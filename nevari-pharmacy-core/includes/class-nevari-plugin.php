@@ -19,8 +19,10 @@ final class Nevari_Plugin {
         add_action('init', [$this, 'register_post_types']);
         add_action('init', [$this, 'register_taxonomies']);
         add_action('init', [$this, 'register_product_meta']);
+        add_action('init', [$this, 'register_order_statuses']);
         add_filter('rest_post_dispatch', [$this, 'append_rest_cors_headers'], 10, 3);
         add_filter('rest_pre_serve_request', [$this, 'send_rest_cors_headers'], 10, 4);
+        add_filter('wc_order_statuses', [$this, 'filter_woocommerce_order_statuses']);
 
         Nevari_Audit::init();
         Nevari_Auth::init();
@@ -120,6 +122,51 @@ final class Nevari_Plugin {
         }
     }
 
+    public function register_order_statuses(): void {
+        if (!function_exists('register_post_status')) {
+            return;
+        }
+
+        register_post_status('wc-awaiting-doctor', [
+            'label' => __('Awaiting Doctor', 'nevari-pharmacy-core'),
+            'public' => true,
+            'exclude_from_search' => false,
+            'show_in_admin_all_list' => true,
+            'show_in_admin_status_list' => true,
+            'label_count' => _n_noop('Awaiting Doctor <span class="count">(%s)</span>', 'Awaiting Doctor <span class="count">(%s)</span>', 'nevari-pharmacy-core'),
+        ]);
+
+        register_post_status('wc-awaiting-prescription', [
+            'label' => __('Awaiting Prescription', 'nevari-pharmacy-core'),
+            'public' => true,
+            'exclude_from_search' => false,
+            'show_in_admin_all_list' => true,
+            'show_in_admin_status_list' => true,
+            'label_count' => _n_noop('Awaiting Prescription <span class="count">(%s)</span>', 'Awaiting Prescription <span class="count">(%s)</span>', 'nevari-pharmacy-core'),
+        ]);
+    }
+
+    public function filter_woocommerce_order_statuses(array $statuses): array {
+        $ordered = [];
+
+        foreach ($statuses as $key => $label) {
+            $ordered[$key] = $label;
+            if ('wc-pending' === $key) {
+                $ordered['wc-awaiting-doctor'] = __('Awaiting Doctor', 'nevari-pharmacy-core');
+                $ordered['wc-awaiting-prescription'] = __('Awaiting Prescription', 'nevari-pharmacy-core');
+            }
+        }
+
+        if (!isset($ordered['wc-awaiting-doctor'])) {
+            $ordered['wc-awaiting-doctor'] = __('Awaiting Doctor', 'nevari-pharmacy-core');
+        }
+        if (!isset($ordered['wc-awaiting-prescription'])) {
+            $ordered['wc-awaiting-prescription'] = __('Awaiting Prescription', 'nevari-pharmacy-core');
+        }
+
+        return $ordered;
+    }
+
     private function register_woocommerce_hooks(): void {
         add_action('woocommerce_new_order', static function ($order_id) {
             Nevari_Audit::log('orders', 'woocommerce', 'order.created', 'success', [
@@ -129,6 +176,7 @@ final class Nevari_Plugin {
                 'message' => 'WooCommerce order created.',
             ]);
         }, 10, 1);
+        add_action('woocommerce_checkout_order_processed', [$this, 'apply_initial_rx_order_status'], 20, 1);
 
         add_action('woocommerce_order_status_changed', static function ($order_id, $old_status, $new_status) {
             Nevari_Audit::log('orders', 'woocommerce', 'order.status_changed', 'success', [
@@ -206,6 +254,35 @@ final class Nevari_Plugin {
         if ($prescription) {
             $item->add_meta_data('_nevari_prescription_id', (int) $prescription->id, true);
         }
+    }
+
+    public function apply_initial_rx_order_status(int $order_id): void {
+        if (!self::instance() || !function_exists('wc_get_order')) {
+            return;
+        }
+
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
+
+        $requires_rx = false;
+        foreach ($order->get_items() as $item) {
+            if ($item->get_meta('_nevari_rx_required') === 'yes') {
+                $requires_rx = true;
+                break;
+            }
+        }
+
+        if (!$requires_rx) {
+            return;
+        }
+
+        $order->update_meta_data('_nevari_rx_validation_status', 'awaiting_doctor');
+        if (!(int) $order->get_meta('_nevari_assigned_doctor_user_id')) {
+            $order->set_status('awaiting-doctor', __('Awaiting doctor assignment for prescription review.', 'nevari-pharmacy-core'));
+        }
+        $order->save();
     }
 
     public function handle_rest_preflight(): void {

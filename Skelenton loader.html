@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nevari Skeleton Loader</title>
+
+  <style>
+    :root {
+      --color-bg-page: #EDE5DA;
+      --color-bg-app: #F8F5EF;
+      --color-panel: rgba(255,255,255,0.35);
+
+      --color-primary: #0E2955;
+
+      --skeleton-base: rgba(14, 41, 85, 0.06);
+      --skeleton-highlight: rgba(255,255,255,0.55);
+
+      --border: rgba(14, 41, 85, 0.08);
+
+      --radius-xs: 8px;
+      --radius-sm: 12px;
+      --radius-md: 16px;
+      --radius-lg: 22px;
+      --radius-xl: 30px;
+      --radius-pill: 999px;
+
+      --shadow-soft: 0 18px 45px rgba(14, 41, 85, 0.10);
+      --shadow-card: 0 12px 28px rgba(14, 41, 85, 0.07);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, sans-serif;
+      background:
+        radial-gradient(circle at 25% 20%, rgba(255,255,255,0.58), transparent 34%),
+        radial-gradient(circle at 78% 15%, rgba(216,202,182,0.34), transparent 28%),
+        var(--color-bg-page);
+      padding: 42px;
+      color: var(--color-primary);
+    }
+
+    .app-shell {
+      width: min(1180px, 100%);
+      min-height: 840px;
+      margin: auto;
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      background: rgba(248,245,239,0.94);
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.6);
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(18px);
+    }
+
+    .sidebar {
+      padding: 24px 18px;
+      background: linear-gradient(
+        180deg,
+        rgba(248,245,239,0.96),
+        rgba(241,235,226,0.92)
+      );
+      border-right: 1px solid rgba(14,41,85,0.04);
+    }
+
+    .content {
+      padding: 22px 28px 30px;
+    }
+
+    /* SHIMMER */
+
+    .skeleton {
+      position: relative;
+      overflow: hidden;
+      background: var(--skeleton-base);
+    }
+
+    .skeleton::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      transform: translateX(-100%);
+      background: linear-gradient(
+        90deg,
+        transparent,
+        var(--skeleton-highlight),
+        transparent
+      );
+      animation: shimmer 1.6s infinite;
+    }
+
+    @keyframes shimmer {
+      100% {
+        transform: translateX(100%);
+      }
+    }
+
+    /* SIDEBAR */
+
+    .brand {
+      height: 32px;
+      width: 130px;
+      border-radius: var(--radius-pill);
+      margin-bottom: 42px;
+    }
+
+    .nav-group {
+      margin-bottom: 32px;
+    }
+
+    .nav-label {
+      height: 10px;
+      width: 70px;
+      border-radius: var(--radius-pill);
+      margin-bottom: 14px;
+    }
+
+    .nav-item {
+      height: 42px;
+      border-radius: var(--radius-pill);
+      margin-bottom: 8px;
+    }
+
+    .profile-card {
+      margin-top: 50px;
+      padding: 18px;
+      border-radius: var(--radius-lg);
+      background: rgba(231,238,248,0.5);
+      border: 1px solid rgba(255,255,255,0.5);
+    }
+
+    .profile-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .circle {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+    }
+
+    .profile-lines {
+      flex: 1;
+    }
+
+    .line {
+      height: 10px;
+      border-radius: var(--radius-pill);
+      margin-bottom: 8px;
+    }
+
+    .line.short {
+      width: 60%;
+    }
+
+    .line.medium {
+      width: 80%;
+    }
+
+    .button {
+      height: 40px;
+      border-radius: var(--radius-pill);
+    }
+
+    /* TOPBAR */
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 300px 1fr auto;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 26px;
+    }
+
+    .search {
+      height: 40px;
+      border-radius: var(--radius-pill);
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .pill {
+      width: 80px;
+      height: 38px;
+      border-radius: var(--radius-pill);
+    }
+
+    .user {
+      width: 220px;
+      height: 48px;
+      border-radius: var(--radius-pill);
+    }
+
+    .title {
+      width: 280px;
+      height: 34px;
+      border-radius: var(--radius-md);
+      margin-bottom: 24px;
+    }
+
+    /* SALES SECTION */
+
+    .section {
+      padding: 18px;
+      border-radius: 26px;
+      background: rgba(255,255,255,0.18);
+      border: 1px solid rgba(255,255,255,0.34);
+      margin-bottom: 20px;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+
+    .section-title {
+      width: 180px;
+      height: 22px;
+      border-radius: var(--radius-sm);
+    }
+
+    .section-action {
+      width: 120px;
+      height: 38px;
+      border-radius: var(--radius-pill);
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }
+
+    .metric-card {
+      min-height: 126px;
+      border-radius: var(--radius-lg);
+      padding: 18px;
+      position: relative;
+      overflow: hidden;
+      background: rgba(255,255,255,0.26);
+      border: 1px solid rgba(255,255,255,0.4);
+      box-shadow: var(--shadow-card);
+    }
+
+    .metric-top {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .metric-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+    }
+
+    .metric-menu {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+    }
+
+    .metric-line {
+      height: 10px;
+      border-radius: var(--radius-pill);
+      margin-bottom: 12px;
+    }
+
+    .metric-line.big {
+      height: 26px;
+      width: 70%;
+    }
+
+    .metric-line.small {
+      width: 55%;
+    }
+
+    /* CHARTS */
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 0.78fr 1.22fr;
+      gap: 18px;
+      margin-bottom: 20px;
+    }
+
+    .chart-panel {
+      padding: 20px;
+      border-radius: var(--radius-lg);
+      background: rgba(255,255,255,0.35);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-card);
+    }
+
+    .donut-wrap {
+      display: grid;
+      place-items: center;
+      min-height: 260px;
+    }
+
+    .donut {
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+    }
+
+    .bars {
+      height: 260px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-around;
+      padding: 20px 10px;
+    }
+
+    .bar {
+      width: 48px;
+      border-radius: 999px 999px 18px 18px;
+    }
+
+    .bar:nth-child(1) { height: 70px; }
+    .bar:nth-child(2) { height: 110px; }
+    .bar:nth-child(3) { height: 160px; }
+    .bar:nth-child(4) { height: 135px; }
+    .bar:nth-child(5) { height: 100px; }
+    .bar:nth-child(6) { height: 80px; }
+
+    /* TABLE */
+
+    .table-panel {
+      padding: 20px;
+      border-radius: var(--radius-lg);
+      background: rgba(255,255,255,0.35);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-card);
+    }
+
+    .table-toolbar {
+      display: flex;
+      gap: 10px;
+    }
+
+    .toolbar-item {
+      width: 110px;
+      height: 34px;
+      border-radius: var(--radius-pill);
+    }
+
+    .table {
+      margin-top: 20px;
+    }
+
+    .table-row {
+      display: grid;
+      grid-template-columns: 2fr 1fr 2fr 1fr 1fr 2fr 40px;
+      gap: 12px;
+      padding: 16px 0;
+      border-bottom: 1px solid rgba(14,41,85,0.06);
+      align-items: center;
+    }
+
+    .table-cell {
+      height: 12px;
+      border-radius: var(--radius-pill);
+    }
+
+    .table-cell.short {
+      width: 70%;
+    }
+
+    .table-cell.medium {
+      width: 90%;
+    }
+
+    .table-cell.small {
+      width: 50%;
+    }
+
+    .table-avatar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .tiny-avatar {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+    }
+
+    @media (max-width: 1100px) {
+      .app-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .metric-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 680px) {
+      body {
+        padding: 14px;
+      }
+
+      .content {
+        padding: 16px;
+      }
+
+      .metric-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar {
+        grid-template-columns: 1fr;
+      }
+
+      .table-row {
+        min-width: 900px;
+      }
+
+      .table {
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="app-shell">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+
+      <div class="brand skeleton"></div>
+
+      <div class="nav-group">
+        <div class="nav-label skeleton"></div>
+
+        <div class="nav-item skeleton"></div>
+        <div class="nav-item skeleton"></div>
+        <div class="nav-item skeleton"></div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label skeleton"></div>
+
+        <div class="nav-item skeleton"></div>
+        <div class="nav-item skeleton"></div>
+        <div class="nav-item skeleton"></div>
+      </div>
+
+      <div class="profile-card">
+        <div class="profile-row">
+          <div class="circle skeleton"></div>
+
+          <div class="profile-lines">
+            <div class="line medium skeleton"></div>
+            <div class="line short skeleton"></div>
+          </div>
+        </div>
+
+        <div class="button skeleton"></div>
+      </div>
+
+    </aside>
+
+    <!-- CONTENT -->
+    <main class="content">
+
+      <!-- TOPBAR -->
+      <div class="topbar">
+
+        <div class="search skeleton"></div>
+
+        <div></div>
+
+        <div class="top-actions">
+          <div class="pill skeleton"></div>
+          <div class="user skeleton"></div>
+          <div class="pill skeleton"></div>
+        </div>
+
+      </div>
+
+      <!-- PAGE TITLE -->
+      <div class="title skeleton"></div>
+
+      <!-- METRICS -->
+      <section class="section">
+
+        <div class="section-header">
+          <div class="section-title skeleton"></div>
+          <div class="section-action skeleton"></div>
+        </div>
+
+        <div class="metric-grid">
+
+          <div class="metric-card">
+            <div class="metric-top">
+              <div class="metric-icon skeleton"></div>
+              <div class="metric-menu skeleton"></div>
+            </div>
+
+            <div class="metric-line small skeleton"></div>
+            <div class="metric-line big skeleton"></div>
+            <div class="metric-line small skeleton"></div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-top">
+              <div class="metric-icon skeleton"></div>
+              <div class="metric-menu skeleton"></div>
+            </div>
+
+            <div class="metric-line small skeleton"></div>
+            <div class="metric-line big skeleton"></div>
+            <div class="metric-line small skeleton"></div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-top">
+              <div class="metric-icon skeleton"></div>
+              <div class="metric-menu skeleton"></div>
+            </div>
+
+            <div class="metric-line small skeleton"></div>
+            <div class="metric-line big skeleton"></div>
+            <div class="metric-line small skeleton"></div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-top">
+              <div class="metric-icon skeleton"></div>
+              <div class="metric-menu skeleton"></div>
+            </div>
+
+            <div class="metric-line small skeleton"></div>
+            <div class="metric-line big skeleton"></div>
+            <div class="metric-line small skeleton"></div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- CHARTS -->
+      <section class="dashboard-grid">
+
+        <div class="chart-panel">
+
+          <div class="section-header">
+            <div class="section-title skeleton"></div>
+            <div class="metric-menu skeleton"></div>
+          </div>
+
+          <div class="donut-wrap">
+            <div class="donut skeleton"></div>
+          </div>
+
+        </div>
+
+        <div class="chart-panel">
+
+          <div class="section-header">
+            <div class="section-title skeleton"></div>
+            <div class="metric-menu skeleton"></div>
+          </div>
+
+          <div class="bars">
+            <div class="bar skeleton"></div>
+            <div class="bar skeleton"></div>
+            <div class="bar skeleton"></div>
+            <div class="bar skeleton"></div>
+            <div class="bar skeleton"></div>
+            <div class="bar skeleton"></div>
+          </div>
+
+        </div>
+
+      </section>
+
+      <!-- TABLE -->
+      <section class="table-panel">
+
+        <div class="section-header">
+          <div class="section-title skeleton"></div>
+
+          <div class="table-toolbar">
+            <div class="toolbar-item skeleton"></div>
+            <div class="toolbar-item skeleton"></div>
+            <div class="toolbar-item skeleton"></div>
+          </div>
+        </div>
+
+        <div class="table">
+
+          <!-- ROW -->
+          <div class="table-row">
+
+            <div class="table-avatar">
+              <div class="tiny-avatar skeleton"></div>
+              <div class="table-cell medium skeleton"></div>
+            </div>
+
+            <div class="table-cell short skeleton"></div>
+            <div class="table-cell medium skeleton"></div>
+            <div class="table-cell small skeleton"></div>
+            <div class="table-cell short skeleton"></div>
+            <div class="table-cell medium skeleton"></div>
+            <div class="table-cell small skeleton"></div>
+
+          </div>
+
+          <!-- ROW -->
+          <div class="table-row">
+
+            <div class="table-avatar">
+              <div class="tiny-avatar skeleton"></div>
+              <div class="table-cell medium skeleton"></div>
+            </div>
+
+            <div class="table-cell short skeleton"></div>
+            <div class="table-cell medium skeleton"></div>
+            <div class="table-cell small skeleton"></div>
+            <div class="table-cell short skeleton"></div>
+            <div class="table-cell medium skeleton"></div>
+            <div class="table-cell small skeleton"></div>
+
+          </div>
+
+          <!-- ROW -->
+          <div class="table-row">
+
+            <div class="table-avatar">
+              <div class="tiny-avatar skeleton"></div>
+              <div class="table-cell medium skeleton"></div>
+            </div>
+
+            <div class="table-cell short skeleton"></div>
+            <div class="table-cell medium skeleton"></div>
+            <div class="table-cell small skeleton"></div>
+            <div class="table-cell short skeleton"></div>
+            <div class="table-cell medium skeleton"></div>
+            <div class="table-cell small skeleton"></div>
+
+          </div>
+
+        </div>
+
+      </section>
+
+    </main>
+
+  </div>
+
+</body>
+</html>

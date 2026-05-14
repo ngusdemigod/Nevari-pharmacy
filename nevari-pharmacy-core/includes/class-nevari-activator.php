@@ -401,6 +401,14 @@ final class Nevari_Activator {
                 'body_text' => 'Hello {{patient_name}}, your prescription {{prescription_number}} has been assigned by {{doctor_name}}.',
                 'variables' => ['patient_name', 'doctor_name', 'prescription_number'],
             ],
+            [
+                'template_key' => 'doctor_order_assigned',
+                'name' => 'Doctor Order Assigned',
+                'subject' => 'A pharmacy order needs your review',
+                'body_html' => '<p>Hello {{doctor_name}},</p><p>Order {{order_number}} has been assigned to you for {{patient_name}}.</p><p>You can open your dashboard to create a prescription or schedule an appointment.</p>',
+                'body_text' => 'Hello {{doctor_name}}, order {{order_number}} has been assigned to you for {{patient_name}}. Open your dashboard to create a prescription or schedule an appointment.',
+                'variables' => ['doctor_name', 'patient_name', 'order_number'],
+            ],
         ];
 
         foreach ($templates as $template) {

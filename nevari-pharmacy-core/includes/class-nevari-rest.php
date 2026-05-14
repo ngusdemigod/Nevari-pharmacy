@@ -55,9 +55,14 @@ final class Nevari_Rest {
                 'callback' => [__CLASS__, 'orders_update'],
                 'permission_callback' => [__CLASS__, 'store_admin_required'],
             ],
+            [
+                'methods' => WP_REST_Server::DELETABLE,
+                'callback' => [__CLASS__, 'orders_delete'],
+                'permission_callback' => [__CLASS__, 'store_admin_required'],
+            ],
         ]);
 
-        foreach (['notes', 'rx-hold', 'release-rx-hold', 'link-prescription'] as $action) {
+        foreach (['notes', 'rx-hold', 'release-rx-hold', 'link-prescription', 'assign-doctor'] as $action) {
             register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/' . $action, [
                 'methods' => WP_REST_Server::CREATABLE,
                 'callback' => [__CLASS__, 'orders_action'],
@@ -418,8 +423,11 @@ final class Nevari_Rest {
         if (!Nevari_Helpers::is_store_admin()) {
             if (Nevari_Helpers::is_patient()) {
                 $args['customer_id'] = get_current_user_id();
+            } elseif (Nevari_Helpers::is_doctor()) {
+                $args['meta_key'] = '_nevari_assigned_doctor_user_id';
+                $args['meta_value'] = (string) get_current_user_id();
             } else {
-                return Nevari_Helpers::error('forbidden', 'Doctors cannot list all orders.', 403);
+                return Nevari_Helpers::error('forbidden', 'You cannot list these orders.', 403);
             }
         } elseif ($request->get_param('patient_id')) {
             $args['customer_id'] = (int) $request->get_param('patient_id');
@@ -466,6 +474,23 @@ final class Nevari_Rest {
         return Nevari_Helpers::success(self::format_order($order, true));
     }
 
+    public static function orders_delete(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_write', 10, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'delete'])) {
+            return $response;
+        }
+        if (!self::woo_available()) {
+            return Nevari_Helpers::error('woocommerce_missing', 'WooCommerce is required.', 503);
+        }
+        $order = wc_get_order((int) $request['id']);
+        if (!$order) {
+            return Nevari_Helpers::error('order_not_found', 'Order not found.', 404);
+        }
+        $order_id = (int) $order->get_id();
+        $order->delete(true);
+        Nevari_Audit::log('orders', 'nevari', 'order.deleted', 'success', ['order_id' => $order_id, 'object_type' => 'shop_order', 'object_id' => $order_id, 'message' => 'Order deleted from Nevari dashboard.']);
+        return Nevari_Helpers::success(['deleted' => true, 'id' => $order_id]);
+    }
+
     public static function orders_action(WP_REST_Request $request): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('rest_orders_action', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id()])) {
             return $response;
@@ -510,6 +535,53 @@ final class Nevari_Rest {
             $order->update_meta_data('_nevari_rx_validation_status', 'linked');
             self::update_prescription_status($prescription_id, ['order_id' => $order->get_id()], 'order_linked', 'Prescription linked to order.');
             Nevari_Audit::log('orders', 'nevari', 'order.prescription_linked', 'success', ['order_id' => $order->get_id(), 'prescription_id' => $prescription_id, 'message' => 'Prescription linked to order.']);
+        } elseif (str_ends_with($route, '/assign-doctor')) {
+            $doctor_id = isset($params['doctor_user_id']) ? (int) $params['doctor_user_id'] : 0;
+            if (!$doctor_id) {
+                return Nevari_Helpers::error('validation_error', 'doctor_user_id is required.', 422);
+            }
+            $doctor = get_user_by('id', $doctor_id);
+            if (!$doctor || !in_array('doctor', (array) $doctor->roles, true) || get_user_meta($doctor_id, '_nevari_doctor_disabled', true)) {
+                return Nevari_Helpers::error('doctor_not_found', 'Doctor not found or inactive.', 404);
+            }
+            $patient_id = (int) $order->get_user_id();
+            if (!$patient_id) {
+                return Nevari_Helpers::error('order_patient_missing', 'This order is not linked to a patient account.', 409);
+            }
+            $patient = get_user_by('id', $patient_id);
+
+            $order->update_meta_data('_nevari_assigned_doctor_user_id', $doctor_id);
+            $order->update_meta_data('_nevari_assigned_at', Nevari_Helpers::now());
+            $order->update_meta_data('_nevari_rx_validation_status', 'awaiting_prescription');
+            $order->set_status('awaiting-prescription', __('Doctor assigned and prescription review pending.', 'nevari-pharmacy-core'));
+            Nevari_Helpers::ensure_doctor_patient_link($doctor_id, $patient_id, 'order_assignment');
+
+            Nevari_Emails::queue_or_send([
+                'template_key' => 'doctor_order_assigned',
+                'recipient_user_id' => $doctor_id,
+                'subject' => sprintf(__('Order %s assigned for review', 'nevari-pharmacy-core'), $order->get_order_number()),
+                'body_html' => sprintf(
+                    '<p>Hello %s,</p><p>Order %s has been assigned to you for %s.</p><p>Open your doctor dashboard to create a prescription or schedule an appointment.</p>',
+                    esc_html($doctor->display_name),
+                    esc_html($order->get_order_number()),
+                    esc_html($patient ? $patient->display_name : __('the patient', 'nevari-pharmacy-core'))
+                ),
+                'related_object_type' => 'shop_order',
+                'related_object_id' => (int) $order->get_id(),
+                'variables' => [
+                    'doctor_name' => $doctor->display_name,
+                    'patient_name' => $patient ? $patient->display_name : __('Patient', 'nevari-pharmacy-core'),
+                    'order_number' => $order->get_order_number(),
+                ],
+            ], false);
+
+            Nevari_Audit::log('orders', 'nevari', 'order.doctor_assigned', 'success', [
+                'order_id' => $order->get_id(),
+                'object_type' => 'shop_order',
+                'object_id' => $order->get_id(),
+                'related_user_id' => $doctor_id,
+                'message' => sprintf('Order assigned to doctor %s.', $doctor->display_name),
+            ]);
         }
         $order->save();
         return Nevari_Helpers::success(self::format_order($order, true));
@@ -550,6 +622,9 @@ final class Nevari_Rest {
             return $order;
         }
         if (Nevari_Helpers::is_doctor()) {
+            if ((int) $order->get_meta('_nevari_assigned_doctor_user_id') === get_current_user_id()) {
+                return $order;
+            }
             $prescription_id = (int) $order->get_meta('_nevari_prescription_id');
             $prescription = $prescription_id ? self::get_prescription_row($prescription_id) : null;
             if ($prescription && Nevari_Helpers::can_view_prescription($prescription)) {
@@ -560,27 +635,96 @@ final class Nevari_Rest {
     }
 
     private static function format_order($order, bool $include_items = false): array {
+        $assigned_doctor_id = (int) $order->get_meta('_nevari_assigned_doctor_user_id');
+        $assigned_doctor = $assigned_doctor_id ? get_user_by('id', $assigned_doctor_id) : null;
         $data = [
             'id' => $order->get_id(),
             'number' => $order->get_order_number(),
             'status' => $order->get_status(),
             'currency' => $order->get_currency(),
             'total' => $order->get_total(),
+            'payment_status' => $order->get_date_paid() ? 'completed' : $order->get_status(),
             'customer_id' => $order->get_user_id(),
             'rx_status' => $order->get_meta('_nevari_rx_validation_status') ?: null,
             'prescription_id' => $order->get_meta('_nevari_prescription_id') ? (int) $order->get_meta('_nevari_prescription_id') : null,
+            'assigned_doctor_user_id' => $assigned_doctor_id ?: null,
+            'assigned_doctor' => $assigned_doctor ? [
+                'user_id' => (int) $assigned_doctor->ID,
+                'display_name' => $assigned_doctor->display_name,
+                'email' => $assigned_doctor->user_email,
+            ] : null,
+            'totals' => [
+                'subtotal' => (float) $order->get_subtotal(),
+                'discount_total' => (float) $order->get_discount_total(),
+                'shipping_total' => (float) $order->get_shipping_total(),
+                'shipping_tax' => (float) $order->get_shipping_tax(),
+                'tax_total' => (float) $order->get_total_tax(),
+                'fees_total' => (float) $order->get_total_fees(),
+                'grand_total' => (float) $order->get_total(),
+                'items_count' => (int) $order->get_item_count(),
+                'items_quantity' => array_reduce($order->get_items(), static function ($carry, $item) {
+                    return $carry + (float) $item->get_quantity();
+                }, 0),
+            ],
             'created_at' => $order->get_date_created() ? $order->get_date_created()->date('c') : null,
+            'updated_at' => $order->get_date_modified() ? $order->get_date_modified()->date('c') : null,
         ];
         if ($include_items) {
+            $notes = [];
+            foreach ($order->get_customer_order_notes() as $note) {
+                $notes[] = [
+                    'id' => (int) $note->id,
+                    'content' => wp_strip_all_tags($note->content),
+                    'created_at' => isset($note->date_created) && $note->date_created ? $note->date_created->date('c') : null,
+                ];
+            }
+            $data['customer_note'] = $order->get_customer_note();
+            $data['billing'] = [
+                'first_name' => $order->get_billing_first_name(),
+                'last_name' => $order->get_billing_last_name(),
+                'email' => $order->get_billing_email(),
+                'phone' => $order->get_billing_phone(),
+                'company' => $order->get_billing_company(),
+                'address_1' => $order->get_billing_address_1(),
+                'address_2' => $order->get_billing_address_2(),
+                'city' => $order->get_billing_city(),
+                'state' => $order->get_billing_state(),
+                'postcode' => $order->get_billing_postcode(),
+                'country' => $order->get_billing_country(),
+            ];
+            $data['shipping'] = [
+                'first_name' => $order->get_shipping_first_name(),
+                'last_name' => $order->get_shipping_last_name(),
+                'company' => $order->get_shipping_company(),
+                'address_1' => $order->get_shipping_address_1(),
+                'address_2' => $order->get_shipping_address_2(),
+                'city' => $order->get_shipping_city(),
+                'state' => $order->get_shipping_state(),
+                'postcode' => $order->get_shipping_postcode(),
+                'country' => $order->get_shipping_country(),
+            ];
+            $data['order_notes'] = $notes;
             $data['items'] = [];
             foreach ($order->get_items() as $item) {
+                $product = $item->get_product();
+                $quantity = (float) $item->get_quantity();
+                $line_total = (float) $item->get_total();
+                $line_subtotal = (float) $item->get_subtotal();
+                $unit_price = $quantity > 0 ? $line_subtotal / $quantity : $line_subtotal;
                 $data['items'][] = [
                     'id' => $item->get_id(),
                     'product_id' => $item->get_product_id(),
                     'variation_id' => $item->get_variation_id(),
                     'name' => $item->get_name(),
-                    'quantity' => $item->get_quantity(),
-                    'total' => $item->get_total(),
+                    'sku' => $product ? $product->get_sku() : '',
+                    'quantity' => $quantity,
+                    'subtotal' => $line_subtotal,
+                    'discount_total' => max(0, $line_subtotal - $line_total),
+                    'unit_price' => $unit_price,
+                    'total' => $line_total,
+                    'tax_total' => (float) $item->get_total_tax(),
+                    'stock_status' => $product ? $product->get_stock_status() : null,
+                    'image_url' => ($product && $product->get_image_id()) ? wp_get_attachment_image_url($product->get_image_id(), 'thumbnail') : null,
                     'rx_required' => $item->get_meta('_nevari_rx_required') === 'yes',
                     'prescription_id' => $item->get_meta('_nevari_prescription_id') ? (int) $item->get_meta('_nevari_prescription_id') : null,
                 ];
@@ -1207,11 +1351,29 @@ final class Nevari_Rest {
         global $wpdb;
         $params = Nevari_Helpers::get_json_params($request);
         $doctor_id = isset($params['doctor_user_id']) ? (int) $params['doctor_user_id'] : 0;
-        $patient_id = Nevari_Helpers::is_store_admin() && !empty($params['patient_user_id']) ? (int) $params['patient_user_id'] : get_current_user_id();
+        $order_id = isset($params['order_id']) ? (int) $params['order_id'] : 0;
+        $order = null;
+        if (Nevari_Helpers::is_store_admin()) {
+            $patient_id = !empty($params['patient_user_id']) ? (int) $params['patient_user_id'] : 0;
+        } elseif (Nevari_Helpers::is_doctor()) {
+            $patient_id = !empty($params['patient_user_id']) ? (int) $params['patient_user_id'] : 0;
+        } else {
+            $patient_id = get_current_user_id();
+        }
         $type = isset($params['type']) ? sanitize_key((string) $params['type']) : 'video';
         $start = Nevari_Helpers::normalize_datetime($params['start_at'] ?? null);
         $end = Nevari_Helpers::normalize_datetime($params['end_at'] ?? null);
         $reason = isset($params['reason']) ? sanitize_textarea_field((string) $params['reason']) : '';
+
+        if ($order_id) {
+            $order = self::get_order_scoped($order_id);
+            if (is_wp_error($order)) {
+                return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) $order->get_error_data('status') ?: 404);
+            }
+            if (!$patient_id) {
+                $patient_id = (int) $order->get_user_id();
+            }
+        }
 
         if (!$doctor_id || !$patient_id || !$start || !$end || strtotime($end) <= strtotime($start) || !$reason) {
             return Nevari_Helpers::error('validation_error', 'doctor_user_id, valid start_at/end_at, and reason are required.', 422);
@@ -1219,6 +1381,16 @@ final class Nevari_Rest {
         $doctor = get_user_by('id', $doctor_id);
         if (!$doctor || !in_array('doctor', (array) $doctor->roles, true) || get_user_meta($doctor_id, '_nevari_doctor_disabled', true)) {
             return Nevari_Helpers::error('doctor_not_found', 'Doctor not found or inactive.', 404);
+        }
+        if (Nevari_Helpers::is_doctor() && !Nevari_Helpers::is_store_admin()) {
+            if ($doctor_id !== get_current_user_id()) {
+                return Nevari_Helpers::error('forbidden', 'Doctors can create appointments only for themselves.', 403);
+            }
+            if (!Nevari_Helpers::doctor_patient_link_exists($doctor_id, $patient_id)) {
+                if (!$order_id || !$order || (int) $order->get_meta('_nevari_assigned_doctor_user_id') !== $doctor_id || (int) $order->get_user_id() !== $patient_id) {
+                    return Nevari_Helpers::error('forbidden_patient_scope', 'Doctor can schedule appointments only for assigned patients.', 403);
+                }
+            }
         }
         $allowed_types = ['video', 'phone', 'in_person', 'async_form'];
         if (!in_array($type, $allowed_types, true)) {
@@ -1242,7 +1414,7 @@ final class Nevari_Rest {
         $wpdb->insert($table, [
             'patient_user_id' => $patient_id,
             'doctor_user_id' => $doctor_id,
-            'order_id' => isset($params['order_id']) ? (int) $params['order_id'] : null,
+            'order_id' => $order_id ?: null,
             'type' => $type,
             'status' => Nevari_Helpers::is_store_admin() ? 'confirmed' : 'requested',
             'start_at' => $start,

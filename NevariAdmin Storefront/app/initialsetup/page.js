@@ -68,7 +68,10 @@ function decodePairingBaseUrl(pairingCode) {
 }
 
 function buildUrl(session, path) {
-  return `${normalizeBaseUrl(session.baseUrl)}/wp-json/${API_NAMESPACE}${path}`;
+  const url = new URL("/api/nevari-proxy", typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  url.searchParams.set("baseUrl", normalizeBaseUrl(session.baseUrl));
+  url.searchParams.set("path", path);
+  return url.toString();
 }
 
 function frontendContext(session) {
@@ -190,7 +193,7 @@ export default function InitialSetupPage() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...nextSession, currentPage }));
       setSession(nextSession);
       setFeedback("Pairing verified. Redirecting to sign in...");
-      router.replace("/login");
+      router.replace("/dashboard");
     } catch (error) {
       console.error(error);
       setFeedback(error.message || "Pairing failed.");

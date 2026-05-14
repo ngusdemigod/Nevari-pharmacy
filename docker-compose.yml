@@ -3,15 +3,6 @@ services:
     build:
       context: ./NevariAdmin Storefront
     container_name: nevari-storefront
-    working_dir: /app
-    command: npm run dev -- --hostname 0.0.0.0 --port 4173
-    environment:
-      CHOKIDAR_USEPOLLING: "true"
-      WATCHPACK_POLLING: "true"
-      NODE_ENV: development
     ports:
       - "4173:4173"
-    volumes:
-      - ./NevariAdmin Storefront:/app
-      - /app/node_modules
     restart: unless-stopped

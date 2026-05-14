@@ -44,6 +44,20 @@ const FRONTEND_PAGES = [
   }
 ];
 
+const SEARCH_PLACEHOLDERS = {
+  orders: "Search orders",
+  payments: "Search payments",
+  customers: "Search patients",
+  consultations: "Search appointments",
+  prescriptions: "Search prescriptions",
+  products: "Search products",
+  doctors: "Search doctors",
+  emails: "Search emails",
+  audit: "Search audit events",
+  settings: "Search settings",
+  profile: "Search profile"
+};
+
 function defaultSession() {
   const hasWindow = typeof window !== "undefined";
   const origin = hasWindow ? window.location.origin : "";
@@ -155,12 +169,61 @@ function formatDate(value, withTime = false) {
   }).format(date);
 }
 
+function formatStatusLabel(value) {
+  return String(value || "n/a")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function joinNonEmpty(values, separator = " ") {
+  return values.map((value) => String(value || "").trim()).filter(Boolean).join(separator);
+}
+
+function customerFullName(order) {
+  const shippingName = joinNonEmpty([order?.shipping?.first_name, order?.shipping?.last_name]);
+  if (shippingName) {
+    return shippingName;
+  }
+  const billingName = joinNonEmpty([order?.billing?.first_name, order?.billing?.last_name]);
+  return billingName || patientLabel(order?.customer_id);
+}
+
+function formatAddress(address) {
+  if (!address) {
+    return "No delivery address on file";
+  }
+
+  const lines = [
+    joinNonEmpty([address.first_name, address.last_name]),
+    address.company,
+    joinNonEmpty([address.address_1, address.address_2]),
+    joinNonEmpty([address.city, address.state, address.postcode], ", "),
+    address.country
+  ].filter(Boolean);
+
+  return lines.length ? lines.join(", ") : "No delivery address on file";
+}
+
+function itemQuantityTotal(order) {
+  if (order?.totals?.items_quantity !== undefined && order?.totals?.items_quantity !== null) {
+    return Number(order.totals.items_quantity);
+  }
+  return (order?.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+}
+
 function formatTopbarDate() {
   return new Intl.DateTimeFormat("en-US", {
     month: "long",
     day: "numeric",
     year: "numeric"
   }).format(new Date());
+}
+
+function formatLiveLabel(value = new Date()) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(value);
 }
 
 function toneClass(value) {
@@ -240,7 +303,9 @@ function frontendContext(session) {
 }
 
 function buildUrl(session, path, params = {}) {
-  const url = new URL(`${normalizeBaseUrl(session.baseUrl)}/wp-json/${API_NAMESPACE}${path}`);
+  const url = new URL("/api/nevari-proxy", typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  url.searchParams.set("baseUrl", normalizeBaseUrl(session.baseUrl));
+  url.searchParams.set("path", path);
   Object.entries(params).forEach(([key, value]) => {
     if (value === undefined || value === null || value === "") {
       return;
@@ -282,6 +347,10 @@ function InlineIcon({ id }) {
 
 function StatusPill({ value, children, className = "status-pill" }) {
   return <span className={`${className} ${toneClass(value)}`}>{children}</span>;
+}
+
+function SkeletonBox({ className = "" }) {
+  return <div className={`skeleton ${className}`.trim()} aria-hidden="true" />;
 }
 
 function IconSprite() {
@@ -399,6 +468,15 @@ function IconSprite() {
         <path d="M21 12a9 9 0 1 1-2.64-6.36" />
         <path d="M21 3v6h-6" />
       </symbol>
+      <symbol id="i-printer" viewBox="0 0 24 24">
+        <path d="M7 8V4h10v4" />
+        <rect x="6" y="14" width="12" height="6" rx="2" />
+        <rect x="4" y="8" width="16" height="8" rx="2" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="m6 6 12 12" />
+        <path d="m18 6-12 12" />
+      </symbol>
       <symbol id="i-package" viewBox="0 0 24 24">
         <path d="m12 3 8 4-8 4-8-4 8-4Z" />
         <path d="M4 7v10l8 4 8-4V7" />
@@ -412,13 +490,15 @@ export default function Page() {
   const router = useRouter();
   const [session, setSession] = useState(defaultSession);
   const [currentPage, setCurrentPage] = useState("overview");
+  const [trendMode, setTrendMode] = useState("week");
   const [data, setData] = useState(emptyData);
   const [audit, setAudit] = useState({ category: "orders", status: "all", source: "all" });
   const [search, setSearch] = useState("");
+  const [liveSnapshots, setLiveSnapshots] = useState([]);
   const deferredSearch = useDeferredValue(search);
   const [selectedAuditIndex, setSelectedAuditIndex] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [authGate, setAuthGate] = useState({ visible: true, stage: "setup" });
+  const [authGate, setAuthGate] = useState({ visible: true, stage: "auth" });
   const [setupFeedback, setSetupFeedback] = useState("Enter the pairing code to trust this storefront.");
   const [authFeedback, setAuthFeedback] = useState("Not connected.");
   const [setupSubmitting, setSetupSubmitting] = useState(false);
@@ -433,6 +513,15 @@ export default function Page() {
   const [authView, setAuthView] = useState("login");
   const [syncStatus, setSyncStatus] = useState({ text: "Disconnected", mode: "" });
   const [hydrated, setHydrated] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
+  const [selectedOrderDetail, setSelectedOrderDetail] = useState(null);
+  const [selectedOrderDoctorId, setSelectedOrderDoctorId] = useState("");
+  const [selectedOrderStatus, setSelectedOrderStatus] = useState("");
+  const [selectedOrderNote, setSelectedOrderNote] = useState("");
+  const [orderDetailLoading, setOrderDetailLoading] = useState(false);
+  const [orderMutationLoading, setOrderMutationLoading] = useState(false);
+  const [orderActionFeedback, setOrderActionFeedback] = useState("");
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
   const latestSessionRef = useRef(session);
   const refreshPromiseRef = useRef(null);
   const bootstrapStartedRef = useRef(false);
@@ -470,6 +559,32 @@ export default function Page() {
     return () => document.body.classList.remove("auth-locked");
   }, [authGate.visible]);
 
+  useEffect(() => {
+    if (currentPage !== "orders") {
+      setSelectedOrderId(null);
+      setSelectedOrderDetail(null);
+      setSelectedOrderDoctorId("");
+      setSelectedOrderStatus("");
+      setSelectedOrderNote("");
+      setOrderActionFeedback("");
+      setOrderModalOpen(false);
+    }
+  }, [currentPage]);
+
+  useEffect(() => {
+    if (!selectedOrderId) {
+      return;
+    }
+    const matchingOrder = (data.orderDetails || []).find((order) => order.id === selectedOrderId);
+    if (matchingOrder && !selectedOrderDetail) {
+      setSelectedOrderDetail(matchingOrder);
+      setSelectedOrderDoctorId(matchingOrder.assigned_doctor_user_id ? String(matchingOrder.assigned_doctor_user_id) : "");
+      setSelectedOrderStatus(matchingOrder.status || "");
+      setSelectedOrderNote(matchingOrder.customer_note || "");
+      setOrderModalOpen(true);
+    }
+  }, [data.orderDetails, selectedOrderDetail, selectedOrderId]);
+
   function showAuthGate(stage) {
     if (stage === "setup") {
       router.push("/initialsetup");
@@ -488,6 +603,163 @@ export default function Page() {
       setCurrentPage(normalizePageId(pageId));
       setSidebarOpen(false);
     });
+  }
+
+  function syncOrderState(nextOrder) {
+    setData((prev) => ({
+      ...prev,
+      orderDetails: (prev.orderDetails || []).map((order) => (order.id === nextOrder.id ? { ...order, ...nextOrder } : order)),
+      orders: (prev.orders || []).map((order) => (order.id === nextOrder.id ? { ...order, ...nextOrder } : order))
+    }));
+    setSelectedOrderDetail(nextOrder);
+    setSelectedOrderId(nextOrder.id);
+  }
+
+  function removeOrderState(orderId) {
+    setData((prev) => ({
+      ...prev,
+      orderDetails: (prev.orderDetails || []).filter((order) => order.id !== orderId),
+      orders: (prev.orders || []).filter((order) => order.id !== orderId)
+    }));
+    setSelectedOrderId(null);
+    setSelectedOrderDetail(null);
+    setSelectedOrderDoctorId("");
+    setSelectedOrderStatus("");
+    setSelectedOrderNote("");
+    setOrderModalOpen(false);
+  }
+
+  async function openOrderDetails(orderId) {
+    setSelectedOrderId(orderId);
+    setOrderDetailLoading(true);
+    setOrderActionFeedback("");
+    try {
+      const payload = await apiRequest(`/orders/${orderId}`);
+      const nextOrder = payload?.data;
+      if (nextOrder) {
+        setSelectedOrderDetail(nextOrder);
+        setSelectedOrderDoctorId(nextOrder.assigned_doctor_user_id ? String(nextOrder.assigned_doctor_user_id) : "");
+        setSelectedOrderStatus(nextOrder.status || "");
+        setSelectedOrderNote(nextOrder.customer_note || "");
+        syncOrderState(nextOrder);
+        setOrderModalOpen(true);
+      }
+    } catch (error) {
+      setOrderActionFeedback(describeRequestError(error));
+    } finally {
+      setOrderDetailLoading(false);
+    }
+  }
+
+  async function saveSelectedOrder() {
+    if (!selectedOrderDetail) {
+      return;
+    }
+    setOrderMutationLoading(true);
+    setOrderActionFeedback("");
+    try {
+      const payload = await apiRequest(`/orders/${selectedOrderDetail.id}`, {
+        method: "POST",
+        body: {
+          status: selectedOrderStatus,
+          customer_note: selectedOrderNote
+        }
+      });
+      syncOrderState(payload.data);
+      setOrderActionFeedback("Order updated.");
+    } catch (error) {
+      setOrderActionFeedback(describeRequestError(error));
+    } finally {
+      setOrderMutationLoading(false);
+    }
+  }
+
+  async function assignSelectedOrderDoctor() {
+    if (!selectedOrderDetail || !selectedOrderDoctorId) {
+      return;
+    }
+    setOrderMutationLoading(true);
+    setOrderActionFeedback("");
+    try {
+      const payload = await apiRequest(`/orders/${selectedOrderDetail.id}/assign-doctor`, {
+        method: "POST",
+        body: { doctor_user_id: Number(selectedOrderDoctorId) }
+      });
+      syncOrderState(payload.data);
+      setOrderActionFeedback("Doctor assigned and notified.");
+    } catch (error) {
+      setOrderActionFeedback(describeRequestError(error));
+    } finally {
+      setOrderMutationLoading(false);
+    }
+  }
+
+  async function deleteSelectedOrder() {
+    if (!selectedOrderDetail || typeof window === "undefined") {
+      return;
+    }
+    if (!window.confirm(`Delete order #${selectedOrderDetail.number}?`)) {
+      return;
+    }
+    setOrderMutationLoading(true);
+    setOrderActionFeedback("");
+    try {
+      await apiRequest(`/orders/${selectedOrderDetail.id}`, { method: "DELETE" });
+      removeOrderState(selectedOrderDetail.id);
+      setOrderActionFeedback("Order deleted.");
+    } catch (error) {
+      setOrderActionFeedback(describeRequestError(error));
+    } finally {
+      setOrderMutationLoading(false);
+    }
+  }
+
+  function printSelectedOrder() {
+    if (typeof window === "undefined" || !selectedOrderDetail) {
+      return;
+    }
+    window.print();
+  }
+
+  async function refundSelectedOrder() {
+    if (!selectedOrderDetail) {
+      return;
+    }
+    setOrderMutationLoading(true);
+    setOrderActionFeedback("");
+    try {
+      const payload = await apiRequest(`/orders/${selectedOrderDetail.id}`, {
+        method: "POST",
+        body: {
+          status: "refunded",
+          customer_note: selectedOrderNote
+        }
+      });
+      syncOrderState(payload.data);
+      setSelectedOrderStatus(payload?.data?.status || "refunded");
+      setOrderActionFeedback("Order marked as refunded. Capture gateway-side refund separately if required.");
+    } catch (error) {
+      setOrderActionFeedback(describeRequestError(error));
+    } finally {
+      setOrderMutationLoading(false);
+    }
+  }
+
+  function contactSelectedCustomer() {
+    if (typeof window === "undefined" || !selectedOrderDetail) {
+      return;
+    }
+    const email = selectedOrderDetail.billing?.email;
+    const phone = selectedOrderDetail.billing?.phone;
+    if (email) {
+      window.location.href = `mailto:${email}?subject=${encodeURIComponent(`Order #${selectedOrderDetail.number}`)}`;
+      return;
+    }
+    if (phone) {
+      window.location.href = `tel:${phone}`;
+      return;
+    }
+    setOrderActionFeedback("No customer email or phone number is available for contact.");
   }
 
   async function apiRequest(path, { method = "GET", body, params = {}, auth = true, retry = true } = {}, activeSession = session) {
@@ -667,23 +939,49 @@ export default function Page() {
         )
       ).flat();
 
+      const nextDashboard = dashboardPayload.data || {};
+      const nextAppointments = appointmentsPayload.data || [];
+      const nextEmails = emailsPayload.data || [];
+      const nextDoctors = doctorsPayload.data || [];
+      const nextProducts = productsPayload.data || [];
+
       setData({
-        dashboard: dashboardPayload.data || {},
+        dashboard: nextDashboard,
         orders,
         orderDetails,
-        appointments: appointmentsPayload.data || [],
+        appointments: nextAppointments,
         prescriptions,
         prescriptionDetails,
         prescriptionHistory,
-        emails: emailsPayload.data || [],
-        doctors: doctorsPayload.data || [],
-        products: productsPayload.data || [],
+        emails: nextEmails,
+        doctors: nextDoctors,
+        products: nextProducts,
         auditEvents: []
       });
 
+      const now = new Date();
+      const ordersToday = orderDetails.filter((order) => {
+        const created = new Date(order.created_at);
+        return !Number.isNaN(created.getTime()) &&
+          created.getFullYear() === now.getFullYear() &&
+          created.getMonth() === now.getMonth() &&
+          created.getDate() === now.getDate();
+      }).length;
+
+      setLiveSnapshots((prev) => (
+        [
+          ...prev,
+          {
+            label: formatLiveLabel(now),
+            total: safeNumber(nextDashboard.sales?.today || 0),
+            volume: ordersToday
+          }
+        ].slice(-7)
+      ));
+
       await fetchAuditEvents(activeSession, audit, deferredSearch);
       setSyncStatus({
-        text: `Live • ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
+        text: `Live | ${formatLiveLabel()}`,
         mode: "live"
       });
     } finally {
@@ -962,6 +1260,26 @@ export default function Page() {
     };
   }, [audit.category, audit.status, audit.source, deferredSearch, session.accessToken]);
 
+  useEffect(() => {
+    if (trendMode !== "live" || !session.accessToken) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      const activeSession = latestSessionRef.current;
+      if (!activeSession?.accessToken || refreshing) {
+        return;
+      }
+
+      fetchAllData(activeSession).catch((error) => {
+        console.error(error);
+        setSyncStatus({ text: "Sync error", mode: "error" });
+      });
+    }, 15000);
+
+    return () => window.clearInterval(intervalId);
+  }, [trendMode, session.accessToken, refreshing]);
+
   const dashboard = data.dashboard || {};
   const sales = dashboard.sales || {};
   const consultations = dashboard.consultations || {};
@@ -969,6 +1287,9 @@ export default function Page() {
   const emailsSummary = dashboard.emails || {};
   const doctorMap = new Map((data.doctors || []).map((doctor) => [doctor.user_id || doctor.id, doctor.display_name]));
   const query = deferredSearch.trim().toLowerCase();
+  const showPageSearch = currentPage !== "overview";
+  const searchPlaceholder = SEARCH_PLACEHOLDERS[currentPage] || "Search this page";
+  const matchesSearch = (text, enabled) => !enabled || !query || normalizeText(text).includes(query);
   const siteName = session.siteName || DEFAULT_SITE_NAME;
   const siteLogo = session.siteLogo || "/ne.webp";
 
@@ -977,7 +1298,7 @@ export default function Page() {
   const emailTotal = Number(emailsSummary.sent_today || 0) + Number(emailsSummary.failed_today || 0);
   const emailFailureRate = emailTotal ? (Number(emailsSummary.failed_today || 0) / emailTotal) * 100 : 0;
 
-  const revenueDays = (() => {
+  const weeklyTrend = (() => {
     const orders = data.orderDetails || [];
     const now = new Date();
     const days = [];
@@ -987,21 +1308,32 @@ export default function Page() {
       day.setDate(now.getDate() - offset);
       const next = new Date(day);
       next.setDate(day.getDate() + 1);
-      const total = orders
+      const dayOrders = orders
         .filter((order) => {
           const created = new Date(order.created_at);
           return !Number.isNaN(created.getTime()) && created >= day && created < next;
-        })
-        .reduce((sum, order) => sum + Number(order.total || 0), 0);
+        });
       days.push({
         label: day.toLocaleDateString("en-US", { weekday: "short" }),
-        total
+        total: dayOrders.reduce((sum, order) => sum + Number(order.total || 0), 0),
+        volume: dayOrders.length
       });
     }
     return days;
   })();
 
-  const chartMax = Math.max(...revenueDays.map((day) => day.total), 1);
+  const liveTrend = (() => {
+    const placeholders = Array.from({ length: Math.max(0, 7 - liveSnapshots.length) }, (_, index) => ({
+      label: index === 0 ? "Live" : "",
+      total: 0,
+      volume: 0,
+      placeholder: true
+    }));
+    return [...placeholders, ...liveSnapshots];
+  })();
+
+  const trendSeries = trendMode === "live" ? liveTrend : weeklyTrend;
+  const chartMax = Math.max(...trendSeries.map((day) => day.total), 1);
   const chartColors = ["#b9996d", "#d99860", "#d8cab6", "#344a6e", "#5c6d89", "#adb7c8", "#b9996d"];
 
   const legendItems = [
@@ -1010,6 +1342,25 @@ export default function Page() {
     { color: "lime", label: "Completed consultations", value: consultations.completed || 0 },
     { color: "violet", label: "Email failures today", value: emailsSummary.failed_today || 0 }
   ];
+
+  const donutSegments = (() => {
+    const radius = 54;
+    const circumference = 2 * Math.PI * radius;
+    const total = Math.max(legendItems.reduce((sum, item) => sum + Number(item.value), 0), 1);
+    let offset = 0;
+
+    return legendItems.map((item) => {
+      const segmentLength = (Number(item.value) / total) * circumference;
+      const segment = {
+        ...item,
+        circumference,
+        dasharray: `${segmentLength} ${circumference - segmentLength}`,
+        dashoffset: -offset
+      };
+      offset += segmentLength;
+      return segment;
+    });
+  })();
 
   const catalogItems = (() => {
     const products = data.products || [];
@@ -1056,31 +1407,44 @@ export default function Page() {
   const filteredOrders = (data.orderDetails || []).filter((order) => {
     const names = (order.items || []).map((item) => item.name).join(" ");
     const searchText = `${order.number} ${order.status} ${order.rx_status || ""} ${names} ${order.customer_id || ""}`;
-    return normalizeText(searchText).includes(query);
+    return matchesSearch(searchText, currentPage === "orders");
   });
 
+  const selectedOrderPrescription = selectedOrderDetail
+    ? (data.prescriptionDetails || []).find((item) => item.id === selectedOrderDetail.prescription_id)
+    : null;
+
+  const selectedOrderDoctorProfile = selectedOrderDetail?.assigned_doctor_user_id
+    ? (data.doctors || []).find((doctor) => Number(doctor.user_id) === Number(selectedOrderDetail.assigned_doctor_user_id))
+    : null;
+
   const filteredEmails = (data.emails || []).filter((email) =>
-    normalizeText(`${email.recipient_email} ${email.template_key} ${email.status} ${email.related_object_type} ${email.provider}`).includes(query)
+    matchesSearch(`${email.recipient_email} ${email.template_key} ${email.status} ${email.related_object_type} ${email.provider}`, currentPage === "emails")
   );
 
   const filteredAppointments = (data.appointments || []).filter((appointment) =>
-    normalizeText(`${appointment.status} ${appointment.reason} ${appointment.type} ${appointment.patient_user_id} ${appointment.doctor_user_id}`).includes(query)
+    matchesSearch(`${appointment.status} ${appointment.reason} ${appointment.type} ${appointment.patient_user_id} ${appointment.doctor_user_id}`, currentPage === "consultations")
   );
 
   const filteredPrescriptions = (data.prescriptionDetails || []).filter((prescription) =>
-    normalizeText(`${prescription.prescription_number} ${prescription.status} ${prescription.patient_user_id} ${prescription.doctor_user_id} ${prescription.diagnosis}`).includes(query)
+    matchesSearch(`${prescription.prescription_number} ${prescription.status} ${prescription.patient_user_id} ${prescription.doctor_user_id} ${prescription.diagnosis}`, currentPage === "prescriptions")
   );
 
   const filteredProducts = (data.products || []).filter((product) => {
     const rules = product.pharmacy_rules || {};
-    return normalizeText(`${product.name} ${product.sku} ${product.badge?.label} ${product.badge?.key} ${product.stock_status} ${rules.rx_required} ${rules.otc} ${rules.consultation_required}`).includes(query);
+    return matchesSearch(`${product.name} ${product.sku} ${product.badge?.label} ${product.badge?.key} ${product.stock_status} ${rules.rx_required} ${rules.otc} ${rules.consultation_required}`, currentPage === "products");
   });
 
   const filteredDoctors = (data.doctors || []).filter((doctor) =>
-    normalizeText(`${doctor.display_name} ${doctor.email} ${doctor.specialty} ${doctor.location} ${doctor.user_id}`).includes(query)
+    matchesSearch(`${doctor.display_name} ${doctor.email} ${doctor.specialties?.join(" ")} ${doctor.location} ${doctor.user_id}`, currentPage === "doctors")
   );
 
-  const paymentRows = filteredOrders.map((order) => {
+  const paymentRows = (data.orderDetails || [])
+    .filter((order) => {
+      const paymentStatus = order.payment_status || order.status || "pending";
+      return matchesSearch(`${order.number} ${paymentStatus} ${order.rx_status || ""} ${order.customer_id || ""} ${order.total || 0}`, currentPage === "payments");
+    })
+    .map((order) => {
     const paymentStatus = order.payment_status || order.status || "pending";
     const held = ["on_hold", "on-hold"].includes(order.rx_status || "");
     return {
@@ -1161,7 +1525,7 @@ export default function Page() {
     });
 
     return [...customerMap.values()]
-      .filter((row) => normalizeText(`${row.label} ${row.email} ${row.id}`).includes(query))
+      .filter((row) => matchesSearch(`${row.label} ${row.email} ${row.id}`, currentPage === "customers"))
       .sort((a, b) => safeNumber(b.spend) - safeNumber(a.spend))
       .slice(0, 18);
   })();
@@ -1233,6 +1597,217 @@ export default function Page() {
       note: "refresh token kept locally for this frontend"
     }
   ];
+
+  const profileCards = [
+    {
+      label: "Display name",
+      value: session.user?.display_name || siteName,
+      note: "visible in the storefront command center"
+    },
+    {
+      label: "Email",
+      value: session.user?.email || "Not available",
+      note: "current authenticated WordPress account"
+    },
+    {
+      label: "Role",
+      value: session.user?.roles?.join(", ") || "Frontend guest",
+      note: "active session permissions"
+    },
+    {
+      label: "Connection",
+      value: session.baseUrl || "Not configured",
+      note: "paired WordPress environment"
+    }
+  ];
+
+  const hasPrimaryData = Boolean(
+    data.dashboard ||
+    (data.orderDetails || []).length ||
+    (data.appointments || []).length ||
+    (data.prescriptionDetails || []).length ||
+    (data.products || []).length ||
+    (data.doctors || []).length ||
+    (data.emails || []).length
+  );
+  const showPageSkeleton = Boolean(session.accessToken && refreshing && !hasPrimaryData);
+
+  function renderMetricSkeletons(count = 4) {
+    return Array.from({ length: count }, (_, index) => (
+      <article className="metric-card skeleton-panel" key={`metric-skeleton-${index}`}>
+        <div className="metric-row">
+          <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
+          <SkeletonBox className="skeleton-circle skeleton-circle-xs" />
+        </div>
+        <SkeletonBox className="skeleton-line skeleton-line-md" />
+        <SkeletonBox className="skeleton-line skeleton-line-lg skeleton-line-tall" />
+        <SkeletonBox className="skeleton-line skeleton-line-sm" />
+      </article>
+    ));
+  }
+
+  function renderTableRowSkeletons(count = 5, columns = 7) {
+    return Array.from({ length: count }, (_, rowIndex) => (
+      <tr key={`table-skeleton-${rowIndex}`}>
+        {Array.from({ length: columns }, (_, columnIndex) => (
+          <td key={`table-skeleton-${rowIndex}-${columnIndex}`}>
+            <SkeletonBox className={`skeleton-line ${columnIndex % 3 === 0 ? "skeleton-line-lg" : columnIndex % 3 === 1 ? "skeleton-line-md" : "skeleton-line-sm"}`} />
+          </td>
+        ))}
+      </tr>
+    ));
+  }
+
+  function renderOrderDetailSkeleton() {
+    return (
+      <div className="order-detail-grid">
+        <div className="order-detail-stack">
+          <div className="mini-stat-grid">
+            {Array.from({ length: 4 }, (_, index) => (
+              <div className="mini-stat skeleton-panel" key={`order-stat-skeleton-${index}`}>
+                <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                <SkeletonBox className="skeleton-line skeleton-line-md skeleton-line-tall" />
+                <SkeletonBox className="skeleton-line skeleton-line-sm" />
+              </div>
+            ))}
+          </div>
+          <div className="detail-form-grid">
+            <div className="detail-field">
+              <SkeletonBox className="skeleton-line skeleton-line-xs" />
+              <SkeletonBox className="skeleton-pill" />
+            </div>
+            <div className="detail-field">
+              <SkeletonBox className="skeleton-line skeleton-line-xs" />
+              <SkeletonBox className="skeleton-pill" />
+            </div>
+            <div className="detail-field detail-field-wide">
+              <SkeletonBox className="skeleton-line skeleton-line-xs" />
+              <SkeletonBox className="skeleton-block" />
+            </div>
+          </div>
+        </div>
+        <div className="order-detail-stack">
+          {Array.from({ length: 4 }, (_, index) => (
+            <div className="detail-item-card skeleton-panel" key={`order-detail-item-skeleton-${index}`}>
+              <SkeletonBox className="skeleton-line skeleton-line-md" />
+              <SkeletonBox className="skeleton-line skeleton-line-sm" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderPageSkeleton() {
+    if (currentPage === "overview") {
+      return (
+        <section className="page-view active">
+          <section className="metrics-grid">
+            {renderMetricSkeletons(4)}
+          </section>
+          <section className="analytics-grid">
+            <article className="panel skeleton-panel">
+              <div className="panel-header">
+                <div>
+                  <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                  <SkeletonBox className="skeleton-line skeleton-line-lg" />
+                </div>
+                <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+              </div>
+              <div className="skeleton-chart-bars">
+                {Array.from({ length: 7 }, (_, index) => (
+                  <SkeletonBox className={`skeleton-bar skeleton-bar-${(index % 4) + 1}`} key={`overview-bar-${index}`} />
+                ))}
+              </div>
+            </article>
+            <article className="panel skeleton-panel">
+              <div className="panel-header">
+                <div>
+                  <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                  <SkeletonBox className="skeleton-line skeleton-line-lg" />
+                </div>
+                <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
+              </div>
+              <div className="skeleton-donut-layout">
+                <SkeletonBox className="skeleton-donut" />
+                <div className="detail-list">
+                  {Array.from({ length: 4 }, (_, index) => (
+                    <div className="detail-item-card skeleton-panel" key={`overview-legend-${index}`}>
+                      <SkeletonBox className="skeleton-line skeleton-line-md" />
+                      <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </article>
+          </section>
+        </section>
+      );
+    }
+
+    if (currentPage === "orders") {
+      return (
+        <section className="page-view active">
+          <section className="page-banner panel skeleton-panel">
+            <div className="detail-list">
+              <SkeletonBox className="skeleton-line skeleton-line-xs" />
+              <SkeletonBox className="skeleton-line skeleton-line-lg" />
+              <SkeletonBox className="skeleton-line skeleton-line-md" />
+            </div>
+            <div className="banner-stats">
+              <div className="mini-stat skeleton-panel"><SkeletonBox className="skeleton-line skeleton-line-xs" /><SkeletonBox className="skeleton-line skeleton-line-md skeleton-line-tall" /></div>
+              <div className="mini-stat skeleton-panel"><SkeletonBox className="skeleton-line skeleton-line-xs" /><SkeletonBox className="skeleton-line skeleton-line-md skeleton-line-tall" /></div>
+            </div>
+          </section>
+          <section className="panel table-panel skeleton-panel">
+            <div className="panel-header">
+              <div>
+                <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                <SkeletonBox className="skeleton-line skeleton-line-lg" />
+              </div>
+              <div className="toolbar">
+                <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+                <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+                <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+              </div>
+            </div>
+            <div className="table-scroll">
+              <table><tbody>{renderTableRowSkeletons(5, 7)}</tbody></table>
+            </div>
+          </section>
+          <section className="panel order-detail-panel skeleton-panel">
+            <div className="panel-header">
+              <div>
+                <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                <SkeletonBox className="skeleton-line skeleton-line-lg" />
+              </div>
+            </div>
+            {renderOrderDetailSkeleton()}
+          </section>
+        </section>
+      );
+    }
+
+    return (
+      <section className="page-view active">
+        <section className="panel table-panel skeleton-panel">
+          <div className="panel-header">
+            <div>
+              <SkeletonBox className="skeleton-line skeleton-line-xs" />
+              <SkeletonBox className="skeleton-line skeleton-line-lg" />
+            </div>
+            <div className="toolbar">
+              <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+              <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+            </div>
+          </div>
+          <div className="table-scroll">
+            <table><tbody>{renderTableRowSkeletons(6, 7)}</tbody></table>
+          </div>
+        </section>
+      </section>
+    );
+  }
 
   function renderCatalogBlock() {
     return catalogItems.length ? (
@@ -1335,16 +1910,18 @@ export default function Page() {
               <button className="icon-button mobile-only" type="button" aria-label="Toggle navigation" onClick={() => setSidebarOpen((prev) => !prev)}>
                 <InlineIcon id="i-menu" />
               </button>
-              <label className="search-field" htmlFor="globalSearch">
-                <InlineIcon id="i-search" />
-                <input
-                  id="globalSearch"
-                  type="search"
-                  placeholder="Search order, patient, doctor, product, audit event"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-              </label>
+              {showPageSearch && (
+                <label className="search-field" htmlFor="globalSearch">
+                  <InlineIcon id="i-search" />
+                  <input
+                    id="globalSearch"
+                    type="search"
+                    placeholder={searchPlaceholder}
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
+                </label>
+              )}
             </div>
 
             <div className="topbar-actions">
@@ -1357,13 +1934,13 @@ export default function Page() {
                 <InlineIcon id="i-refresh-cw" />
                 <span>{refreshing ? "Refreshing" : "Refresh"}</span>
               </button>
-              <button className="pill-button" type="button">
+              <button className="pill-button" type="button" onClick={() => switchPage("consultations")}>
                 <InlineIcon id="i-calendar" />
                 <span>{formatTopbarDate()}</span>
               </button>
-              <button className="icon-button" type="button"><InlineIcon id="i-bell" /></button>
+              <button className="icon-button" type="button" onClick={() => switchPage("audit")}><InlineIcon id="i-bell" /></button>
               <button className="icon-button" type="button" onClick={() => switchPage("settings")}><InlineIcon id="i-settings" /></button>
-              <div className="user-chip">
+              <button className="user-chip user-chip-button" type="button" onClick={() => switchPage("profile")}>
                 <div className="user-avatar">
                   {getInitials(session.user?.display_name || siteName)}
                 </div>
@@ -1371,11 +1948,13 @@ export default function Page() {
                   <strong>{session.user?.display_name || siteName}</strong>
                   <span>{session.user?.roles?.join(", ") || (session.paired ? "Paired frontend" : "WordPress pairing required")}</span>
                 </div>
-              </div>
+              </button>
             </div>
           </header>
 
           <div className="pages-stack">
+            {showPageSkeleton ? renderPageSkeleton() : (
+              <>
             {currentPage === "overview" && (
               <section className="page-view active">
                 <section className="metrics-grid">
@@ -1425,22 +2004,37 @@ export default function Page() {
                         <h2>Weekly revenue and order velocity</h2>
                       </div>
                       <div className="segmented">
-                        <button className="segment active" type="button">Week</button>
-                        <button className="segment" type="button">Live</button>
+                        <button className={`segment ${trendMode === "week" ? "active" : ""}`} type="button" onClick={() => setTrendMode("week")}>Week</button>
+                        <button
+                          className={`segment ${trendMode === "live" ? "active" : ""}`}
+                          type="button"
+                          onClick={() => {
+                            setTrendMode("live");
+                            handleRefresh();
+                          }}
+                        >
+                          Live
+                        </button>
                       </div>
                     </div>
+                    <div className="chart-scroll">
                     <div className="bar-chart">
-                      {revenueDays.map((day, index) => (
-                        <div className="bar-col" key={day.label}>
+                      {trendSeries.map((day, index) => (
+                        <div className="bar-col" key={`${trendMode}-${day.label || "slot"}-${index}`}>
                           <div className="bar-shell">
-                            <div className="bar-fill" style={{ height: `${Math.max(16, (day.total / chartMax) * 190)}px`, backgroundColor: chartColors[index] }} />
+                            <div
+                              className={`bar-fill ${day.placeholder ? "placeholder" : ""}`}
+                              style={{ height: `${Math.max(16, (day.total / chartMax) * 190)}px`, backgroundColor: chartColors[index] }}
+                            />
                           </div>
                           <div className="bar-note">
                             <strong>{formatMoney(day.total)}</strong>
                             <span>{day.label}</span>
+                            <small>{day.volume ? `${formatNumber(day.volume)} orders` : (trendMode === "live" ? "Waiting for updates" : "No orders")}</small>
                           </div>
                         </div>
                       ))}
+                    </div>
                     </div>
                   </article>
 
@@ -1455,6 +2049,20 @@ export default function Page() {
                     <div className="mix-layout">
                       <div className="donut-wrap">
                         <div className="donut-chart">
+                          <svg className="donut-svg" viewBox="0 0 140 140" aria-hidden="true">
+                            <circle className="donut-track" cx="70" cy="70" r="54" />
+                            {donutSegments.map((item) => (
+                              <circle
+                                key={item.label}
+                                className={`donut-segment ${item.color}`}
+                                cx="70"
+                                cy="70"
+                                r="54"
+                                strokeDasharray={item.dasharray}
+                                strokeDashoffset={item.dashoffset}
+                              />
+                            ))}
+                          </svg>
                           <div className="donut-center">
                             <span>Total active</span>
                             <strong>{formatNumber(legendItems.reduce((sum, item) => sum + Number(item.value), 0))}</strong>
@@ -1515,7 +2123,7 @@ export default function Page() {
                   <article className="panel compact">
                     <div className="panel-header">
                       <div>
-                        <p className="section-kicker">Today’s appointments</p>
+                        <p className="section-kicker">Today's appointments</p>
                         <h2>Closest consultation slots</h2>
                       </div>
                       <button className="pill-button" type="button" onClick={() => switchPage("consultations")}>Open board</button>
@@ -1545,7 +2153,7 @@ export default function Page() {
                     {renderEmailBlock()}
                   </article>
                 </section>
-              </section>
+                </section>
             )}
 
             {currentPage === "orders" && (
@@ -1590,14 +2198,18 @@ export default function Page() {
                         {filteredOrders.length ? filteredOrders.map((order) => {
                           const prescription = (data.prescriptionDetails || []).find((item) => item.id === order.prescription_id);
                           return (
-                            <tr key={order.id}>
+                            <tr
+                              key={order.id}
+                              className={`interactive-row ${selectedOrderId === order.id ? "active" : ""}`}
+                              onClick={() => openOrderDetails(order.id)}
+                            >
                               <td><div className="table-title"><strong>#{order.number}</strong><span className="muted">{formatDate(order.created_at, true)}</span></div></td>
                               <td><div className="table-title"><strong>{patientLabel(order.customer_id)}</strong><span className="muted">WordPress user {order.customer_id || "guest"}</span></div></td>
                               <td>{(order.items || []).length ? `${order.items.length} items: ${(order.items || []).slice(0, 2).map((item) => item.name).join(", ")}` : "order details unavailable"}</td>
                               <td>{prescription ? `${prescription.prescription_number} • ${prescription.status}` : (order.prescription_id ? `Prescription #${order.prescription_id}` : "No linked prescription")}</td>
                               <td><StatusPill value={order.rx_status || order.status}>{order.rx_status || order.status}</StatusPill></td>
                               <td>{formatMoney(order.total || 0, order.currency || "USD")}</td>
-                              <td>{order.rx_status === "on_hold" ? "Release hold" : (order.prescription_id ? "Review linkage" : "Link prescription")}</td>
+                              <td>{order.assigned_doctor?.display_name || (order.rx_status === "on_hold" ? "Release hold" : (order.prescription_id ? "Review linkage" : "Assign doctor"))}</td>
                             </tr>
                           );
                         }) : (
@@ -1606,6 +2218,250 @@ export default function Page() {
                       </tbody>
                     </table>
                   </div>
+                </section>
+                <section
+                  className={`panel order-detail-panel order-modal ${orderModalOpen ? "is-open" : "is-hidden"}`}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={selectedOrderDetail ? `Order #${selectedOrderDetail.number}` : "Order details"}
+                >
+                  <div className="panel-header">
+                    <div>
+                      <p className="section-kicker">Order workspace</p>
+                      <h2>{selectedOrderDetail ? `Order #${selectedOrderDetail.number}` : "Select an order"}</h2>
+                    </div>
+                    {selectedOrderDetail ? (
+                      <div className="toolbar">
+                        <button className="pill-button" type="button" onClick={() => switchPage("prescriptions")}>Open prescriptions</button>
+                        <button className="pill-button" type="button" onClick={() => switchPage("consultations")}>Open consultations</button>
+                        <button className="icon-button" type="button" aria-label="Close order details" onClick={() => setOrderModalOpen(false)}>
+                          <InlineIcon id="i-x" />
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  {orderDetailLoading ? (
+                    renderOrderDetailSkeleton()
+                  ) : selectedOrderDetail ? (
+                    <div className="order-detail-page">
+                      <div className="order-detail-header">
+                        <div>
+                          <p className="section-kicker">Header section</p>
+                          <h3>Order #{selectedOrderDetail.number}</h3>
+                          <div className="order-detail-meta">
+                            <StatusPill value={selectedOrderDetail.status}>{formatStatusLabel(selectedOrderDetail.status)}</StatusPill>
+                            <span>{formatDate(selectedOrderDetail.created_at, true)}</span>
+                            <span>Payment: {formatStatusLabel(selectedOrderDetail.payment_status)}</span>
+                          </div>
+                        </div>
+                        <div className="order-detail-actions">
+                          <button className="pill-button" type="button" onClick={printSelectedOrder}>
+                            <InlineIcon id="i-printer" />
+                            Print Invoice
+                          </button>
+                          <button className="button-primary" type="button" onClick={saveSelectedOrder} disabled={orderMutationLoading}>
+                            <InlineIcon id="i-package" />
+                            {orderMutationLoading ? "Updating..." : "Update Status"}
+                          </button>
+                          <button className="pill-button" type="button" onClick={refundSelectedOrder} disabled={orderMutationLoading}>
+                            <InlineIcon id="i-refresh-cw" />
+                            Refund
+                          </button>
+                          <button className="pill-button" type="button" onClick={contactSelectedCustomer}>
+                            <InlineIcon id="i-mail" />
+                            Contact Customer
+                          </button>
+                          {!selectedOrderDetail.assigned_doctor_user_id ? (
+                            <button className="pill-button" type="button" onClick={assignSelectedOrderDoctor} disabled={orderMutationLoading || !selectedOrderDoctorId}>
+                              <InlineIcon id="i-user" />
+                              Assign Doctor
+                            </button>
+                          ) : null}
+                          <button className="pill-button danger" type="button" onClick={deleteSelectedOrder} disabled={orderMutationLoading}>
+                            Delete Order
+                          </button>
+                        </div>
+                      </div>
+                      <div className="order-detail-grid">
+                        <div className="order-detail-stack">
+                          <div className="order-summary-grid">
+                            {[
+                              { label: "Total Amount", value: formatMoney(selectedOrderDetail.totals?.subtotal || 0, selectedOrderDetail.currency || "USD"), note: "item subtotal before adjustments" },
+                              { label: "Items Count", value: formatNumber(itemQuantityTotal(selectedOrderDetail)), note: `${formatNumber(selectedOrderDetail.totals?.items_count || (selectedOrderDetail.items || []).length)} distinct line items` },
+                              { label: "Shipping Fee", value: formatMoney((selectedOrderDetail.totals?.shipping_total || 0) + (selectedOrderDetail.totals?.shipping_tax || 0), selectedOrderDetail.currency || "USD"), note: "shipping and shipping tax" },
+                              { label: "Discount Applied", value: formatMoney(selectedOrderDetail.totals?.discount_total || 0, selectedOrderDetail.currency || "USD"), note: "line and order discounts" },
+                              { label: "Tax/VAT", value: formatMoney(selectedOrderDetail.totals?.tax_total || 0, selectedOrderDetail.currency || "USD"), note: "tax across all items" },
+                              { label: "Final Payable Amount", value: formatMoney(selectedOrderDetail.totals?.grand_total || selectedOrderDetail.total || 0, selectedOrderDetail.currency || "USD"), note: selectedOrderDetail.rx_status ? `RX: ${formatStatusLabel(selectedOrderDetail.rx_status)}` : "order grand total" }
+                            ].map((metric) => (
+                              <div className="mini-stat order-mini-stat" key={metric.label}>
+                                <span>{metric.label}</span>
+                                <strong>{metric.value}</strong>
+                                <small>{metric.note}</small>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="detail-section">
+                            <div className="panel-header">
+                              <div>
+                                <p className="section-kicker">Products</p>
+                                <h3>Product list</h3>
+                              </div>
+                            </div>
+                            <div className="table-scroll">
+                              <table className="order-products-table">
+                                <thead>
+                                  <tr>
+                                    <th>Product Image</th>
+                                    <th>Product Name</th>
+                                    <th>SKU</th>
+                                    <th>Quantity</th>
+                                    <th>Unit Price</th>
+                                    <th>Discount</th>
+                                    <th>Total Price</th>
+                                    <th>Stock Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(selectedOrderDetail.items || []).length ? selectedOrderDetail.items.map((item) => (
+                                    <tr key={item.id}>
+                                      <td>
+                                        <div className="order-product-media">
+                                          {item.image_url ? <img src={item.image_url} alt={item.name} className="order-product-image" /> : <div className="order-product-image order-product-fallback"><InlineIcon id="i-package" /></div>}
+                                        </div>
+                                      </td>
+                                      <td>
+                                        <div className="table-title">
+                                          <strong>{item.name}</strong>
+                                          <span className="muted">{item.rx_required ? "Doctor review required" : "Standard fulfilment"}</span>
+                                        </div>
+                                      </td>
+                                      <td>{item.sku || "n/a"}</td>
+                                      <td>{formatNumber(item.quantity)}</td>
+                                      <td>{formatMoney(item.unit_price || 0, selectedOrderDetail.currency || "USD")}</td>
+                                      <td>{formatMoney(item.discount_total || 0, selectedOrderDetail.currency || "USD")}</td>
+                                      <td>{formatMoney(item.total || 0, selectedOrderDetail.currency || "USD")}</td>
+                                      <td><StatusPill value={item.stock_status || "info"}>{formatStatusLabel(item.stock_status || (item.rx_required ? "rx required" : "available"))}</StatusPill></td>
+                                    </tr>
+                                  )) : (
+                                    <tr><td colSpan="8" className="muted">No line items available.</td></tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                          <div className="order-clinical-grid">
+                            <div className="detail-section">
+                              <div className="panel-header">
+                                <div>
+                                  <p className="section-kicker">Assigned doctor</p>
+                                  <h3>{selectedOrderDetail.assigned_doctor?.display_name || "Unassigned"}</h3>
+                                </div>
+                              </div>
+                              <div className="detail-list">
+                                <div className="detail-item-card">
+                                  <strong>{selectedOrderDetail.assigned_doctor?.email || "No doctor email available"}</strong>
+                                  <span className="muted">{selectedOrderDoctorProfile?.specialties?.length ? selectedOrderDoctorProfile.specialties.join(", ") : "No specialty metadata available"}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="detail-section">
+                              <div className="panel-header">
+                                <div>
+                                  <p className="section-kicker">Doctor's prescription</p>
+                                  <h3>{selectedOrderPrescription?.prescription_number || "No linked prescription"}</h3>
+                                </div>
+                              </div>
+                              {selectedOrderPrescription ? (
+                                <div className="detail-list">
+                                  <div className="detail-item-card">
+                                    <strong>{formatStatusLabel(selectedOrderPrescription.status)}</strong>
+                                    <span className="muted">{selectedOrderPrescription.diagnosis || "No diagnosis recorded."}</span>
+                                  </div>
+                                  <div className="detail-item-card">
+                                    <strong>Instructions</strong>
+                                    <span className="muted">{selectedOrderPrescription.instructions || "No prescription instructions recorded."}</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="muted">No prescription is linked to this order yet.</div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="order-detail-stack">
+                          <div className="detail-section">
+                            <div className="panel-header">
+                              <div>
+                                <p className="section-kicker">Customer Information Card</p>
+                                <h3>{customerFullName(selectedOrderDetail)}</h3>
+                              </div>
+                            </div>
+                            <div className="detail-list">
+                              <div className="detail-item-card"><strong>Full Name</strong><span className="muted">{customerFullName(selectedOrderDetail)}</span></div>
+                              <div className="detail-item-card"><strong>Email Address</strong><span className="muted">{selectedOrderDetail.billing?.email || "No email on file"}</span></div>
+                              <div className="detail-item-card"><strong>Phone Number</strong><span className="muted">{selectedOrderDetail.billing?.phone || "No phone number on file"}</span></div>
+                              <div className="detail-item-card"><strong>Delivery Address</strong><span className="muted">{formatAddress(selectedOrderDetail.shipping)}</span></div>
+                              <div className="detail-item-card"><strong>Customer Notes</strong><span className="muted">{selectedOrderNote || "No customer note recorded."}</span></div>
+                            </div>
+                          </div>
+                          <div className="detail-section">
+                            <div className="panel-header">
+                              <div>
+                                <p className="section-kicker">Order controls</p>
+                                <h3>Operational updates</h3>
+                              </div>
+                            </div>
+                            <div className="detail-form-grid">
+                              <label className="detail-field">
+                                <span>Order Status</span>
+                                <div className="select-wrap">
+                                  <select value={selectedOrderStatus} onChange={(event) => setSelectedOrderStatus(event.target.value)}>
+                                    {["pending", "awaiting-doctor", "awaiting-prescription", "processing", "on-hold", "completed", "cancelled", "failed", "refunded"].map((status) => (
+                                      <option key={status} value={status}>{formatStatusLabel(status)}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </label>
+                              <label className="detail-field">
+                                <span>Doctor Assignment</span>
+                                <div className="select-wrap">
+                                  <select value={selectedOrderDoctorId} onChange={(event) => setSelectedOrderDoctorId(event.target.value)} disabled={Boolean(selectedOrderDetail.assigned_doctor_user_id)}>
+                                    <option value="">Select doctor</option>
+                                    {(data.doctors || []).map((doctor) => (
+                                      <option key={doctor.user_id} value={doctor.user_id}>{doctor.display_name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </label>
+                              <label className="detail-field detail-field-wide">
+                                <span>Customer Note</span>
+                                <textarea value={selectedOrderNote} onChange={(event) => setSelectedOrderNote(event.target.value)} rows={4} />
+                              </label>
+                            </div>
+                            {orderActionFeedback ? <div className="muted order-feedback">{orderActionFeedback}</div> : null}
+                          </div>
+                          <div className="detail-section">
+                            <div className="panel-header">
+                              <div>
+                                <p className="section-kicker">Order notes</p>
+                                <h3>Timeline</h3>
+                              </div>
+                            </div>
+                            <div className="detail-list">
+                              {(selectedOrderDetail.order_notes || []).length ? selectedOrderDetail.order_notes.map((note) => (
+                                <div className="detail-item-card" key={note.id}>
+                                  <strong>{formatDate(note.created_at, true)}</strong>
+                                  <span className="muted">{note.content}</span>
+                                </div>
+                              )) : <div className="muted">No order notes recorded.</div>}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="muted">Choose an order from the table to edit it, delete it, or assign a doctor.</div>
+                  )}
                 </section>
               </section>
             )}
@@ -2146,6 +3002,33 @@ export default function Page() {
                   ))}
                 </section>
               </section>
+            )}
+
+            {currentPage === "profile" && (
+              <section className="page-view active">
+                <section className="page-banner panel">
+                  <div>
+                    <p className="section-kicker">Profile</p>
+                    <h2>Storefront account and identity</h2>
+                    <p className="hero-text">Review the current signed-in user, paired environment, and storefront identity in one place.</p>
+                  </div>
+                  <div className="banner-actions">
+                    <button className="button-primary" type="button" onClick={() => showAuthGate("auth")}>Manage session</button>
+                    <button className="pill-button" type="button" onClick={() => switchPage("settings")}>Open settings</button>
+                  </div>
+                </section>
+                <section className="settings-grid profile-grid">
+                  {profileCards.map((card) => (
+                    <article className="mini-stat" key={card.label}>
+                      <span>{card.label}</span>
+                      <strong>{card.value}</strong>
+                      <small>{card.note}</small>
+                    </article>
+                  ))}
+                </section>
+              </section>
+            )}
+              </>
             )}
           </div>
         </main>
