@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nevari Admin Storefront</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <svg class="icon-sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-layout" viewBox="0 0 24 24">
+      <rect x="3" y="4" width="7" height="7" rx="2"></rect>
+      <rect x="14" y="4" width="7" height="4" rx="2"></rect>
+      <rect x="14" y="11" width="7" height="9" rx="2"></rect>
+      <rect x="3" y="14" width="7" height="6" rx="2"></rect>
+    </symbol>
+    <symbol id="i-pill" viewBox="0 0 24 24">
+      <path d="M10.5 20.5 3.5 13.5a5 5 0 1 1 7-7l7 7a5 5 0 1 1-7 7Z"></path>
+      <path d="m8 8 8 8"></path>
+    </symbol>
+    <symbol id="i-cart" viewBox="0 0 24 24">
+      <circle cx="9" cy="20" r="1.5"></circle>
+      <circle cx="18" cy="20" r="1.5"></circle>
+      <path d="M3 4h2l2.2 10.2a1 1 0 0 0 1 .8h9.6a1 1 0 0 0 1-.8L21 7H7"></path>
+    </symbol>
+    <symbol id="i-stethoscope" viewBox="0 0 24 24">
+      <path d="M6 3v5a4 4 0 0 0 8 0V3"></path>
+      <path d="M10 17a6 6 0 0 0 12 0v-1"></path>
+      <circle cx="20" cy="10" r="2"></circle>
+      <path d="M8 3h4"></path>
+    </symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24">
+      <path d="M12 3l7 3v6c0 4.6-3 7.8-7 9-4-1.2-7-4.4-7-9V6l7-3Z"></path>
+      <path d="m9.5 12 1.7 1.7 3.8-4.2"></path>
+    </symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24">
+      <rect x="3" y="5" width="18" height="14" rx="3"></rect>
+      <path d="m4 7 8 6 8-6"></path>
+    </symbol>
+    <symbol id="i-users" viewBox="0 0 24 24">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"></path>
+      <circle cx="9.5" cy="7" r="4"></circle>
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+      <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="7"></circle>
+      <path d="m20 20-3.5-3.5"></path>
+    </symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24">
+      <path d="M15 17H5l1.5-2.5V10a5.5 5.5 0 0 1 11 0v4.5L19 17h-4"></path>
+      <path d="M10 20a2 2 0 0 0 4 0"></path>
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <path d="M12 3v3"></path>
+      <path d="M12 18v3"></path>
+      <path d="m4.9 4.9 2.1 2.1"></path>
+      <path d="m17 17 2.1 2.1"></path>
+      <path d="M3 12h3"></path>
+      <path d="M18 12h3"></path>
+      <path d="m4.9 19.1 2.1-2.1"></path>
+      <path d="m17 7 2.1-2.1"></path>
+      <circle cx="12" cy="12" r="4"></circle>
+    </symbol>
+    <symbol id="i-more" viewBox="0 0 24 24">
+      <circle cx="6" cy="12" r="1.6"></circle>
+      <circle cx="12" cy="12" r="1.6"></circle>
+      <circle cx="18" cy="12" r="1.6"></circle>
+    </symbol>
+    <symbol id="i-arrow-up-right" viewBox="0 0 24 24">
+      <path d="M7 17 17 7"></path>
+      <path d="M8 7h9v9"></path>
+    </symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24">
+      <path d="M4 7h16"></path>
+      <path d="M4 12h16"></path>
+      <path d="M4 17h16"></path>
+    </symbol>
+    <symbol id="i-x" viewBox="0 0 24 24">
+      <path d="m6 6 12 12"></path>
+      <path d="m18 6-12 12"></path>
+    </symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24">
+      <path d="M4 6h16"></path>
+      <path d="M7 12h10"></path>
+      <path d="M10 18h4"></path>
+    </symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24">
+      <rect x="3" y="5" width="18" height="16" rx="3"></rect>
+      <path d="M8 3v4"></path>
+      <path d="M16 3v4"></path>
+      <path d="M3 10h18"></path>
+    </symbol>
+  </svg>
+
+  <div class="page-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <div class="brand-row">
+          <div class="brand-mark">N</div>
+          <div>
+            <strong>Nevari</strong>
+            <span>Store Admin</span>
+          </div>
+        </div>
+
+        <nav class="nav-groups" aria-label="Primary">
+          <div class="nav-group">
+            <p class="nav-label">Operations</p>
+            <button class="nav-item active" data-target="overview">
+              <span class="nav-icon"><svg><use href="#i-layout"></use></svg></span>
+              <span>Overview</span>
+            </button>
+            <button class="nav-item" data-target="queue">
+              <span class="nav-icon"><svg><use href="#i-cart"></use></svg></span>
+              <span>Order Queue</span>
+            </button>
+            <button class="nav-item" data-target="consultations">
+              <span class="nav-icon"><svg><use href="#i-stethoscope"></use></svg></span>
+              <span>Consultations</span>
+            </button>
+            <button class="nav-item" data-target="catalog">
+              <span class="nav-icon"><svg><use href="#i-pill"></use></svg></span>
+              <span>Catalog Rules</span>
+            </button>
+          </div>
+
+          <div class="nav-group">
+            <p class="nav-label">Monitoring</p>
+            <button class="nav-item" data-target="communications">
+              <span class="nav-icon"><svg><use href="#i-mail"></use></svg></span>
+              <span>Emails</span>
+            </button>
+            <button class="nav-item" data-target="audit">
+              <span class="nav-icon"><svg><use href="#i-shield"></use></svg></span>
+              <span>Audit Center</span>
+            </button>
+            <button class="nav-item" data-target="team">
+              <span class="nav-icon"><svg><use href="#i-users"></use></svg></span>
+              <span>Doctors & Roles</span>
+            </button>
+          </div>
+        </nav>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-card-header">
+          <div class="sidebar-orb"></div>
+          <div>
+            <strong>Compliance Health</strong>
+            <span>92% logging coverage this week</span>
+          </div>
+        </div>
+        <div class="sidebar-meter" aria-hidden="true">
+          <span class="meter-fill"></span>
+        </div>
+        <button class="button-primary button-block">Open Security Queue</button>
+      </div>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="icon-button mobile-only" id="navToggle" aria-label="Toggle navigation">
+            <svg><use href="#i-menu"></use></svg>
+          </button>
+          <label class="search-field" for="globalSearch">
+            <svg><use href="#i-search"></use></svg>
+            <input id="globalSearch" type="search" placeholder="Search order, patient, doctor, audit event">
+          </label>
+        </div>
+
+        <div class="topbar-actions">
+          <button class="pill-button" id="connectButton">
+            <svg><use href="#i-shield"></use></svg>
+            <span id="connectionLabel">Connect WordPress</span>
+          </button>
+          <span class="sync-status" id="syncStatus">Disconnected</span>
+          <button class="pill-button">
+            <svg><use href="#i-calendar"></use></svg>
+            <span>May 20, 2026</span>
+          </button>
+          <button class="icon-button">
+            <svg><use href="#i-bell"></use></svg>
+          </button>
+          <button class="icon-button">
+            <svg><use href="#i-settings"></use></svg>
+          </button>
+          <div class="user-chip">
+            <div class="user-avatar">AO</div>
+            <div class="user-meta">
+              <strong id="currentUserName">Amara Obi</strong>
+              <span id="currentUserRole">Store Admin</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="pages-stack">
+        <section class="page-view active" id="overview" data-page="overview">
+          <section class="hero-panel">
+            <div class="hero-copy">
+              <p class="eyebrow">Nevari Store</p>
+              <h1>Operational control across orders, consultations, prescriptions, email, and audit.</h1>
+              <p class="hero-text">A standalone admin surface shaped around the Nevari pharmacy workflow: WooCommerce sales, prescription holds, doctor coordination, and compliance-first event visibility.</p>
+              <div class="hero-actions">
+                <button class="button-primary">Release 14 RX Holds</button>
+                <button class="pill-button">Send assignment digest</button>
+              </div>
+            </div>
+            <div class="hero-spotlight">
+              <div class="spotlight-card">
+                <div class="spotlight-head">
+                  <span class="status-dot good"></span>
+                  <span>Today</span>
+                </div>
+                <strong id="heroOrdersCount">0</strong>
+                <span id="heroOrdersLabel">orders today</span>
+              </div>
+              <div class="spotlight-card accent">
+                <div class="spotlight-head">
+                  <span class="status-dot warn"></span>
+                  <span>Requires action</span>
+                </div>
+                <strong id="heroRxCount">0</strong>
+                <span id="heroRxLabel">prescriptions awaiting assignment</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="metrics-grid">
+            <article class="metric-card lime">
+              <div class="metric-row">
+                <span class="metric-icon"><svg><use href="#i-cart"></use></svg></span>
+                <button class="icon-button subtle"><svg><use href="#i-more"></use></svg></button>
+              </div>
+              <span class="metric-label">Gross sales</span>
+              <strong id="salesMetricValue">$0.00</strong>
+              <small id="salesMetricNote"><svg><use href="#i-arrow-up-right"></use></svg> waiting for live data</small>
+            </article>
+
+            <article class="metric-card mint">
+              <div class="metric-row">
+                <span class="metric-icon"><svg><use href="#i-stethoscope"></use></svg></span>
+                <button class="icon-button subtle"><svg><use href="#i-more"></use></svg></button>
+              </div>
+              <span class="metric-label">Appointments in progress</span>
+              <strong id="appointmentsMetricValue">0</strong>
+              <small id="appointmentsMetricNote">connect to load consultation counts</small>
+            </article>
+
+            <article class="metric-card rose">
+              <div class="metric-row">
+                <span class="metric-icon"><svg><use href="#i-pill"></use></svg></span>
+                <button class="icon-button subtle"><svg><use href="#i-more"></use></svg></button>
+              </div>
+              <span class="metric-label">RX holds</span>
+              <strong id="rxMetricValue">0</strong>
+              <small id="rxMetricNote">connect to inspect prescription queue</small>
+            </article>
+
+            <article class="metric-card violet">
+              <div class="metric-row">
+                <span class="metric-icon"><svg><use href="#i-mail"></use></svg></span>
+                <button class="icon-button subtle"><svg><use href="#i-more"></use></svg></button>
+              </div>
+              <span class="metric-label">Email failure rate</span>
+              <strong id="emailMetricValue">0%</strong>
+              <small id="emailMetricNote">connect to inspect delivery logs</small>
+            </article>
+          </section>
+
+          <section class="analytics-grid">
+            <article class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Commerce + care</p>
+                  <h2>Weekly revenue and order velocity</h2>
+                </div>
+                <div class="segmented">
+                  <button class="segment active">Week</button>
+                  <button class="segment">Month</button>
+                </div>
+              </div>
+              <div class="bar-chart" id="revenueChart"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Operational mix</p>
+                  <h2>Order and prescription states</h2>
+                </div>
+                <button class="icon-button"><svg><use href="#i-filter"></use></svg></button>
+              </div>
+              <div class="mix-layout">
+                <div class="donut-wrap">
+                  <div class="donut-chart" id="mixDonut">
+                    <div class="donut-center">
+                      <span>Total active</span>
+                      <strong id="mixTotalValue">0</strong>
+                    </div>
+                  </div>
+                </div>
+                <div class="legend-list" id="operationsLegend"></div>
+              </div>
+            </article>
+          </section>
+
+          <section class="operations-grid">
+            <article class="panel compact">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Catalog controls</p>
+                  <h2>Products by badge and type</h2>
+                </div>
+              </div>
+              <div class="stack-list" id="catalogStats"></div>
+            </article>
+
+            <article class="panel compact">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Clinical team</p>
+                  <h2>Doctors and patient access</h2>
+                </div>
+              </div>
+              <div class="mini-stat-grid" id="teamStats"></div>
+            </article>
+
+            <article class="panel compact">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Comms</p>
+                  <h2>Email delivery health</h2>
+                </div>
+              </div>
+              <div class="mini-stat-grid" id="emailStats"></div>
+            </article>
+          </section>
+        </section>
+
+        <section class="page-view" id="queue" data-page="queue">
+          <section class="panel table-panel">
+            <div class="panel-header">
+              <div>
+                <p class="section-kicker">Fulfillment queue</p>
+                <h2>Prescription-sensitive orders</h2>
+              </div>
+              <div class="toolbar">
+                <button class="pill-button">Needs RX</button>
+                <button class="pill-button">Awaiting payment</button>
+                <button class="pill-button">Doctor follow-up</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Order</th>
+                    <th>Patient</th>
+                    <th>Product mix</th>
+                    <th>Prescription</th>
+                    <th>Status</th>
+                    <th>Value</th>
+                    <th>Next action</th>
+                  </tr>
+                </thead>
+                <tbody id="queueTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="page-view" id="consultations" data-page="consultations">
+          <section class="dual-table-grid">
+            <article class="panel table-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Consultation flow</p>
+                  <h2>Appointment status board</h2>
+                </div>
+                <button class="pill-button">Today only</button>
+              </div>
+              <div class="status-columns" id="appointmentColumns"></div>
+            </article>
+
+            <article class="panel table-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Prescription history</p>
+                  <h2>Recent assignment events</h2>
+                </div>
+                <button class="pill-button">Last 7 days</button>
+              </div>
+              <div class="history-list" id="historyList"></div>
+            </article>
+          </section>
+        </section>
+
+        <section class="page-view" id="catalog" data-page="catalog">
+          <section class="panel compact">
+            <div class="panel-header">
+              <div>
+                <p class="section-kicker">Catalog controls</p>
+                <h2>Products by badge and type</h2>
+              </div>
+            </div>
+            <div class="stack-list" id="catalogStatsPage"></div>
+          </section>
+        </section>
+
+        <section class="page-view" id="communications" data-page="communications">
+          <section class="operations-grid single-page-grid">
+            <article class="panel compact">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Comms</p>
+                  <h2>Email delivery health</h2>
+                </div>
+              </div>
+              <div class="mini-stat-grid" id="emailStatsPage"></div>
+            </article>
+          </section>
+
+          <section class="panel table-panel">
+            <div class="panel-header">
+              <div>
+                <p class="section-kicker">Messaging</p>
+                <h2>Recent email log</h2>
+              </div>
+              <div class="toolbar">
+                <button class="pill-button">Assignment notices</button>
+                <button class="pill-button">Failures</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Recipient</th>
+                    <th>Template</th>
+                    <th>Related object</th>
+                    <th>Provider</th>
+                    <th>Status</th>
+                    <th>Time</th>
+                  </tr>
+                </thead>
+                <tbody id="emailLogBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="page-view" id="audit" data-page="audit">
+          <section class="panel audit-panel">
+            <div class="panel-header audit-header">
+              <div>
+                <p class="section-kicker">Compliance</p>
+                <h2>Audit center</h2>
+              </div>
+              <div class="toolbar">
+                <label class="select-wrap">
+                  <span>Status</span>
+                  <select id="auditStatusFilter">
+                    <option value="all">All</option>
+                    <option value="success">Success</option>
+                    <option value="error">Error</option>
+                  </select>
+                </label>
+                <label class="select-wrap">
+                  <span>Source</span>
+                  <select id="auditSourceFilter">
+                    <option value="all">All</option>
+                    <option value="woocommerce">WooCommerce</option>
+                    <option value="nevari">Nevari</option>
+                    <option value="wordpress">WordPress</option>
+                    <option value="system">System</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div class="audit-tabs" id="auditTabs"></div>
+            <div class="audit-layout">
+              <div class="audit-table-wrap">
+                <div class="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Timestamp</th>
+                        <th>Status</th>
+                        <th>Severity</th>
+                        <th>Source</th>
+                        <th>Action</th>
+                        <th>Actor</th>
+                        <th>Object</th>
+                        <th>Message</th>
+                      </tr>
+                    </thead>
+                    <tbody id="auditTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <aside class="audit-detail" id="auditDetail">
+                <div class="audit-detail-empty">
+                  <span class="detail-icon"><svg><use href="#i-shield"></use></svg></span>
+                  <strong>Select an event</strong>
+                  <p>View metadata, request id, IP address, and related pharmacy objects.</p>
+                </div>
+              </aside>
+            </div>
+          </section>
+        </section>
+
+        <section class="page-view" id="team" data-page="team">
+          <section class="panel compact">
+            <div class="panel-header">
+              <div>
+                <p class="section-kicker">Clinical team</p>
+                <h2>Doctors and patient access</h2>
+              </div>
+            </div>
+            <div class="mini-stat-grid" id="teamStatsPage"></div>
+          </section>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="auth-gate" id="authGate" hidden>
+    <div class="auth-gate-shell">
+      <section class="auth-stage" id="setupStage">
+        <div class="auth-stage-copy">
+          <p class="eyebrow">Nevari Storefront</p>
+          <h1>Pair this dashboard before anyone can access operational data.</h1>
+          <p class="auth-copy">Enter the one-time pairing code generated from <strong>Nevari Pharmacy -> Connections</strong>. The pharmacy URL is embedded in the code and the storefront remains locked until the handshake succeeds.</p>
+        </div>
+        <div class="auth-card standalone-auth-card">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">First-time setup</p>
+              <h2>Pair this Storefront</h2>
+            </div>
+          </div>
+          <form class="auth-form" id="setupForm">
+            <label>
+              <span>Frontend type</span>
+              <input id="setupFrontendType" name="frontendType" type="text" value="storefront" readonly>
+            </label>
+            <label>
+              <span>Pairing code</span>
+              <input id="setupPairingCode" name="pairingCode" type="text" placeholder="NV1.xxxxx.yyyyy" required>
+            </label>
+            <div class="connection-preview">
+              <span>Connection target</span>
+              <strong id="setupPreview">Paste a pairing code to resolve the pharmacy URL.</strong>
+            </div>
+            <div class="auth-actions">
+              <button class="button-primary" type="submit" id="setupSubmit">Verify pairing</button>
+            </div>
+          </form>
+          <p class="auth-feedback" id="setupFeedback">Enter the pairing code to trust this storefront.</p>
+        </div>
+      </section>
+
+      <section class="auth-stage" id="authStage" hidden>
+        <div class="auth-stage-copy">
+          <p class="eyebrow">Nevari Storefront</p>
+          <h1>Sign in before the dashboard becomes available.</h1>
+          <p class="auth-copy">Use a WordPress account with <code>store_admin</code>, <code>administrator</code>, or equivalent WooCommerce access. This screen blocks the app until the current frontend is authenticated.</p>
+        </div>
+        <div class="auth-card standalone-auth-card">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Authentication</p>
+              <h2>Sign in to the paired pharmacy</h2>
+            </div>
+          </div>
+          <div class="connection-preview">
+            <span>Paired pharmacy</span>
+            <strong id="configuredApiRoot">Not configured</strong>
+          </div>
+          <form class="auth-form" id="authForm">
+            <label>
+              <span>Username or email</span>
+              <input id="wpUsername" name="username" type="text" autocomplete="username" required>
+            </label>
+            <label>
+              <span>Password</span>
+              <input id="wpPassword" name="password" type="password" autocomplete="current-password" required>
+            </label>
+            <div class="auth-actions">
+              <button class="button-primary" type="submit" id="authSubmit">Connect</button>
+              <button class="pill-button" type="button" id="logoutButton">Clear session</button>
+            </div>
+          </form>
+          <p class="auth-feedback" id="authFeedback">Not connected.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

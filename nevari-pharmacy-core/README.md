@@ -69,6 +69,20 @@ POST /wp-json/nevari/v1/auth/refresh
 }
 ```
 
+## Local development CORS
+
+Nevari REST routes allow these development origins by default:
+
+- `http://localhost` on any port
+- `https://localhost` on any port
+- `http://127.0.0.1` on any port
+- `https://127.0.0.1` on any port
+- `http://[::1]` on any port
+- `https://[::1]` on any port
+- `null` for direct `file://` usage
+
+Additional origins can still be added through the `nevari_allowed_origins` WordPress filter.
+
 ## Core endpoints
 
 ### Auth

@@ -8,11 +8,24 @@ final class Nevari_Activator {
         self::create_tables();
         self::create_roles_and_caps();
         self::seed_defaults();
+        update_option('nevari_pharmacy_db_version', NEVARI_PHARMACY_VERSION, false);
         flush_rewrite_rules();
     }
 
     public static function deactivate(): void {
         flush_rewrite_rules();
+    }
+
+    public static function maybe_upgrade(): void {
+        $installed = (string) get_option('nevari_pharmacy_db_version', '');
+        if ($installed === NEVARI_PHARMACY_VERSION) {
+            return;
+        }
+
+        self::create_tables();
+        self::create_roles_and_caps();
+        self::seed_defaults();
+        update_option('nevari_pharmacy_db_version', NEVARI_PHARMACY_VERSION, false);
     }
 
     private static function create_tables(): void {
@@ -30,6 +43,8 @@ final class Nevari_Activator {
         $email_logs = Nevari_Helpers::table('email_logs');
         $audit_logs = Nevari_Helpers::table('audit_logs');
         $refresh_tokens = Nevari_Helpers::table('refresh_tokens');
+        $pairing_sessions = Nevari_Helpers::table('pairing_sessions');
+        $frontend_connections = Nevari_Helpers::table('frontend_connections');
 
         dbDelta("CREATE TABLE {$doctor_settings} (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -256,6 +271,45 @@ final class Nevari_Activator {
             PRIMARY KEY  (id),
             UNIQUE KEY token_hash (token_hash),
             KEY user_active (user_id, revoked_at, expires_at)
+        ) {$charset};");
+
+        dbDelta("CREATE TABLE {$pairing_sessions} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            session_uuid CHAR(36) NOT NULL,
+            frontend_type VARCHAR(40) NOT NULL,
+            code_hash CHAR(64) NOT NULL,
+            code_hint VARCHAR(16) NULL,
+            requested_origin VARCHAR(255) NULL,
+            verified_origin VARCHAR(255) NULL,
+            generated_by BIGINT UNSIGNED NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            expires_at DATETIME NOT NULL,
+            verified_at DATETIME NULL,
+            used_at DATETIME NULL,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY session_uuid (session_uuid),
+            UNIQUE KEY code_hash (code_hash),
+            KEY frontend_type_status (frontend_type, status),
+            KEY expires_at (expires_at)
+        ) {$charset};");
+
+        dbDelta("CREATE TABLE {$frontend_connections} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            frontend_type VARCHAR(40) NOT NULL,
+            frontend_origin VARCHAR(255) NOT NULL,
+            frontend_url VARCHAR(255) NOT NULL,
+            trust_status VARCHAR(30) NOT NULL DEFAULT 'trusted',
+            paired_by BIGINT UNSIGNED NOT NULL,
+            pairing_session_id BIGINT UNSIGNED NULL,
+            paired_at DATETIME NOT NULL,
+            last_seen_at DATETIME NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY frontend_type_origin (frontend_type, frontend_origin),
+            KEY trust_status (trust_status),
+            KEY pairing_session_id (pairing_session_id)
         ) {$charset};");
     }
 

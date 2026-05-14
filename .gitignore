@@ -21,6 +21,7 @@ composer.lock
 
 # Node/build dependencies
 node_modules/
+.next/
 dist/
 build/
 

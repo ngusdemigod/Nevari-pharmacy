@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pharmacy — Sign In</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-page:        #EDE5DA;
+      --bg-app:         #F8F5EF;
+      --bg-panel:       #FFFFFF;
+      --bg-card:        #FFFDF8;
+
+      --primary:        #0E2955;
+      --primary-hover:  #143B73;
+      --primary-soft:   #E7EEF8;
+
+      --text-main:      #0E2955;
+      --text-muted:     #5F6470;
+      --text-subtle:    #9AA4B5;
+
+      --border:         rgba(14,41,85,0.10);
+      --border-strong:  rgba(14,41,85,0.18);
+      --white-glass:    rgba(255,255,255,0.62);
+
+      --lime:    #D8CAB6;
+      --mint:    #ADB7C8;
+      --rose:    #D99860;
+      --violet:  #5C6D89;
+      --teal:    #344A6E;
+      --apricot: #B9996D;
+
+      --font: Inter, Manrope, ui-sans-serif, system-ui, sans-serif;
+
+      --r-sm:   12px;
+      --r-md:   16px;
+      --r-lg:   22px;
+      --r-xl:   30px;
+      --r-pill: 999px;
+
+      --shadow-soft: 0 18px 45px rgba(14,41,85,0.10);
+      --shadow-card: 0 12px 28px rgba(14,41,85,0.07);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 16px;
+      background:
+        radial-gradient(circle at 25% 20%, rgba(255,255,255,0.58), transparent 34%),
+        radial-gradient(circle at 78% 15%, rgba(216,202,182,0.34), transparent 28%),
+        var(--bg-page);
+    }
+
+    /* ─── CARD ───────────────────────────────── */
+    .card {
+      width: 100%;
+      max-width: 480px;
+      background: rgba(248,245,239,0.94);
+      border: 1px solid rgba(255,255,255,0.56);
+      border-radius: var(--r-xl);
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      overflow: hidden;
+      position: relative;
+      animation: fadeUp 0.42s cubic-bezier(0.22,1,0.36,1) both;
+    }
+
+    /* decorative soft blobs */
+    .card::before {
+      content: '';
+      position: absolute;
+      top: -70px; right: -70px;
+      width: 200px; height: 200px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(216,202,182,0.38), transparent 68%);
+      pointer-events: none;
+    }
+    .card::after {
+      content: '';
+      position: absolute;
+      bottom: -50px; left: -50px;
+      width: 180px; height: 180px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(173,183,200,0.24), transparent 68%);
+      pointer-events: none;
+    }
+
+    /* ─── HEADER ─────────────────────────────── */
+    .card-header {
+      padding: 32px 40px 24px;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      z-index: 1;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      color: var(--text-main);
+      margin-bottom: 22px;
+    }
+
+    .brand-mark {
+      width: 27px; height: 27px;
+      border-radius: 50%;
+      border: 3px solid var(--primary);
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+
+    .eyebrow {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--text-subtle);
+      margin-bottom: 5px;
+    }
+
+    .card-header h1 {
+      font-size: clamp(21px, 5vw, 25px);
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      line-height: 1.1;
+    }
+
+    .card-header p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 5px;
+      line-height: 1.5;
+    }
+
+    .stat-strip {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+      margin-top: 18px;
+    }
+
+    .stat-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 11px;
+      border-radius: var(--r-pill);
+      background: var(--white-glass);
+      border: 1px solid var(--border-strong);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .chip-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ─── BODY ───────────────────────────────── */
+    .card-body {
+      padding: 26px 40px 32px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ─── TABS ───────────────────────────────── */
+    .auth-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 4px;
+      background: rgba(14,41,85,0.07);
+      border-radius: var(--r-pill);
+      margin-bottom: 24px;
+    }
+
+    .auth-tab {
+      flex: 1;
+      padding: 8px 0;
+      border-radius: var(--r-pill);
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: background 0.18s, color 0.18s;
+    }
+
+    .auth-tab.active {
+      background: var(--primary);
+      color: #fff;
+      /* no shadow */
+    }
+
+    /* ─── FORM ───────────────────────────────── */
+    .form-group { margin-bottom: 13px; }
+
+    label {
+      display: block;
+      font-size: 11.5px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text-main);
+      margin-bottom: 6px;
+    }
+
+    .input-wrap { position: relative; }
+
+    .input-icon {
+      position: absolute;
+      left: 13px; top: 50%;
+      transform: translateY(-50%);
+      font-size: 13px;
+      opacity: 0.35;
+      pointer-events: none;
+      line-height: 1;
+    }
+
+    input[type="email"],
+    input[type="password"],
+    input[type="text"] {
+      width: 100%;
+      height: 44px;
+      padding: 0 42px 0 40px;
+      background: var(--white-glass);
+      border: 1.5px solid var(--border-strong);
+      border-radius: var(--r-sm);
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-main);
+      outline: none;
+      transition: border-color 0.18s, background 0.18s;
+    }
+
+    input::placeholder { color: var(--text-subtle); }
+
+    input:focus {
+      border-color: var(--primary);
+      background: var(--bg-panel);
+      box-shadow: 0 0 0 3px var(--primary-soft);
+    }
+
+    .input-suffix {
+      position: absolute;
+      right: 13px; top: 50%;
+      transform: translateY(-50%);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .form-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 4px 0 18px;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+      width: 14px; height: 14px;
+      accent-color: var(--primary);
+    }
+
+    .forgot-link {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--primary);
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-color: rgba(14,41,85,0.20);
+      text-underline-offset: 3px;
+      white-space: nowrap;
+    }
+
+    /* ─── PRIMARY BUTTON ─────────────────────── */
+    .btn-primary {
+      width: 100%;
+      height: 46px;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: var(--r-pill);
+      font-family: var(--font);
+      font-size: 13.5px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: none;
+      transition: background 0.18s, transform 0.12s;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn-primary:active { transform: translateY(0); }
+
+    /* ─── DIVIDER ────────────────────────────── */
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 18px 0;
+    }
+
+    .divider-line { flex: 1; height: 1px; background: var(--border); }
+
+    .divider span {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-subtle);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      white-space: nowrap;
+    }
+
+    /* ─── SOCIAL BUTTONS ─────────────────────── */
+    .social-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .btn-social {
+      height: 42px;
+      border: 1.5px solid var(--border-strong);
+      border-radius: var(--r-sm);
+      background: var(--white-glass);
+      font-family: var(--font);
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-main);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: none;
+      transition: background 0.18s, border-color 0.18s;
+    }
+
+    .btn-social:hover {
+      background: var(--bg-panel);
+      border-color: rgba(14,41,85,0.28);
+    }
+
+    .btn-social svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+    /* ─── FOOTER NOTE ────────────────────────── */
+    .form-footer {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .form-footer a {
+      font-weight: 600;
+      color: var(--primary);
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-color: rgba(14,41,85,0.20);
+      text-underline-offset: 3px;
+    }
+
+    /* ─── METRIC STRIP ───────────────────────── */
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border-top: 1px solid var(--border);
+      position: relative;
+      z-index: 1;
+    }
+
+    .metric-cell {
+      padding: 15px 10px;
+      text-align: center;
+      border-right: 1px solid var(--border);
+    }
+
+    .metric-cell:last-child { border-right: none; }
+
+    .m-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      margin: 0 auto 7px;
+    }
+
+    .m-val {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      line-height: 1;
+      color: var(--text-main);
+    }
+
+    .m-label {
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-subtle);
+      margin-top: 4px;
+    }
+
+    /* ─── ANIMATION ──────────────────────────── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ─── RESPONSIVE ─────────────────────────── */
+    @media (max-width: 600px) {
+      body { padding: 20px 14px; align-items: flex-start; }
+      .card { border-radius: var(--r-lg); }
+      .card-header { padding: 24px 24px 20px; }
+      .card-body   { padding: 20px 24px 26px; }
+      .brand       { margin-bottom: 16px; }
+      .stat-chip   { font-size: 10.5px; padding: 5px 10px; }
+
+      .metric-strip { grid-template-columns: repeat(2,1fr); }
+      .metric-cell:nth-child(2) { border-right: none; }
+      .metric-cell:nth-child(3) { border-top: 1px solid var(--border); border-right: 1px solid var(--border); }
+      .metric-cell:nth-child(4) { border-top: 1px solid var(--border); border-right: none; }
+    }
+
+    @media (max-width: 400px) {
+      body { padding: 0; background: var(--bg-app); align-items: flex-start; }
+      .card {
+        max-width: 100%;
+        border-radius: 0;
+        min-height: 100vh;
+        box-shadow: none;
+        border-color: transparent;
+        display: flex;
+        flex-direction: column;
+      }
+      .card::before, .card::after { display: none; }
+      .card-header { padding: 28px 20px 18px; }
+      .card-body   { padding: 18px 20px 22px; flex: 1; }
+      .social-row  { grid-template-columns: 1fr; }
+      input[type="email"],
+      input[type="password"],
+      input[type="text"] { height: 48px; font-size: 14px; }
+      .btn-primary { height: 50px; font-size: 14px; }
+      .form-row    { flex-direction: column; align-items: flex-start; gap: 8px; }
+      .metric-strip { margin-top: auto; grid-template-columns: repeat(2,1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+
+  <!-- HEADER -->
+  <div class="card-header">
+    <div class="brand">
+      <div class="brand-mark">⊕</div>
+      Pharmacy
+    </div>
+    <div class="eyebrow">Admin Portal</div>
+    <h1>Welcome back 👋</h1>
+    <p>Sign in to manage your store, inventory &amp; team.</p>
+
+    <div class="stat-strip">
+      <div class="stat-chip"><span class="chip-dot" style="background:var(--lime)"></span>Sales tracked daily</div>
+      <div class="stat-chip"><span class="chip-dot" style="background:var(--mint)"></span>Live inventory</div>
+      <div class="stat-chip"><span class="chip-dot" style="background:var(--rose)"></span>Expiry alerts</div>
+      <div class="stat-chip"><span class="chip-dot" style="background:var(--violet)"></span>Team roles</div>
+    </div>
+  </div>
+
+  <!-- FORM BODY -->
+  <div class="card-body">
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" onclick="switchTab(this,'signin')">Sign In</button>
+      <button class="auth-tab"        onclick="switchTab(this,'register')">Register</button>
+    </div>
+
+    <!-- SIGN IN -->
+    <div id="form-signin">
+      <div class="form-group">
+        <label for="si-email">Email address</label>
+        <div class="input-wrap">
+          <span class="input-icon">✉</span>
+          <input type="email" id="si-email" placeholder="you@pharmacy.com" autocomplete="email" />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="si-pw">Password</label>
+        <div class="input-wrap">
+          <span class="input-icon">🔒</span>
+          <input type="password" id="si-pw" placeholder="Enter your password" autocomplete="current-password" />
+          <span class="input-suffix" onclick="togglePwd(this,'si-pw')">Show</span>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label class="checkbox-label">
+          <input type="checkbox" /> Keep me signed in
+        </label>
+        <span class="forgot-link">Forgot password?</span>
+      </div>
+
+      <button class="btn-primary">Sign In &nbsp;→</button>
+
+      <div class="divider">
+        <div class="divider-line"></div>
+        <span>or continue with</span>
+        <div class="divider-line"></div>
+      </div>
+
+      <div class="social-row">
+        <button class="btn-social">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+          Google
+        </button>
+        <button class="btn-social">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="13" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="13" width="10" height="10" fill="#00A4EF"/><rect x="13" y="13" width="10" height="10" fill="#FFB900"/></svg>
+          Microsoft
+        </button>
+      </div>
+
+      <div class="form-footer">
+        Don't have an account? <a onclick="switchTabByName('register')">Create one</a>
+      </div>
+    </div>
+
+    <!-- REGISTER -->
+    <div id="form-register" style="display:none;">
+      <div class="form-group">
+        <label for="rg-name">Full name</label>
+        <div class="input-wrap">
+          <span class="input-icon">👤</span>
+          <input type="text" id="rg-name" placeholder="Budiono Siregar" autocomplete="name" />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="rg-email">Email address</label>
+        <div class="input-wrap">
+          <span class="input-icon">✉</span>
+          <input type="email" id="rg-email" placeholder="you@pharmacy.com" autocomplete="email" />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="rg-pw">Create password</label>
+        <div class="input-wrap">
+          <span class="input-icon">🔒</span>
+          <input type="password" id="rg-pw" placeholder="Min. 8 characters" autocomplete="new-password" />
+          <span class="input-suffix" onclick="togglePwd(this,'rg-pw')">Show</span>
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-bottom:16px;">
+        <label class="checkbox-label">
+          <input type="checkbox" />
+          I agree to the
+          <a style="font-weight:600;color:var(--primary);cursor:pointer;text-decoration:underline;text-decoration-color:rgba(14,41,85,.20);text-underline-offset:3px;margin-left:3px;">Terms &amp; Privacy</a>
+        </label>
+      </div>
+
+      <button class="btn-primary">Create Account &nbsp;→</button>
+
+      <div class="divider">
+        <div class="divider-line"></div>
+        <span>or sign up with</span>
+        <div class="divider-line"></div>
+      </div>
+
+      <div class="social-row">
+        <button class="btn-social">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+          Google
+        </button>
+        <button class="btn-social">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="13" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="13" width="10" height="10" fill="#00A4EF"/><rect x="13" y="13" width="10" height="10" fill="#FFB900"/></svg>
+          Microsoft
+        </button>
+      </div>
+
+      <div class="form-footer">
+        Already have an account? <a onclick="switchTabByName('signin')">Sign in</a>
+      </div>
+    </div>
+
+  </div><!-- /card-body -->
+
+  <!-- METRIC STRIP -->
+  <div class="metric-strip">
+    <div class="metric-cell">
+      <div class="m-dot" style="background:var(--lime)"></div>
+      <div class="m-val">$95</div>
+      <div class="m-label">Today's Sales</div>
+    </div>
+    <div class="metric-cell">
+      <div class="m-dot" style="background:var(--mint)"></div>
+      <div class="m-val">1.4K</div>
+      <div class="m-label">Categories</div>
+    </div>
+    <div class="metric-cell">
+      <div class="m-dot" style="background:var(--rose)"></div>
+      <div class="m-val">0.00%</div>
+      <div class="m-label">Expired</div>
+    </div>
+    <div class="metric-cell">
+      <div class="m-dot" style="background:var(--violet)"></div>
+      <div class="m-val">255K</div>
+      <div class="m-label">Users</div>
+    </div>
+  </div>
+
+</div><!-- /card -->
+
+<script>
+  function switchTab(btn, formId) {
+    document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('form-signin').style.display   = formId === 'signin'   ? '' : 'none';
+    document.getElementById('form-register').style.display = formId === 'register' ? '' : 'none';
+  }
+
+  function switchTabByName(formId) {
+    document.querySelectorAll('.auth-tab').forEach(t => {
+      t.classList.toggle('active', t.getAttribute('onclick').includes(formId));
+    });
+    document.getElementById('form-signin').style.display   = formId === 'signin'   ? '' : 'none';
+    document.getElementById('form-register').style.display = formId === 'register' ? '' : 'none';
+  }
+
+  function togglePwd(el, id) {
+    const inp = document.getElementById(id);
+    const hide = inp.type === 'password';
+    inp.type = hide ? 'text' : 'password';
+    el.textContent = hide ? 'Hide' : 'Show';
+  }
+</script>
+</body>
+</html>

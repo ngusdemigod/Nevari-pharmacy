@@ -54,6 +54,14 @@ final class Nevari_Auth {
             ]);
             return $user_id;
         }
+        if (!Nevari_Connections::validate_token_context($payload)) {
+            Nevari_Audit::log('security', 'nevari', 'auth.invalid_frontend_context', 'error', [
+                'severity' => 'warning',
+                'error_code' => 'invalid_frontend_context',
+                'message' => 'Access token was used from an untrusted frontend context.',
+            ]);
+            return $user_id;
+        }
         return (int) $payload['sub'];
     }
 
@@ -73,6 +81,20 @@ final class Nevari_Auth {
 
         if (!$username || !$password) {
             return Nevari_Helpers::error('validation_error', 'Username and password are required.', 422);
+        }
+
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend) {
+            Nevari_Audit::log('security', 'nevari', 'auth.untrusted_frontend', 'error', [
+                'severity' => 'warning',
+                'error_code' => 'untrusted_frontend',
+                'message' => 'Login attempt from an untrusted frontend.',
+                'metadata' => [
+                    'frontend_type' => $params['frontend_type'] ?? null,
+                    'frontend_url' => $params['frontend_url'] ?? null,
+                ],
+            ]);
+            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
         }
 
         $user = wp_authenticate($username, $password);
@@ -96,17 +118,26 @@ final class Nevari_Auth {
             return Nevari_Helpers::error('forbidden', 'This account cannot access the pharmacy dashboard.', 403);
         }
 
-        $tokens = self::issue_token_pair((int) $user->ID);
+        $tokens = self::issue_token_pair((int) $user->ID, $frontend);
         Nevari_Audit::log('security', 'nevari', 'auth.login_success', 'success', [
             'actor_user_id' => (int) $user->ID,
             'related_user_id' => (int) $user->ID,
             'message' => 'API login successful.',
+            'metadata' => [
+                'frontend_type' => $frontend['frontend_type'],
+                'frontend_origin' => $frontend['frontend_origin'],
+            ],
         ]);
 
         return Nevari_Helpers::success([
             'access_token' => $tokens['access_token'],
             'refresh_token' => $tokens['refresh_token'],
             'expires_in' => $tokens['expires_in'],
+            'frontend' => [
+                'type' => $frontend['frontend_type'],
+                'origin' => $frontend['frontend_origin'],
+                'url' => $frontend['frontend_url'],
+            ],
             'user' => self::format_user($user),
         ]);
     }
@@ -126,6 +157,11 @@ final class Nevari_Auth {
         }
         if (!$refresh_token) {
             return Nevari_Helpers::error('validation_error', 'refresh_token is required.', 422);
+        }
+
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend) {
+            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
         }
 
         $table = Nevari_Helpers::table('refresh_tokens');
@@ -152,7 +188,7 @@ final class Nevari_Auth {
         }
 
         $wpdb->update($table, ['revoked_at' => $now], ['id' => (int) $row->id], ['%s'], ['%d']);
-        $tokens = self::issue_token_pair((int) $user->ID);
+        $tokens = self::issue_token_pair((int) $user->ID, $frontend);
 
         Nevari_Audit::log('security', 'nevari', 'auth.refresh_success', 'success', [
             'actor_user_id' => (int) $user->ID,
@@ -164,6 +200,11 @@ final class Nevari_Auth {
             'access_token' => $tokens['access_token'],
             'refresh_token' => $tokens['refresh_token'],
             'expires_in' => $tokens['expires_in'],
+            'frontend' => [
+                'type' => $frontend['frontend_type'],
+                'origin' => $frontend['frontend_origin'],
+                'url' => $frontend['frontend_url'],
+            ],
             'user' => self::format_user($user),
         ]);
     }
@@ -180,6 +221,10 @@ final class Nevari_Auth {
         }
         if ($response = Nevari_Helpers::rate_limit('auth_logout_token', 10, 15 * MINUTE_IN_SECONDS, [$token_key])) {
             return $response;
+        }
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend) {
+            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
         }
         if ($refresh_token) {
             $row = $wpdb->get_row($wpdb->prepare(
@@ -209,16 +254,25 @@ final class Nevari_Auth {
 
     public static function me(WP_REST_Request $request): WP_REST_Response {
         $user = wp_get_current_user();
-        return Nevari_Helpers::success(self::format_user($user));
+        return Nevari_Helpers::success([
+            'user' => self::format_user($user),
+            'frontend' => [
+                'type' => !empty($_SERVER['HTTP_X_NEVARI_FRONTEND_TYPE']) ? sanitize_key(wp_unslash($_SERVER['HTTP_X_NEVARI_FRONTEND_TYPE'])) : null,
+                'origin' => !empty($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN'])) : null,
+            ],
+        ]);
     }
 
-    private static function issue_token_pair(int $user_id): array {
+    private static function issue_token_pair(int $user_id, array $frontend): array {
         global $wpdb;
         $expires_in = (int) apply_filters('nevari_access_token_ttl', 15 * MINUTE_IN_SECONDS);
         $access_token = self::encode_jwt([
             'iss' => site_url(),
             'sub' => $user_id,
             'type' => 'access',
+            'aud' => $frontend['frontend_origin'],
+            'frontend_type' => $frontend['frontend_type'],
+            'frontend_origin' => $frontend['frontend_origin'],
             'iat' => time(),
             'exp' => time() + $expires_in,
         ]);

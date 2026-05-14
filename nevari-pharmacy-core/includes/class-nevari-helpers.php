@@ -23,6 +23,8 @@ final class Nevari_Helpers {
             'auth_refresh_token' => ['limit' => 10, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_logout_ip' => ['limit' => 30, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_logout_token' => ['limit' => 10, 'window' => 15 * MINUTE_IN_SECONDS],
+            'pairing_verify' => ['limit' => 20, 'window' => 10 * MINUTE_IN_SECONDS],
+            'pairing_register' => ['limit' => 20, 'window' => 10 * MINUTE_IN_SECONDS],
             'rest_orders_read' => ['limit' => 120, 'window' => MINUTE_IN_SECONDS],
             'rest_orders_show' => ['limit' => 180, 'window' => MINUTE_IN_SECONDS],
             'rest_orders_write' => ['limit' => 20, 'window' => MINUTE_IN_SECONDS],

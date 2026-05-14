@@ -14,12 +14,17 @@ final class Nevari_Plugin {
     }
 
     public function init(): void {
+        add_action('init', [$this, 'send_rest_request_headers'], 0);
+        add_action('init', [$this, 'handle_rest_preflight'], 0);
         add_action('init', [$this, 'register_post_types']);
         add_action('init', [$this, 'register_taxonomies']);
         add_action('init', [$this, 'register_product_meta']);
+        add_filter('rest_post_dispatch', [$this, 'append_rest_cors_headers'], 10, 3);
+        add_filter('rest_pre_serve_request', [$this, 'send_rest_cors_headers'], 10, 4);
 
         Nevari_Audit::init();
         Nevari_Auth::init();
+        Nevari_Connections::init();
         Nevari_Rest::init();
         Nevari_Admin::init();
         Nevari_Emails::init();
@@ -201,5 +206,222 @@ final class Nevari_Plugin {
         if ($prescription) {
             $item->add_meta_data('_nevari_prescription_id', (int) $prescription->id, true);
         }
+    }
+
+    public function handle_rest_preflight(): void {
+        if (!$this->is_nevari_rest_preflight_request()) {
+            return;
+        }
+
+        $origin = $this->allowed_rest_origin();
+        if (!$origin) {
+            return;
+        }
+
+        $this->emit_rest_cors_headers($origin);
+        status_header(204);
+        header('Content-Length: 0');
+        exit;
+    }
+
+    public function send_rest_request_headers(): void {
+        if (!$this->is_nevari_rest_request()) {
+            return;
+        }
+
+        $origin = $this->allowed_rest_origin();
+        if (!$origin) {
+            return;
+        }
+
+        $this->emit_rest_cors_headers($origin);
+    }
+
+    public function append_rest_cors_headers($response, $server, $request) {
+        if (!$request instanceof WP_REST_Request || !$this->is_nevari_rest_route($request->get_route())) {
+            return $response;
+        }
+
+        $origin = $this->allowed_rest_origin();
+        if (!$origin) {
+            return $response;
+        }
+
+        if ($response instanceof WP_HTTP_Response) {
+            foreach ($this->rest_cors_headers($origin) as $header_name => $header_value) {
+                $response->header($header_name, $header_value);
+            }
+        }
+
+        return $response;
+    }
+
+    public function send_rest_cors_headers($served, $result, $request, $server) {
+        if (!$request instanceof WP_REST_Request || !$this->is_nevari_rest_route($request->get_route())) {
+            return $served;
+        }
+
+        $origin = $this->allowed_rest_origin();
+        if (!$origin) {
+            return $served;
+        }
+
+        $this->emit_rest_cors_headers($origin);
+
+        return $served;
+    }
+
+    private function allowed_rest_origin(): ?string {
+        $origin = isset($_SERVER['HTTP_ORIGIN']) ? trim(wp_unslash($_SERVER['HTTP_ORIGIN'])) : '';
+        if ($origin === '') {
+            return null;
+        }
+
+        $origin = $this->normalize_allowed_origin($origin);
+        if ($origin === null) {
+            return null;
+        }
+
+        $allowed = apply_filters('nevari_allowed_origins', [
+            home_url(),
+            site_url(),
+            'null',
+        ]);
+
+        if (class_exists('Nevari_Connections')) {
+            foreach (Nevari_Connections::trusted_frontends() as $connection) {
+                if (!empty($connection['frontend_origin'])) {
+                    $allowed[] = $connection['frontend_origin'];
+                }
+            }
+        }
+
+        $allowed = array_values(array_filter(array_map(static function ($value) {
+            if (!is_string($value)) {
+                return '';
+            }
+
+            $value = trim($value);
+            if ($value === '' || $value === 'null' || $value === '*') {
+                return $value;
+            }
+
+            if (class_exists('Nevari_Connections')) {
+                return Nevari_Connections::normalize_origin($value) ?: '';
+            }
+
+            $parts = wp_parse_url($value);
+            if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+                return '';
+            }
+
+            $normalized = strtolower((string) $parts['scheme']) . '://' . strtolower((string) $parts['host']);
+            if (!empty($parts['port'])) {
+                $normalized .= ':' . (int) $parts['port'];
+            }
+
+            return $normalized;
+        }, is_array($allowed) ? $allowed : [])));
+
+        if (in_array('*', $allowed, true) || in_array($origin, $allowed, true) || $this->is_local_development_origin($origin)) {
+            return $origin;
+        }
+
+        return null;
+    }
+
+    private function is_local_development_origin(string $origin): bool {
+        if ($origin === 'null') {
+            return false;
+        }
+
+        $parts = wp_parse_url($origin);
+        if (!is_array($parts)) {
+            return false;
+        }
+
+        $scheme = isset($parts['scheme']) ? strtolower((string) $parts['scheme']) : '';
+        $host = isset($parts['host']) ? strtolower((string) $parts['host']) : '';
+
+        if (!in_array($scheme, ['http', 'https'], true)) {
+            return false;
+        }
+
+        return in_array($host, ['localhost', '127.0.0.1', '::1'], true);
+    }
+
+    private function is_nevari_rest_preflight_request(): bool {
+        if (strtoupper(isset($_SERVER['REQUEST_METHOD']) ? (string) $_SERVER['REQUEST_METHOD'] : '') !== 'OPTIONS') {
+            return false;
+        }
+
+        return $this->is_nevari_rest_request();
+    }
+
+    private function is_nevari_rest_request(): bool {
+        return $this->is_nevari_rest_route($this->requested_rest_route());
+    }
+
+    private function requested_rest_route(): string {
+        if (!empty($_GET['rest_route'])) {
+            $route = (string) wp_unslash($_GET['rest_route']);
+            return strpos($route, '/') === 0 ? $route : '/' . ltrim($route, '/');
+        }
+
+        $path = wp_parse_url(isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '', PHP_URL_PATH);
+        if (!is_string($path) || $path === '') {
+            return '';
+        }
+
+        $rest_prefix = '/' . trim(rest_get_url_prefix(), '/');
+        $position = strpos($path, $rest_prefix . '/');
+        if ($position === false) {
+            return '';
+        }
+
+        return substr($path, $position + strlen($rest_prefix));
+    }
+
+    private function is_nevari_rest_route(string $route): bool {
+        return strpos($route, '/' . NEVARI_PHARMACY_REST_NS . '/') === 0;
+    }
+
+    private function emit_rest_cors_headers(string $origin): void {
+        foreach ($this->rest_cors_headers($origin) as $header_name => $header_value) {
+            header($header_name . ': ' . $header_value);
+        }
+    }
+
+    private function normalize_allowed_origin(string $origin): ?string {
+        if ($origin === 'null') {
+            return 'null';
+        }
+
+        if (class_exists('Nevari_Connections')) {
+            return Nevari_Connections::normalize_origin($origin);
+        }
+
+        $parts = wp_parse_url($origin);
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return null;
+        }
+
+        $normalized = strtolower((string) $parts['scheme']) . '://' . strtolower((string) $parts['host']);
+        if (!empty($parts['port'])) {
+            $normalized .= ':' . (int) $parts['port'];
+        }
+
+        return $normalized;
+    }
+
+    private function rest_cors_headers(string $origin): array {
+        return [
+            'Access-Control-Allow-Origin' => $origin,
+            'Access-Control-Allow-Methods' => 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers' => 'Authorization, Content-Type, X-Requested-With, X-Nevari-Frontend-Type, X-Nevari-Frontend-Origin',
+            'Access-Control-Expose-Headers' => 'Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining',
+            'Access-Control-Max-Age' => '600',
+            'Vary' => 'Origin',
+        ];
     }
 }
