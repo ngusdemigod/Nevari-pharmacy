@@ -22,6 +22,9 @@ const state = {
     source: "all",
     search: ""
   },
+  queue: {
+    filter: "all"
+  },
   data: {
     dashboard: null,
     orders: [],
@@ -41,6 +44,11 @@ const state = {
 
 const refs = {
   queueTableBody: document.getElementById("queueTableBody"),
+  queueFilterTabs: document.getElementById("queueFilterTabs"),
+  queueAllCount: document.getElementById("queueAllCount"),
+  queueNeedsRxCount: document.getElementById("queueNeedsRxCount"),
+  queueAwaitingPaymentCount: document.getElementById("queueAwaitingPaymentCount"),
+  queueDoctorFollowUpCount: document.getElementById("queueDoctorFollowUpCount"),
   appointmentColumns: document.getElementById("appointmentColumns"),
   historyList: document.getElementById("historyList"),
   emailLogBody: document.getElementById("emailLogBody"),
@@ -332,8 +340,55 @@ function toneClass(value) {
   return "info";
 }
 
+function normalizeOrderQueueValue(value) {
+  return String(value || "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+}
+
+function isNeedsRxOrder(order) {
+  const status = normalizeOrderQueueValue(order?.status);
+  const rxStatus = normalizeOrderQueueValue(order?.rx_status);
+  return ["requires-prescription", "awaiting-prescription", "on-hold"].includes(rxStatus)
+    || ["awaiting-prescription", "on-hold"].includes(status);
+}
+
+function isAwaitingPaymentOrder(order) {
+  const status = normalizeOrderQueueValue(order?.payment_status || order?.status);
+  return ["pending", "processing", "awaiting-payment", "on-hold"].includes(status);
+}
+
+function isDoctorFollowUpOrder(order) {
+  const status = normalizeOrderQueueValue(order?.status);
+  const rxStatus = normalizeOrderQueueValue(order?.rx_status);
+  return ["awaiting-doctor", "awaiting-prescription", "doctor-follow-up"].includes(status)
+    || ["awaiting-prescription"].includes(rxStatus)
+    || Boolean(order?.assigned_doctor_user_id || order?.assigned_doctor);
+}
+
+function matchesOrderQueueFilter(order, filter) {
+  if (filter === "needs_rx") {
+    return isNeedsRxOrder(order);
+  }
+  if (filter === "awaiting_payment") {
+    return isAwaitingPaymentOrder(order);
+  }
+  if (filter === "doctor_follow_up") {
+    return isDoctorFollowUpOrder(order);
+  }
+  return true;
+}
+
 function patientLabel(userId) {
   return userId ? `Customer #${userId}` : "Guest checkout";
+}
+
+function customerSummary(order) {
+  const firstName = String(order?.billing?.first_name || order?.shipping?.first_name || "").trim();
+  const lastName = String(order?.billing?.last_name || order?.shipping?.last_name || "").trim();
+  const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+  return {
+    name: fullName || patientLabel(order?.customer_id),
+    email: order?.billing?.email || "No email on file"
+  };
 }
 
 function doctorNameMap() {
@@ -639,9 +694,31 @@ function renderEmailStats() {
 function renderQueue(search = "") {
   const prescriptionsById = new Map((state.data.prescriptionDetails || []).map((item) => [item.id, item]));
   const query = search.trim().toLowerCase();
-  const orders = (state.data.orderDetails || []).filter((order) => {
+  const allOrders = state.data.orderDetails || [];
+  const queueCounts = {
+    all: allOrders.length,
+    needs_rx: allOrders.filter((order) => isNeedsRxOrder(order)).length,
+    awaiting_payment: allOrders.filter((order) => isAwaitingPaymentOrder(order)).length,
+    doctor_follow_up: allOrders.filter((order) => isDoctorFollowUpOrder(order)).length
+  };
+
+  if (refs.queueAllCount) refs.queueAllCount.textContent = formatNumber(queueCounts.all);
+  if (refs.queueNeedsRxCount) refs.queueNeedsRxCount.textContent = formatNumber(queueCounts.needs_rx);
+  if (refs.queueAwaitingPaymentCount) refs.queueAwaitingPaymentCount.textContent = formatNumber(queueCounts.awaiting_payment);
+  if (refs.queueDoctorFollowUpCount) refs.queueDoctorFollowUpCount.textContent = formatNumber(queueCounts.doctor_follow_up);
+
+  if (refs.queueFilterTabs) {
+    refs.queueFilterTabs.querySelectorAll("[data-queue-filter]").forEach((button) => {
+      const active = button.dataset.queueFilter === state.queue.filter;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+
+  const orders = allOrders.filter((order) => {
     const names = (order.items || []).map((item) => item.name).join(" ");
-    return `${order.number} ${order.status} ${order.rx_status || ""} ${names}`.toLowerCase().includes(query);
+    const searchText = `${order.number} ${order.status} ${order.rx_status || ""} ${names}`;
+    return searchText.toLowerCase().includes(query) && matchesOrderQueueFilter(order, state.queue.filter);
   });
 
   refs.queueTableBody.innerHTML = orders.length ? orders.map((order) => {
@@ -649,12 +726,12 @@ function renderQueue(search = "") {
     return `
       <tr>
         <td><div class="table-title"><strong>#${order.number}</strong><span class="muted">${formatDate(order.created_at, true)}</span></div></td>
-        <td><div class="table-title"><strong>${patientLabel(order.customer_id)}</strong><span class="muted">WordPress user ${order.customer_id || "guest"}</span></div></td>
+        <td><div class="table-customer-cell order-customer-cell"><strong>${customerSummary(order).name}</strong><span>${customerSummary(order).email}</span></div></td>
         <td>${(order.items || []).length ? `${order.items.length} items: ${(order.items || []).slice(0, 2).map((item) => item.name).join(", ")}` : "order details unavailable"}</td>
         <td>${prescription ? `${prescription.prescription_number} • ${prescription.status}` : (order.prescription_id ? `Prescription #${order.prescription_id}` : "No linked prescription")}</td>
-        <td><span class="status-pill ${toneClass(order.rx_status || order.status)}">${order.rx_status || order.status}</span></td>
         <td>${formatMoney(order.total || 0, order.currency || "USD")}</td>
-        <td>${order.rx_status === "on_hold" ? "Release hold" : (order.prescription_id ? "Review linkage" : "Link prescription")}</td>
+        <td><span class="status-pill ${toneClass(order.rx_status || order.status)}">${order.rx_status || order.status}</span></td>
+        <td><span class="row-actions">${order.rx_status === "on_hold" ? "Release hold" : (order.prescription_id ? "Review linkage" : "Link prescription")}</span></td>
       </tr>
     `;
   }).join("") : `<tr><td colspan="7" class="muted">No orders match the current search.</td></tr>`;
@@ -925,6 +1002,19 @@ function initNavigation() {
   });
 }
 
+function initQueueTabs() {
+  if (!refs.queueFilterTabs) {
+    return;
+  }
+
+  refs.queueFilterTabs.querySelectorAll("[data-queue-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.queue.filter = button.dataset.queueFilter || "all";
+      renderQueue(refs.globalSearch.value);
+    });
+  });
+}
+
 function initSetupFlow() {
   refs.setupPairingCode.addEventListener("input", updateConnectionPreview);
 
@@ -1008,6 +1098,7 @@ async function bootstrap() {
   loadSession();
   updateUserUI();
   initNavigation();
+  initQueueTabs();
   initSetupFlow();
   initAuthFlow();
   initSearch();

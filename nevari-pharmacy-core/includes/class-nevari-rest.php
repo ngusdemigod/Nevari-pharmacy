@@ -11,6 +11,7 @@ final class Nevari_Rest {
     public static function register_routes(): void {
         self::orders_routes();
         self::products_routes();
+        self::customers_routes();
         self::doctors_routes();
         self::appointments_routes();
         self::prescriptions_routes();
@@ -41,6 +42,11 @@ final class Nevari_Rest {
                 'methods' => WP_REST_Server::READABLE,
                 'callback' => [__CLASS__, 'orders_index'],
                 'permission_callback' => [__CLASS__, 'auth_required'],
+            ],
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'orders_create'],
+                'permission_callback' => [__CLASS__, 'store_admin_required'],
             ],
         ]);
 
@@ -75,6 +81,18 @@ final class Nevari_Rest {
             'callback' => [__CLASS__, 'orders_prescriptions'],
             'permission_callback' => [__CLASS__, 'auth_required'],
         ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/receipt', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'orders_receipt'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/send-receipt', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'orders_send_receipt'],
+            'permission_callback' => [__CLASS__, 'store_admin_required'],
+        ]);
     }
 
     private static function products_routes(): void {
@@ -107,6 +125,18 @@ final class Nevari_Rest {
                 'callback' => [__CLASS__, 'products_delete'],
                 'permission_callback' => [__CLASS__, 'store_admin_required'],
             ],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/(?P<id>\d+)/duplicate', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'products_duplicate'],
+            'permission_callback' => [__CLASS__, 'store_admin_required'],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/media', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'products_upload_media'],
+            'permission_callback' => [__CLASS__, 'store_admin_required'],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/(?P<id>\d+)/pharmacy-rules', [
@@ -154,6 +184,16 @@ final class Nevari_Rest {
             'methods' => WP_REST_Server::READABLE,
             'callback' => [__CLASS__, 'product_badges'],
             'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+    }
+
+    private static function customers_routes(): void {
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/customers', [
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'customers_create'],
+                'permission_callback' => [__CLASS__, 'store_admin_required'],
+            ],
         ]);
     }
 
@@ -431,13 +471,46 @@ final class Nevari_Rest {
             }
         } elseif ($request->get_param('patient_id')) {
             $args['customer_id'] = (int) $request->get_param('patient_id');
+        } elseif ($request->get_param('customer_email')) {
+            $args['billing_email'] = sanitize_email((string) $request->get_param('customer_email'));
         }
 
-        $result = wc_get_orders($args);
+        try {
+            $result = wc_get_orders($args);
+        } catch (Throwable $exception) {
+            error_log(sprintf( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+                'Nevari orders_index query failed: %s in %s:%d',
+                $exception->getMessage(),
+                $exception->getFile(),
+                $exception->getLine()
+            ));
+            return Nevari_Helpers::error('orders_query_failed', 'Orders could not be loaded from WooCommerce.', 500);
+        }
+
         $orders = is_object($result) && isset($result->orders) ? $result->orders : [];
         $total = is_object($result) && isset($result->total) ? (int) $result->total : count($orders);
-        $items = array_map([__CLASS__, 'format_order'], $orders);
-        return Nevari_Helpers::success($items, Nevari_Helpers::pagination_meta($page, $per_page, $total));
+        $items = [];
+        $format_errors = [];
+        foreach ($orders as $order) {
+            try {
+                $items[] = self::format_order($order);
+            } catch (Throwable $exception) {
+                $order_id = is_object($order) && method_exists($order, 'get_id') ? (int) $order->get_id() : 0;
+                error_log(sprintf( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+                    'Nevari orders_index format failed for order %d: %s in %s:%d',
+                    $order_id,
+                    $exception->getMessage(),
+                    $exception->getFile(),
+                    $exception->getLine()
+                ));
+                $format_errors[] = $order_id;
+            }
+        }
+        $meta = Nevari_Helpers::pagination_meta($page, $per_page, $total);
+        if ($format_errors) {
+            $meta['order_format_errors'] = $format_errors;
+        }
+        return Nevari_Helpers::success($items, $meta);
     }
 
     public static function orders_show(WP_REST_Request $request): WP_REST_Response {
@@ -448,7 +521,133 @@ final class Nevari_Rest {
         if (is_wp_error($order)) {
             return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) $order->get_error_data('status') ?: 404);
         }
-        return Nevari_Helpers::success(self::format_order($order, true));
+        try {
+            return Nevari_Helpers::success(self::format_order($order, true));
+        } catch (Throwable $exception) {
+            error_log(sprintf( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+                'Nevari orders_show format failed for order %d: %s in %s:%d',
+                (int) $order->get_id(),
+                $exception->getMessage(),
+                $exception->getFile(),
+                $exception->getLine()
+            ));
+            return Nevari_Helpers::error('order_format_failed', 'Order data could not be formatted for the dashboard.', 500, [
+                'order_id' => (int) $order->get_id(),
+            ]);
+        }
+    }
+
+    public static function orders_create(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'create'])) {
+            return $response;
+        }
+        if (!self::woo_available()) {
+            return Nevari_Helpers::error('woocommerce_missing', 'WooCommerce is required.', 503);
+        }
+
+        $params = Nevari_Helpers::get_json_params($request);
+        $items = [];
+        if (!empty($params['items']) && is_array($params['items'])) {
+            $items = array_values(array_filter(array_map(static function ($item) {
+                if (!is_array($item)) {
+                    return null;
+                }
+                $product_id = isset($item['product_id']) ? (int) $item['product_id'] : 0;
+                $quantity = isset($item['quantity']) ? max(1, (int) $item['quantity']) : 0;
+                return ($product_id > 0 && $quantity > 0) ? ['product_id' => $product_id, 'quantity' => $quantity] : null;
+            }, $params['items'])));
+        }
+        if (!$items) {
+            $product_id = isset($params['product_id']) ? (int) $params['product_id'] : 0;
+            $quantity = isset($params['quantity']) ? max(1, (int) $params['quantity']) : 1;
+            if ($product_id > 0) {
+                $items[] = ['product_id' => $product_id, 'quantity' => $quantity];
+            }
+        }
+        if (!$items) {
+            return Nevari_Helpers::error('validation_error', 'At least one valid item is required.', 422);
+        }
+
+        $billing = isset($params['billing']) && is_array($params['billing']) ? $params['billing'] : [];
+        $email = isset($billing['email']) ? sanitize_email((string) $billing['email']) : '';
+        if (!$email) {
+            return Nevari_Helpers::error('validation_error', 'Customer email is required.', 422);
+        }
+
+        $doctor_id = isset($params['doctor_user_id']) ? (int) $params['doctor_user_id'] : 0;
+        if ($doctor_id) {
+            $doctor = get_user_by('id', $doctor_id);
+            if (!$doctor || !in_array('doctor', (array) $doctor->roles, true) || get_user_meta($doctor_id, '_nevari_doctor_disabled', true)) {
+                return Nevari_Helpers::error('doctor_not_found', 'Doctor not found or inactive.', 404);
+            }
+        }
+
+        $order = wc_create_order([
+            'customer_id' => isset($params['customer_id']) ? max(0, (int) $params['customer_id']) : 0,
+            'created_via' => 'nevari_dashboard',
+        ]);
+        if (is_wp_error($order)) {
+            return Nevari_Helpers::error('order_create_failed', $order->get_error_message(), 400);
+        }
+
+        $first_name = isset($billing['first_name']) ? sanitize_text_field((string) $billing['first_name']) : '';
+        $last_name = isset($billing['last_name']) ? sanitize_text_field((string) $billing['last_name']) : '';
+        $phone = isset($billing['phone']) ? sanitize_text_field((string) $billing['phone']) : '';
+        $address_1 = isset($billing['address_1']) ? sanitize_text_field((string) $billing['address_1']) : '';
+        $city = isset($billing['city']) ? sanitize_text_field((string) $billing['city']) : '';
+        $state = isset($billing['state']) ? sanitize_text_field((string) $billing['state']) : '';
+        $postcode = isset($billing['postcode']) ? sanitize_text_field((string) $billing['postcode']) : '';
+        $country = isset($billing['country']) ? sanitize_text_field((string) $billing['country']) : '';
+
+        foreach ($items as $item) {
+            $product = wc_get_product((int) $item['product_id']);
+            if (!$product) {
+                return Nevari_Helpers::error('validation_error', 'One or more items reference an invalid product_id.', 422);
+            }
+            $order->add_product($product, (int) $item['quantity']);
+        }
+        $order->set_billing_first_name($first_name);
+        $order->set_billing_last_name($last_name);
+        $order->set_billing_email($email);
+        $order->set_billing_phone($phone);
+        $order->set_billing_address_1($address_1);
+        $order->set_billing_city($city);
+        $order->set_billing_state($state);
+        $order->set_billing_postcode($postcode);
+        $order->set_billing_country($country);
+        $order->set_shipping_first_name($first_name);
+        $order->set_shipping_last_name($last_name);
+        $order->set_shipping_address_1($address_1);
+        $order->set_shipping_city($city);
+        $order->set_shipping_state($state);
+        $order->set_shipping_postcode($postcode);
+        $order->set_shipping_country($country);
+
+        if (!empty($params['customer_note'])) {
+            $order->set_customer_note(sanitize_textarea_field((string) $params['customer_note']));
+        }
+
+        if ($doctor_id) {
+            $order->update_meta_data('_nevari_assigned_doctor_user_id', $doctor_id);
+            $order->update_meta_data('_nevari_assigned_at', Nevari_Helpers::now());
+            $order->update_meta_data('_nevari_rx_validation_status', 'awaiting_prescription');
+            $order->set_status('awaiting-prescription');
+        } else {
+            $order->set_status(!empty($params['status']) ? sanitize_key((string) $params['status']) : 'pending');
+        }
+
+        $order->calculate_totals();
+        $order->save();
+
+        Nevari_Audit::log('orders', 'nevari', 'order.created', 'success', [
+            'order_id' => $order->get_id(),
+            'object_type' => 'shop_order',
+            'object_id' => $order->get_id(),
+            'related_user_id' => $doctor_id ?: null,
+            'message' => 'Order created from Nevari dashboard.',
+        ]);
+
+        return Nevari_Helpers::success(self::format_order($order, true), ['created' => true], 201);
     }
 
     public static function orders_update(WP_REST_Request $request): WP_REST_Response {
@@ -607,6 +806,74 @@ final class Nevari_Rest {
         return Nevari_Helpers::success($items);
     }
 
+    public static function orders_receipt(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_read', 60, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'receipt'])) {
+            return $response;
+        }
+
+        $order = self::get_viewable_order((int) $request['id']);
+        if (is_wp_error($order)) {
+            return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) ($order->get_error_data()['status'] ?? 404));
+        }
+
+        $pdf = self::build_order_receipt_pdf($order);
+        return Nevari_Helpers::success([
+            'filename' => sprintf('receipt-order-%s.pdf', sanitize_file_name((string) $order->get_order_number())),
+            'content_type' => 'application/pdf',
+            'base64' => base64_encode($pdf),
+        ]);
+    }
+
+    public static function orders_send_receipt(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_write', 10, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'send_receipt'])) {
+            return $response;
+        }
+
+        $order = self::get_viewable_order((int) $request['id']);
+        if (is_wp_error($order)) {
+            return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) ($order->get_error_data()['status'] ?? 404));
+        }
+
+        $recipient = sanitize_email((string) $order->get_billing_email());
+        if (!$recipient || !is_email($recipient)) {
+            return Nevari_Helpers::error('receipt_email_missing', 'This order does not have a valid customer email address.', 422);
+        }
+
+        $filename = sprintf('receipt-order-%s.pdf', sanitize_file_name((string) $order->get_order_number()));
+        $tmp_file = wp_tempnam($filename);
+        if (!$tmp_file || file_put_contents($tmp_file, self::build_order_receipt_pdf($order)) === false) {
+            return Nevari_Helpers::error('receipt_pdf_failed', 'The receipt PDF could not be generated.', 500);
+        }
+
+        $subject = sprintf('Receipt for order #%s', $order->get_order_number());
+        $body = sprintf(
+            '<p>Hello %s,</p><p>Your receipt for order <strong>#%s</strong> is attached.</p><p>Thank you for shopping with %s.</p>',
+            esc_html(trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) ?: 'Customer'),
+            esc_html((string) $order->get_order_number()),
+            esc_html(wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES))
+        );
+        $sent = wp_mail($recipient, $subject, $body, ['Content-Type: text/html; charset=UTF-8'], [$tmp_file]);
+        @unlink($tmp_file);
+
+        if (!$sent) {
+            Nevari_Audit::log('emails', 'nevari', 'receipt.send_failed', 'error', [
+                'order_id' => $order->get_id(),
+                'message' => 'Receipt email failed to send.',
+            ]);
+            return Nevari_Helpers::error('receipt_send_failed', 'The receipt email could not be sent.', 500);
+        }
+
+        Nevari_Audit::log('emails', 'nevari', 'receipt.sent', 'success', [
+            'order_id' => $order->get_id(),
+            'message' => 'Receipt PDF sent to customer.',
+        ]);
+
+        return Nevari_Helpers::success([
+            'recipient_email' => $recipient,
+            'status' => 'sent',
+        ]);
+    }
+
     private static function get_order_scoped(int $order_id) {
         if (!self::woo_available()) {
             return new WP_Error('woocommerce_missing', 'WooCommerce is required.', ['status' => 503]);
@@ -637,6 +904,7 @@ final class Nevari_Rest {
     private static function format_order($order, bool $include_items = false): array {
         $assigned_doctor_id = (int) $order->get_meta('_nevari_assigned_doctor_user_id');
         $assigned_doctor = $assigned_doctor_id ? get_user_by('id', $assigned_doctor_id) : null;
+        $items = $order->get_items();
         $data = [
             'id' => $order->get_id(),
             'number' => $order->get_order_number(),
@@ -654,15 +922,15 @@ final class Nevari_Rest {
                 'email' => $assigned_doctor->user_email,
             ] : null,
             'totals' => [
-                'subtotal' => (float) $order->get_subtotal(),
+                'subtotal' => self::order_subtotal($order, $items),
                 'discount_total' => (float) $order->get_discount_total(),
                 'shipping_total' => (float) $order->get_shipping_total(),
                 'shipping_tax' => (float) $order->get_shipping_tax(),
                 'tax_total' => (float) $order->get_total_tax(),
-                'fees_total' => (float) $order->get_total_fees(),
+                'fees_total' => self::order_fees_total($order),
                 'grand_total' => (float) $order->get_total(),
                 'items_count' => (int) $order->get_item_count(),
-                'items_quantity' => array_reduce($order->get_items(), static function ($carry, $item) {
+                'items_quantity' => array_reduce($items, static function ($carry, $item) {
                     return $carry + (float) $item->get_quantity();
                 }, 0),
             ],
@@ -706,31 +974,150 @@ final class Nevari_Rest {
             $data['order_notes'] = $notes;
             $data['items'] = [];
             foreach ($order->get_items() as $item) {
-                $product = $item->get_product();
-                $quantity = (float) $item->get_quantity();
-                $line_total = (float) $item->get_total();
-                $line_subtotal = (float) $item->get_subtotal();
-                $unit_price = $quantity > 0 ? $line_subtotal / $quantity : $line_subtotal;
-                $data['items'][] = [
-                    'id' => $item->get_id(),
-                    'product_id' => $item->get_product_id(),
-                    'variation_id' => $item->get_variation_id(),
-                    'name' => $item->get_name(),
-                    'sku' => $product ? $product->get_sku() : '',
-                    'quantity' => $quantity,
-                    'subtotal' => $line_subtotal,
-                    'discount_total' => max(0, $line_subtotal - $line_total),
-                    'unit_price' => $unit_price,
-                    'total' => $line_total,
-                    'tax_total' => (float) $item->get_total_tax(),
-                    'stock_status' => $product ? $product->get_stock_status() : null,
-                    'image_url' => ($product && $product->get_image_id()) ? wp_get_attachment_image_url($product->get_image_id(), 'thumbnail') : null,
-                    'rx_required' => $item->get_meta('_nevari_rx_required') === 'yes',
-                    'prescription_id' => $item->get_meta('_nevari_prescription_id') ? (int) $item->get_meta('_nevari_prescription_id') : null,
-                ];
+                try {
+                    $product = $item->get_product();
+                    $quantity = (float) $item->get_quantity();
+                    $line_total = (float) $item->get_total();
+                    $line_subtotal = (float) $item->get_subtotal();
+                    $unit_price = $quantity > 0 ? $line_subtotal / $quantity : $line_subtotal;
+                    $image_url = null;
+                    if ($product && $product->get_image_id()) {
+                        $image_url = wp_get_attachment_image_url($product->get_image_id(), 'thumbnail') ?: null;
+                    }
+                    $data['items'][] = [
+                        'id' => $item->get_id(),
+                        'product_id' => $item->get_product_id(),
+                        'variation_id' => $item->get_variation_id(),
+                        'name' => $item->get_name(),
+                        'sku' => $product ? $product->get_sku() : '',
+                        'quantity' => $quantity,
+                        'subtotal' => $line_subtotal,
+                        'discount_total' => max(0, $line_subtotal - $line_total),
+                        'unit_price' => $unit_price,
+                        'total' => $line_total,
+                        'tax_total' => (float) $item->get_total_tax(),
+                        'stock_status' => $product ? $product->get_stock_status() : null,
+                        'image_url' => $image_url,
+                        'rx_required' => $item->get_meta('_nevari_rx_required') === 'yes',
+                        'prescription_id' => $item->get_meta('_nevari_prescription_id') ? (int) $item->get_meta('_nevari_prescription_id') : null,
+                    ];
+                } catch (Throwable $exception) {
+                    error_log(sprintf( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+                        'Nevari format_order item failed for order %d item %d: %s in %s:%d',
+                        (int) $order->get_id(),
+                        is_object($item) && method_exists($item, 'get_id') ? (int) $item->get_id() : 0,
+                        $exception->getMessage(),
+                        $exception->getFile(),
+                        $exception->getLine()
+                    ));
+                }
             }
         }
         return $data;
+    }
+
+    private static function build_order_receipt_pdf($order): string {
+        $items = $order->get_items();
+        $currency = $order->get_currency() ?: get_woocommerce_currency();
+        $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) ?: 'Customer';
+        $lines = [
+            wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES),
+            'Payment Receipt',
+            sprintf('Order #%s', $order->get_order_number()),
+            sprintf('Date: %s', $order->get_date_created() ? $order->get_date_created()->date_i18n('M j, Y g:i a') : 'n/a'),
+            sprintf('Customer: %s', $customer_name),
+            sprintf('Email: %s', $order->get_billing_email() ?: 'n/a'),
+            sprintf('Payment status: %s', ucfirst((string) ($order->get_date_paid() ? 'completed' : $order->get_status()))),
+            '',
+            'Items',
+        ];
+
+        foreach ($items as $item) {
+            $quantity = (float) $item->get_quantity();
+            $lines[] = sprintf(
+                '%s x%s  %s',
+                wp_strip_all_tags($item->get_name()),
+                wc_format_decimal($quantity, 0),
+                wp_strip_all_tags(wc_price((float) $item->get_total(), ['currency' => $currency]))
+            );
+        }
+
+        $lines = array_merge($lines, [
+            '',
+            sprintf('Subtotal: %s', wp_strip_all_tags(wc_price(self::order_subtotal($order, $items), ['currency' => $currency]))),
+            sprintf('Discount: %s', wp_strip_all_tags(wc_price((float) $order->get_discount_total(), ['currency' => $currency]))),
+            sprintf('Shipping: %s', wp_strip_all_tags(wc_price((float) $order->get_shipping_total() + (float) $order->get_shipping_tax(), ['currency' => $currency]))),
+            sprintf('Tax: %s', wp_strip_all_tags(wc_price((float) $order->get_total_tax(), ['currency' => $currency]))),
+            sprintf('Total paid: %s', wp_strip_all_tags(wc_price((float) $order->get_total(), ['currency' => $currency]))),
+        ]);
+
+        return self::build_simple_pdf($lines);
+    }
+
+    private static function build_simple_pdf(array $lines): string {
+        $content = "BT\n/F1 12 Tf\n50 770 Td\n";
+        foreach ($lines as $index => $line) {
+            $safe_line = self::pdf_escape((string) $line);
+            if ($index > 0) {
+                $content .= "0 -18 Td\n";
+            }
+            $content .= sprintf("(%s) Tj\n", $safe_line);
+        }
+        $content .= "ET";
+
+        $objects = [
+            '<< /Type /Catalog /Pages 2 0 R >>',
+            '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+            '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+            sprintf("<< /Length %d >>\nstream\n%s\nendstream", strlen($content), $content),
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        ];
+
+        $pdf = "%PDF-1.4\n";
+        $offsets = [0];
+        foreach ($objects as $index => $object) {
+            $offsets[] = strlen($pdf);
+            $pdf .= sprintf("%d 0 obj\n%s\nendobj\n", $index + 1, $object);
+        }
+
+        $xref_offset = strlen($pdf);
+        $pdf .= sprintf("xref\n0 %d\n0000000000 65535 f \n", count($objects) + 1);
+        foreach (array_slice($offsets, 1) as $offset) {
+            $pdf .= sprintf("%010d 00000 n \n", $offset);
+        }
+        $pdf .= sprintf(
+            "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF",
+            count($objects) + 1,
+            $xref_offset
+        );
+
+        return $pdf;
+    }
+
+    private static function pdf_escape(string $value): string {
+        $value = wp_strip_all_tags(html_entity_decode($value, ENT_QUOTES, 'UTF-8'));
+        $value = preg_replace('/[^\x20-\x7E]/', '', $value);
+        return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $value);
+    }
+
+    private static function order_subtotal($order, array $items): float {
+        if (method_exists($order, 'get_subtotal')) {
+            return (float) $order->get_subtotal();
+        }
+
+        return (float) array_reduce($items, static function ($carry, $item) {
+            return $carry + (float) $item->get_subtotal();
+        }, 0.0);
+    }
+
+    private static function order_fees_total($order): float {
+        if (method_exists($order, 'get_total_fees')) {
+            return (float) $order->get_total_fees();
+        }
+
+        return (float) array_reduce($order->get_items('fee'), static function ($carry, $item) {
+            return $carry + (float) $item->get_total();
+        }, 0.0);
     }
 
     public static function products_index(WP_REST_Request $request): WP_REST_Response {
@@ -815,8 +1202,14 @@ final class Nevari_Rest {
         $product = new WC_Product_Simple();
         $product->set_name($name);
         $product->set_status(isset($params['status']) ? sanitize_key((string) $params['status']) : 'draft');
+        if (isset($params['sku'])) {
+            $product->set_sku(sanitize_text_field((string) $params['sku']));
+        }
         if (isset($params['regular_price'])) {
             $product->set_regular_price(wc_format_decimal($params['regular_price']));
+        }
+        if (isset($params['sale_price'])) {
+            $product->set_sale_price(wc_format_decimal($params['sale_price']));
         }
         if (isset($params['description'])) {
             $product->set_description(wp_kses_post((string) $params['description']));
@@ -824,7 +1217,23 @@ final class Nevari_Rest {
         if (isset($params['short_description'])) {
             $product->set_short_description(wp_kses_post((string) $params['short_description']));
         }
+        if (array_key_exists('stock_quantity', $params)) {
+            $product->set_manage_stock(true);
+            $product->set_stock_quantity((int) $params['stock_quantity']);
+        }
+        if (isset($params['stock_status'])) {
+            $product->set_stock_status(sanitize_key((string) $params['stock_status']));
+        }
+        if (isset($params['catalog_visibility']) && method_exists($product, 'set_catalog_visibility')) {
+            $product->set_catalog_visibility(sanitize_key((string) $params['catalog_visibility']));
+        }
         $product_id = $product->save();
+        if (!empty($params['categories']) && is_array($params['categories'])) {
+            wp_set_object_terms($product_id, array_map('sanitize_text_field', $params['categories']), 'product_cat');
+        }
+        if (!empty($params['tags']) && is_array($params['tags'])) {
+            wp_set_object_terms($product_id, array_map('sanitize_text_field', $params['tags']), 'product_tag');
+        }
         if (!empty($params['pharmacy_rules']) && is_array($params['pharmacy_rules'])) {
             Nevari_Helpers::update_product_rules($product_id, $params['pharmacy_rules']);
         }
@@ -844,7 +1253,7 @@ final class Nevari_Rest {
             return Nevari_Helpers::error('product_not_found', 'Product not found.', 404);
         }
         $params = Nevari_Helpers::get_json_params($request);
-        foreach (['name', 'status', 'description', 'short_description', 'regular_price', 'sale_price', 'sku', 'stock_quantity'] as $field) {
+        foreach (['name', 'status', 'description', 'short_description', 'regular_price', 'sale_price', 'sku', 'stock_quantity', 'stock_status'] as $field) {
             if (!array_key_exists($field, $params)) {
                 continue;
             }
@@ -856,10 +1265,33 @@ final class Nevari_Rest {
                 case 'regular_price': $product->set_regular_price(wc_format_decimal($params[$field])); break;
                 case 'sale_price': $product->set_sale_price(wc_format_decimal($params[$field])); break;
                 case 'sku': $product->set_sku(sanitize_text_field((string) $params[$field])); break;
-                case 'stock_quantity': $product->set_stock_quantity((int) $params[$field]); break;
+                case 'stock_quantity':
+                    $product->set_manage_stock(true);
+                    $product->set_stock_quantity((int) $params[$field]);
+                    break;
+                case 'stock_status': $product->set_stock_status(sanitize_key((string) $params[$field])); break;
             }
         }
+        if (isset($params['catalog_visibility']) && method_exists($product, 'set_catalog_visibility')) {
+            $product->set_catalog_visibility(sanitize_key((string) $params['catalog_visibility']));
+        }
+        if (array_key_exists('images', $params) && is_array($params['images'])) {
+            $image_ids = array_values(array_filter(array_map(static function ($image) {
+                if (is_array($image)) {
+                    return isset($image['id']) ? (int) $image['id'] : 0;
+                }
+                return (int) $image;
+            }, $params['images'])));
+            $product->set_image_id($image_ids[0] ?? 0);
+            $product->set_gallery_image_ids(array_slice($image_ids, 1));
+        }
         $product->save();
+        if (array_key_exists('categories', $params) && is_array($params['categories'])) {
+            wp_set_object_terms($product->get_id(), array_map('sanitize_text_field', $params['categories']), 'product_cat');
+        }
+        if (array_key_exists('tags', $params) && is_array($params['tags'])) {
+            wp_set_object_terms($product->get_id(), array_map('sanitize_text_field', $params['tags']), 'product_tag');
+        }
         if (!empty($params['pharmacy_rules']) && is_array($params['pharmacy_rules'])) {
             Nevari_Helpers::update_product_rules($product->get_id(), $params['pharmacy_rules']);
         }
@@ -877,6 +1309,116 @@ final class Nevari_Rest {
         }
         Nevari_Audit::log('orders', 'nevari', 'product.deleted', 'success', ['product_id' => (int) $request['id'], 'object_type' => 'product', 'object_id' => (int) $request['id']]);
         return Nevari_Helpers::success(['deleted' => true]);
+    }
+
+    public static function products_duplicate(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_products_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id()])) {
+            return $response;
+        }
+        if (!self::woo_available()) {
+            return Nevari_Helpers::error('woocommerce_missing', 'WooCommerce is required.', 503);
+        }
+        $source = wc_get_product((int) $request['id']);
+        if (!$source) {
+            return Nevari_Helpers::error('product_not_found', 'Product not found.', 404);
+        }
+
+        $duplicate = clone $source;
+        $duplicate->set_id(0);
+        $duplicate->set_name(sanitize_text_field($source->get_name() . ' (copy)'));
+        $duplicate->set_status('draft');
+        $duplicate->set_sku('');
+        $duplicate->set_slug('');
+
+        if (method_exists($duplicate, 'set_catalog_visibility')) {
+            $duplicate->set_catalog_visibility($source->get_catalog_visibility());
+        }
+        $duplicate->set_regular_price($source->get_regular_price());
+        $duplicate->set_sale_price($source->get_sale_price());
+        $duplicate->set_description($source->get_description());
+        $duplicate->set_short_description($source->get_short_description());
+        $duplicate->set_manage_stock($source->get_manage_stock());
+        $duplicate->set_stock_status($source->get_stock_status());
+        if ($source->get_stock_quantity() !== null) {
+            $duplicate->set_stock_quantity($source->get_stock_quantity());
+        }
+
+        $new_product_id = $duplicate->save();
+        if (!$new_product_id) {
+            return Nevari_Helpers::error('product_duplicate_failed', 'The product could not be duplicated.', 500);
+        }
+
+        $category_ids = wp_get_post_terms($source->get_id(), 'product_cat', ['fields' => 'ids']);
+        if (!is_wp_error($category_ids) && $category_ids) {
+            wp_set_object_terms($new_product_id, array_map('intval', $category_ids), 'product_cat');
+        }
+
+        $tag_ids = wp_get_post_terms($source->get_id(), 'product_tag', ['fields' => 'ids']);
+        if (!is_wp_error($tag_ids) && $tag_ids) {
+            wp_set_object_terms($new_product_id, array_map('intval', $tag_ids), 'product_tag');
+        }
+
+        $image_id = $source->get_image_id();
+        if ($image_id) {
+            $duplicate->set_image_id($image_id);
+        }
+        $gallery_ids = $source->get_gallery_image_ids();
+        if (is_array($gallery_ids) && $gallery_ids) {
+            $duplicate->set_gallery_image_ids(array_map('intval', $gallery_ids));
+        }
+        $duplicate->save();
+
+        $source_rules = Nevari_Helpers::product_rules($source->get_id());
+        if (!empty($source_rules) && is_array($source_rules)) {
+            Nevari_Helpers::update_product_rules($new_product_id, $source_rules);
+        }
+
+        Nevari_Audit::log('orders', 'nevari', 'product.duplicated', 'success', ['product_id' => $new_product_id, 'source_product_id' => $source->get_id(), 'object_type' => 'product', 'object_id' => $new_product_id]);
+        return Nevari_Helpers::success(self::format_product(wc_get_product($new_product_id), true), [], 201);
+    }
+
+    public static function products_upload_media(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_products_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'media'])) {
+            return $response;
+        }
+        $params = Nevari_Helpers::get_json_params($request);
+        $filename = isset($params['filename']) ? sanitize_file_name((string) $params['filename']) : '';
+        $mime_type = isset($params['mime_type']) ? sanitize_text_field((string) $params['mime_type']) : '';
+        $data_base64 = isset($params['data_base64']) ? (string) $params['data_base64'] : '';
+        if (!$filename || !$mime_type || !$data_base64 || strpos($mime_type, 'image/') !== 0) {
+            return Nevari_Helpers::error('validation_error', 'A valid image upload is required.', 422);
+        }
+
+        $bytes = base64_decode($data_base64, true);
+        if ($bytes === false || !$bytes) {
+            return Nevari_Helpers::error('validation_error', 'Image data is invalid.', 422);
+        }
+
+        $upload = wp_upload_bits($filename, null, $bytes);
+        if (!empty($upload['error'])) {
+            return Nevari_Helpers::error('media_upload_failed', sanitize_text_field((string) $upload['error']), 500);
+        }
+
+        $attachment_id = wp_insert_attachment([
+            'post_mime_type' => $mime_type,
+            'post_title' => sanitize_text_field(pathinfo($filename, PATHINFO_FILENAME)),
+            'post_status' => 'inherit',
+        ], $upload['file']);
+        if (is_wp_error($attachment_id) || !$attachment_id) {
+            return Nevari_Helpers::error('media_upload_failed', 'The image attachment could not be created.', 500);
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        $metadata = wp_generate_attachment_metadata($attachment_id, $upload['file']);
+        if ($metadata) {
+            wp_update_attachment_metadata($attachment_id, $metadata);
+        }
+
+        return Nevari_Helpers::success([
+            'id' => (int) $attachment_id,
+            'src' => wp_get_attachment_url($attachment_id),
+            'alt' => sanitize_text_field(pathinfo($filename, PATHINFO_FILENAME)),
+        ], [], 201);
     }
 
     public static function products_update_rules(WP_REST_Request $request): WP_REST_Response {
@@ -898,21 +1440,50 @@ final class Nevari_Rest {
 
     private static function format_product($product, bool $include_description = false): array {
         $product_id = $product->get_id();
+        $stock_quantity = $product->get_stock_quantity();
+        if ($stock_quantity === null) {
+            $raw_stock = get_post_meta($product_id, '_stock', true);
+            if ($raw_stock !== '' && $raw_stock !== null) {
+                $stock_quantity = wc_stock_amount($raw_stock);
+            }
+        }
         $data = [
             'id' => $product_id,
             'name' => $product->get_name(),
             'type' => $product->get_type(),
             'status' => $product->get_status(),
+            'slug' => $product->get_slug(),
+            'permalink' => get_permalink($product_id),
+            'date_created' => $product->get_date_created() ? $product->get_date_created()->date('c') : null,
+            'date_modified' => $product->get_date_modified() ? $product->get_date_modified()->date('c') : null,
             'sku' => $product->get_sku(),
+            'currency' => get_woocommerce_currency(),
             'price' => $product->get_price(),
             'regular_price' => $product->get_regular_price(),
             'sale_price' => $product->get_sale_price(),
             'stock_status' => $product->get_stock_status(),
-            'stock_quantity' => $product->get_stock_quantity(),
+            'stock_quantity' => $stock_quantity,
+            'stock' => $stock_quantity,
             'categories' => wp_get_post_terms($product_id, 'product_cat', ['fields' => 'names']),
             'tags' => wp_get_post_terms($product_id, 'product_tag', ['fields' => 'names']),
             'pharmacy_rules' => Nevari_Helpers::product_rules($product_id),
             'image' => wp_get_attachment_image_url($product->get_image_id(), 'medium') ?: null,
+            'images' => array_values(array_filter(array_merge(
+                $product->get_image_id() ? [[
+                    'id' => (int) $product->get_image_id(),
+                    'src' => wp_get_attachment_image_url($product->get_image_id(), 'large') ?: wp_get_attachment_url($product->get_image_id()),
+                    'alt' => get_post_meta($product->get_image_id(), '_wp_attachment_image_alt', true) ?: $product->get_name(),
+                ]] : [],
+                array_map(static function ($attachment_id) use ($product) {
+                    return [
+                        'id' => (int) $attachment_id,
+                        'src' => wp_get_attachment_image_url($attachment_id, 'large') ?: wp_get_attachment_url($attachment_id),
+                        'alt' => get_post_meta($attachment_id, '_wp_attachment_image_alt', true) ?: $product->get_name(),
+                    ];
+                }, $product->get_gallery_image_ids())
+            ), static function ($image) {
+                return !empty($image['src']);
+            })),
         ];
         if ($include_description) {
             $data['description'] = $product->get_description();
@@ -1074,6 +1645,63 @@ final class Nevari_Rest {
         return Nevari_Helpers::success(self::format_doctor(get_user_by('id', (int) $user_id), true), [], 201);
     }
 
+    public static function customers_create(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_customers_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id()])) {
+            return $response;
+        }
+        $params = Nevari_Helpers::get_json_params($request);
+        $email = isset($params['email']) ? sanitize_email((string) $params['email']) : '';
+        $display_name = isset($params['display_name']) ? sanitize_text_field((string) $params['display_name']) : '';
+        $first_name = isset($params['first_name']) ? sanitize_text_field((string) $params['first_name']) : '';
+        $last_name = isset($params['last_name']) ? sanitize_text_field((string) $params['last_name']) : '';
+        if (!$display_name) {
+            $display_name = trim($first_name . ' ' . $last_name);
+        }
+        if (!$email || !is_email($email) || !$display_name) {
+            return Nevari_Helpers::error('validation_error', 'Valid email and display_name are required.', 422);
+        }
+        if (email_exists($email)) {
+            return Nevari_Helpers::error('email_exists', 'A user with this email already exists.', 409);
+        }
+
+        $password = !empty($params['password']) ? (string) $params['password'] : wp_generate_password(20, true);
+        $email_parts = explode('@', $email);
+        $login_base = sanitize_user($email_parts[0] . '_' . wp_generate_password(4, false));
+        $role = get_role('customer') ? 'customer' : 'subscriber';
+        $user_id = wp_insert_user([
+            'user_login' => $login_base,
+            'user_email' => $email,
+            'user_pass' => $password,
+            'display_name' => $display_name,
+            'role' => $role,
+        ]);
+        if (is_wp_error($user_id)) {
+            return Nevari_Helpers::error('customer_create_failed', $user_id->get_error_message(), 400);
+        }
+
+        update_user_meta((int) $user_id, 'first_name', $first_name);
+        update_user_meta((int) $user_id, 'last_name', $last_name);
+        update_user_meta((int) $user_id, 'billing_first_name', $first_name);
+        update_user_meta((int) $user_id, 'billing_last_name', $last_name);
+        update_user_meta((int) $user_id, 'billing_email', $email);
+        if (!empty($params['phone'])) {
+            update_user_meta((int) $user_id, 'billing_phone', sanitize_text_field((string) $params['phone']));
+        }
+        if (!empty($params['address'])) {
+            update_user_meta((int) $user_id, 'billing_address_1', sanitize_text_field((string) $params['address']));
+        }
+
+        Nevari_Audit::log('orders', 'nevari', 'customer.created', 'success', ['related_user_id' => (int) $user_id, 'object_type' => 'user', 'object_id' => (int) $user_id]);
+        return Nevari_Helpers::success([
+            'id' => (int) $user_id,
+            'user_id' => (int) $user_id,
+            'display_name' => $display_name,
+            'email' => $email,
+            'first_name' => $first_name,
+            'last_name' => $last_name,
+        ], [], 201);
+    }
+
     public static function doctors_update(WP_REST_Request $request): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('rest_doctors_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id()])) {
             return $response;
@@ -1165,7 +1793,7 @@ final class Nevari_Rest {
 
     private static function ensure_doctor_profile(int $doctor_user_id, array $params): int {
         $existing = get_posts([
-            'post_type' => 'nevari_doctor_profile',
+            'post_type' => 'nevari_doctor_prof',
             'post_status' => ['publish', 'draft', 'private'],
             'meta_key' => '_nevari_doctor_user_id',
             'meta_value' => $doctor_user_id,
@@ -1179,7 +1807,7 @@ final class Nevari_Rest {
             wp_update_post(['ID' => $profile_id, 'post_title' => $title, 'post_content' => $content]);
         } else {
             $profile_id = wp_insert_post([
-                'post_type' => 'nevari_doctor_profile',
+                'post_type' => 'nevari_doctor_prof',
                 'post_status' => 'publish',
                 'post_title' => $title,
                 'post_content' => $content,
@@ -1204,7 +1832,7 @@ final class Nevari_Rest {
         global $wpdb;
         $table = Nevari_Helpers::table('doctor_settings');
         $existing = (int) $wpdb->get_var($wpdb->prepare("SELECT id FROM {$table} WHERE doctor_user_id = %d", $doctor_id));
-        $profile = get_posts(['post_type' => 'nevari_doctor_profile', 'meta_key' => '_nevari_doctor_user_id', 'meta_value' => $doctor_id, 'fields' => 'ids', 'numberposts' => 1]);
+        $profile = get_posts(['post_type' => 'nevari_doctor_prof', 'meta_key' => '_nevari_doctor_user_id', 'meta_value' => $doctor_id, 'fields' => 'ids', 'numberposts' => 1]);
         $data = [
             'doctor_user_id' => $doctor_id,
             'profile_post_id' => $profile ? (int) $profile[0] : null,
@@ -1225,7 +1853,7 @@ final class Nevari_Rest {
 
     private static function format_doctor(WP_User $user, bool $include_private = false): array {
         global $wpdb;
-        $profile_ids = get_posts(['post_type' => 'nevari_doctor_profile', 'meta_key' => '_nevari_doctor_user_id', 'meta_value' => $user->ID, 'fields' => 'ids', 'numberposts' => 1]);
+        $profile_ids = get_posts(['post_type' => 'nevari_doctor_prof', 'meta_key' => '_nevari_doctor_user_id', 'meta_value' => $user->ID, 'fields' => 'ids', 'numberposts' => 1]);
         $profile_id = $profile_ids ? (int) $profile_ids[0] : 0;
         $settings = $wpdb->get_row($wpdb->prepare("SELECT * FROM " . Nevari_Helpers::table('doctor_settings') . " WHERE doctor_user_id = %d", (int) $user->ID));
         $data = [
@@ -2000,12 +2628,17 @@ final class Nevari_Rest {
     }
 
     private static function sales_summary(): array {
-        if (!self::woo_available()) { return ['today' => '0', 'month' => '0', 'orders_today' => 0]; }
+        if (!self::woo_available()) { return ['today' => '0', 'month' => '0', 'orders_today' => 0, 'currency' => 'USD']; }
         $today_orders = wc_get_orders(['limit' => -1, 'date_created' => '>' . gmdate('Y-m-d 00:00:00'), 'status' => ['processing','completed']]);
         $month_orders = wc_get_orders(['limit' => -1, 'date_created' => '>' . gmdate('Y-m-01 00:00:00'), 'status' => ['processing','completed']]);
         $today_total = 0; foreach ($today_orders as $o) { $today_total += (float) $o->get_total(); }
         $month_total = 0; foreach ($month_orders as $o) { $month_total += (float) $o->get_total(); }
-        return ['today' => wc_format_decimal($today_total, 2), 'month' => wc_format_decimal($month_total, 2), 'orders_today' => count($today_orders)];
+        return [
+            'today' => wc_format_decimal($today_total, 2),
+            'month' => wc_format_decimal($month_total, 2),
+            'orders_today' => count($today_orders),
+            'currency' => get_woocommerce_currency(),
+        ];
     }
 
     public static function audit_logs_index(WP_REST_Request $request): WP_REST_Response {

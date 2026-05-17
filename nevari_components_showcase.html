@@ -1,0 +1,304 @@
+
+<style>
+  :root {
+    --n-primary: #0E2955;
+    --n-primary-hover: #143B73;
+    --n-primary-soft: #E7EEF8;
+    --n-bg-app: #F8F5EF;
+    --n-bg-panel: #FFFFFF;
+    --n-bg-card: #FFFDF8;
+    --n-text-main: #0E2955;
+    --n-text-muted: #5F6470;
+    --n-text-subtle: #9AA4B5;
+    --n-border: rgba(14,41,85,0.10);
+    --n-border-strong: rgba(14,41,85,0.18);
+    --n-shadow-card: 0 12px 28px rgba(14,41,85,0.07);
+    --n-shadow-inset: inset 0 1px 0 rgba(255,255,255,0.55);
+    --n-shadow-btn: 0 10px 22px rgba(14,41,85,0.14);
+    --n-radius-pill: 999px;
+    --n-radius-md: 16px;
+    --n-radius-sm: 12px;
+    --n-radius-xs: 8px;
+    --n-sand: #D8CAB6;
+    --n-softblue: #ADB7C8;
+    --n-apricot: #D99860;
+    --n-slateblue: #5C6D89;
+    --n-deepblue: #344A6E;
+    --n-goldsand: #B9996D;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Inter, Manrope, ui-sans-serif, system-ui, sans-serif; background: transparent; }
+  .wrapper { padding: 28px 24px; display: flex; flex-direction: column; gap: 36px; }
+  .section-label { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--n-text-subtle); margin-bottom: 14px; }
+
+  /* ─── STATUS CHIPS ─── */
+  .chips-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 12px;
+    border-radius: var(--n-radius-pill);
+    font-size: 12px; font-weight: 600; letter-spacing: -0.01em;
+    border: 1px solid transparent;
+    box-shadow: var(--n-shadow-inset);
+    white-space: nowrap; cursor: default; user-select: none;
+    transition: transform 0.12s, box-shadow 0.12s;
+  }
+  .chip:hover { transform: translateY(-1px); box-shadow: var(--n-shadow-card), var(--n-shadow-inset); }
+  .chip-dot {
+    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  }
+  .chip.pending {
+    background: linear-gradient(135deg, #FEF3DC, #FAE0A8);
+    color: #7A4E0D; border-color: rgba(185,153,109,0.28);
+  }
+  .chip.pending .chip-dot { background: #D99860; }
+  .chip.complete {
+    background: linear-gradient(135deg, #D9EFE4, #AEDCC5);
+    color: #1A5438; border-color: rgba(52,154,110,0.22);
+  }
+  .chip.complete .chip-dot { background: #349A6E; }
+  .chip.canceled {
+    background: linear-gradient(135deg, #EEE9E3, #DDD3C7);
+    color: #4A3E32; border-color: rgba(92,77,61,0.18);
+  }
+  .chip.canceled .chip-dot { background: #9A8878; }
+  .chip.processing {
+    background: linear-gradient(135deg, #DDE5F5, #B8CCEE);
+    color: #1A3468; border-color: rgba(52,74,110,0.22);
+  }
+  .chip.processing .chip-dot { background: #344A6E; animation: pulse-dot 1.4s ease-in-out infinite; }
+  .chip.refunded {
+    background: linear-gradient(135deg, #EDE0F5, #D8BFEC);
+    color: #4A2468; border-color: rgba(108,60,148,0.20);
+  }
+  .chip.refunded .chip-dot { background: #7B42B0; }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.75); }
+  }
+
+  /* ─── ADD BUTTON ─── */
+  .add-btn-group { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn-add-primary {
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 40px; padding: 0 20px;
+    border-radius: var(--n-radius-pill);
+    background: var(--n-primary);
+    color: white; font-size: 13px; font-weight: 600;
+    border: none; cursor: pointer;
+    box-shadow: var(--n-shadow-btn);
+    transition: background 0.15s, transform 0.12s, box-shadow 0.15s;
+    letter-spacing: -0.01em;
+  }
+  .btn-add-primary:hover { background: var(--n-primary-hover); transform: translateY(-1px); box-shadow: 0 14px 28px rgba(14,41,85,0.20); }
+  .btn-add-primary:active { transform: translateY(0); box-shadow: var(--n-shadow-btn); }
+  .btn-add-primary .plus-icon {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+    display: grid; place-items: center;
+    font-size: 16px; line-height: 1; font-weight: 300;
+  }
+
+  .btn-add-outline {
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 40px; padding: 0 18px;
+    border-radius: var(--n-radius-pill);
+    background: rgba(255,255,255,0.38);
+    color: var(--n-primary); font-size: 13px; font-weight: 600;
+    border: 1px solid var(--n-border-strong); cursor: pointer;
+    box-shadow: var(--n-shadow-inset);
+    transition: background 0.15s, transform 0.12s;
+    letter-spacing: -0.01em;
+  }
+  .btn-add-outline:hover { background: rgba(255,255,255,0.68); transform: translateY(-1px); }
+  .btn-add-outline .plus-icon {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--n-primary-soft);
+    display: grid; place-items: center;
+    font-size: 14px; font-weight: 300; color: var(--n-primary);
+  }
+
+  .btn-add-ghost {
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 40px; padding: 0 16px;
+    border-radius: var(--n-radius-pill);
+    background: var(--n-primary-soft);
+    color: var(--n-primary); font-size: 13px; font-weight: 600;
+    border: none; cursor: pointer;
+    transition: background 0.15s, transform 0.12s;
+    letter-spacing: -0.01em;
+  }
+  .btn-add-ghost:hover { background: #D0DDF5; transform: translateY(-1px); }
+  .btn-add-ghost .plus-icon {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: rgba(14,41,85,0.10);
+    display: grid; place-items: center;
+    font-size: 14px; font-weight: 300;
+  }
+
+  .btn-add-icon {
+    width: 40px; height: 40px;
+    border-radius: var(--n-radius-pill);
+    background: var(--n-primary);
+    color: white; font-size: 20px; font-weight: 300;
+    border: none; cursor: pointer;
+    display: grid; place-items: center;
+    box-shadow: var(--n-shadow-btn);
+    transition: background 0.15s, transform 0.12s;
+  }
+  .btn-add-icon:hover { background: var(--n-primary-hover); transform: translateY(-1px) scale(1.04); }
+
+  /* ─── FILTER OPTIONS ─── */
+  .filter-block { display: flex; flex-direction: column; gap: 16px; }
+
+  .filter-bar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 6px 8px;
+    background: rgba(255,255,255,0.35);
+    border: 1px solid var(--n-border);
+    border-radius: var(--n-radius-pill);
+    box-shadow: var(--n-shadow-inset);
+    width: fit-content;
+  }
+  .filter-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 32px; padding: 0 14px;
+    border-radius: var(--n-radius-pill);
+    background: transparent; color: var(--n-text-muted);
+    font-size: 12px; font-weight: 600;
+    border: none; cursor: pointer;
+    transition: background 0.13s, color 0.13s;
+    letter-spacing: -0.01em;
+  }
+  .filter-btn:hover { background: rgba(14,41,85,0.06); color: var(--n-text-main); }
+  .filter-btn.active {
+    background: var(--n-primary); color: white;
+    box-shadow: 0 6px 16px rgba(14,41,85,0.16);
+  }
+  .filter-btn .count-badge {
+    min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: var(--n-radius-pill);
+    font-size: 10px; font-weight: 700; line-height: 18px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .filter-btn.active .count-badge { background: rgba(255,255,255,0.20); color: white; }
+  .filter-btn:not(.active) .count-badge { background: rgba(14,41,85,0.09); color: var(--n-text-muted); }
+  .filter-divider { width: 1px; height: 20px; background: var(--n-border); flex-shrink: 0; }
+
+  .filter-dropdown-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .filter-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 36px; padding: 0 14px;
+    border-radius: var(--n-radius-pill);
+    background: rgba(255,255,255,0.38); color: var(--n-text-main);
+    font-size: 12px; font-weight: 600;
+    border: 1px solid var(--n-border); cursor: pointer;
+    box-shadow: var(--n-shadow-inset);
+    transition: background 0.13s, border-color 0.13s;
+    letter-spacing: -0.01em;
+  }
+  .filter-pill:hover { background: rgba(255,255,255,0.70); border-color: var(--n-border-strong); }
+  .filter-pill .caret { font-size: 10px; color: var(--n-text-subtle); margin-left: 2px; }
+  .filter-pill .filter-icon { font-size: 13px; color: var(--n-text-muted); }
+  .filter-pill.active-filter { border-color: rgba(14,41,85,0.30); background: var(--n-primary-soft); color: var(--n-primary); }
+  .filter-pill.active-filter .caret { color: var(--n-primary); }
+
+  .active-tags { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .active-tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 10px 0 12px;
+    border-radius: var(--n-radius-pill);
+    background: var(--n-primary); color: white;
+    font-size: 11px; font-weight: 600;
+    border: none; cursor: default;
+  }
+  .active-tag .remove-btn {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: rgba(255,255,255,0.20); color: white;
+    display: grid; place-items: center;
+    font-size: 11px; line-height: 1; cursor: pointer;
+    border: none; padding: 0;
+    transition: background 0.12s;
+  }
+  .active-tag .remove-btn:hover { background: rgba(255,255,255,0.38); }
+  .clear-all-link { font-size: 11px; color: var(--n-apricot); font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+  /* Nested panel */
+  .component-panel {
+    background: rgba(255,255,255,0.28);
+    border: 1px solid rgba(255,255,255,0.40);
+    border-radius: 20px;
+    padding: 20px 22px;
+    box-shadow: var(--n-shadow-card);
+  }
+</style>
+
+<div class="wrapper">
+
+  <!-- STATUS CHIPS -->
+  <div class="component-panel">
+    <div class="section-label">Status chips</div>
+    <div class="chips-row">
+      <span class="chip pending"><span class="chip-dot"></span>Pending</span>
+      <span class="chip complete"><span class="chip-dot"></span>Complete</span>
+      <span class="chip canceled"><span class="chip-dot"></span>Canceled</span>
+      <span class="chip processing"><span class="chip-dot"></span>Processing</span>
+      <span class="chip refunded"><span class="chip-dot"></span>Refunded</span>
+    </div>
+  </div>
+
+  <!-- ADD BUTTONS -->
+  <div class="component-panel">
+    <div class="section-label">Add button — variants</div>
+    <div class="add-btn-group">
+      <button class="btn-add-primary">
+        <span class="plus-icon">+</span>
+        Add Record
+      </button>
+      <button class="btn-add-outline">
+        <span class="plus-icon">+</span>
+        New Entry
+      </button>
+      <button class="btn-add-ghost">
+        <span class="plus-icon">+</span>
+        Add Item
+      </button>
+      <button class="btn-add-icon" title="Add">+</button>
+    </div>
+  </div>
+
+  <!-- FILTER OPTIONS -->
+  <div class="component-panel">
+    <div class="section-label">Filter options — segmented tabs</div>
+    <div class="filter-bar">
+      <button class="filter-btn active">All <span class="count-badge">120</span></button>
+      <button class="filter-btn">Pending <span class="count-badge">18</span></button>
+      <button class="filter-btn">Complete <span class="count-badge">74</span></button>
+      <div class="filter-divider"></div>
+      <button class="filter-btn">Canceled <span class="count-badge">11</span></button>
+      <button class="filter-btn">Refunded <span class="count-badge">6</span></button>
+    </div>
+  </div>
+
+  <div class="component-panel">
+    <div class="section-label">Filter options — dropdown pills</div>
+    <div class="filter-dropdown-group">
+      <span class="filter-pill"><span class="filter-icon">⊞</span> Filter <span class="caret">▾</span></span>
+      <span class="filter-pill active-filter">Status: Active <span class="caret">▾</span></span>
+      <span class="filter-pill">Date Range <span class="caret">▾</span></span>
+      <span class="filter-pill">Sort by: Newest <span class="caret">▾</span></span>
+    </div>
+  </div>
+
+  <div class="component-panel">
+    <div class="section-label">Filter options — active tags</div>
+    <div class="active-tags">
+      <span style="font-size:12px; color:var(--n-text-muted); font-weight:600;">Active:</span>
+      <span class="active-tag">Status: Pending <button class="remove-btn">×</button></span>
+      <span class="active-tag">Apr 2025 <button class="remove-btn">×</button></span>
+      <span class="active-tag">Above ₦10,000 <button class="remove-btn">×</button></span>
+      <span class="clear-all-link">Clear all</span>
+    </div>
+  </div>
+
+</div>

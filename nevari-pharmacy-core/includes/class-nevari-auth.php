@@ -22,6 +22,12 @@ final class Nevari_Auth {
             'permission_callback' => '__return_true',
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/password-reset', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'password_reset'],
+            'permission_callback' => '__return_true',
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/logout', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'logout'],
@@ -60,6 +66,9 @@ final class Nevari_Auth {
                 'error_code' => 'invalid_frontend_context',
                 'message' => 'Access token was used from an untrusted frontend context.',
             ]);
+            return $user_id;
+        }
+        if (!self::user_can_access_frontend((int) $payload['sub'], (string) $payload['frontend_type'])) {
             return $user_id;
         }
         return (int) $payload['sub'];
@@ -108,14 +117,14 @@ final class Nevari_Auth {
             return Nevari_Helpers::error('invalid_credentials', 'Invalid username or password.', 401);
         }
 
-        if (!self::user_can_access_dashboard($user)) {
+        if (!self::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
             Nevari_Audit::log('security', 'nevari', 'auth.forbidden_access', 'error', [
                 'actor_user_id' => (int) $user->ID,
                 'related_user_id' => (int) $user->ID,
                 'error_code' => 'role_not_allowed',
                 'message' => 'User role is not allowed to access Nevari API.',
             ]);
-            return Nevari_Helpers::error('forbidden', 'This account cannot access the pharmacy dashboard.', 403);
+            return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
         }
 
         $tokens = self::issue_token_pair((int) $user->ID, $frontend);
@@ -140,6 +149,64 @@ final class Nevari_Auth {
             ],
             'user' => self::format_user($user),
         ]);
+    }
+
+    public static function password_reset(WP_REST_Request $request): WP_REST_Response {
+        $params = Nevari_Helpers::get_json_params($request);
+        $username = isset($params['username']) ? sanitize_text_field((string) $params['username']) : '';
+        $ip = Nevari_Helpers::client_ip();
+        $username_key = $username ? sanitize_user(strtolower($username), true) : 'unknown';
+
+        if ($response = Nevari_Helpers::rate_limit('auth_password_reset_ip', 5, 15 * MINUTE_IN_SECONDS, [$ip])) {
+            return $response;
+        }
+        if ($response = Nevari_Helpers::rate_limit('auth_password_reset_user', 5, 15 * MINUTE_IN_SECONDS, [$username_key])) {
+            return $response;
+        }
+        if (!$username) {
+            return Nevari_Helpers::error('validation_error', 'Username or email is required.', 422);
+        }
+
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend) {
+            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+        }
+
+        $reset_user = self::find_user_by_login_or_email($username);
+        if (!$reset_user || !self::user_can_access_frontend($reset_user, (string) $frontend['frontend_type'])) {
+            Nevari_Audit::log('security', 'nevari', 'auth.password_reset_requested', 'success', [
+                'message' => 'Password reset requested.',
+                'metadata' => [
+                    'frontend_type' => $frontend['frontend_type'],
+                    'frontend_origin' => $frontend['frontend_origin'],
+                    'result' => 'ineligible_or_unknown_user',
+                ],
+            ]);
+            return Nevari_Helpers::success(['submitted' => true]);
+        }
+
+        $result = retrieve_password($username);
+        if (is_wp_error($result)) {
+            Nevari_Audit::log('security', 'nevari', 'auth.password_reset_requested', 'success', [
+                'message' => 'Password reset requested.',
+                'metadata' => [
+                    'frontend_type' => $frontend['frontend_type'],
+                    'frontend_origin' => $frontend['frontend_origin'],
+                    'result' => $result->get_error_code(),
+                ],
+            ]);
+            return Nevari_Helpers::success(['submitted' => true]);
+        }
+
+        Nevari_Audit::log('security', 'nevari', 'auth.password_reset_requested', 'success', [
+            'message' => 'Password reset requested.',
+            'metadata' => [
+                'frontend_type' => $frontend['frontend_type'],
+                'frontend_origin' => $frontend['frontend_origin'],
+            ],
+        ]);
+
+        return Nevari_Helpers::success(['submitted' => true]);
     }
 
     public static function refresh(WP_REST_Request $request): WP_REST_Response {
@@ -185,6 +252,10 @@ final class Nevari_Auth {
         $user = get_user_by('id', (int) $row->user_id);
         if (!$user) {
             return Nevari_Helpers::error('invalid_refresh_token', 'Refresh token user no longer exists.', 401);
+        }
+        if (!self::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
+            $wpdb->update($table, ['revoked_at' => $now], ['id' => (int) $row->id], ['%s'], ['%d']);
+            return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
         }
 
         $wpdb->update($table, ['revoked_at' => $now], ['id' => (int) $row->id], ['%s'], ['%d']);
@@ -328,9 +399,23 @@ final class Nevari_Auth {
         return $payload;
     }
 
-    private static function user_can_access_dashboard(WP_User $user): bool {
+    private static function user_can_access_frontend($user, string $frontend_type): bool {
+        $resolved_user = $user instanceof WP_User ? $user : get_user_by('id', (int) $user);
+        if (!$resolved_user) {
+            return false;
+        }
+
+        if ($frontend_type === 'storefront') {
+            return (bool) array_intersect(['administrator', 'shop_manager'], (array) $resolved_user->roles);
+        }
+
         $allowed_roles = ['patient', 'customer', 'doctor', 'store_admin', 'administrator', 'shop_manager'];
-        return (bool) array_intersect($allowed_roles, (array) $user->roles);
+        return (bool) array_intersect($allowed_roles, (array) $resolved_user->roles);
+    }
+
+    private static function find_user_by_login_or_email(string $username): ?WP_User {
+        $user = strpos($username, '@') !== false ? get_user_by('email', $username) : get_user_by('login', $username);
+        return $user instanceof WP_User ? $user : null;
     }
 
     public static function format_user(WP_User $user): array {

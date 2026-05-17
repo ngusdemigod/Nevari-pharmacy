@@ -348,9 +348,12 @@
                 <h2>Prescription-sensitive orders</h2>
               </div>
               <div class="toolbar">
-                <button class="pill-button">Needs RX</button>
-                <button class="pill-button">Awaiting payment</button>
-                <button class="pill-button">Doctor follow-up</button>
+                <div class="order-queue-tabs" id="queueFilterTabs" role="tablist" aria-label="Order queue filters">
+                  <button class="pill-button order-queue-tab active" type="button" data-queue-filter="all" role="tab" aria-selected="true">All <span class="filter-count" id="queueAllCount">0</span></button>
+                  <button class="pill-button order-queue-tab" type="button" data-queue-filter="needs_rx" role="tab" aria-selected="false">Needs RX <span class="filter-count" id="queueNeedsRxCount">0</span></button>
+                  <button class="pill-button order-queue-tab" type="button" data-queue-filter="awaiting_payment" role="tab" aria-selected="false">Awaiting payment <span class="filter-count" id="queueAwaitingPaymentCount">0</span></button>
+                  <button class="pill-button order-queue-tab" type="button" data-queue-filter="doctor_follow_up" role="tab" aria-selected="false">Doctor follow-up <span class="filter-count" id="queueDoctorFollowUpCount">0</span></button>
+                </div>
               </div>
             </div>
             <div class="table-scroll">
@@ -361,9 +364,9 @@
                     <th>Patient</th>
                     <th>Product mix</th>
                     <th>Prescription</th>
+                    <th>Price</th>
                     <th>Status</th>
-                    <th>Value</th>
-                    <th>Next action</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody id="queueTableBody"></tbody>

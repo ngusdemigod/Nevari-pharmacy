@@ -4,6 +4,8 @@ if (!defined('ABSPATH')) {
 }
 
 final class Nevari_Plugin {
+    private const DOCTOR_PROFILE_POST_TYPE = 'nevari_doctor_prof';
+
     private static $instance = null;
 
     public static function instance(): self {
@@ -35,7 +37,7 @@ final class Nevari_Plugin {
     }
 
     public function register_post_types(): void {
-        register_post_type('nevari_doctor_profile', [
+        register_post_type(self::DOCTOR_PROFILE_POST_TYPE, [
             'label' => __('Doctor Profiles', 'nevari-pharmacy-core'),
             'labels' => [
                 'name' => __('Doctor Profiles', 'nevari-pharmacy-core'),
@@ -51,7 +53,7 @@ final class Nevari_Plugin {
     }
 
     public function register_taxonomies(): void {
-        register_taxonomy('nevari_doctor_specialty', ['nevari_doctor_profile'], [
+        register_taxonomy('nevari_doctor_specialty', [self::DOCTOR_PROFILE_POST_TYPE], [
             'label' => __('Doctor Specialties', 'nevari-pharmacy-core'),
             'public' => false,
             'show_ui' => true,
@@ -59,7 +61,7 @@ final class Nevari_Plugin {
             'hierarchical' => true,
         ]);
 
-        register_taxonomy('nevari_doctor_language', ['nevari_doctor_profile'], [
+        register_taxonomy('nevari_doctor_language', [self::DOCTOR_PROFILE_POST_TYPE], [
             'label' => __('Doctor Languages', 'nevari-pharmacy-core'),
             'public' => false,
             'show_ui' => true,
@@ -67,7 +69,7 @@ final class Nevari_Plugin {
             'hierarchical' => false,
         ]);
 
-        register_taxonomy('nevari_doctor_location', ['nevari_doctor_profile'], [
+        register_taxonomy('nevari_doctor_location', [self::DOCTOR_PROFILE_POST_TYPE], [
             'label' => __('Doctor Locations', 'nevari-pharmacy-core'),
             'public' => false,
             'show_ui' => true,

@@ -967,6 +967,291 @@
       }
     }
 
+    /* ── Status Chips ── */
+    .chips-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 12px;
+      border-radius: var(--radius-pill);
+      font-size: var(--font-size-sm);
+      font-weight: var(--font-weight-semibold);
+      letter-spacing: -0.01em;
+      border: 1px solid transparent;
+      white-space: nowrap;
+      cursor: default;
+      user-select: none;
+      transition: transform 0.12s;
+    }
+
+    .chip:hover { transform: translateY(-1px); }
+
+    .chip-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .chip.pending    { background: #FEF0CC; color: #7A4E0D; border-color: #F0D080; }
+    .chip.pending    .chip-dot { background: #D99860; }
+
+    .chip.complete   { background: #D4EDE2; color: #1A5438; border-color: #9ECFB8; }
+    .chip.complete   .chip-dot { background: #349A6E; }
+
+    .chip.canceled   { background: #E8E3DC; color: #4A3E32; border-color: #C8BFB3; }
+    .chip.canceled   .chip-dot { background: #9A8878; }
+
+    .chip.processing { background: #DAE4F4; color: #1A3468; border-color: #A8BEE0; }
+    .chip.processing .chip-dot { background: #344A6E; animation: chip-pulse 1.4s ease-in-out infinite; }
+
+    .chip.refunded   { background: #EAD9F5; color: #4A2468; border-color: #C8A0E4; }
+    .chip.refunded   .chip-dot { background: #7B42B0; }
+
+    @keyframes chip-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.45; transform: scale(0.72); }
+    }
+
+    /* ── Add Buttons ── */
+    .btn-add-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 20px;
+      border-radius: var(--radius-pill);
+      background: var(--color-primary);
+      color: white;
+      font-size: var(--font-size-md);
+      font-weight: var(--font-weight-semibold);
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 10px 22px rgba(14,41,85,0.14);
+      transition: background 0.15s, transform 0.12s;
+      letter-spacing: -0.01em;
+    }
+
+    .btn-add-primary:hover { background: var(--color-primary-hover); transform: translateY(-1px); }
+
+    .btn-add-outline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 18px;
+      border-radius: var(--radius-pill);
+      background: rgba(255,255,255,0.38);
+      color: var(--color-primary);
+      font-size: var(--font-size-md);
+      font-weight: var(--font-weight-semibold);
+      border: 1px solid var(--color-border-strong);
+      cursor: pointer;
+      box-shadow: var(--shadow-inset);
+      transition: background 0.15s, transform 0.12s;
+      letter-spacing: -0.01em;
+    }
+
+    .btn-add-outline:hover { background: rgba(255,255,255,0.68); transform: translateY(-1px); }
+
+    .btn-add-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 16px;
+      border-radius: var(--radius-pill);
+      background: var(--color-primary-soft);
+      color: var(--color-primary);
+      font-size: var(--font-size-md);
+      font-weight: var(--font-weight-semibold);
+      border: none;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.12s;
+      letter-spacing: -0.01em;
+    }
+
+    .btn-add-ghost:hover { background: #D0DDF5; transform: translateY(-1px); }
+
+    .btn-add-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-pill);
+      background: var(--color-primary);
+      color: white;
+      font-size: 22px;
+      font-weight: 300;
+      border: none;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 10px 22px rgba(14,41,85,0.14);
+      transition: background 0.15s, transform 0.12s;
+    }
+
+    .btn-add-icon:hover { background: var(--color-primary-hover); transform: translateY(-1px) scale(1.04); }
+
+    .btn-plus-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.18);
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+      font-weight: 300;
+      line-height: 1;
+    }
+
+    /* ── Filter Bars ── */
+    .filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 6px 8px;
+      background: rgba(255,255,255,0.35);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-pill);
+      box-shadow: var(--shadow-inset);
+      width: fit-content;
+    }
+
+    .filter-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 14px;
+      border-radius: var(--radius-pill);
+      background: transparent;
+      color: var(--color-text-muted);
+      font-size: var(--font-size-sm);
+      font-weight: var(--font-weight-semibold);
+      border: none;
+      cursor: pointer;
+      transition: background 0.13s, color 0.13s;
+      letter-spacing: -0.01em;
+    }
+
+    .filter-btn:hover { background: rgba(14,41,85,0.06); color: var(--color-text-main); }
+
+    .filter-btn.active {
+      background: var(--color-primary);
+      color: white;
+      box-shadow: 0 6px 16px rgba(14,41,85,0.16);
+    }
+
+    .filter-count {
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: var(--radius-pill);
+      font-size: 10px;
+      font-weight: var(--font-weight-bold);
+      line-height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .filter-btn.active .filter-count { background: rgba(255,255,255,0.20); color: white; }
+    .filter-btn:not(.active) .filter-count { background: rgba(14,41,85,0.09); color: var(--color-text-muted); }
+
+    .filter-divider { width: 1px; height: 20px; background: var(--color-border); flex-shrink: 0; }
+
+    .filter-pill-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .filter-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 36px;
+      padding: 0 14px;
+      border-radius: var(--radius-pill);
+      background: rgba(255,255,255,0.38);
+      color: var(--color-text-main);
+      font-size: var(--font-size-sm);
+      font-weight: var(--font-weight-semibold);
+      border: 1px solid var(--color-border);
+      cursor: pointer;
+      box-shadow: var(--shadow-inset);
+      transition: background 0.13s, border-color 0.13s;
+      letter-spacing: -0.01em;
+    }
+
+    .filter-pill:hover { background: rgba(255,255,255,0.70); border-color: var(--color-border-strong); }
+
+    .filter-pill.active-filter {
+      border-color: rgba(14,41,85,0.30);
+      background: var(--color-primary-soft);
+      color: var(--color-primary);
+    }
+
+    .active-tags {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .active-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 10px 0 12px;
+      border-radius: var(--radius-pill);
+      background: var(--color-primary);
+      color: white;
+      font-size: 11px;
+      font-weight: var(--font-weight-semibold);
+      border: none;
+      cursor: default;
+    }
+
+    .active-tag-remove {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.20);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-size: 11px;
+      line-height: 1;
+      cursor: pointer;
+      border: none;
+      padding: 0;
+      transition: background 0.12s;
+    }
+
+    .active-tag-remove:hover { background: rgba(255,255,255,0.38); }
+
+    .clear-all-link {
+      font-size: 11px;
+      color: var(--color-accent-rose);
+      font-weight: var(--font-weight-semibold);
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      background: none;
+      border: none;
+    }
+
     @media (max-width: 680px) {
       body { padding: 14px; }
 
@@ -1326,6 +1611,73 @@
         <button class="pill">Secondary Pill</button>
         <button class="icon-button">⋯</button>
         <button class="page-item active">2</button>
+      </div>
+    </article>
+  </section>
+
+  <section class="system-section" style="margin-top: 28px;">
+    <article class="system-card" style="grid-column: 1 / -1;">
+      <h3>Status Chips</h3>
+      <div class="chips-row" style="margin-top: 14px;">
+        <span class="chip pending"><span class="chip-dot"></span>Pending</span>
+        <span class="chip complete"><span class="chip-dot"></span>Complete</span>
+        <span class="chip canceled"><span class="chip-dot"></span>Canceled</span>
+        <span class="chip processing"><span class="chip-dot"></span>Processing</span>
+        <span class="chip refunded"><span class="chip-dot"></span>Refunded</span>
+      </div>
+    </article>
+  </section>
+
+  <section class="system-section" style="margin-top: 28px;">
+    <article class="system-card" style="grid-column: 1 / -1;">
+      <h3>Add Buttons</h3>
+      <div class="component-row">
+        <button class="btn-add-primary">
+          <span class="btn-plus-icon">+</span>
+          Add Record
+        </button>
+        <button class="btn-add-outline">
+          <span class="btn-plus-icon" style="background: var(--color-primary-soft); color: var(--color-primary);">+</span>
+          New Entry
+        </button>
+        <button class="btn-add-ghost">
+          <span class="btn-plus-icon" style="background: rgba(14,41,85,0.10);">+</span>
+          Add Item
+        </button>
+        <button class="btn-add-icon" title="Add">+</button>
+      </div>
+    </article>
+  </section>
+
+  <section class="system-section" style="margin-top: 28px;">
+    <article class="system-card" style="grid-column: 1 / -1;">
+      <h3>Filter Options</h3>
+
+      <p style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--color-text-subtle); margin: 14px 0 10px;">Segmented tab bar</p>
+      <div class="filter-bar">
+        <button class="filter-btn active">All <span class="filter-count">120</span></button>
+        <button class="filter-btn">Pending <span class="filter-count">18</span></button>
+        <button class="filter-btn">Complete <span class="filter-count">74</span></button>
+        <div class="filter-divider"></div>
+        <button class="filter-btn">Canceled <span class="filter-count">11</span></button>
+        <button class="filter-btn">Refunded <span class="filter-count">6</span></button>
+      </div>
+
+      <p style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--color-text-subtle); margin: 18px 0 10px;">Dropdown pills</p>
+      <div class="filter-pill-group">
+        <button class="filter-pill">&#8862; Filter &#9660;</button>
+        <button class="filter-pill active-filter">Status: Active &#9660;</button>
+        <button class="filter-pill">Date Range &#9660;</button>
+        <button class="filter-pill">Sort by: Newest &#9660;</button>
+      </div>
+
+      <p style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--color-text-subtle); margin: 18px 0 10px;">Active filter tags</p>
+      <div class="active-tags">
+        <span style="font-size: 12px; color: var(--color-text-muted); font-weight: 600;">Active:</span>
+        <span class="active-tag">Status: Pending <button class="active-tag-remove">&#215;</button></span>
+        <span class="active-tag">Apr 2025 <button class="active-tag-remove">&#215;</button></span>
+        <span class="active-tag">Above &#8358;10,000 <button class="active-tag-remove">&#215;</button></span>
+        <button class="clear-all-link">Clear all</button>
       </div>
     </article>
   </section>

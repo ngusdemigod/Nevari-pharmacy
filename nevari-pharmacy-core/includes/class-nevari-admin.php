@@ -397,6 +397,8 @@ final class Nevari_Admin {
         return [
             'auth_login_ip' => ['label' => 'Login attempts by IP', 'default_limit' => 5, 'default_window' => 15 * MINUTE_IN_SECONDS],
             'auth_login_user' => ['label' => 'Login attempts by username', 'default_limit' => 10, 'default_window' => 15 * MINUTE_IN_SECONDS],
+            'auth_password_reset_ip' => ['label' => 'Password reset requests by IP', 'default_limit' => 5, 'default_window' => 15 * MINUTE_IN_SECONDS],
+            'auth_password_reset_user' => ['label' => 'Password reset requests by username', 'default_limit' => 5, 'default_window' => 15 * MINUTE_IN_SECONDS],
             'auth_refresh_ip' => ['label' => 'Token refresh by IP', 'default_limit' => 20, 'default_window' => 15 * MINUTE_IN_SECONDS],
             'auth_refresh_token' => ['label' => 'Token refresh by token', 'default_limit' => 10, 'default_window' => 15 * MINUTE_IN_SECONDS],
             'auth_logout_ip' => ['label' => 'Logout by IP', 'default_limit' => 30, 'default_window' => 15 * MINUTE_IN_SECONDS],

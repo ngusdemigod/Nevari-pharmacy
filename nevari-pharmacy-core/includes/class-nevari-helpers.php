@@ -19,6 +19,8 @@ final class Nevari_Helpers {
         return [
             'auth_login_ip' => ['limit' => 5, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_login_user' => ['limit' => 10, 'window' => 15 * MINUTE_IN_SECONDS],
+            'auth_password_reset_ip' => ['limit' => 5, 'window' => 15 * MINUTE_IN_SECONDS],
+            'auth_password_reset_user' => ['limit' => 5, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_refresh_ip' => ['limit' => 20, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_refresh_token' => ['limit' => 10, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_logout_ip' => ['limit' => 30, 'window' => 15 * MINUTE_IN_SECONDS],

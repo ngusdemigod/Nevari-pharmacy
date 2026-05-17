@@ -1,0 +1,11 @@
+MOdify these designs:
+- New product form: Shoould use same prduct edit form but and empty version aimed at creating a new product
+
+- New order form: the product should be a list table format with the ability to add as many products use the recent sales list product table from here [updated_nevari_design_system.html](updated_nevari_design_system.html) as an inspiration but witha an add button below every last list that says "add product" with an icon
+
+- New doctor and new customer forms: these should be profile creation forms but tailored to the respective scope, each form must have an initials avatar icon that gets its value from the first and the last words in  the fullname field or the first and lastname fields.  this profie form should be a 2 column form, column 1(Left): should cary the initals avatar (the circle should use the "sand" color and the initials should use the "primary" color gotten from the design system [updated_nevari_design_system.html](updated_nevari_design_system.html)) and the fullname and the email address all stacked on top of eachother whit their values gotten fromtheir respective form fields while column 2 (right): carries the form fields.
+
+- new consultation form: should have a rendered calendar showing the appointment calendar of the selected doctor this calendar should be able to zoom in down to the hour and out to the days of the week so the admin user can see days and times the doctor has been booked. then the formfield should be at the right hand side column and should start with the doctor's name, patient id should be changed to a search dropdown form where you can search by email or user name or first and last name of the user you want to add to the consultation use the design system [updated_nevari_design_system.html](updated_nevari_design_system.html) to make informed ui descisions
+
+
+if there are two popups on top of each other when once the cta button on the top most popup is clicked, let the popup be dissmissed to show the one underneath this should be effective throughout the app.

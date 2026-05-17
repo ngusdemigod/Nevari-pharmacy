@@ -62,6 +62,27 @@ async function proxyRequest(request, { params } = {}) {
   responseHeaders.delete("transfer-encoding");
   responseHeaders.set("Cache-Control", "no-store");
 
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    const rawBody = await response.text();
+    return Response.json(
+      {
+        success: false,
+        error: {
+          code: "upstream_non_json_response",
+          message: htmlToTextMessage(rawBody) || `WordPress returned ${response.status} for ${targetUrl.pathname}.`,
+          details: {
+            status: response.status,
+            statusText: response.statusText,
+            path: targetUrl.pathname,
+            upstream: `${targetUrl.origin}${targetUrl.pathname}`
+          }
+        }
+      },
+      { status: response.status || 502, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -89,4 +110,26 @@ export async function POST(request) {
       { status: 400 }
     );
   }
+}
+
+export async function DELETE(request) {
+  try {
+    return await proxyRequest(request);
+  } catch (error) {
+    return Response.json(
+      { success: false, error: { message: error.message || "Proxy request failed." } },
+      { status: 400 }
+    );
+  }
+}
+
+function htmlToTextMessage(value) {
+  return String(value || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
 }

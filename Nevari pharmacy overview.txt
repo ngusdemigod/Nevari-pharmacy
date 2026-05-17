@@ -1,3 +1,11 @@
+cd "C:\Users\USER\Downloads\nevari-pharmacy-core"
+docker compose up -d --build
+
+docker compose down
+http://localhost:4173
+http://127.0.0.1:3001/dashboard
+
+
 
 # Nevari Pharmacy Consultation & Prescription Management Architecture
 

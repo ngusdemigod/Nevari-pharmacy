@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Nevari Product Editor</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    font-family:'Inter',sans-serif;
+    background:#667085;
+    height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+}
+
+.overlay{
+    position:fixed;
+    inset:0;
+    background:rgba(17,24,39,.45);
+    backdrop-filter:blur(10px);
+}
+
+.modal{
+    position:relative;
+    width:95vw;
+    max-width:1400px;
+    height:92vh;
+    background:#fff;
+    border-radius:28px;
+    overflow:hidden;
+    box-shadow:0 20px 80px rgba(0,0,0,.18);
+    display:flex;
+    flex-direction:column;
+    z-index:2;
+}
+
+.header{
+    padding:28px 32px 20px;
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+}
+
+.title-wrap small{
+    display:block;
+    font-size:14px;
+    font-weight:700;
+    color:#6B7280;
+    margin-bottom:10px;
+}
+
+.title-wrap h1{
+    font-size:42px;
+    color:#102B5C;
+    font-weight:700;
+}
+
+.header-actions{
+    display:flex;
+    gap:16px;
+    align-items:center;
+}
+
+.publish-btn{
+    border:none;
+    background:#E9D5FF;
+    color:#5B2E91;
+    font-weight:600;
+    padding:14px 24px;
+    border-radius:999px;
+    cursor:pointer;
+}
+
+.close-btn{
+    width:52px;
+    height:52px;
+    border-radius:50%;
+    border:1px solid #D1D5DB;
+    background:#fff;
+    font-size:28px;
+    cursor:pointer;
+    color:#102B5C;
+}
+
+.content{
+    flex:1;
+    display:grid;
+    grid-template-columns: 520px 1fr;
+    gap:24px;
+    padding:0 24px 24px;
+    min-height:0;
+}
+
+/* LEFT COLUMN */
+
+.media-card{
+    border:1px solid #ECECEC;
+    border-radius:24px;
+    padding:20px;
+    background:#FAF9F7;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+}
+
+.media-title{
+    font-size:15px;
+    font-weight:700;
+    color:#6B7280;
+    margin-bottom:18px;
+}
+
+.featured-image{
+    width:100%;
+    flex:1;
+    min-height:320px;
+    border-radius:22px;
+    overflow:hidden;
+    position:relative;
+    background:#f3f4f6;
+}
+
+.featured-image img{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+}
+
+.edit-icon{
+    position:absolute;
+    top:16px;
+    right:16px;
+    width:42px;
+    height:42px;
+    border-radius:50%;
+    background:#fff;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    box-shadow:0 4px 20px rgba(0,0,0,.12);
+    cursor:pointer;
+    font-size:18px;
+}
+
+.thumb-grid{
+    margin-top:18px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:12px;
+}
+
+.thumb{
+    width:92px;
+    height:92px;
+    border-radius:16px;
+    overflow:hidden;
+    position:relative;
+    border:2px solid transparent;
+    cursor:pointer;
+    background:#f3f4f6;
+}
+
+.thumb.active{
+    border-color:#102B5C;
+}
+
+.thumb img{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+}
+
+.thumb .mini-edit{
+    position:absolute;
+    top:6px;
+    right:6px;
+    width:26px;
+    height:26px;
+    border-radius:50%;
+    background:#fff;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:12px;
+    box-shadow:0 2px 10px rgba(0,0,0,.12);
+}
+
+/* RIGHT COLUMN */
+
+.form-card{
+    border:1px solid #ECECEC;
+    border-radius:24px;
+    background:#fff;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+    min-height:0;
+}
+
+.tabs{
+    display:flex;
+    border-bottom:1px solid #ECECEC;
+}
+
+.tab{
+    flex:1;
+    padding:22px;
+    text-align:center;
+    font-weight:600;
+    color:#6B7280;
+    cursor:pointer;
+    position:relative;
+}
+
+.tab.active{
+    color:#102B5C;
+}
+
+.tab.active::after{
+    content:'';
+    position:absolute;
+    left:0;
+    bottom:0;
+    width:100%;
+    height:3px;
+    background:#102B5C;
+}
+
+.form-scroll{
+    flex:1;
+    overflow-y:auto;
+    padding:28px;
+}
+
+.grid-2{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:24px;
+}
+
+.field{
+    margin-bottom:28px;
+}
+
+.field label{
+    display:block;
+    margin-bottom:10px;
+    font-size:15px;
+    font-weight:600;
+    color:#102B5C;
+}
+
+.input,
+.textarea{
+    width:100%;
+    border:1px solid #D1D5DB;
+    border-radius:18px;
+    padding:18px;
+    font-size:15px;
+    outline:none;
+}
+
+.textarea{
+    min-height:200px;
+    resize:none;
+}
+
+.price-wrap{
+    display:flex;
+    align-items:center;
+    border:1px solid #D1D5DB;
+    border-radius:18px;
+    overflow:hidden;
+}
+
+.currency{
+    padding:18px;
+    border-right:1px solid #E5E7EB;
+    color:#102B5C;
+    font-weight:600;
+}
+
+.price-input{
+    flex:1;
+    border:none;
+    padding:18px;
+    outline:none;
+    font-size:15px;
+}
+
+.footer{
+    border-top:1px solid #ECECEC;
+    padding:22px 24px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    background:#fff;
+}
+
+.delete-btn{
+    background:#fff;
+    border:1px solid #F5C2C7;
+    color:#C1121F;
+    padding:16px 24px;
+    border-radius:18px;
+    font-weight:600;
+    cursor:pointer;
+}
+
+.footer-actions{
+    display:flex;
+    gap:16px;
+}
+
+.secondary-btn{
+    background:#fff;
+    border:1px solid #D1D5DB;
+    color:#102B5C;
+    padding:16px 28px;
+    border-radius:18px;
+    font-weight:600;
+    cursor:pointer;
+}
+
+.primary-btn{
+    background:#0B2A63;
+    color:#fff;
+    border:none;
+    padding:16px 34px;
+    border-radius:18px;
+    font-weight:600;
+    cursor:pointer;
+}
+
+@media(max-width:1200px){
+
+    .content{
+        grid-template-columns:1fr;
+        overflow-y:auto;
+    }
+
+    .media-card{
+        min-height:auto;
+    }
+
+    .featured-image{
+        height:420px;
+        flex:none;
+    }
+}
+
+@media(max-width:768px){
+
+    .title-wrap h1{
+        font-size:28px;
+    }
+
+    .grid-2{
+        grid-template-columns:1fr;
+    }
+
+    .tabs{
+        overflow-x:auto;
+    }
+
+    .tab{
+        min-width:220px;
+    }
+
+    .footer{
+        flex-direction:column;
+        gap:18px;
+        align-items:stretch;
+    }
+
+    .footer-actions{
+        width:100%;
+    }
+
+    .footer-actions button{
+        flex:1;
+    }
+}
+</style>
+</head>
+<body>
+
+<div class="overlay"></div>
+
+<div class="modal">
+
+    <div class="header">
+        <div class="title-wrap">
+            <small>PRODUCT EDITOR</small>
+            <h1>Diclofenac 50mg</h1>
+        </div>
+
+        <div class="header-actions">
+            <button class="publish-btn">Publish</button>
+            <button class="close-btn">×</button>
+        </div>
+    </div>
+
+    <div class="content">
+
+        <!-- LEFT -->
+        <div class="media-card">
+
+            <div class="media-title">MEDIA GALLERY</div>
+
+            <div class="featured-image">
+                <img src="https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?q=80&w=1200&auto=format&fit=crop" />
+
+                <div class="edit-icon">✎</div>
+            </div>
+
+            <div class="thumb-grid">
+
+                <div class="thumb active">
+                    <img src="https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?q=80&w=400&auto=format&fit=crop">
+                    <div class="mini-edit">✎</div>
+                </div>
+
+                <div class="thumb">
+                    <img src="https://images.unsplash.com/photo-1471864190281-a93a3070b6de?q=80&w=400&auto=format&fit=crop">
+                    <div class="mini-edit">✎</div>
+                </div>
+
+                <div class="thumb">
+                    <img src="https://images.unsplash.com/photo-1607619056574-7b8d3ee536b2?q=80&w=400&auto=format&fit=crop">
+                    <div class="mini-edit">✎</div>
+                </div>
+
+                <div class="thumb">
+                    <img src="https://images.unsplash.com/photo-1626285861696-9f0bf5a49c6d?q=80&w=400&auto=format&fit=crop">
+                    <div class="mini-edit">✎</div>
+                </div>
+
+                <div class="thumb">
+                    <img src="https://images.unsplash.com/photo-1587854692152-cbe660dbde88?q=80&w=400&auto=format&fit=crop">
+                    <div class="mini-edit">✎</div>
+                </div>
+
+                <div class="thumb">
+                    <img src="https://images.unsplash.com/photo-1576602976047-174e57a47881?q=80&w=400&auto=format&fit=crop">
+                    <div class="mini-edit">✎</div>
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- RIGHT -->
+        <div class="form-card">
+
+            <div class="tabs">
+                <div class="tab active">Details</div>
+                <div class="tab">Tags & Organization</div>
+                <div class="tab">Inventory & Shipping</div>
+            </div>
+
+            <div class="form-scroll">
+
+                <div class="grid-2">
+
+                    <div class="field">
+                        <label>Product Title</label>
+                        <input class="input" value="Diclofenac 50mg"/>
+                    </div>
+
+                    <div class="field">
+                        <label>Short Description</label>
+                        <textarea class="textarea" style="min-height:120px;">Pain reliever and anti-inflammatory medication.</textarea>
+                    </div>
+
+                </div>
+
+                <div class="field">
+                    <label>Long Description</label>
+                    <textarea class="textarea">
+Diclofenac 50mg is a nonsteroidal anti-inflammatory drug (NSAID) used to relieve pain, reduce inflammation, and lower fever.
+
+It is commonly prescribed for arthritis, muscle pain, and dental pain.
+                    </textarea>
+                </div>
+
+                <div class="grid-2">
+
+                    <div class="field">
+                        <label>Regular Price</label>
+
+                        <div class="price-wrap">
+                            <div class="currency">USD</div>
+                            <input class="price-input" value="12.50"/>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label>Sale Price</label>
+
+                        <div class="price-wrap">
+                            <div class="currency">USD</div>
+                            <input class="price-input" value="8.90"/>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="footer">
+
+        <button class="delete-btn">Delete Product</button>
+
+        <div class="footer-actions">
+            <button class="secondary-btn">Cancel</button>
+            <button class="primary-btn">Save Changes</button>
+        </div>
+
+    </div>
+
+</div>
+
+</body>
+</html>
