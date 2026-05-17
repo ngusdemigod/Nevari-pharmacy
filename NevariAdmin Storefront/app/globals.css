@@ -602,6 +602,2222 @@ body.modal-open .page-shell {
   grid-template-columns: 1fr;
 }
 
+.role-shell {
+  --role-primary: #0a2a5e;
+  --role-primary-dark: #061b3c;
+  --role-primary-soft: #dde7f2;
+  --role-secondary: #e5d7c6;
+  --role-secondary-soft: #f6efe7;
+  --role-accent-blue: #bfd0e5;
+  --role-accent-sand: #cdb98d;
+  --role-accent-peach: #f1e3d4;
+  --role-border: #ebe4da;
+  --role-text: #07182f;
+  --role-muted: #6e7480;
+  --role-card-shadow: 0 16px 40px rgba(10, 42, 94, 0.08);
+  --role-soft-shadow: 0 8px 20px rgba(10, 42, 94, 0.06);
+  width: min(1440px, 100%);
+}
+
+.role-shell .sidebar,
+.role-shell .main-shell {
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--role-card-shadow);
+}
+
+.role-shell .sidebar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(250, 248, 245, 0.9));
+}
+
+.role-shell .main-shell {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(250, 248, 245, 0.92));
+}
+
+.role-shell .brand-mark {
+  background: linear-gradient(135deg, var(--role-primary), var(--role-primary-dark));
+}
+
+.role-shell .brand-row span,
+.role-shell .nav-item,
+.role-shell .muted,
+.role-shell td,
+.role-shell .calendar-weekday,
+.role-shell .role-profile p {
+  color: var(--role-muted);
+}
+
+.role-shell .nav-groups {
+  gap: 8px;
+}
+
+.role-shell .nav-item {
+  min-height: 44px;
+  font-weight: 650;
+}
+
+.role-shell .nav-item.active {
+  background: var(--role-primary);
+  box-shadow: 0 12px 28px rgba(10, 42, 94, 0.18);
+}
+
+.role-topbar {
+  grid-template-columns: 1fr;
+  min-height: 72px;
+  height: auto;
+  align-items: center;
+  border-bottom: 1px solid var(--role-border);
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+}
+
+.role-sidebar-backdrop {
+  display: none;
+}
+
+.role-menu-button {
+  gap: 4px;
+  align-content: center;
+  justify-items: center;
+}
+
+.role-menu-button span {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.role-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.role-heading span {
+  color: var(--role-muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.role-topbar h1 {
+  margin: 0;
+  color: var(--role-text);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.role-gap,
+.role-metrics,
+.role-status-row {
+  margin-top: 18px;
+}
+
+.role-split {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.42fr) minmax(0, 1fr);
+  gap: 18px;
+}
+
+.role-calendar-panel,
+.role-profile {
+  align-content: start;
+}
+
+.role-shell .panel,
+.role-shell .table-panel,
+.role-shell .status-lane {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--role-border);
+  box-shadow: var(--role-card-shadow);
+}
+
+.role-calendar-panel h2,
+.role-profile h2,
+.table-panel h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.role-shell .metric-card {
+  min-height: 140px;
+  border-color: transparent;
+  box-shadow: var(--role-card-shadow);
+}
+
+.role-shell .metric-card.lime {
+  background: linear-gradient(135deg, var(--role-secondary-soft), var(--role-secondary));
+}
+
+.role-shell .metric-card.mint {
+  background: linear-gradient(135deg, #eff5fc, var(--role-accent-blue));
+}
+
+.role-shell .metric-card.rose {
+  background: linear-gradient(135deg, var(--role-accent-peach), var(--role-secondary));
+}
+
+.role-shell .metric-card.violet {
+  background: linear-gradient(135deg, var(--role-primary-soft), var(--role-primary));
+  color: #fff;
+}
+
+.role-shell .metric-card span {
+  position: relative;
+  z-index: 1;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.role-shell .metric-card strong {
+  position: relative;
+  z-index: 1;
+}
+
+.role-shell .status-lane {
+  min-height: 108px;
+  padding: 16px;
+}
+
+.role-shell .status-lane span {
+  color: var(--role-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.role-status-row strong {
+  display: block;
+  margin-top: 10px;
+  font-size: 24px;
+}
+
+.role-shell .table-panel {
+  padding: 18px;
+}
+
+.role-shell th {
+  color: var(--role-text);
+}
+
+.role-shell td {
+  border-top-color: var(--role-border);
+}
+
+.role-shell .pill-button {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: var(--role-border);
+  box-shadow: var(--role-soft-shadow);
+}
+
+.role-shell .pill-button:hover {
+  background: #fff;
+}
+
+.role-shell .role-profile {
+  display: grid;
+  gap: 8px;
+  min-height: 170px;
+}
+
+.role-shell .role-profile h2 {
+  color: var(--role-text);
+  font-size: 24px;
+}
+
+.role-app-header,
+.role-profile-mini,
+.role-icon-cluster,
+.role-appointment-card,
+.role-consultation-card {
+  display: flex;
+  align-items: center;
+}
+
+.role-app-header {
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.role-profile-mini {
+  gap: 12px;
+}
+
+.role-profile-mini div {
+  display: grid;
+  gap: 2px;
+}
+
+.role-profile-mini small,
+.role-doctor-strip small,
+.role-consultation-card small,
+.role-plan-card small,
+.role-appointment-card small {
+  color: var(--role-muted);
+}
+
+.role-profile-mini strong {
+  color: var(--role-text);
+  font-size: 16px;
+}
+
+.role-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--role-secondary), var(--role-accent-blue));
+  color: var(--role-primary);
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: var(--role-soft-shadow);
+  flex: 0 0 auto;
+}
+
+.role-avatar.doctor {
+  color: #fff;
+  background: linear-gradient(135deg, var(--role-primary), var(--role-secondary));
+}
+
+.role-avatar.compact {
+  width: 38px;
+  height: 38px;
+  font-size: 11px;
+}
+
+.role-icon-cluster {
+  gap: 8px;
+}
+
+.role-icon-circle {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--role-border);
+  box-shadow: var(--role-soft-shadow);
+  color: transparent;
+  position: relative;
+}
+
+.role-icon-circle::before {
+  color: var(--role-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.role-icon-circle:first-child::before {
+  content: "S";
+}
+
+.role-icon-circle.role-icon-alert::before {
+  content: "N";
+}
+
+.role-icon-alert::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b96b5f;
+  border: 2px solid #fff;
+  position: absolute;
+  right: 4px;
+  top: 4px;
+}
+
+.role-search-card {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--role-border);
+  box-shadow: var(--role-soft-shadow);
+  color: var(--role-muted);
+  font-size: 13px;
+}
+
+.role-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.doctor-overview-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.role-category-card {
+  min-height: 120px;
+  display: grid;
+  align-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--role-border);
+  box-shadow: var(--role-card-shadow);
+}
+
+.role-category-card.accent-blue {
+  background: linear-gradient(135deg, #eff5fc, var(--role-accent-blue));
+}
+
+.role-category-card.accent-sand {
+  background: linear-gradient(135deg, var(--role-secondary-soft), var(--role-accent-sand));
+}
+
+.role-category-card.accent-peach {
+  background: linear-gradient(135deg, var(--role-accent-peach), var(--role-secondary));
+}
+
+.role-category-card span {
+  color: var(--role-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.role-category-card strong {
+  color: var(--role-text);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.role-home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.role-feature-card,
+.role-plan-card {
+  border-radius: 24px;
+  border: 1px solid var(--role-border);
+  box-shadow: var(--role-card-shadow);
+}
+
+.role-feature-card {
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.role-section-label {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--role-text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.role-appointment-card {
+  gap: 12px;
+  min-height: 76px;
+  padding: 12px;
+  border-radius: 20px;
+  background: var(--role-secondary-soft);
+}
+
+.role-calendar-tile {
+  width: 48px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  background: var(--role-primary);
+  color: #fff;
+}
+
+.role-calendar-tile span {
+  font-size: 10px;
+}
+
+.role-calendar-tile strong {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.role-appointment-card div:nth-child(2),
+.role-consultation-card div {
+  display: grid;
+  gap: 2px;
+}
+
+.role-appointment-card em,
+.role-consultation-card em {
+  margin-left: auto;
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  background: #e8f2ee;
+  color: #2b665d;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.role-plan-card {
+  min-height: 168px;
+  padding: 18px;
+  background: linear-gradient(135deg, #eff5fc, var(--role-secondary-soft));
+}
+
+.role-plan-card h2 {
+  max-width: 280px;
+  margin: 10px 0 12px;
+  color: var(--role-text);
+  font-size: clamp(20px, 2vw, 28px);
+  line-height: 1.02;
+}
+
+.role-plan-card p {
+  margin: 0;
+  color: var(--role-muted);
+}
+
+.doctor-plan-card {
+  background: linear-gradient(135deg, var(--role-secondary-soft), var(--role-secondary));
+}
+
+.role-doctor-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.role-doctor-strip article {
+  display: grid;
+  gap: 8px;
+  min-height: 128px;
+  align-content: start;
+  padding: 14px;
+  border-radius: 20px;
+  background: var(--role-secondary-soft);
+}
+
+.role-doctor-strip strong {
+  font-size: 13px;
+}
+
+.role-consultation-list {
+  display: grid;
+  gap: 10px;
+}
+
+.role-consultation-card {
+  gap: 12px;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--role-secondary-soft);
+}
+
+.role-chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.role-chip-grid span {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
+  background: var(--role-primary-soft);
+  color: var(--role-primary);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.role-empty-card {
+  color: var(--role-muted);
+  font-size: 13px;
+}
+
+.desktop-dashboard-page {
+  min-height: calc(100vh - 52px);
+  width: min(1360px, 100%);
+  margin: 0 auto;
+}
+
+body:has(.role-shell-exact) {
+  background: #fff;
+}
+
+.role-shell-exact {
+  --color-primary: #0a2a5e;
+  --color-primary-soft: #dde7f2;
+  --color-primary-dark: #061b3c;
+  --color-secondary: #e5d7c6;
+  --color-secondary-soft: #f6efe7;
+  --color-accent-yellow: #cdb98d;
+  --color-accent-mint: #ede4d7;
+  --color-accent-pink: #d7c1b4;
+  --color-accent-blue: #bfd0e5;
+  --color-accent-peach: #f1e3d4;
+  --color-bg-2: #faf8f5;
+  --color-surface-soft: #f8f4ee;
+  --color-text: #07182f;
+  --color-text-muted: #6e7480;
+  --color-text-light: #a8aeb7;
+  --color-border: #ebe4da;
+  --color-dark: #0a2a5e;
+  --color-danger: #b96b5f;
+  --shadow-card: 0 16px 40px rgba(10, 42, 94, 0.08);
+  --shadow-soft: 0 8px 20px rgba(10, 42, 94, 0.06);
+  --shadow-floating: 0 22px 60px rgba(10, 42, 94, 0.13);
+}
+
+.desktop-dashboard-shell {
+  display: grid;
+  gap: 12px;
+  min-height: calc(100vh - 52px);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.desktop-dashboard-top-content {
+  grid-row: 1;
+}
+
+.desktop-dashboard-header {
+  grid-row: 2;
+}
+
+.desktop-dashboard-screen {
+  grid-row: 3;
+}
+
+.desktop-bottom-nav {
+  grid-row: 4;
+}
+
+.dashboard-side-nav {
+  display: none;
+}
+
+.dashboard-side-nav-backdrop,
+.dashboard-tablet-toolbar {
+  display: none;
+}
+
+.dashboard-menu-button {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: grid;
+  place-content: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-soft);
+}
+
+.dashboard-menu-button span {
+  width: 16px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--color-text);
+}
+
+.dashboard-side-nav-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dashboard-side-nav-mark {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  display: block;
+  object-fit: contain;
+  box-sizing: border-box;
+  padding: 8px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+
+.dashboard-side-nav-header div {
+  display: grid;
+  gap: 4px;
+}
+
+.dashboard-side-nav-header strong {
+  color: var(--color-text);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.dashboard-side-nav-header span:last-child {
+  color: var(--color-text-muted);
+  font-size: 15px;
+}
+
+.dashboard-side-nav-label {
+  margin: 30px 0 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dashboard-side-nav-list {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard-side-nav-item {
+  width: 100%;
+  min-height: 52px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 18px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.dashboard-side-nav-item.active {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.dashboard-side-nav-icon,
+.dashboard-mobile-nav-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.dashboard-side-nav-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--color-primary);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.dashboard-side-nav-item.active .dashboard-side-nav-icon {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.dashboard-side-nav-icon svg,
+.dashboard-mobile-nav-icon svg,
+.customer-quick-icon svg,
+.customer-order-icon svg,
+.icon-wrap svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.desktop-dashboard-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.desktop-dashboard-top-content {
+  display: grid;
+  gap: 0;
+}
+
+.desktop-dashboard-kicker {
+  margin: 0 0 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.desktop-dashboard-title {
+  margin: 0;
+  color: var(--color-text);
+  font-size: clamp(28px, 4vw, 42px);
+  line-height: 0.98;
+}
+
+.desktop-dashboard-cta {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--color-accent-blue);
+  color: var(--color-primary-dark);
+  text-decoration: none;
+  box-shadow: 0 12px 28px rgba(10, 42, 94, 0.18);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.desktop-dashboard-cta-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  position: relative;
+}
+
+.desktop-dashboard-cta-icon::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  top: -3px;
+  width: 7px;
+  height: 7px;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+}
+
+.desktop-dashboard-screen {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 31px;
+  background: linear-gradient(180deg, #fff 0%, #fbf8f3 100%);
+  padding: 14px 14px 12px;
+  position: relative;
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-floating);
+}
+
+.role-shell-exact .screen-scroll {
+  height: 100%;
+  overflow-y: auto;
+  padding: 0 2px 92px;
+  scrollbar-width: none;
+}
+
+.role-shell-exact .screen-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.role-shell-exact .app-header,
+.role-shell-exact .profile-mini,
+.role-shell-exact .cluster,
+.role-shell-exact .topbar {
+  display: flex;
+  align-items: center;
+}
+
+.role-shell-exact .app-header {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 0;
+}
+
+.role-shell-exact .profile-mini {
+  gap: 10px;
+  min-width: 0;
+}
+
+.role-shell-exact .small {
+  font-size: 11px;
+}
+
+.role-shell-exact .muted {
+  color: var(--color-text-muted);
+}
+
+.role-shell-exact .avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #e5d7c6, #d7c1b4);
+  color: #1f2b26;
+  font-size: 14px;
+  font-weight: 800;
+  position: relative;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.86);
+  box-shadow: var(--shadow-soft);
+  flex: 0 0 auto;
+}
+
+.role-shell-exact .avatar.doctor-one {
+  background: linear-gradient(135deg, #0a2a5e, #e5d7c6);
+}
+
+.role-shell-exact .avatar.doctor-two {
+  background: linear-gradient(135deg, #ede4d7, #e5d7c6);
+}
+
+.role-shell-exact .avatar.doctor-three {
+  background: linear-gradient(135deg, #cdb98d, #f1e3d4);
+}
+
+.role-shell-exact .avatar::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  width: 26px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: 50% 50% 0 0;
+}
+
+.role-shell-exact .icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.92);
+  display: inline-grid;
+  place-items: center;
+  color: var(--color-text);
+  box-shadow: var(--shadow-soft);
+  position: relative;
+}
+
+.role-shell-exact .icon-btn.small {
+  width: 32px;
+  height: 32px;
+}
+
+.mobile-icon-cluster {
+  gap: 8px;
+}
+
+.mobile-icon-search,
+.mobile-icon-bell,
+.mobile-icon-calendar {
+  position: relative;
+  display: inline-block;
+}
+
+.mobile-icon-search {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+
+.mobile-icon-search::after {
+  content: "";
+  position: absolute;
+  right: -5px;
+  bottom: -3px;
+  width: 7px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+
+.mobile-icon-bell {
+  width: 14px;
+  height: 15px;
+  border: 2px solid currentColor;
+  border-bottom: 0;
+  border-radius: 9px 9px 4px 4px;
+}
+
+.mobile-icon-bell::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: -4px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.mobile-icon-calendar {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+}
+
+.role-shell-exact .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  border: 2px solid #fff;
+}
+
+.role-shell-exact .search-box {
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: var(--radius-pill);
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--color-text-muted);
+  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--color-border);
+  font-size: 12px;
+}
+
+.mobile-search-box {
+  margin: 16px 0;
+}
+
+.role-shell-exact .search-box input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+}
+
+.role-shell-exact .tiny-title {
+  font-size: 13px;
+  font-weight: 720;
+  margin: 16px 0 10px;
+}
+
+.role-shell-exact .category-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 9px;
+}
+
+.role-shell-exact .category-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 2px;
+}
+
+.role-shell-exact .doctor-category-grid {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.role-shell-exact .category-card {
+  min-height: 104px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 22px;
+  padding: 10px;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.overview-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 0px;
+}
+
+.overview-title {
+  margin: 0;
+  color: var(--color-text);
+  font-size: clamp(28px, 4vw, 42px);
+  line-height: 0.98;
+}
+
+.role-shell-exact .category-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--color-text);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.role-shell-exact .category-icon.green {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.role-shell-exact .category-icon.yellow {
+  background: var(--color-accent-yellow);
+}
+
+.role-shell-exact .category-icon.lilac {
+  background: var(--color-secondary);
+}
+
+.role-shell-exact .category-icon.blue {
+  background: var(--color-accent-blue);
+}
+
+.role-shell-exact .category-meta {
+  font-size: 9px;
+  color: var(--color-text-light);
+}
+
+.role-shell-exact .category-name {
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.role-shell-exact .appointment-card,
+.role-shell-exact .empty-card {
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow-card);
+  padding: 15px;
+}
+
+.role-shell-exact .appointment-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.appointment-stack-viewport {
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scrollbar-width: none;
+}
+
+.appointment-stack-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.appointment-stack-track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(340px, 420px);
+  gap: 0;
+  align-items: stretch;
+  padding-right: 24px;
+}
+
+.appointment-stack-card {
+  position: relative;
+  min-height: 116px;
+  scroll-snap-align: start;
+  margin-left: calc(var(--stack, 0) * -36px);
+  z-index: calc(20 - var(--stack, 0));
+}
+
+.appointment-stack-card:first-child {
+  margin-left: 0;
+}
+
+.mobile-gap-bottom {
+  margin-bottom: 12px;
+}
+
+.role-shell-exact .calendar-tile {
+  width: 52px;
+  height: 56px;
+  border-radius: 18px;
+  background: var(--color-secondary);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-weight: 820;
+}
+
+.role-shell-exact .calendar-tile span {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  line-height: 1;
+}
+
+.role-shell-exact .calendar-tile strong {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.role-shell-exact .card-title {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.role-shell-exact .card-desc {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.role-shell-exact .status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 5px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  width: fit-content;
+}
+
+.role-shell-exact .status-badge.success {
+  background: #e8f2ee;
+  color: #2b665d;
+}
+
+.role-shell-exact .status-badge.warning {
+  background: #f7f1e4;
+  color: #8a6b27;
+}
+
+.booking-search-results {
+  display: grid;
+  gap: 12px;
+}
+
+.booking-search-results {
+  margin: -2px 0 16px;
+}
+
+.booking-search-result,
+.booking-search-empty {
+  border-radius: 18px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(235, 228, 218, 0.9);
+  box-shadow: var(--shadow-card);
+}
+
+.booking-search-result {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+}
+
+.booking-search-result strong {
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.booking-search-result span,
+.booking-search-empty {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.role-shell-exact .booking-search-empty {
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow-card);
+  border: 1px solid rgba(235, 228, 218, 0.9);
+  padding: 13px;
+}
+
+.desktop-booking-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.role-shell-exact .booking-list {
+  display: grid;
+  gap: 12px;
+}
+
+.role-shell-exact .booking-card {
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow-card);
+  border: 1px solid rgba(235, 228, 218, 0.9);
+  padding: 13px;
+}
+
+.role-shell-exact .booking-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.role-shell-exact .booking-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--color-primary);
+  background: linear-gradient(135deg, var(--color-secondary), var(--color-accent-blue));
+  font-size: 12px;
+  font-weight: 700;
+  flex: 0 0 auto;
+  box-shadow: var(--shadow-soft);
+}
+
+.role-shell-exact .booking-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.role-shell-exact .booking-meta h4 {
+  font-size: 13px;
+  line-height: 1.25;
+  color: var(--color-text);
+  margin: 0 0 3px;
+}
+
+.role-shell-exact .booking-meta p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+}
+
+.role-shell-exact .booking-pill {
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.role-shell-exact .booking-stat-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--color-secondary-soft);
+  border-radius: 15px;
+  overflow: hidden;
+  margin: 12px 0;
+}
+
+.role-shell-exact .booking-stat {
+  padding: 10px;
+}
+
+.role-shell-exact .booking-stat + .booking-stat {
+  border-left: 1px solid var(--color-border);
+}
+
+.role-shell-exact .booking-stat strong {
+  display: block;
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--color-text);
+  margin-bottom: 3px;
+}
+
+.role-shell-exact .booking-stat span {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.role-shell-exact .booking-btn {
+  min-height: 42px;
+  border-radius: 14px;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  background: var(--color-dark);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 12px 24px rgba(10, 42, 94, 0.18);
+}
+
+.role-shell-exact .plan-card {
+  position: relative;
+  min-height: 192px;
+  border-radius: 26px;
+  padding: 14px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  isolation: isolate;
+}
+
+.role-shell-exact .plan-card.green {
+  background: linear-gradient(135deg, #eff5fc 0%, #ede4d7 100%);
+}
+
+.role-shell-exact .plan-card.purple {
+  background: linear-gradient(135deg, #f6efe7 0%, #e5d7c6 100%);
+}
+
+.role-shell-exact .mini-person {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.role-shell-exact .mini-person .avatar {
+  width: 34px;
+  height: 34px;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.role-shell-exact .mini-person h4 {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.role-shell-exact .mini-person p {
+  font-size: 9px;
+  color: var(--color-text-muted);
+}
+
+.role-shell-exact .plan-title {
+  max-width: 260px;
+  font-size: 20px;
+  line-height: 1.05;
+  margin-bottom: 18px;
+}
+
+.role-shell-exact .plan-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.role-shell-exact .price {
+  font-size: 13px;
+  font-weight: 800;
+  margin-right: auto;
+}
+
+.role-shell-exact .register-pill {
+  height: 38px;
+  border-radius: var(--radius-pill);
+  padding: 0 8px 0 6px;
+  border: none;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 650;
+  box-shadow: var(--shadow-soft);
+}
+
+.role-shell-exact .register-pill .round {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-dark);
+  color: #fff;
+}
+
+.role-shell-exact .doctor-figure {
+  position: absolute;
+  right: -10px;
+  bottom: -6px;
+  width: 116px;
+  height: 150px;
+  border-radius: 50px 50px 0 0;
+  background:
+    radial-gradient(circle at 52% 18%, #e7c9b6 0 16px, transparent 17px),
+    linear-gradient(90deg, transparent 26px, #fff 26px 90px, transparent 90px),
+    linear-gradient(160deg, #dde7f2, #fff);
+  box-shadow: -12px -6px 28px rgba(255, 255, 255, 0.4);
+  z-index: -1;
+}
+
+.role-shell-exact .doctor-figure::before {
+  content: "";
+  position: absolute;
+  top: 28px;
+  left: 42px;
+  width: 34px;
+  height: 18px;
+  border-radius: 50%;
+  background: #36312c;
+}
+
+.role-shell-exact .doctor-figure::after {
+  content: "";
+  position: absolute;
+  top: 62px;
+  left: 47px;
+  width: 23px;
+  height: 48px;
+  border-left: 3px solid #444;
+  border-right: 3px solid #444;
+  border-bottom: 3px solid #444;
+  border-radius: 0 0 16px 16px;
+  opacity: 0.55;
+}
+
+.role-shell-exact .doctor-figure.female {
+  background:
+    radial-gradient(circle at 52% 18%, #e7c9b6 0 16px, transparent 17px),
+    linear-gradient(90deg, transparent 22px, #fff 22px 94px, transparent 94px),
+    linear-gradient(160deg, #e5d7c6, #fff);
+}
+
+.role-shell-exact .doctor-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.role-shell-exact .doctor-card {
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 25px;
+  padding: 13px;
+  box-shadow: var(--shadow-card);
+  display: grid;
+  gap: 12px;
+}
+
+.role-shell-exact .doctor-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.role-shell-exact .doctor-head .avatar {
+  width: 42px;
+  height: 42px;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.role-shell-exact .doctor-head h4 {
+  font-size: 12px;
+}
+
+.role-shell-exact .doctor-head p {
+  font-size: 9px;
+  color: var(--color-text-muted);
+}
+
+.mobile-push {
+  margin-left: auto;
+}
+
+.role-shell-exact .info-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 10px;
+  color: #3a403a;
+}
+
+.role-shell-exact .info-line .icon-wrap {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-surface-soft);
+  display: grid;
+  place-items: center;
+  color: var(--color-text);
+  flex: 0 0 auto;
+}
+
+.role-shell-exact .empty-card {
+  min-height: 184px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.role-shell-exact .compact-empty {
+  min-height: 72px;
+}
+
+.role-shell-exact .bottom-nav {
+  display: none;
+}
+
+.desktop-bottom-nav {
+  width: min(520px, calc(100% - 32px));
+  margin: 0 auto;
+}
+
+.role-shell-exact .nav-item {
+  width: auto;
+  min-width: 42px;
+  height: 42px;
+  margin-bottom: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--color-text-light);
+  background: transparent;
+  font-size: 10px;
+  font-weight: 650;
+  padding: 0;
+}
+
+.role-shell-exact .nav-item.active {
+  min-width: 112px;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+  color: #fff;
+  padding: 0 13px;
+}
+
+.mobile-nav-glyph {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  border: 2px solid currentColor;
+}
+
+.glyph-1 {
+  border-radius: 4px;
+}
+
+.glyph-2 {
+  border-radius: 50%;
+}
+
+.glyph-3 {
+  border-radius: 4px;
+  position: relative;
+}
+
+.glyph-4 {
+  border-radius: 50%;
+}
+
+.customer-dashboard-stack,
+.customer-doctor-list,
+.customer-order-list,
+.customer-appointment-list {
+  display: grid;
+  gap: 16px;
+}
+
+.customer-persistent-app-header {
+  margin-bottom: 16px;
+}
+
+.customer-hero-card,
+.customer-panel-card,
+.customer-list-shell,
+.customer-profile-hero,
+.customer-profile-card,
+.customer-order-card,
+.customer-appointment-card {
+  border-radius: 28px;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow-card);
+}
+
+.customer-hero-card {
+  padding: 18px;
+  background:
+    radial-gradient(circle at top right, rgba(191, 208, 229, 0.42), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 248, 245, 0.98));
+}
+
+.customer-app-header {
+  margin-bottom: 18px;
+}
+
+.customer-section-kicker {
+  display: inline-block;
+  margin-bottom: 8px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.customer-hero-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.customer-hero-text,
+.customer-meta-line {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.customer-quick-grid,
+.customer-overview-grid,
+.customer-status-grid,
+.customer-profile-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.customer-quick-grid,
+.customer-overview-grid {
+  margin-top: 18px;
+}
+
+.customer-quick-card {
+  min-height: 120px;
+  padding: 16px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.66);
+  display: grid;
+  align-content: space-between;
+  gap: 12px;
+  text-align: left;
+  box-shadow: var(--shadow-soft);
+}
+
+.customer-quick-card.accent-blue,
+.customer-stat-card.stat-1 {
+  background: linear-gradient(135deg, #eff5fc, var(--color-accent-blue));
+}
+
+.customer-quick-card.accent-sand,
+.customer-stat-card.stat-2 {
+  background: linear-gradient(135deg, var(--color-secondary-soft), var(--color-accent-yellow));
+}
+
+.customer-quick-card.accent-peach,
+.customer-stat-card.stat-3 {
+  background: linear-gradient(135deg, var(--color-accent-peach), var(--color-secondary));
+}
+
+.customer-stat-card.stat-4 {
+  background: linear-gradient(135deg, rgba(221, 231, 242, 0.9), rgba(245, 239, 231, 0.96));
+}
+
+.customer-quick-card strong,
+.customer-stat-card strong,
+.customer-status-tile strong,
+.customer-profile-card strong,
+.customer-order-side strong {
+  color: var(--color-text);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.customer-quick-card small,
+.customer-stat-card span,
+.customer-status-tile span,
+.customer-profile-card span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.customer-quick-icon,
+.customer-order-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.64);
+  color: var(--color-primary);
+}
+
+.customer-panel-card,
+.customer-list-shell,
+.customer-profile-hero {
+  padding: 18px;
+}
+
+.customer-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.customer-panel-head h2,
+.customer-profile-hero h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 22px;
+}
+
+.customer-inline-link {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.customer-appointment-highlight {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.customer-status-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.customer-status-tile,
+.customer-profile-card {
+  min-height: 88px;
+  padding: 14px;
+  border-radius: 22px;
+  background: var(--color-bg-2);
+  display: grid;
+  align-content: space-between;
+  gap: 8px;
+}
+
+.customer-doctor-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.customer-doctor-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 24px;
+  background: var(--color-bg-2);
+}
+
+.customer-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.customer-stat-card {
+  min-height: 108px;
+  padding: 14px 12px;
+  border-radius: 22px;
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  align-content: space-between;
+  gap: 10px;
+}
+
+.customer-order-card,
+.customer-appointment-card {
+  padding: 14px;
+}
+
+.customer-order-summary {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  text-align: left;
+  background: transparent;
+}
+
+.customer-order-main,
+.customer-order-side,
+.customer-order-detail-grid,
+.customer-order-actions,
+.customer-profile-hero {
+  display: flex;
+}
+
+.customer-order-main {
+  align-items: center;
+  gap: 12px;
+}
+
+.customer-order-side {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.customer-order-detail {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+
+.customer-order-detail-grid {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.customer-order-detail-grid > div {
+  flex: 1 1 140px;
+  min-height: 74px;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--color-bg-2);
+  display: grid;
+  gap: 6px;
+}
+
+.customer-order-detail-grid span {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.customer-order-detail-grid strong {
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.customer-order-actions {
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.customer-appointment-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.customer-appointment-card.past {
+  background: linear-gradient(180deg, rgba(248, 244, 238, 0.92), rgba(255, 255, 255, 0.96));
+}
+
+.customer-appointment-copy {
+  min-width: 0;
+}
+
+.customer-profile-hero {
+  align-items: center;
+  gap: 16px;
+}
+
+.customer-profile-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 980px) {
+  .desktop-dashboard-page {
+    width: 100%;
+  }
+
+  .desktop-dashboard-shell {
+    min-height: calc(100vh - 52px);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  .desktop-dashboard-screen {
+    min-height: 0;
+    height: 100%;
+    padding: 20px 20px 16px;
+  }
+
+  .role-shell-exact .screen-scroll {
+    padding-bottom: 104px;
+  }
+
+  .role-split {
+    grid-template-columns: 1fr;
+  }
+
+  .role-shell .sidebar {
+    z-index: 42;
+  }
+
+  .role-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 41;
+    display: block;
+    background: rgba(14, 41, 85, 0.2);
+    backdrop-filter: blur(2px);
+  }
+
+  .role-topbar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .role-topbar h1 {
+    font-size: 22px;
+  }
+
+  .doctor-overview-grid,
+  .role-doctor-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .role-home-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .role-shell-exact .doctor-list,
+  .role-shell-exact .doctor-category-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .desktop-booking-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .desktop-dashboard-screen {
+    padding: 10px 10px 12px;
+    border-radius: 0px;
+    border: 0px
+  }
+
+  .desktop-dashboard-title {
+    font-size: 22px;
+    line-height: 1;
+  }
+
+  .role-shell-exact .category-grid,
+  .role-shell-exact .doctor-category-grid,
+  .role-shell-exact .doctor-list {
+    grid-template-columns: 1fr;
+  }
+
+  .role-shell-exact .category-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .appointment-stack-track {
+    grid-auto-columns: minmax(280px, 88vw);
+  }
+
+  .appointment-stack-card {
+    margin-left: calc(var(--stack, 0) * -18px);
+  }
+
+  .desktop-dashboard-header {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-top: 4px;
+  }
+
+  .desktop-bottom-nav {
+    width: 90%;
+  }
+
+  .customer-overview-grid,
+  .customer-doctor-list,
+  .customer-profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-appointment-highlight,
+  .customer-appointment-card {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+  }
+
+  .customer-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-persistent-app-header {
+    margin-bottom: 8px;
+  }
+
+  .role-shell-exact .bottom-nav {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    height: 58px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-floating);
+    border-radius: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px;
+    backdrop-filter: blur(16px);
+    z-index: 8;
+  }
+
+  .desktop-bottom-nav {
+    width: 80%;
+  }
+}
+
+@media (min-width: 981px) {
+  .desktop-dashboard-shell {
+    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .dashboard-side-nav {
+    position: sticky;
+    top: 24px;
+    min-height: calc(100vh - 48px);
+    display: grid;
+    align-content: start;
+    gap: 0;
+    padding: 20px;
+    border-radius: 10px;
+    border: 1px solid rgba(235, 228, 218, 0.92);
+    background: linear-gradient(180deg, rgba(250, 248, 245, 0.98), rgba(248, 244, 238, 0.98));
+    box-shadow: none;
+    grid-row: 1 / span 2;
+  }
+
+  .desktop-dashboard-header,
+  .desktop-dashboard-screen,
+  .desktop-bottom-nav {
+    grid-column: 2;
+  }
+
+  .desktop-dashboard-header {
+    grid-row: 1;
+  }
+
+  .desktop-dashboard-screen {
+    grid-row: 2;
+  }
+
+  .customer-persistent-app-header,
+  .desktop-dashboard-top-content,
+  .role-shell-exact .desktop-bottom-nav {
+    display: none;
+  }
+
+  .customer-quick-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .customer-overview-grid {
+    grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  }
+}
+
+@media (max-width: 980px) {
+  .dashboard-side-nav {
+    display: none;
+  }
+
+  .desktop-dashboard-top-content {
+    display: grid;
+  }
+
+  .customer-stats-row {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 721px) and (max-width: 980px) {
+  .desktop-dashboard-shell {
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+  }
+
+  .dashboard-tablet-toolbar {
+    display: flex;
+    justify-content: flex-start;
+    grid-row: 1;
+  }
+
+  .desktop-dashboard-top-content {
+    grid-row: 2;
+  }
+
+  .desktop-dashboard-header {
+    grid-row: 3;
+  }
+
+  .desktop-dashboard-screen {
+    grid-row: 4;
+  }
+
+  .dashboard-side-nav {
+    position: fixed;
+    inset: 16px auto 16px 16px;
+    z-index: 30;
+    width: min(300px, calc(100vw - 32px));
+    display: grid;
+    align-content: start;
+    padding: 20px;
+    border-radius: 10px;
+    border: 1px solid rgba(235, 228, 218, 0.92);
+    background: linear-gradient(180deg, rgba(250, 248, 245, 0.99), rgba(248, 244, 238, 0.99));
+    box-shadow: var(--shadow-floating);
+    transform: translateX(calc(-100% - 24px));
+    transition: transform 180ms ease;
+  }
+
+  .dashboard-side-nav.is-open {
+    transform: translateX(0);
+  }
+
+  .dashboard-side-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 29;
+    display: block;
+    background: rgba(7, 24, 47, 0.18);
+  }
+
+  .role-shell-exact .desktop-bottom-nav {
+    display: none;
+  }
+
+  .role-shell-exact .screen-scroll {
+    padding-bottom: 18px;
+  }
+}
+
+@media (max-width: 640px) {
+  .customer-stats-row {
+    gap: 8px;
+  }
+
+  .customer-stat-card {
+    min-height: 94px;
+    padding: 12px 10px;
+  }
+
+  .customer-stat-card strong {
+    font-size: 20px;
+  }
+
+  .customer-order-summary {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .customer-order-side {
+    align-items: flex-start;
+  }
+}
+
 .status-dot {
   width: 10px;
   height: 10px;
@@ -1352,11 +3568,13 @@ td {
 
 .auth-inline-links {
   display: flex;
-  justify-content: center;
+  justify-content: space-between;
+  gap: 18px;
   margin-top: 2px;
 }
 
 .auth-text-link {
+  flex: 0 0 auto;
   min-height: auto;
   padding: 0;
   background: transparent;
@@ -1478,6 +3696,59 @@ td {
 
   .main-shell {
     padding: 14px;
+  }
+
+  .role-topbar {
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .role-gap,
+  .role-metrics,
+  .role-status-row {
+    margin-top: 14px;
+  }
+
+  .role-shell .table-panel,
+  .role-shell .panel {
+    padding: 14px;
+  }
+
+  .role-shell .toolbar {
+    align-items: stretch;
+  }
+
+  .role-shell .toolbar .pill-button {
+    flex: 1 1 calc(50% - 5px);
+  }
+
+  .role-app-header {
+    align-items: flex-start;
+  }
+
+  .role-overview-grid,
+  .doctor-overview-grid,
+  .role-doctor-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .role-appointment-card,
+  .role-consultation-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .role-appointment-card em,
+  .role-consultation-card em {
+    margin-left: 0;
+  }
+
+  .calendar-widget {
+    gap: 5px;
+  }
+
+  .calendar-day {
+    border-radius: 10px;
   }
 
   .auth-gate {
@@ -2982,9 +5253,9 @@ body.auth-locked .page-shell {
 .calendar-day {
   aspect-ratio: 1;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.38);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-main);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--role-border, var(--color-border));
+  color: var(--role-text, var(--color-text-main));
   font-weight: 750;
   position: relative;
 }
@@ -3002,11 +5273,11 @@ body.auth-locked .page-shell {
   height: 6px;
   transform: translateX(-50%);
   border-radius: 50%;
-  background: var(--color-accent-rose);
+  background: var(--role-accent-sand, var(--color-accent-rose));
 }
 
 .calendar-day.active {
-  background: var(--color-primary);
+  background: var(--role-primary, var(--color-primary));
   color: #fff;
 }
 

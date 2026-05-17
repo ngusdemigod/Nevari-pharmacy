@@ -16,6 +16,12 @@ final class Nevari_Auth {
             'permission_callback' => '__return_true',
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/verify-code', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'verify_code'],
+            'permission_callback' => '__return_true',
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/refresh', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'refresh'],
@@ -28,28 +34,34 @@ final class Nevari_Auth {
             'permission_callback' => '__return_true',
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/register-customer', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'register_customer'],
+            'permission_callback' => '__return_true',
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/logout', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'logout'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => [__CLASS__, 'api_session_required'],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/me', [
             'methods' => WP_REST_Server::READABLE,
             'callback' => [__CLASS__, 'me'],
-            'permission_callback' => static function () {
-                return is_user_logged_in();
-            },
+            'permission_callback' => [__CLASS__, 'api_session_required'],
         ]);
     }
 
     public static function determine_current_user($user_id) {
-        if ($user_id) {
-            return $user_id;
-        }
+        $api_user_id = self::api_session_user_id();
+        return $api_user_id ?: $user_id;
+    }
+
+    public static function api_session_user_id(): int {
         $token = Nevari_Helpers::get_bearer_token();
         if (!$token) {
-            return $user_id;
+            return 0;
         }
         $payload = self::decode_jwt($token);
         if (!$payload || empty($payload['sub']) || empty($payload['type']) || $payload['type'] !== 'access') {
@@ -58,7 +70,7 @@ final class Nevari_Auth {
                 'error_code' => 'invalid_token',
                 'message' => 'Invalid bearer token used.',
             ]);
-            return $user_id;
+            return 0;
         }
         if (!Nevari_Connections::validate_token_context($payload)) {
             Nevari_Audit::log('security', 'nevari', 'auth.invalid_frontend_context', 'error', [
@@ -66,12 +78,16 @@ final class Nevari_Auth {
                 'error_code' => 'invalid_frontend_context',
                 'message' => 'Access token was used from an untrusted frontend context.',
             ]);
-            return $user_id;
+            return 0;
         }
         if (!self::user_can_access_frontend((int) $payload['sub'], (string) $payload['frontend_type'])) {
-            return $user_id;
+            return 0;
         }
         return (int) $payload['sub'];
+    }
+
+    public static function api_session_required(): bool {
+        return self::api_session_user_id() > 0;
     }
 
     public static function login(WP_REST_Request $request): WP_REST_Response {
@@ -112,7 +128,7 @@ final class Nevari_Auth {
                 'severity' => 'warning',
                 'error_code' => 'invalid_credentials',
                 'message' => 'API login failed.',
-                'metadata' => ['username' => $username],
+                'metadata' => ['username_hash' => hash('sha256', strtolower($username))],
             ]);
             return Nevari_Helpers::error('invalid_credentials', 'Invalid username or password.', 401);
         }
@@ -127,11 +143,110 @@ final class Nevari_Auth {
             return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
         }
 
+        if (self::frontend_requires_email_verification((string) $frontend['frontend_type'])) {
+            $challenge = self::issue_login_challenge($user, $frontend);
+            if (is_wp_error($challenge)) {
+                return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
+            }
+
+            Nevari_Audit::log('security', 'nevari', 'auth.verification_code_sent', 'success', [
+                'actor_user_id' => (int) $user->ID,
+                'related_user_id' => (int) $user->ID,
+                'message' => 'Login verification code sent.',
+                'metadata' => [
+                    'frontend_type' => $frontend['frontend_type'],
+                    'frontend_origin' => $frontend['frontend_origin'],
+                ],
+            ]);
+
+            return Nevari_Helpers::success([
+                'verification_required' => true,
+                'challenge_id' => $challenge['challenge_id'],
+                'masked_email' => self::mask_email((string) $user->user_email),
+                'expires_in' => $challenge['expires_in'],
+            ]);
+        }
+
         $tokens = self::issue_token_pair((int) $user->ID, $frontend);
         Nevari_Audit::log('security', 'nevari', 'auth.login_success', 'success', [
             'actor_user_id' => (int) $user->ID,
             'related_user_id' => (int) $user->ID,
             'message' => 'API login successful.',
+            'metadata' => [
+                'frontend_type' => $frontend['frontend_type'],
+                'frontend_origin' => $frontend['frontend_origin'],
+            ],
+        ]);
+
+        return Nevari_Helpers::success([
+            'access_token' => $tokens['access_token'],
+            'refresh_token' => $tokens['refresh_token'],
+            'expires_in' => $tokens['expires_in'],
+            'frontend' => [
+                'type' => $frontend['frontend_type'],
+                'origin' => $frontend['frontend_origin'],
+                'url' => $frontend['frontend_url'],
+            ],
+            'user' => self::format_user($user),
+        ]);
+    }
+
+    public static function verify_code(WP_REST_Request $request): WP_REST_Response {
+        global $wpdb;
+        $params = Nevari_Helpers::get_json_params($request);
+        $challenge_id = isset($params['challenge_id']) ? sanitize_text_field((string) $params['challenge_id']) : '';
+        $code = isset($params['code']) ? preg_replace('/\D+/', '', (string) $params['code']) : '';
+        $ip = Nevari_Helpers::client_ip();
+
+        if ($response = Nevari_Helpers::rate_limit('auth_verify_ip', 10, 15 * MINUTE_IN_SECONDS, [$ip])) {
+            return $response;
+        }
+        if ($response = Nevari_Helpers::rate_limit('auth_verify_challenge', 5, 15 * MINUTE_IN_SECONDS, [$challenge_id ?: 'unknown'])) {
+            return $response;
+        }
+        if (!$challenge_id || strlen($code) !== 6) {
+            return Nevari_Helpers::error('validation_error', 'challenge_id and six-digit code are required.', 422);
+        }
+
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend) {
+            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+        }
+
+        $table = Nevari_Helpers::table('login_challenges');
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE challenge_uuid = %s AND consumed_at IS NULL AND expires_at > %s LIMIT 1",
+            $challenge_id,
+            Nevari_Helpers::now()
+        ));
+        if (!$row || $row->frontend_type !== $frontend['frontend_type'] || $row->frontend_origin !== $frontend['frontend_origin']) {
+            return Nevari_Helpers::error('invalid_verification_code', 'Verification code is invalid or expired.', 401);
+        }
+        if ((int) $row->attempts >= 5) {
+            return Nevari_Helpers::error('verification_locked', 'Verification challenge is locked.', 429);
+        }
+
+        $wpdb->update($table, ['attempts' => (int) $row->attempts + 1], ['id' => (int) $row->id], ['%d'], ['%d']);
+        if (!hash_equals((string) $row->code_hash, hash('sha256', $code))) {
+            Nevari_Audit::log('security', 'nevari', 'auth.verification_failed', 'error', [
+                'related_user_id' => (int) $row->user_id,
+                'severity' => 'warning',
+                'message' => 'Login verification code failed.',
+            ]);
+            return Nevari_Helpers::error('invalid_verification_code', 'Verification code is invalid or expired.', 401);
+        }
+
+        $user = get_user_by('id', (int) $row->user_id);
+        if (!$user || !self::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
+            return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
+        }
+
+        $wpdb->update($table, ['consumed_at' => Nevari_Helpers::now()], ['id' => (int) $row->id], ['%s'], ['%d']);
+        $tokens = self::issue_token_pair((int) $user->ID, $frontend);
+        Nevari_Audit::log('security', 'nevari', 'auth.login_success', 'success', [
+            'actor_user_id' => (int) $user->ID,
+            'related_user_id' => (int) $user->ID,
+            'message' => 'API login successful after email verification.',
             'metadata' => [
                 'frontend_type' => $frontend['frontend_type'],
                 'frontend_origin' => $frontend['frontend_origin'],
@@ -207,6 +322,52 @@ final class Nevari_Auth {
         ]);
 
         return Nevari_Helpers::success(['submitted' => true]);
+    }
+
+    public static function register_customer(WP_REST_Request $request): WP_REST_Response {
+        $params = Nevari_Helpers::get_json_params($request);
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend || $frontend['frontend_type'] !== 'patient_dashboard') {
+            return Nevari_Helpers::error('forbidden', 'Customer registration is available only from the customer dashboard.', 403);
+        }
+
+        $email = isset($params['email']) ? sanitize_email((string) $params['email']) : '';
+        $first_name = isset($params['first_name']) ? sanitize_text_field((string) $params['first_name']) : '';
+        $last_name = isset($params['last_name']) ? sanitize_text_field((string) $params['last_name']) : '';
+        $password = isset($params['password']) ? (string) $params['password'] : '';
+        $display_name = trim($first_name . ' ' . $last_name);
+
+        if (!$email || !is_email($email) || !$display_name || strlen($password) < 8) {
+            return Nevari_Helpers::error('validation_error', 'Valid name, email, and password with at least 8 characters are required.', 422);
+        }
+        if (email_exists($email)) {
+            return Nevari_Helpers::error('email_exists', 'A user with this email already exists.', 409);
+        }
+
+        $email_parts = explode('@', $email);
+        $user_id = wp_insert_user([
+            'user_login' => sanitize_user($email_parts[0] . '_' . wp_generate_password(4, false)),
+            'user_email' => $email,
+            'user_pass' => $password,
+            'display_name' => $display_name,
+            'role' => 'customer',
+        ]);
+        if (is_wp_error($user_id)) {
+            return Nevari_Helpers::error('customer_create_failed', $user_id->get_error_message(), 400);
+        }
+
+        update_user_meta((int) $user_id, 'first_name', $first_name);
+        update_user_meta((int) $user_id, 'last_name', $last_name);
+        update_user_meta((int) $user_id, 'billing_first_name', $first_name);
+        update_user_meta((int) $user_id, 'billing_last_name', $last_name);
+        update_user_meta((int) $user_id, 'billing_email', $email);
+
+        Nevari_Audit::log('security', 'nevari', 'auth.customer_registered', 'success', [
+            'related_user_id' => (int) $user_id,
+            'message' => 'Customer self-registration completed.',
+        ]);
+
+        return Nevari_Helpers::success(['created' => true], [], 201);
     }
 
     public static function refresh(WP_REST_Request $request): WP_REST_Response {
@@ -367,6 +528,58 @@ final class Nevari_Auth {
         ];
     }
 
+    private static function frontend_requires_email_verification(string $frontend_type): bool {
+        return in_array($frontend_type, ['storefront', 'doctors_dashboard'], true);
+    }
+
+    private static function issue_login_challenge(WP_User $user, array $frontend) {
+        global $wpdb;
+        $code = (string) random_int(100000, 999999);
+        $expires_in = 10 * MINUTE_IN_SECONDS;
+        $challenge_id = wp_generate_uuid4();
+        $inserted = $wpdb->insert(Nevari_Helpers::table('login_challenges'), [
+            'challenge_uuid' => $challenge_id,
+            'user_id' => (int) $user->ID,
+            'frontend_type' => $frontend['frontend_type'],
+            'frontend_origin' => $frontend['frontend_origin'],
+            'code_hash' => hash('sha256', $code),
+            'attempts' => 0,
+            'expires_at' => gmdate('Y-m-d H:i:s', time() + $expires_in),
+            'consumed_at' => null,
+            'created_at' => Nevari_Helpers::now(),
+        ], ['%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s', '%s']);
+        if (!$inserted) {
+            return new WP_Error('verification_challenge_failed', 'Verification code could not be created.');
+        }
+
+        $email_id = Nevari_Emails::queue_or_send([
+            'template_key' => 'login_verification_code',
+            'recipient_user_id' => (int) $user->ID,
+            'variables' => [
+                'display_name' => $user->display_name ?: $user->user_login,
+                'verification_code' => $code,
+                'expires_minutes' => 10,
+            ],
+        ], true);
+        if (is_wp_error($email_id)) {
+            return $email_id;
+        }
+
+        return [
+            'challenge_id' => $challenge_id,
+            'expires_in' => $expires_in,
+        ];
+    }
+
+    private static function mask_email(string $email): string {
+        if (!is_email($email)) {
+            return '';
+        }
+        [$local, $domain] = explode('@', $email, 2);
+        $visible = substr($local, 0, min(2, strlen($local)));
+        return $visible . str_repeat('*', max(1, strlen($local) - strlen($visible))) . '@' . $domain;
+    }
+
     public static function encode_jwt(array $payload): string {
         $header = ['typ' => 'JWT', 'alg' => 'HS256'];
         $segments = [
@@ -409,8 +622,15 @@ final class Nevari_Auth {
             return (bool) array_intersect(['administrator', 'shop_manager'], (array) $resolved_user->roles);
         }
 
-        $allowed_roles = ['patient', 'customer', 'doctor', 'store_admin', 'administrator', 'shop_manager'];
-        return (bool) array_intersect($allowed_roles, (array) $resolved_user->roles);
+        if ($frontend_type === 'doctors_dashboard') {
+            return in_array('doctor', (array) $resolved_user->roles, true);
+        }
+
+        if ($frontend_type === 'patient_dashboard') {
+            return in_array('customer', (array) $resolved_user->roles, true);
+        }
+
+        return false;
     }
 
     private static function find_user_by_login_or_email(string $username): ?WP_User {

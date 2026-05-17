@@ -55,7 +55,15 @@ The storefront then authenticates against the plugin REST API:
 - `GET /wp-json/nevari/v1/dashboard/store-admin`
 - supporting live data endpoints for orders, appointments, prescriptions, doctors, emails, products, and audit logs
 
-Session tokens are stored in browser local storage for this frontend.
+Set `NEVARI_PROXY_ALLOWED_ORIGINS` on the Next.js server to the comma-separated list of WordPress origins this deployment may contact, for example:
+
+```powershell
+$env:NEVARI_PROXY_ALLOWED_ORIGINS="https://pharmacy.example.com"
+```
+
+The proxy rejects requests when this allowlist is missing, when the target is outside the allowlist, or when the target uses a private-network hostname.
+
+Session tokens are currently stored in browser local storage for this frontend. Replace that with server-managed `HttpOnly` cookies before production deployment.
 
 ## Cross-origin note
 

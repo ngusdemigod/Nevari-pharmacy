@@ -43,6 +43,7 @@ final class Nevari_Activator {
         $email_logs = Nevari_Helpers::table('email_logs');
         $audit_logs = Nevari_Helpers::table('audit_logs');
         $refresh_tokens = Nevari_Helpers::table('refresh_tokens');
+        $login_challenges = Nevari_Helpers::table('login_challenges');
         $pairing_sessions = Nevari_Helpers::table('pairing_sessions');
         $frontend_connections = Nevari_Helpers::table('frontend_connections');
 
@@ -273,6 +274,23 @@ final class Nevari_Activator {
             KEY user_active (user_id, revoked_at, expires_at)
         ) {$charset};");
 
+        dbDelta("CREATE TABLE {$login_challenges} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            challenge_uuid CHAR(36) NOT NULL,
+            user_id BIGINT UNSIGNED NOT NULL,
+            frontend_type VARCHAR(40) NOT NULL,
+            frontend_origin VARCHAR(255) NOT NULL,
+            code_hash CHAR(64) NOT NULL,
+            attempts INT UNSIGNED NOT NULL DEFAULT 0,
+            expires_at DATETIME NOT NULL,
+            consumed_at DATETIME NULL,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY challenge_uuid (challenge_uuid),
+            KEY user_active (user_id, consumed_at, expires_at),
+            KEY frontend_type (frontend_type)
+        ) {$charset};");
+
         dbDelta("CREATE TABLE {$pairing_sessions} (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             session_uuid CHAR(36) NOT NULL,
@@ -408,6 +426,14 @@ final class Nevari_Activator {
                 'body_html' => '<p>Hello {{doctor_name}},</p><p>Order {{order_number}} has been assigned to you for {{patient_name}}.</p><p>You can open your dashboard to create a prescription or schedule an appointment.</p>',
                 'body_text' => 'Hello {{doctor_name}}, order {{order_number}} has been assigned to you for {{patient_name}}. Open your dashboard to create a prescription or schedule an appointment.',
                 'variables' => ['doctor_name', 'patient_name', 'order_number'],
+            ],
+            [
+                'template_key' => 'login_verification_code',
+                'name' => 'Login Verification Code',
+                'subject' => 'Your Nevari verification code',
+                'body_html' => '<p>Hello {{display_name}},</p><p>Your verification code is <strong>{{verification_code}}</strong>.</p><p>This code expires in {{expires_minutes}} minutes.</p>',
+                'body_text' => 'Hello {{display_name}}, your verification code is {{verification_code}}. This code expires in {{expires_minutes}} minutes.',
+                'variables' => ['display_name', 'verification_code', 'expires_minutes'],
             ],
         ];
 

@@ -4,6 +4,44 @@ function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function allowedOrigins() {
+  return String(process.env.NEVARI_PROXY_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((value) => normalizeBaseUrl(value))
+    .filter(Boolean);
+}
+
+function isPrivateHostname(hostname) {
+  const normalized = String(hostname || "").toLowerCase();
+  return normalized === "localhost"
+    || normalized === "127.0.0.1"
+    || normalized === "::1"
+    || normalized.startsWith("10.")
+    || normalized.startsWith("192.168.")
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(normalized)
+    || normalized.startsWith("169.254.");
+}
+
+function assertAllowedTarget(target) {
+  if (!["http:", "https:"].includes(target.protocol)) {
+    throw new Error("Unsupported protocol.");
+  }
+  if (target.username || target.password) {
+    throw new Error("Credentials in target URLs are not allowed.");
+  }
+  if (isPrivateHostname(target.hostname)) {
+    throw new Error("Private network targets are not allowed.");
+  }
+
+  const allowlist = allowedOrigins();
+  if (!allowlist.length) {
+    throw new Error("Proxy allowlist is not configured.");
+  }
+  if (!allowlist.includes(target.origin)) {
+    throw new Error("Target origin is not allowed.");
+  }
+}
+
 function buildTargetUrl(requestUrl) {
   const url = new URL(requestUrl);
   const baseUrl = normalizeBaseUrl(url.searchParams.get("baseUrl"));
@@ -17,6 +55,7 @@ function buildTargetUrl(requestUrl) {
   }
 
   const target = new URL(`${baseUrl}/wp-json/${API_NAMESPACE}${path}`);
+  assertAllowedTarget(target);
   url.searchParams.forEach((value, key) => {
     if (key === "baseUrl" || key === "path") {
       return;
@@ -95,7 +134,7 @@ export async function GET(request) {
     return await proxyRequest(request);
   } catch (error) {
     return Response.json(
-      { success: false, error: { message: "Proxy request failed." } },
+      { success: false, error: { message: error?.message || "Proxy request failed." } },
       { status: 400 }
     );
   }
@@ -106,7 +145,7 @@ export async function POST(request) {
     return await proxyRequest(request);
   } catch (error) {
     return Response.json(
-      { success: false, error: { message: "Proxy request failed." } },
+      { success: false, error: { message: error?.message || "Proxy request failed." } },
       { status: 400 }
     );
   }
@@ -117,7 +156,7 @@ export async function DELETE(request) {
     return await proxyRequest(request);
   } catch (error) {
     return Response.json(
-      { success: false, error: { message: "Proxy request failed." } },
+      { success: false, error: { message: error?.message || "Proxy request failed." } },
       { status: 400 }
     );
   }

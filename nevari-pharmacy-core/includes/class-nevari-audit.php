@@ -23,7 +23,7 @@ final class Nevari_Audit {
             'severity' => 'warning',
             'message' => 'Login failed.',
             'error_code' => 'invalid_credentials',
-            'metadata' => ['username' => sanitize_text_field($username)],
+            'metadata' => ['username_hash' => hash('sha256', strtolower(sanitize_text_field($username)))],
         ]);
     }
 

@@ -1,0 +1,3612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nevari Health Dashboard Design System</title>
+  <style>
+    :root {
+      --font-main: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+      /* Nevari Health palette extracted from the supplied brand guideline */
+      --color-primary: #0A2A5E;
+      --color-primary-soft: #DDE7F2;
+      --color-primary-dark: #061B3C;
+
+      --color-secondary: #E5D7C6;
+      --color-secondary-soft: #F6EFE7;
+
+      /* Accent colours generated from the navy and milk palette */
+      --color-accent-yellow: #CDB98D;
+      --color-accent-mint: #EDE4D7;
+      --color-accent-pink: #D7C1B4;
+      --color-accent-blue: #BFD0E5;
+      --color-accent-peach: #F1E3D4;
+
+      --color-bg: #FFFFFF;
+      --color-bg-2: #FAF8F5;
+      --color-surface: #FFFFFF;
+      --color-surface-soft: #F8F4EE;
+
+      --color-text: #07182F;
+      --color-text-muted: #6E7480;
+      --color-text-light: #A8AEB7;
+
+      --color-border: #EBE4DA;
+      --color-dark: #0A2A5E;
+      --color-danger: #B96B5F;
+      --color-success: #3B7468;
+      --color-warning: #A9873C;
+
+      --radius-xs: 8px;
+      --radius-sm: 12px;
+      --radius-md: 16px;
+      --radius-lg: 22px;
+      --radius-xl: 28px;
+      --radius-2xl: 36px;
+      --radius-pill: 999px;
+
+      --space-4: 4px;
+      --space-6: 6px;
+      --space-8: 8px;
+      --space-10: 10px;
+      --space-12: 12px;
+      --space-14: 14px;
+      --space-16: 16px;
+      --space-18: 18px;
+      --space-20: 20px;
+      --space-24: 24px;
+      --space-32: 32px;
+      --space-40: 40px;
+
+      --shadow-card: 0 16px 40px rgba(10, 42, 94, 0.08);
+      --shadow-soft: 0 8px 20px rgba(10, 42, 94, 0.06);
+      --shadow-floating: 0 22px 60px rgba(10, 42, 94, 0.13);
+      --shadow-inner: inset 0 0 0 1px rgba(255,255,255,0.75);
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      min-height: 100vh;
+      font-family: var(--font-main);
+      color: var(--color-text);
+      background: #FFFFFF;
+      line-height: 1.45;
+      overflow-x: hidden;
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      width: 720px;
+      height: 720px;
+      border: 1px solid rgba(10, 42, 94, 0.08);
+      border-radius: 46% 54% 60% 40%;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    body::before {
+      top: -260px;
+      left: -180px;
+      transform: rotate(12deg);
+    }
+
+    body::after {
+      right: -240px;
+      bottom: -260px;
+      transform: rotate(-18deg);
+    }
+
+    .page {
+      width: min(1440px, 100%);
+      margin: 0 auto;
+      padding: 36px 22px 64px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.95fr) minmax(320px, 1.5fr);
+      align-items: center;
+      gap: 36px;
+      margin-bottom: 38px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 13px;
+      border-radius: var(--radius-pill);
+      background: rgba(255, 255, 255, 0.76);
+      box-shadow: var(--shadow-soft);
+      font-size: 12px;
+      color: var(--color-text-muted);
+      margin-bottom: 18px;
+      backdrop-filter: blur(14px);
+    }
+
+    .eyebrow span {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--color-primary-dark);
+      box-shadow: 0 0 0 5px rgba(207, 244, 122, 0.34);
+    }
+
+    h1 {
+      font-size: clamp(34px, 6vw, 72px);
+      line-height: 0.95;
+      letter-spacing: -0.06em;
+      margin-bottom: 18px;
+    }
+
+    .hero p {
+      max-width: 560px;
+      color: var(--color-text-muted);
+      font-size: 16px;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .button {
+      appearance: none;
+      border: none;
+      border-radius: var(--radius-pill);
+      padding: 13px 18px;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform .2s ease, box-shadow .2s ease, background .2s ease;
+    }
+
+    .button:hover {
+      transform: translateY(-2px);
+    }
+
+    .button-primary {
+      background: var(--color-dark);
+      color: #fff;
+      box-shadow: 0 12px 28px rgba(10, 42, 94, .18);
+    }
+
+    .button-soft {
+      background: rgba(255,255,255,.82);
+      color: var(--color-text);
+      border: 1px solid rgba(255,255,255,.9);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .hero-preview {
+      position: relative;
+      min-height: 445px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .hero-preview .phone {
+      transform: scale(.92);
+      margin-left: -24px;
+    }
+
+    .hero-preview .phone:nth-child(2) {
+      transform: scale(1.02);
+      z-index: 2;
+      margin-left: -72px;
+      margin-right: -72px;
+    }
+
+    .hero-preview .phone:nth-child(3) {
+      transform: scale(.92);
+    }
+
+    .section {
+      margin-top: 46px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 20px;
+    }
+
+    .section-title {
+      font-size: clamp(24px, 3vw, 40px);
+      letter-spacing: -0.04em;
+      line-height: 1;
+    }
+
+    .section-subtitle {
+      max-width: 560px;
+      color: var(--color-text-muted);
+      font-size: 14px;
+      margin-top: 10px;
+    }
+
+    .showcase-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(280px, 1fr));
+      gap: 24px;
+      align-items: start;
+    }
+
+    .phone {
+      width: 310px;
+      min-width: 310px;
+      height: 652px;
+      border-radius: 38px;
+      background: rgba(255, 255, 255, 0.72);
+      padding: 10px;
+      box-shadow:
+        var(--shadow-floating),
+        inset 0 0 0 1px rgba(255,255,255,.92);
+      position: relative;
+      backdrop-filter: blur(18px);
+    }
+
+    .phone::before {
+      content: "";
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 78px;
+      height: 22px;
+      border-radius: 0 0 16px 16px;
+      background: rgba(230, 233, 229, 0.84);
+      z-index: 3;
+    }
+
+    .screen {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      border-radius: 31px;
+      background: linear-gradient(180deg, #FFFFFF 0%, #FBF8F3 100%);
+      padding: 48px 14px 14px;
+      position: relative;
+      border: 1px solid var(--color-border);
+    }
+
+    .screen-scroll {
+      height: 100%;
+      overflow-y: auto;
+      padding: 0 2px 78px;
+      scrollbar-width: none;
+    }
+
+    .screen-scroll::-webkit-scrollbar {
+      display: none;
+    }
+
+    .screen-title {
+      font-size: 17px;
+      font-weight: 720;
+      letter-spacing: -0.03em;
+      margin: 12px 0 12px;
+    }
+
+    .tiny-title {
+      font-size: 13px;
+      font-weight: 720;
+      margin: 16px 0 10px;
+      letter-spacing: -0.02em;
+    }
+
+    .muted {
+      color: var(--color-text-muted);
+    }
+
+    .small {
+      font-size: 11px;
+    }
+
+    .topbar,
+    .app-header,
+    .row,
+    .cluster {
+      display: flex;
+      align-items: center;
+    }
+
+    .topbar {
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .app-header {
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .profile-mini {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #E5D7C6, #D7C1B4);
+      color: #1f2b26;
+      font-size: 14px;
+      font-weight: 800;
+      position: relative;
+      overflow: hidden;
+      border: 2px solid rgba(255,255,255,.86);
+      box-shadow: var(--shadow-soft);
+      flex: 0 0 auto;
+    }
+
+    .avatar.doctor-one { background: linear-gradient(135deg, #0A2A5E, #E5D7C6); }
+    .avatar.doctor-two { background: linear-gradient(135deg, #EDE4D7, #E5D7C6); }
+    .avatar.doctor-three { background: linear-gradient(135deg, #CDB98D, #F1E3D4); }
+    .avatar.doctor-four { background: linear-gradient(135deg, #BFD0E5, #EDE4D7); }
+
+    .avatar::after {
+      content: "";
+      position: absolute;
+      bottom: -6px;
+      width: 26px;
+      height: 18px;
+      background: rgba(255,255,255,.65);
+      border-radius: 50% 50% 0 0;
+    }
+
+    .icon-btn {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(255,255,255,.92);
+      display: inline-grid;
+      place-items: center;
+      color: var(--color-text);
+      box-shadow: var(--shadow-soft);
+      cursor: pointer;
+      position: relative;
+      transition: transform .2s ease, background .2s ease;
+      flex: 0 0 auto;
+    }
+
+    .icon-btn:hover {
+      transform: translateY(-2px);
+      background: #fff;
+    }
+
+    .icon-btn.soft {
+      background: var(--color-surface-soft);
+      box-shadow: none;
+    }
+
+    .icon-btn.dark {
+      background: var(--color-dark);
+      color: #fff;
+    }
+
+    .icon-btn.small {
+      width: 32px;
+      height: 32px;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--color-danger);
+      position: absolute;
+      right: 5px;
+      top: 5px;
+      border: 2px solid #fff;
+    }
+
+    .icon {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 2;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .icon.fill {
+      fill: currentColor;
+      stroke: none;
+    }
+
+    .category-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 9px;
+    }
+
+    .category-card {
+      min-height: 104px;
+      background: rgba(255,255,255,.90);
+      border-radius: var(--radius-lg);
+      padding: 10px;
+      box-shadow: var(--shadow-card);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform .2s ease, box-shadow .2s ease;
+    }
+
+    .category-card:hover {
+      transform: translateY(-3px);
+      box-shadow: var(--shadow-floating);
+    }
+
+    .category-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: var(--color-text);
+    }
+
+    .category-icon.green { background: var(--color-primary); color: #fff; }
+    .category-icon.yellow { background: var(--color-accent-yellow); }
+    .category-icon.lilac { background: var(--color-secondary); }
+    .category-icon.mint { background: var(--color-accent-mint); }
+    .category-icon.pink { background: var(--color-accent-pink); }
+    .category-icon.blue { background: var(--color-accent-blue); }
+
+    .category-meta {
+      font-size: 9px;
+      color: var(--color-text-light);
+    }
+
+    .category-name {
+      font-size: 11px;
+      font-weight: 720;
+      letter-spacing: -0.02em;
+    }
+
+    .plan-card {
+      position: relative;
+      min-height: 192px;
+      border-radius: 26px;
+      padding: 14px;
+      overflow: hidden;
+      box-shadow: var(--shadow-card);
+      background: var(--color-accent-mint);
+      isolation: isolate;
+    }
+
+    .plan-card.purple {
+      background: linear-gradient(135deg, #F6EFE7 0%, #E5D7C6 100%);
+    }
+
+    .plan-card.green {
+      background: linear-gradient(135deg, #EFF5FC 0%, #EDE4D7 100%);
+    }
+
+    .doctor-figure {
+      position: absolute;
+      right: -10px;
+      bottom: -6px;
+      width: 116px;
+      height: 150px;
+      border-radius: 50px 50px 0 0;
+      background:
+        radial-gradient(circle at 52% 18%, #E7C9B6 0 16px, transparent 17px),
+        linear-gradient(90deg, transparent 26px, #fff 26px 90px, transparent 90px),
+        linear-gradient(160deg, #DDE7F2, #ffffff);
+      box-shadow: -12px -6px 28px rgba(255,255,255,.4);
+      z-index: -1;
+    }
+
+    .doctor-figure::before {
+      content: "";
+      position: absolute;
+      top: 28px;
+      left: 42px;
+      width: 34px;
+      height: 18px;
+      border-radius: 50%;
+      background: #36312c;
+    }
+
+    .doctor-figure::after {
+      content: "";
+      position: absolute;
+      top: 62px;
+      left: 47px;
+      width: 23px;
+      height: 48px;
+      border-left: 3px solid #444;
+      border-right: 3px solid #444;
+      border-bottom: 3px solid #444;
+      border-radius: 0 0 16px 16px;
+      opacity: .55;
+    }
+
+    .doctor-figure.female {
+      background:
+        radial-gradient(circle at 52% 18%, #E7C9B6 0 16px, transparent 17px),
+        linear-gradient(90deg, transparent 22px, #fff 22px 94px, transparent 94px),
+        linear-gradient(160deg, #E5D7C6, #ffffff);
+    }
+
+    .doctor-figure.female::before {
+      background: #8b6d5a;
+      width: 40px;
+      left: 38px;
+      top: 28px;
+    }
+
+    .mini-person {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .mini-person .avatar {
+      width: 34px;
+      height: 34px;
+      font-size: 12px;
+      box-shadow: none;
+    }
+
+    .mini-person h4 {
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .mini-person p {
+      font-size: 9px;
+      color: var(--color-text-muted);
+    }
+
+    .plan-title {
+      max-width: 148px;
+      font-size: 20px;
+      line-height: 1.05;
+      letter-spacing: -0.06em;
+      margin-bottom: 18px;
+    }
+
+    .plan-footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .price {
+      font-size: 13px;
+      font-weight: 800;
+      margin-right: auto;
+    }
+
+    .register-pill {
+      height: 38px;
+      border-radius: var(--radius-pill);
+      padding: 0 8px 0 6px;
+      border: none;
+      background: #fff;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      font-weight: 650;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .register-pill .round {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--color-dark);
+      color: #fff;
+    }
+
+    .doctor-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .doctor-card {
+      background: rgba(255,255,255,.92);
+      border-radius: 25px;
+      padding: 13px;
+      box-shadow: var(--shadow-card);
+      display: grid;
+      gap: 12px;
+    }
+
+    .doctor-head {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .doctor-head .avatar {
+      width: 42px;
+      height: 42px;
+      font-size: 12px;
+      box-shadow: none;
+    }
+
+    .doctor-head h4 {
+      font-size: 12px;
+      letter-spacing: -0.02em;
+    }
+
+    .doctor-head p {
+      font-size: 9px;
+      color: var(--color-text-muted);
+    }
+
+    .info-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 10px;
+      color: #3a403a;
+    }
+
+    .info-line .icon-wrap {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--color-surface-soft);
+      display: grid;
+      place-items: center;
+      color: var(--color-text);
+      flex: 0 0 auto;
+    }
+
+    .search-box {
+      background: rgba(255,255,255,.92);
+      border-radius: var(--radius-pill);
+      padding: 11px 14px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--color-text-muted);
+      box-shadow: var(--shadow-soft);
+      border: 1px solid var(--color-border);
+      font-size: 12px;
+    }
+
+    .search-box input {
+      width: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      font: inherit;
+      color: var(--color-text);
+    }
+
+    .search-box input::placeholder {
+      color: var(--color-text-light);
+    }
+
+    .analytics-card {
+      background: rgba(255,255,255,.92);
+      border-radius: 25px;
+      padding: 14px;
+      box-shadow: var(--shadow-card);
+    }
+
+    .analytics-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .analytics-head h4 {
+      font-size: 12px;
+      letter-spacing: -0.02em;
+    }
+
+    .pager {
+      display: flex;
+      gap: 8px;
+    }
+
+    .bar-chart {
+      height: 164px;
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 12px 0 4px;
+    }
+
+    .bar-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+    }
+
+    .bar {
+      width: 22px;
+      height: var(--h);
+      border-radius: var(--radius-pill);
+      background: linear-gradient(180deg, #BFD0E5, #F6EFE7);
+      box-shadow: inset 0 8px 16px rgba(255,255,255,.5);
+    }
+
+    .bar-label {
+      font-size: 9px;
+      color: var(--color-text-light);
+    }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .metric-card {
+      min-height: 158px;
+      border-radius: 24px;
+      background: rgba(255,255,255,.92);
+      padding: 12px;
+      box-shadow: var(--shadow-card);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .metric-top h4 {
+      font-size: 12px;
+      letter-spacing: -0.02em;
+    }
+
+    .metric-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--color-primary);
+      color: #fff;
+    }
+
+    .metric-icon.yellow {
+      background: var(--color-accent-yellow);
+    }
+
+    .metric-desc {
+      font-size: 9px;
+      color: var(--color-text-light);
+      max-width: 92px;
+      line-height: 1.35;
+      margin-bottom: 10px;
+    }
+
+    .progress-ring {
+      width: 62px;
+      height: 62px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle, #fff 52%, transparent 54%),
+        conic-gradient(var(--color-primary) 0 72%, #F0E8DE 72% 100%);
+      font-size: 13px;
+      font-weight: 800;
+      margin: 0 auto;
+    }
+
+    .heart-line {
+      width: 100%;
+      height: 52px;
+    }
+
+    .bottom-nav {
+      position: absolute;
+      left: 22px;
+      right: 22px;
+      bottom: 18px;
+      height: 58px;
+      background: rgba(255,255,255,.90);
+      border: 1px solid var(--color-border);
+      box-shadow: var(--shadow-floating);
+      border-radius: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px;
+      backdrop-filter: blur(16px);
+      z-index: 8;
+    }
+
+    .nav-item {
+      min-width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      color: var(--color-text-light);
+      text-decoration: none;
+      font-size: 10px;
+      font-weight: 650;
+      transition: background .2s ease, color .2s ease;
+    }
+
+    .nav-item.active {
+      min-width: 112px;
+      border-radius: var(--radius-pill);
+      background: var(--color-dark);
+      color: #fff;
+      padding: 0 13px;
+    }
+
+    .nav-item.green-active {
+      background: var(--color-primary);
+      color: #fff;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 24px;
+      padding: 5px 10px;
+      border-radius: var(--radius-pill);
+      font-size: 10px;
+      font-weight: 700;
+      width: fit-content;
+    }
+
+    .status-badge.success {
+      background: #E8F2EE;
+      color: #2B665D;
+    }
+
+    .status-badge.warning {
+      background: #F7F1E4;
+      color: #8A6B27;
+    }
+
+    .status-badge.danger {
+      background: #F8EAE6;
+      color: #9C4E42;
+    }
+
+    .status-badge.neutral {
+      background: #F3F1EE;
+      color: #6C6C6C;
+    }
+
+    .kit-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 18px;
+    }
+
+    .kit-card {
+      grid-column: span 4;
+      background: rgba(255,255,255,.72);
+      border: 1px solid var(--color-border);
+      box-shadow: var(--shadow-card);
+      border-radius: var(--radius-xl);
+      padding: 18px;
+      backdrop-filter: blur(16px);
+      min-height: 180px;
+    }
+
+    .kit-card.wide {
+      grid-column: span 8;
+    }
+
+    .kit-card.full {
+      grid-column: 1 / -1;
+    }
+
+    .kit-title {
+      font-size: 15px;
+      font-weight: 820;
+      letter-spacing: -0.03em;
+      margin-bottom: 12px;
+    }
+
+    .swatch-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .swatch {
+      min-height: 92px;
+      border-radius: 20px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      justify-content: end;
+      color: #161616;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
+    }
+
+    .swatch small {
+      font-size: 10px;
+      opacity: .7;
+    }
+
+    .swatch strong {
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .token-list {
+      display: grid;
+      gap: 9px;
+    }
+
+    .token-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 38px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.72);
+      padding: 9px 11px;
+      font-size: 12px;
+    }
+
+    .token-row code {
+      color: var(--color-text-muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+    }
+
+    .component-stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .button.green {
+      background: var(--color-primary);
+      color: #fff;
+    }
+
+    .button.lilac {
+      background: var(--color-secondary);
+      color: var(--color-text);
+    }
+
+    .button.outline {
+      border: 1px solid var(--color-border);
+      background: #fff;
+      color: var(--color-text);
+    }
+
+    .appointment-card,
+    .order-card,
+    .profile-card,
+    .notification-card,
+    .empty-card {
+      border-radius: var(--radius-xl);
+      background: rgba(255,255,255,.92);
+      box-shadow: var(--shadow-card);
+      padding: 15px;
+    }
+
+    .appointment-card {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .calendar-tile {
+      width: 52px;
+      height: 56px;
+      border-radius: 18px;
+      background: var(--color-secondary);
+      display: grid;
+      place-items: center;
+      text-align: center;
+      font-weight: 820;
+      letter-spacing: -0.02em;
+    }
+
+    .calendar-tile span {
+      display: block;
+      font-size: 10px;
+      color: var(--color-text-muted);
+      line-height: 1;
+    }
+
+    .calendar-tile strong {
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .card-desc {
+      font-size: 11px;
+      color: var(--color-text-muted);
+      margin-top: 2px;
+    }
+
+    .order-card {
+      display: grid;
+      gap: 12px;
+    }
+
+    .order-line {
+      display: grid;
+      grid-template-columns: 46px 1fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .product-thumb {
+      width: 46px;
+      height: 46px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      background: var(--color-primary-soft);
+    }
+
+    .product-thumb.lilac {
+      background: var(--color-secondary);
+    }
+
+    .product-thumb.yellow {
+      background: var(--color-accent-yellow);
+    }
+
+    .progress-track {
+      height: 8px;
+      border-radius: var(--radius-pill);
+      background: #F0E8DE;
+      overflow: hidden;
+    }
+
+    .progress-track span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--color-primary-dark);
+      width: var(--w);
+    }
+
+    .profile-card {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .profile-card .avatar {
+      width: 66px;
+      height: 66px;
+      font-size: 20px;
+    }
+
+    .profile-stats {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .profile-stat {
+      padding: 8px 10px;
+      border-radius: 16px;
+      background: var(--color-surface-soft);
+      font-size: 11px;
+    }
+
+    .notification-card {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .notification-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--color-accent-yellow);
+    }
+
+    .empty-card {
+      min-height: 184px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: var(--color-text-muted);
+    }
+
+    .empty-card .empty-icon {
+      width: 62px;
+      height: 62px;
+      border-radius: 50%;
+      background: var(--color-secondary-soft);
+      display: grid;
+      place-items: center;
+      margin: 0 auto 12px;
+      color: var(--color-text);
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field label {
+      font-size: 11px;
+      color: var(--color-text-muted);
+      font-weight: 700;
+    }
+
+    .input {
+      width: 100%;
+      height: 46px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-pill);
+      background: #fff;
+      padding: 0 15px;
+      outline: none;
+      font: inherit;
+      font-size: 13px;
+    }
+
+    .select {
+      appearance: none;
+      background:
+        linear-gradient(45deg, transparent 50%, var(--color-text-muted) 50%),
+        linear-gradient(135deg, var(--color-text-muted) 50%, transparent 50%),
+        #fff;
+      background-position:
+        calc(100% - 18px) 19px,
+        calc(100% - 13px) 19px,
+        100% 0;
+      background-size: 5px 5px, 5px 5px, 2.5em 2.5em;
+      background-repeat: no-repeat;
+    }
+
+    .tabs {
+      display: inline-flex;
+      border-radius: var(--radius-pill);
+      padding: 5px;
+      background: rgba(255,255,255,.82);
+      gap: 5px;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .tab {
+      border: none;
+      border-radius: var(--radius-pill);
+      min-height: 34px;
+      padding: 0 13px;
+      background: transparent;
+      font: inherit;
+      font-size: 12px;
+      color: var(--color-text-muted);
+      cursor: pointer;
+    }
+
+    .tab.active {
+      background: var(--color-dark);
+      color: #fff;
+    }
+
+    .doctor-strip {
+      display: flex;
+      gap: 12px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      scrollbar-width: none;
+    }
+
+    .doctor-strip::-webkit-scrollbar { display: none; }
+
+    .doctor-mini {
+      min-width: 130px;
+      border-radius: var(--radius-lg);
+      background: #fff;
+      padding: 12px;
+      box-shadow: var(--shadow-soft);
+      text-align: center;
+    }
+
+    .doctor-mini .avatar {
+      margin: 0 auto 8px;
+    }
+
+    .mini-chart {
+      height: 82px;
+      display: flex;
+      align-items: end;
+      gap: 7px;
+      padding-top: 12px;
+    }
+
+    .mini-chart span {
+      flex: 1;
+      height: var(--h);
+      border-radius: var(--radius-pill);
+      background: var(--color-primary);
+    }
+
+    .mini-chart span:nth-child(even) {
+      background: var(--color-secondary);
+    }
+
+    .mobile-only-label {
+      display: none;
+      font-size: 10px;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--color-border);
+      margin: 10px 0;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+    }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 10px;
+      align-items: start;
+      position: relative;
+    }
+
+    .timeline-item:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      left: 16px;
+      top: 34px;
+      bottom: -10px;
+      width: 1px;
+      background: var(--color-border);
+    }
+
+    .timeline-dot {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: var(--color-primary);
+      display: grid;
+      place-items: center;
+      position: relative;
+      z-index: 1;
+    }
+
+    .code-card {
+      grid-column: 1 / -1;
+      background: #07182F;
+      color: #EDEDED;
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      box-shadow: var(--shadow-floating);
+    }
+
+    .code-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 44px;
+      padding: 0 16px;
+      background: #0A2A5E;
+      color: #DDE7F2;
+      font-size: 12px;
+    }
+
+    .code-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #B96B5F;
+    }
+
+    .code-dot:nth-child(2) { background: #CDB98D; }
+    .code-dot:nth-child(3) { background: #3B7468; margin-right: 8px; }
+
+    pre {
+      padding: 18px;
+      overflow-x: auto;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #F6EFE7;
+    }
+
+    .screen .floating-card {
+      position: absolute;
+      right: 14px;
+      top: 92px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.80);
+      box-shadow: var(--shadow-soft);
+      padding: 9px;
+      font-size: 10px;
+      backdrop-filter: blur(12px);
+    }
+
+    @media (max-width: 1180px) {
+      .hero {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-preview {
+        justify-content: flex-start;
+        overflow-x: auto;
+        padding-bottom: 18px;
+      }
+
+      .showcase-grid {
+        grid-template-columns: 1fr;
+        justify-items: center;
+      }
+
+      .kit-card,
+      .kit-card.wide {
+        grid-column: span 6;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 24px 14px 48px;
+      }
+
+      .section-head {
+        display: block;
+      }
+
+      .hero-preview {
+        min-height: auto;
+        justify-content: flex-start;
+      }
+
+      .hero-preview .phone,
+      .hero-preview .phone:nth-child(2),
+      .hero-preview .phone:nth-child(3) {
+        transform: none;
+        margin-left: 0;
+        margin-right: 14px;
+      }
+
+      .kit-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .kit-card,
+      .kit-card.wide,
+      .kit-card.full,
+      .code-card {
+        grid-column: 1 / -1;
+      }
+
+      .phone {
+        width: min(310px, calc(100vw - 28px));
+        min-width: min(310px, calc(100vw - 28px));
+      }
+
+      .swatch-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      h1 {
+        font-size: 42px;
+      }
+
+      .mobile-only-label {
+        display: inline;
+      }
+    }
+
+    /* Typography and hierarchy refinement */
+    :root {
+      --font-main: Inter, "SF Pro Display", "Segoe UI", Roboto, Arial, sans-serif;
+
+      --type-hero: clamp(2.05rem, 5vw, 3.75rem);
+      --type-section: clamp(1.45rem, 2.6vw, 2.35rem);
+      --type-title: clamp(1rem, 1.4vw, 1.16rem);
+      --type-card-title: clamp(.76rem, .7rem + .18vw, .9rem);
+      --type-body: clamp(.82rem, .76rem + .2vw, .96rem);
+      --type-small: clamp(.68rem, .64rem + .14vw, .78rem);
+      --type-tiny: clamp(.58rem, .55rem + .12vw, .68rem);
+
+      --weight-regular: 400;
+      --weight-medium: 500;
+      --weight-semibold: 600;
+      --weight-strong: 650;
+    }
+
+    html {
+      font-size: 16px;
+      text-size-adjust: 100%;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      font-size: var(--type-body);
+      line-height: 1.52;
+      font-weight: var(--weight-regular);
+      letter-spacing: -0.006em;
+    }
+
+    h1 {
+      font-size: var(--type-hero);
+      line-height: 1.04;
+      letter-spacing: -0.045em;
+      font-weight: var(--weight-strong);
+      max-width: 780px;
+    }
+
+    .section-title {
+      font-size: var(--type-section);
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+      font-weight: var(--weight-semibold);
+    }
+
+    .screen-title {
+      font-size: var(--type-title);
+      line-height: 1.22;
+      letter-spacing: -0.025em;
+      font-weight: var(--weight-semibold);
+    }
+
+    .kit-title {
+      font-size: clamp(.9rem, .84rem + .22vw, 1.05rem);
+      line-height: 1.25;
+      letter-spacing: -0.022em;
+      font-weight: var(--weight-semibold);
+    }
+
+    .tiny-title {
+      font-size: var(--type-small);
+      line-height: 1.28;
+      letter-spacing: -0.012em;
+      font-weight: var(--weight-medium);
+      color: var(--color-text);
+    }
+
+    .hero p,
+    .section-subtitle,
+    .card-desc,
+    .metric-desc,
+    .empty-card,
+    .token-row,
+    .field label,
+    .category-meta,
+    .doctor-head p,
+    .mini-person p,
+    .info-line,
+    .small,
+    .muted,
+    .bar-label {
+      font-size: var(--type-small);
+      line-height: 1.48;
+      font-weight: var(--weight-regular);
+      letter-spacing: -0.003em;
+    }
+
+    .hero p,
+    .section-subtitle {
+      font-size: var(--type-body);
+      line-height: 1.62;
+    }
+
+    .eyebrow,
+    .status-badge,
+    .tab,
+    .button,
+    .nav-item,
+    .register-pill,
+    .input,
+    .search-box,
+    .token-row code {
+      font-size: var(--type-small);
+      line-height: 1.2;
+      font-weight: var(--weight-medium);
+      letter-spacing: -0.004em;
+    }
+
+    .category-name,
+    .mini-person h4,
+    .doctor-head h4,
+    .analytics-head h4,
+    .metric-top h4,
+    .card-title,
+    .profile-mini .card-title,
+    .doctor-mini .card-title {
+      font-size: var(--type-card-title);
+      line-height: 1.25;
+      letter-spacing: -0.018em;
+      font-weight: var(--weight-semibold);
+    }
+
+    .plan-title {
+      font-size: clamp(1rem, .92rem + .4vw, 1.28rem);
+      line-height: 1.12;
+      letter-spacing: -0.04em;
+      font-weight: var(--weight-semibold);
+      max-width: 145px;
+    }
+
+    .price,
+    .progress-ring,
+    .calendar-tile,
+    .profile-stat,
+    .swatch strong,
+    .calendar-tile strong {
+      font-weight: var(--weight-semibold);
+    }
+
+    .avatar,
+    .calendar-tile,
+    .category-name,
+    .price,
+    .button,
+    .status-badge,
+    .tab.active,
+    .nav-item.active,
+    .field label {
+      font-weight: var(--weight-medium);
+    }
+
+    .button-primary,
+    .button.green,
+    .button.lilac,
+    .button.outline,
+    .button-soft {
+      font-weight: var(--weight-medium);
+    }
+
+    .swatch small,
+    .swatch strong,
+    .token-row,
+    .token-row code {
+      font-size: var(--type-small);
+    }
+
+    .category-meta,
+    .bar-label,
+    .doctor-head p,
+    .mini-person p {
+      font-size: var(--type-tiny);
+    }
+
+    .doctor-head h4,
+    .analytics-head h4,
+    .metric-top h4 {
+      font-weight: var(--weight-medium);
+    }
+
+    .screen {
+      font-size: var(--type-small);
+    }
+
+    .phone {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .kit-card,
+    .appointment-card,
+    .order-card,
+    .profile-card,
+    .notification-card,
+    .doctor-card,
+    .analytics-card,
+    .metric-card,
+    .plan-card,
+    .category-card {
+      font-weight: var(--weight-regular);
+    }
+
+    .code-head,
+    pre {
+      font-size: var(--type-small);
+      font-weight: var(--weight-regular);
+    }
+
+    @media (max-width: 760px) {
+      h1 {
+        font-size: clamp(2rem, 10vw, 2.65rem);
+        line-height: 1.06;
+      }
+
+      .section-title {
+        font-size: clamp(1.45rem, 7vw, 2rem);
+      }
+
+      .hero p,
+      .section-subtitle {
+        font-size: .88rem;
+      }
+
+      .page {
+        padding-top: 22px;
+      }
+    }
+
+    @media (max-width: 420px) {
+      :root {
+        --type-body: .8rem;
+        --type-small: .67rem;
+        --type-tiny: .58rem;
+      }
+
+      .screen-title {
+        font-size: .98rem;
+      }
+
+      .plan-title {
+        font-size: 1.02rem;
+      }
+
+      .button {
+        min-height: 42px;
+        padding-inline: 15px;
+      }
+    }
+
+
+    /* Booking screens restored with refined typography */
+    .booking-section {
+      margin-top: 56px;
+    }
+
+    .booking-shell {
+      border-radius: var(--radius-2xl);
+      background:
+        radial-gradient(circle at 8% 8%, rgba(229, 215, 198, .35), transparent 32%),
+        radial-gradient(circle at 92% 12%, rgba(10, 42, 94, .08), transparent 34%),
+        rgba(255,255,255,.78);
+      border: 1px solid var(--color-border);
+      box-shadow: var(--shadow-card);
+      padding: 20px;
+      overflow: hidden;
+    }
+
+    .booking-segments {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 20px;
+    }
+
+    .booking-segments span {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      border-radius: var(--radius-pill);
+      padding: 0 12px;
+      background: #fff;
+      border: 1px solid var(--color-border);
+      color: var(--color-text-muted);
+      font-size: var(--type-small);
+      font-weight: var(--weight-medium);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .booking-segments span:first-child {
+      background: var(--color-dark);
+      color: #fff;
+      border-color: var(--color-dark);
+    }
+
+    .booking-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(260px, 1fr));
+      gap: 22px;
+      align-items: start;
+    }
+
+    .booking-wrap {
+      display: grid;
+      gap: 10px;
+    }
+
+    .booking-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 8px;
+      color: var(--color-primary);
+      font-size: var(--type-small);
+      font-weight: var(--weight-medium);
+      letter-spacing: -.01em;
+    }
+
+    .booking-label span:last-child {
+      color: var(--color-text-light);
+    }
+
+    .booking-phone {
+      width: 100%;
+      max-width: 310px;
+      height: 650px;
+      margin: 0 auto;
+      border-radius: 38px;
+      background: rgba(255,255,255,.72);
+      padding: 10px;
+      box-shadow: var(--shadow-floating), inset 0 0 0 1px rgba(255,255,255,.92);
+      position: relative;
+      backdrop-filter: blur(18px);
+    }
+
+    .booking-phone::before {
+      content: "";
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 78px;
+      height: 22px;
+      border-radius: 0 0 16px 16px;
+      background: rgba(230, 233, 229, .84);
+      z-index: 3;
+    }
+
+    .booking-screen {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      border-radius: 31px;
+      background: linear-gradient(180deg, #FFFFFF 0%, #FBF8F3 100%);
+      position: relative;
+      border: 1px solid var(--color-border);
+    }
+
+    .booking-status {
+      height: 48px;
+      background: var(--color-primary-dark);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      font-size: var(--type-small);
+      font-weight: var(--weight-medium);
+      letter-spacing: -.01em;
+    }
+
+    .booking-body {
+      height: 100%;
+      overflow-y: auto;
+      padding: 48px 14px 86px;
+      scrollbar-width: none;
+      font-size: var(--type-small);
+      font-weight: var(--weight-regular);
+    }
+
+    .booking-status + .booking-body {
+      height: calc(100% - 48px);
+      padding-top: 18px;
+    }
+
+    .booking-body::-webkit-scrollbar {
+      display: none;
+    }
+
+    .booking-topbar,
+    .booking-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .booking-topbar {
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .booking-title {
+      font-size: clamp(.96rem, .9rem + .18vw, 1.08rem);
+      line-height: 1.22;
+      letter-spacing: -.025em;
+      color: var(--color-text);
+      font-weight: var(--weight-semibold);
+      margin: 8px 0 12px;
+    }
+
+    .booking-centre-title {
+      flex: 1;
+      text-align: center;
+      font-size: clamp(.88rem, .83rem + .16vw, 1rem);
+      font-weight: var(--weight-semibold);
+      letter-spacing: -.02em;
+      color: var(--color-text);
+    }
+
+    .booking-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 0;
+      background: var(--color-secondary-soft);
+      color: var(--color-primary);
+      display: grid;
+      place-items: center;
+      font-size: .95rem;
+      cursor: pointer;
+      flex: 0 0 auto;
+    }
+
+    .booking-search {
+      height: 42px;
+      border-radius: var(--radius-pill);
+      background: #fff;
+      border: 1px solid var(--color-border);
+      box-shadow: var(--shadow-soft);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 13px;
+      margin-bottom: 14px;
+      color: var(--color-text-muted);
+      font-size: var(--type-small);
+    }
+
+    .booking-search input {
+      width: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      font: inherit;
+      color: var(--color-text);
+    }
+
+    .booking-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .booking-card,
+    .booking-review,
+    .booking-panel,
+    .booking-calendar,
+    .booking-summary {
+      border-radius: 22px;
+      background: rgba(255,255,255,.94);
+      box-shadow: var(--shadow-card);
+      border: 1px solid rgba(235,228,218,.9);
+      padding: 13px;
+      font-weight: var(--weight-regular);
+    }
+
+    .booking-avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: var(--color-primary);
+      background: linear-gradient(135deg, var(--color-secondary), var(--color-accent-blue));
+      font-size: var(--type-small);
+      font-weight: var(--weight-medium);
+      flex: 0 0 auto;
+      box-shadow: var(--shadow-soft);
+      position: relative;
+    }
+
+    .booking-avatar::after {
+      content: "";
+      position: absolute;
+      right: 1px;
+      bottom: 2px;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--color-success);
+      border: 2px solid #fff;
+    }
+
+    .booking-avatar.big {
+      width: 78px;
+      height: 78px;
+      font-size: 1.15rem;
+      margin: 0 auto 12px;
+    }
+
+    .booking-avatar.big::after,
+    .booking-avatar.no-status::after {
+      display: none;
+    }
+
+    .booking-meta {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .booking-meta h4 {
+      font-size: clamp(.76rem, .7rem + .16vw, .88rem);
+      line-height: 1.25;
+      letter-spacing: -.018em;
+      font-weight: var(--weight-semibold);
+      color: var(--color-text);
+      margin-bottom: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .booking-meta p,
+    .booking-text {
+      font-size: var(--type-small);
+      line-height: 1.45;
+      color: var(--color-text-muted);
+      font-weight: var(--weight-regular);
+    }
+
+    .booking-pill {
+      border-radius: var(--radius-pill);
+      background: var(--color-primary-soft);
+      color: var(--color-primary);
+      padding: 5px 8px;
+      font-size: var(--type-small);
+      font-weight: var(--weight-medium);
+      white-space: nowrap;
+    }
+
+    .booking-stat-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background: var(--color-secondary-soft);
+      border-radius: 15px;
+      overflow: hidden;
+      margin: 12px 0;
+    }
+
+    .booking-stat {
+      padding: 10px;
+    }
+
+    .booking-stat + .booking-stat {
+      border-left: 1px solid var(--color-border);
+    }
+
+    .booking-stat strong {
+      display: block;
+      font-size: var(--type-small);
+      line-height: 1.2;
+      font-weight: var(--weight-semibold);
+      color: var(--color-text);
+      margin-bottom: 3px;
+    }
+
+    .booking-stat span {
+      display: block;
+      font-size: var(--type-tiny);
+      color: var(--color-text-muted);
+    }
+
+    .booking-btn {
+      min-height: 42px;
+      border-radius: 14px;
+      border: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      width: 100%;
+      background: var(--color-dark);
+      color: #fff;
+      font-size: var(--type-small);
+      font-weight: var(--weight-medium);
+      text-decoration: none;
+      box-shadow: 0 12px 24px rgba(10,42,94,.18);
+      cursor: pointer;
+    }
+
+    .booking-btn.soft {
+      background: var(--color-secondary-soft);
+      color: var(--color-primary);
+      border: 1px solid var(--color-border);
+      box-shadow: none;
+    }
+
+    .booking-profile {
+      text-align: center;
+      padding: 8px 10px 16px;
+    }
+
+    .booking-profile h3 {
+      font-size: clamp(1.05rem, .98rem + .3vw, 1.32rem);
+      line-height: 1.14;
+      letter-spacing: -.035em;
+      font-weight: var(--weight-semibold);
+      color: var(--color-text);
+      margin-bottom: 4px;
+    }
+
+    .booking-profile p {
+      color: var(--color-text-muted);
+      font-size: var(--type-small);
+      line-height: 1.45;
+      font-weight: var(--weight-regular);
+    }
+
+    .booking-mini-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+      margin-bottom: 12px;
+    }
+
+    .booking-mini {
+      border-radius: 16px;
+      background: #fff;
+      border: 1px solid var(--color-border);
+      padding: 11px;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .booking-mini small {
+      display: block;
+      color: var(--color-text-muted);
+      font-size: var(--type-tiny);
+      margin-bottom: 3px;
+    }
+
+    .booking-mini strong {
+      color: var(--color-text);
+      font-size: var(--type-card-title);
+      font-weight: var(--weight-semibold);
+    }
+
+    .booking-subtitle {
+      font-size: var(--type-card-title);
+      font-weight: var(--weight-semibold);
+      color: var(--color-text);
+      margin: 16px 0 9px;
+      letter-spacing: -.018em;
+    }
+
+    .booking-calendar-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .booking-calendar-head h4 {
+      font-size: clamp(.9rem, .84rem + .22vw, 1.05rem);
+      font-weight: var(--weight-semibold);
+      letter-spacing: -.025em;
+    }
+
+    .booking-date-row {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 6px;
+      text-align: center;
+      margin-bottom: 12px;
+    }
+
+    .booking-date {
+      color: var(--color-text-muted);
+      font-size: var(--type-tiny);
+      padding-bottom: 7px;
+      border-bottom: 2px solid transparent;
+    }
+
+    .booking-date strong {
+      display: block;
+      color: var(--color-text);
+      font-size: var(--type-small);
+      margin-top: 2px;
+      font-weight: var(--weight-medium);
+    }
+
+    .booking-date.active {
+      color: var(--color-primary);
+      border-bottom-color: var(--color-primary);
+      font-weight: var(--weight-semibold);
+    }
+
+    .booking-time-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .booking-slot {
+      min-height: 40px;
+      border-radius: 12px;
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-2);
+      color: var(--color-text-muted);
+      font-size: var(--type-small);
+      font-weight: var(--weight-regular);
+      cursor: pointer;
+    }
+
+    .booking-slot.active {
+      color: var(--color-primary);
+      background: #fff;
+      border-color: var(--color-primary);
+      box-shadow: var(--shadow-soft);
+      font-weight: var(--weight-medium);
+    }
+
+    .booking-bottom {
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      bottom: 14px;
+      z-index: 8;
+      padding-top: 10px;
+      background: linear-gradient(180deg, rgba(255,255,255,0), #fff 28%);
+    }
+
+    .booking-bars {
+      display: grid;
+      gap: 10px;
+      padding: 8px 0 6px;
+    }
+
+    .booking-bar-line {
+      display: grid;
+      grid-template-columns: 20px 1fr 66px;
+      gap: 8px;
+      align-items: center;
+      font-size: var(--type-small);
+      color: var(--color-text-muted);
+    }
+
+    .booking-bar-track {
+      height: 5px;
+      border-radius: var(--radius-pill);
+      background: #EFE8DE;
+      overflow: hidden;
+    }
+
+    .booking-bar-fill {
+      display: block;
+      width: var(--w);
+      height: 100%;
+      border-radius: inherit;
+      background: var(--color-primary);
+    }
+
+    .booking-note {
+      color: var(--color-text-muted);
+      font-size: var(--type-small);
+      line-height: 1.45;
+      margin: 9px 0 12px 52px;
+    }
+
+    .booking-upload {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 52px;
+      border: 1px dashed rgba(10,42,94,.32);
+      background: var(--color-primary-soft);
+      color: var(--color-primary);
+      border-radius: var(--radius-pill);
+      padding: 8px 11px;
+      font-size: var(--type-small);
+      font-weight: var(--weight-medium);
+    }
+
+    .booking-bill-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: var(--color-text-muted);
+      font-size: var(--type-small);
+      font-weight: var(--weight-regular);
+    }
+
+    .booking-bill-line strong {
+      color: var(--color-text);
+      font-weight: var(--weight-semibold);
+    }
+
+    .booking-bill-line.total {
+      border-top: 1px solid var(--color-border);
+      padding-top: 12px;
+      margin-top: 2px;
+      color: var(--color-text);
+    }
+
+    .booking-promo {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .booking-code {
+      flex: 1;
+      border-radius: var(--radius-pill);
+      background: var(--color-secondary-soft);
+      padding: 10px 12px;
+      font-size: var(--type-small);
+      color: var(--color-text);
+      font-weight: var(--weight-medium);
+    }
+
+    .booking-apply {
+      border: 0;
+      border-radius: var(--radius-pill);
+      background: var(--color-primary-dark);
+      color: #fff;
+      padding: 0 13px;
+      font-size: var(--type-small);
+      font-weight: var(--weight-medium);
+    }
+
+    .booking-card-icon {
+      width: 46px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--color-primary-dark);
+      position: relative;
+      flex: 0 0 auto;
+    }
+
+    .booking-card-icon::before,
+    .booking-card-icon::after {
+      content: "";
+      position: absolute;
+      top: 8px;
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+    }
+
+    .booking-card-icon::before {
+      left: 9px;
+      background: var(--color-danger);
+    }
+
+    .booking-card-icon::after {
+      right: 9px;
+      background: var(--color-accent-yellow);
+      mix-blend-mode: screen;
+    }
+
+    .booking-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(7,24,47,.55);
+      display: flex;
+      align-items: end;
+      z-index: 10;
+    }
+
+    .booking-sheet {
+      width: 100%;
+      background: #fff;
+      border-radius: 28px 28px 0 0;
+      padding: 20px 16px 24px;
+      box-shadow: 0 -20px 50px rgba(7,24,47,.2);
+    }
+
+    .booking-sheet h4 {
+      text-align: center;
+      font-size: var(--type-card-title);
+      font-weight: var(--weight-semibold);
+      margin-bottom: 15px;
+      color: var(--color-text);
+    }
+
+    .booking-touch {
+      width: 52px;
+      height: 52px;
+      margin: 12px auto 0;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--color-secondary), var(--color-primary-soft));
+      display: grid;
+      place-items: center;
+      color: var(--color-primary);
+      font-size: 1.2rem;
+    }
+
+    .booking-success {
+      text-align: center;
+      padding: 24px 10px 18px;
+    }
+
+    .booking-check {
+      width: 76px;
+      height: 76px;
+      border-radius: 50%;
+      margin: 0 auto 18px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: linear-gradient(135deg, var(--color-success), var(--color-primary));
+      font-size: 2rem;
+      box-shadow: 0 14px 30px rgba(59,116,104,.22);
+    }
+
+    .booking-success h3 {
+      font-size: clamp(1rem, .92rem + .32vw, 1.25rem);
+      line-height: 1.18;
+      letter-spacing: -.035em;
+      font-weight: var(--weight-semibold);
+      color: var(--color-text);
+      margin-bottom: 8px;
+    }
+
+    .booking-success p {
+      font-size: var(--type-small);
+      line-height: 1.45;
+      color: var(--color-text-muted);
+    }
+
+    .booking-summary-line {
+      display: flex;
+      gap: 9px;
+      color: var(--color-text);
+      font-size: var(--type-small);
+      line-height: 1.4;
+      margin-top: 13px;
+    }
+
+    .booking-summary-line i {
+      color: var(--color-primary);
+      font-style: normal;
+      width: 16px;
+      flex: 0 0 auto;
+    }
+
+    @media (max-width: 1280px) {
+      .booking-grid {
+        grid-template-columns: repeat(3, minmax(260px, 1fr));
+      }
+    }
+
+    @media (max-width: 960px) {
+      .booking-grid {
+        grid-template-columns: repeat(2, minmax(260px, 1fr));
+      }
+    }
+
+    @media (max-width: 660px) {
+      .booking-shell {
+        padding: 14px;
+        border-radius: var(--radius-xl);
+      }
+
+      .booking-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .booking-phone {
+        max-width: 320px;
+      }
+    }
+
+  </style>
+</head>
+
+<body>
+  <svg width="0" height="0" style="position:absolute">
+    <symbol id="icon-search" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="7"></circle>
+      <path d="m20 20-3.5-3.5"></path>
+    </symbol>
+    <symbol id="icon-bell" viewBox="0 0 24 24">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"></path>
+      <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+    </symbol>
+    <symbol id="icon-heart" viewBox="0 0 24 24">
+      <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"></path>
+    </symbol>
+    <symbol id="icon-lungs" viewBox="0 0 24 24">
+      <path d="M12 12V4"></path>
+      <path d="M10 12c-2-3-5-4-6-1-1 4-1 8 2 8 3 0 4-3 4-7z"></path>
+      <path d="M14 12c2-3 5-4 6-1 1 4 1 8-2 8-3 0-4-3-4-7z"></path>
+    </symbol>
+    <symbol id="icon-brain" viewBox="0 0 24 24">
+      <path d="M9 3a4 4 0 0 0-4 4 4 4 0 0 0-2 7 4 4 0 0 0 5 6"></path>
+      <path d="M15 3a4 4 0 0 1 4 4 4 4 0 0 1 2 7 4 4 0 0 1-5 6"></path>
+      <path d="M12 5v14"></path>
+      <path d="M8 9h2"></path>
+      <path d="M14 9h2"></path>
+      <path d="M7 14h3"></path>
+      <path d="M14 14h3"></path>
+    </symbol>
+    <symbol id="icon-home" viewBox="0 0 24 24">
+      <path d="m3 11 9-8 9 8"></path>
+      <path d="M5 10v10h14V10"></path>
+      <path d="M9 20v-6h6v6"></path>
+    </symbol>
+    <symbol id="icon-calendar" viewBox="0 0 24 24">
+      <rect x="3" y="5" width="18" height="16" rx="3"></rect>
+      <path d="M16 3v4"></path>
+      <path d="M8 3v4"></path>
+      <path d="M3 10h18"></path>
+    </symbol>
+    <symbol id="icon-user" viewBox="0 0 24 24">
+      <circle cx="12" cy="8" r="4"></circle>
+      <path d="M4 21a8 8 0 0 1 16 0"></path>
+    </symbol>
+    <symbol id="icon-location" viewBox="0 0 24 24">
+      <path d="M12 21s7-4.4 7-11a7 7 0 0 0-14 0c0 6.6 7 11 7 11z"></path>
+      <circle cx="12" cy="10" r="2.5"></circle>
+    </symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M12 7v6l4 2"></path>
+    </symbol>
+    <symbol id="icon-activity" viewBox="0 0 24 24">
+      <path d="M3 12h4l3 8 4-16 3 8h4"></path>
+    </symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24">
+      <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"></path>
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1A2 2 0 1 1 7.1 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.7 1z"></path>
+    </symbol>
+    <symbol id="icon-arrow-left" viewBox="0 0 24 24">
+      <path d="m15 18-6-6 6-6"></path>
+    </symbol>
+    <symbol id="icon-arrow-right" viewBox="0 0 24 24">
+      <path d="m9 18 6-6-6-6"></path>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24">
+      <path d="m20 6-11 11-5-5"></path>
+    </symbol>
+    <symbol id="icon-pill" viewBox="0 0 24 24">
+      <path d="M10 21 3 14a5 5 0 0 1 7-7l7 7a5 5 0 0 1-7 7z"></path>
+      <path d="m8 8 8 8"></path>
+    </symbol>
+    <symbol id="icon-chat" viewBox="0 0 24 24">
+      <path d="M21 11.5a8.3 8.3 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.3 8.3 0 0 1-3.8-.9L3 21l1.9-5.7a8.3 8.3 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.3 8.3 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z"></path>
+    </symbol>
+    <symbol id="icon-tooth" viewBox="0 0 24 24">
+      <path d="M8 3c2 0 2.5 1 4 1s2-1 4-1c3 0 5 2.5 5 5.5 0 4-2 5.5-3 9-.5 1.7-1.2 3.5-2.5 3.5-1.6 0-1.4-4-3.5-4s-1.9 4-3.5 4C7.2 21 6.5 19.2 6 17.5c-1-3.5-3-5-3-9C3 5.5 5 3 8 3z"></path>
+    </symbol>
+    <symbol id="icon-cart" viewBox="0 0 24 24">
+      <path d="M6 6h15l-2 8H8L6 3H3"></path>
+      <circle cx="9" cy="20" r="1.5"></circle>
+      <circle cx="18" cy="20" r="1.5"></circle>
+    </symbol>
+  </svg>
+
+  <div class="page">
+    <header class="hero">
+      <div>
+        <div class="eyebrow"><span></span> Nevari Health design system</div>
+        <h1>Nevari Health UI components for mobile consultation dashboards</h1>
+        <p>
+          A complete single file HTML design system using the Nevari navy and milk palette, with dashboard screens, doctor cards, activity analytics, profile, orders, appointments, forms, badges, navigation, colour tokens, and reusable component patterns.
+        </p>
+        <div class="hero-actions">
+          <a href="#screens" class="button button-primary">View screens <svg class="icon"><use href="#icon-arrow-right"></use></svg></a>
+          <a href="#components" class="button button-soft">Explore components</a>
+          <a href="#booking-flow" class="button button-soft">Booking screens</a>
+        </div>
+      </div>
+
+      <div class="hero-preview" aria-label="Mobile app screen preview">
+        <article class="phone">
+          <div class="screen">
+            <div class="screen-scroll">
+              <div class="app-header">
+                <div class="profile-mini">
+                  <div class="avatar">SM</div>
+                  <div>
+                    <div class="small muted">Hello,</div>
+                    <div class="card-title">Sofia Mans</div>
+                  </div>
+                </div>
+                <div class="cluster" style="gap:8px">
+                  <button class="icon-btn small" aria-label="Search"><svg class="icon"><use href="#icon-search"></use></svg></button>
+                  <button class="icon-btn small" aria-label="Notifications"><span class="dot"></span><svg class="icon"><use href="#icon-bell"></use></svg></button>
+                </div>
+              </div>
+
+              <div class="tiny-title">Select category</div>
+              <div class="category-grid">
+                <div class="category-card">
+                  <div class="category-icon green"><svg class="icon"><use href="#icon-lungs"></use></svg></div>
+                  <div><div class="category-meta">12 specialists</div><div class="category-name">Pulmonology</div></div>
+                </div>
+                <div class="category-card">
+                  <div class="category-icon yellow"><svg class="icon"><use href="#icon-heart"></use></svg></div>
+                  <div><div class="category-meta">15 specialists</div><div class="category-name">Cardiology</div></div>
+                </div>
+                <div class="category-card">
+                  <div class="category-icon lilac"><svg class="icon"><use href="#icon-brain"></use></svg></div>
+                  <div><div class="category-meta">8 specialists</div><div class="category-name">Neurology</div></div>
+                </div>
+              </div>
+
+              <div class="tiny-title">Select plan</div>
+              <div class="component-stack">
+                <div class="plan-card green">
+                  <div class="mini-person">
+                    <div class="avatar doctor-one">JM</div>
+                    <div><h4>James Murphy</h4><p>Neuro specialist</p></div>
+                  </div>
+                  <h3 class="plan-title">Healing minds, transforming life</h3>
+                  <div class="plan-footer">
+                    <span class="price">$1.5K/month</span>
+                    <button class="register-pill"><span class="round"><svg class="icon"><use href="#icon-check"></use></svg></span>Register <svg class="icon"><use href="#icon-arrow-right"></use></svg></button>
+                  </div>
+                  <div class="doctor-figure"></div>
+                </div>
+
+                <div class="plan-card purple">
+                  <div class="mini-person">
+                    <div class="avatar doctor-two">LO</div>
+                    <div><h4>Lisa K. Ortiz</h4><p>Cardio specialist</p></div>
+                  </div>
+                  <h3 class="plan-title">Your heart’s health our mission</h3>
+                  <div class="doctor-figure female"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="phone">
+          <div class="screen">
+            <div class="screen-scroll">
+              <div class="topbar">
+                <button class="icon-btn small" aria-label="Back"><svg class="icon"><use href="#icon-arrow-left"></use></svg></button>
+                <button class="icon-btn small" aria-label="Search"><svg class="icon"><use href="#icon-search"></use></svg></button>
+              </div>
+              <h2 class="screen-title">Find doctors</h2>
+
+              <div class="doctor-list">
+                <div class="doctor-card">
+                  <div class="doctor-head">
+                    <div class="avatar doctor-one">JM</div>
+                    <div><h4>James Murphy</h4><p>Pulmonologist · 9yr</p></div>
+                  </div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-location"></use></svg></span>3780 Colony Street Stamford, CT 06902</div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-clock"></use></svg></span>Available Today</div>
+                </div>
+
+                <div class="doctor-card">
+                  <div class="doctor-head">
+                    <div class="avatar doctor-two">LO</div>
+                    <div><h4>Lisa K. Ortiz</h4><p>Cardiologist · 4yr</p></div>
+                  </div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-location"></use></svg></span>4503 Kildeer Drive, Norfolk, VA 23502</div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-clock"></use></svg></span>Available Today</div>
+                </div>
+
+                <div class="doctor-card">
+                  <div class="doctor-head">
+                    <div class="avatar doctor-three">CR</div>
+                    <div><h4>Carlos H. Rice</h4><p>Pulmonologist · 12yr</p></div>
+                  </div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-location"></use></svg></span>1748 Hilltop Street, Springfield, MA 01109</div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-clock"></use></svg></span>Available Today</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="phone">
+          <div class="screen">
+            <div class="screen-scroll">
+              <div class="topbar">
+                <button class="icon-btn small"><svg class="icon"><use href="#icon-arrow-left"></use></svg></button>
+                <button class="icon-btn small"><span class="dot"></span><svg class="icon"><use href="#icon-calendar"></use></svg></button>
+              </div>
+              <h2 class="screen-title">Calories</h2>
+              <div class="analytics-card">
+                <div class="analytics-head">
+                  <h4>Daily calories burn</h4>
+                  <div class="pager">
+                    <button class="icon-btn small soft"><svg class="icon"><use href="#icon-arrow-left"></use></svg></button>
+                    <button class="icon-btn small soft"><svg class="icon"><use href="#icon-arrow-right"></use></svg></button>
+                  </div>
+                </div>
+                <div class="bar-chart">
+                  <div class="bar-item"><span class="bar" style="--h:64px"></span><span class="bar-label">Mon</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:112px"></span><span class="bar-label">Tue</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:58px"></span><span class="bar-label">Wed</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:80px"></span><span class="bar-label">Thu</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:48px"></span><span class="bar-label">Fri</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:98px"></span><span class="bar-label">Sat</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:32px"></span><span class="bar-label">Sun</span></div>
+                </div>
+              </div>
+
+              <div class="metrics-grid">
+                <div class="metric-card">
+                  <div class="metric-top"><h4>Sleep</h4><span class="metric-icon"><svg class="icon"><use href="#icon-clock"></use></svg></span></div>
+                  <p class="metric-desc">Your sleep duration today is 7 hours</p>
+                  <div class="progress-ring">7hr</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-top"><h4>Heart</h4><span class="metric-icon yellow"><svg class="icon"><use href="#icon-heart"></use></svg></span></div>
+                  <p class="metric-desc">Your current heart rate is 86 bpm</p>
+                  <svg class="heart-line" viewBox="0 0 140 52">
+                    <path d="M2 36 C16 34, 18 20, 28 24 S42 42, 54 27 S68 8, 82 24 S100 47, 116 22 S130 12, 138 28" fill="none" stroke="#CDB98D" stroke-width="5" stroke-linecap="round"/>
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            <nav class="bottom-nav" aria-label="Bottom navigation">
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-home"></use></svg></a>
+              <a class="nav-item active" href="#"><svg class="icon"><use href="#icon-heart"></use></svg>My activities</a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-calendar"></use></svg></a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-settings"></use></svg></a>
+            </nav>
+          </div>
+        </article>
+      </div>
+    </header>
+
+    <section id="screens" class="section">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">Screen templates</h2>
+          <p class="section-subtitle">Three ready to adapt mobile screens using the same tokens, icons, cards, spacing, and navigation rules.</p>
+        </div>
+        <div class="tabs" aria-label="Screen filter">
+          <button class="tab active">Dashboard</button>
+          <button class="tab">Doctors</button>
+          <button class="tab">Health</button>
+        </div>
+      </div>
+
+      <div class="showcase-grid">
+        <article class="phone">
+          <div class="screen">
+            <div class="screen-scroll">
+              <div class="app-header">
+                <div class="profile-mini">
+                  <div class="avatar">SM</div>
+                  <div>
+                    <div class="small muted">Hello,</div>
+                    <div class="card-title">Sofia Mans</div>
+                  </div>
+                </div>
+                <div class="cluster" style="gap:8px">
+                  <button class="icon-btn small"><svg class="icon"><use href="#icon-search"></use></svg></button>
+                  <button class="icon-btn small"><span class="dot"></span><svg class="icon"><use href="#icon-bell"></use></svg></button>
+                </div>
+              </div>
+
+              <div class="search-box" style="margin-bottom:14px">
+                <svg class="icon"><use href="#icon-search"></use></svg>
+                <input placeholder="Search doctor, medicine, clinic" />
+              </div>
+
+              <div class="tiny-title">Select category</div>
+              <div class="category-grid">
+                <div class="category-card">
+                  <div class="category-icon green"><svg class="icon"><use href="#icon-lungs"></use></svg></div>
+                  <div><div class="category-meta">12 specialists</div><div class="category-name">Pulmonology</div></div>
+                </div>
+                <div class="category-card">
+                  <div class="category-icon yellow"><svg class="icon"><use href="#icon-heart"></use></svg></div>
+                  <div><div class="category-meta">15 specialists</div><div class="category-name">Cardiology</div></div>
+                </div>
+                <div class="category-card">
+                  <div class="category-icon lilac"><svg class="icon"><use href="#icon-brain"></use></svg></div>
+                  <div><div class="category-meta">8 specialists</div><div class="category-name">Neurology</div></div>
+                </div>
+              </div>
+
+              <div class="tiny-title">Today</div>
+              <div class="appointment-card" style="margin-bottom:12px">
+                <div class="calendar-tile"><span>May</span><strong>17</strong></div>
+                <div>
+                  <div class="card-title">Online consultation</div>
+                  <div class="card-desc">10:30 AM with Dr. James</div>
+                </div>
+                <span class="status-badge success">Paid</span>
+              </div>
+
+              <div class="tiny-title">Select plan</div>
+              <div class="plan-card green">
+                <div class="mini-person">
+                  <div class="avatar doctor-one">JM</div>
+                  <div><h4>James Murphy</h4><p>Neuro specialist</p></div>
+                </div>
+                <h3 class="plan-title">Healing minds, transforming life</h3>
+                <div class="plan-footer">
+                  <span class="price">$1.5K/month</span>
+                  <button class="register-pill"><span class="round"><svg class="icon"><use href="#icon-check"></use></svg></span>Register</button>
+                </div>
+                <div class="doctor-figure"></div>
+              </div>
+            </div>
+
+            <nav class="bottom-nav">
+              <a class="nav-item active green-active" href="#"><svg class="icon"><use href="#icon-home"></use></svg>Home</a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-heart"></use></svg></a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-cart"></use></svg></a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-user"></use></svg></a>
+            </nav>
+          </div>
+        </article>
+
+        <article class="phone">
+          <div class="screen">
+            <div class="screen-scroll">
+              <div class="topbar">
+                <button class="icon-btn small"><svg class="icon"><use href="#icon-arrow-left"></use></svg></button>
+                <button class="icon-btn small"><svg class="icon"><use href="#icon-search"></use></svg></button>
+              </div>
+              <h2 class="screen-title">Find doctors</h2>
+
+              <div class="tabs" style="margin-bottom:14px">
+                <button class="tab active">All</button>
+                <button class="tab">Heart</button>
+                <button class="tab">Lungs</button>
+              </div>
+
+              <div class="doctor-list">
+                <div class="doctor-card">
+                  <div class="doctor-head">
+                    <div class="avatar doctor-one">JM</div>
+                    <div><h4>James Murphy</h4><p>Pulmonologist · 9yr</p></div>
+                    <span class="status-badge success" style="margin-left:auto">Open</span>
+                  </div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-location"></use></svg></span>3780 Colony Street Stamford, CT 06902</div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-clock"></use></svg></span>Available Today</div>
+                </div>
+
+                <div class="doctor-card">
+                  <div class="doctor-head">
+                    <div class="avatar doctor-two">LO</div>
+                    <div><h4>Lisa K. Ortiz</h4><p>Cardiologist · 4yr</p></div>
+                    <span class="status-badge warning" style="margin-left:auto">Busy</span>
+                  </div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-location"></use></svg></span>4503 Kildeer Drive, Norfolk, VA 23502</div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-clock"></use></svg></span>Available Today</div>
+                </div>
+
+                <div class="doctor-card">
+                  <div class="doctor-head">
+                    <div class="avatar doctor-three">CR</div>
+                    <div><h4>Carlos H. Rice</h4><p>Pulmonologist · 12yr</p></div>
+                    <span class="status-badge success" style="margin-left:auto">Open</span>
+                  </div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-location"></use></svg></span>1748 Hilltop Street, Springfield, MA 01109</div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-clock"></use></svg></span>Available Today</div>
+                </div>
+
+                <div class="doctor-card">
+                  <div class="doctor-head">
+                    <div class="avatar doctor-four">NA</div>
+                    <div><h4>Nora Adams</h4><p>Dermatologist · 7yr</p></div>
+                    <span class="status-badge neutral" style="margin-left:auto">Later</span>
+                  </div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-location"></use></svg></span>180 Medical Avenue, Dover, DE 19901</div>
+                  <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-clock"></use></svg></span>Tomorrow 9:00 AM</div>
+                </div>
+              </div>
+            </div>
+
+            <nav class="bottom-nav">
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-home"></use></svg></a>
+              <a class="nav-item active" href="#"><svg class="icon"><use href="#icon-search"></use></svg>Doctors</a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-calendar"></use></svg></a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-settings"></use></svg></a>
+            </nav>
+          </div>
+        </article>
+
+        <article class="phone">
+          <div class="screen">
+            <div class="screen-scroll">
+              <div class="topbar">
+                <button class="icon-btn small"><svg class="icon"><use href="#icon-arrow-left"></use></svg></button>
+                <button class="icon-btn small"><span class="dot"></span><svg class="icon"><use href="#icon-calendar"></use></svg></button>
+              </div>
+              <h2 class="screen-title">My activities</h2>
+
+              <div class="analytics-card">
+                <div class="analytics-head">
+                  <h4>Daily calories burn</h4>
+                  <div class="pager">
+                    <button class="icon-btn small soft"><svg class="icon"><use href="#icon-arrow-left"></use></svg></button>
+                    <button class="icon-btn small soft"><svg class="icon"><use href="#icon-arrow-right"></use></svg></button>
+                  </div>
+                </div>
+                <div class="bar-chart">
+                  <div class="bar-item"><span class="bar" style="--h:64px"></span><span class="bar-label">Mon</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:112px"></span><span class="bar-label">Tue</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:58px"></span><span class="bar-label">Wed</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:80px"></span><span class="bar-label">Thu</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:48px"></span><span class="bar-label">Fri</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:98px"></span><span class="bar-label">Sat</span></div>
+                  <div class="bar-item"><span class="bar" style="--h:32px"></span><span class="bar-label">Sun</span></div>
+                </div>
+              </div>
+
+              <div class="metrics-grid">
+                <div class="metric-card">
+                  <div class="metric-top"><h4>Sleep</h4><span class="metric-icon"><svg class="icon"><use href="#icon-clock"></use></svg></span></div>
+                  <p class="metric-desc">Your sleep duration today is 7 hours</p>
+                  <div class="progress-ring">7hr</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-top"><h4>Heart</h4><span class="metric-icon yellow"><svg class="icon"><use href="#icon-heart"></use></svg></span></div>
+                  <p class="metric-desc">Your current heart rate is 86 bpm</p>
+                  <svg class="heart-line" viewBox="0 0 140 52">
+                    <path d="M2 36 C16 34, 18 20, 28 24 S42 42, 54 27 S68 8, 82 24 S100 47, 116 22 S130 12, 138 28" fill="none" stroke="#CDB98D" stroke-width="5" stroke-linecap="round"/>
+                  </svg>
+                </div>
+              </div>
+
+              <div class="tiny-title">Weekly goal</div>
+              <div class="order-card">
+                <div class="row" style="justify-content:space-between">
+                  <div>
+                    <div class="card-title">Health score</div>
+                    <div class="card-desc">You are 68% to your weekly target</div>
+                  </div>
+                  <span class="status-badge success">Good</span>
+                </div>
+                <div class="progress-track"><span style="--w:68%"></span></div>
+              </div>
+            </div>
+
+            <nav class="bottom-nav">
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-home"></use></svg></a>
+              <a class="nav-item active" href="#"><svg class="icon"><use href="#icon-heart"></use></svg>My activities</a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-calendar"></use></svg></a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-settings"></use></svg></a>
+            </nav>
+          </div>
+        </article>
+      </div>
+    </section>
+
+
+    <section id="booking-flow" class="section booking-section">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">Booking screens</h2>
+          <p class="section-subtitle">The doctor booking journey is restored and segmented into discovery, doctor profile, calendar slots, reviews, review and pay, payment confirmation, and booking success states. The typography follows the refined lighter hierarchy.</p>
+        </div>
+      </div>
+
+      <div class="booking-shell">
+        <div class="booking-segments" aria-label="Booking screen segments">
+          <span>01 Discovery</span>
+          <span>02 Profile</span>
+          <span>03 Time slots</span>
+          <span>04 Reviews</span>
+          <span>05 Review and pay</span>
+          <span>06 Payment</span>
+          <span>07 Confirmation</span>
+        </div>
+
+        <div class="booking-grid">
+          <article class="booking-wrap">
+            <div class="booking-label"><span>01 Doctor discovery</span><span>Search and list</span></div>
+            <div class="booking-phone">
+              <div class="booking-screen">
+                <div class="booking-body">
+                  <div class="booking-topbar">
+                    <h3 class="booking-title">Nevari Doctors</h3>
+                    <button class="booking-icon">⌕</button>
+                  </div>
+
+                  <label class="booking-search">
+                    <span>⌕</span>
+                    <input type="search" placeholder="Search by doctor's name" />
+                  </label>
+
+                  <div class="booking-list">
+                    <div class="booking-card">
+                      <div class="booking-row">
+                        <div class="booking-avatar">AA</div>
+                        <div class="booking-meta">
+                          <h4>Dr. Amara Adebayo</h4>
+                          <p>Cardiologist · 8 years exp</p>
+                        </div>
+                        <span class="booking-pill">★ 4.9</span>
+                      </div>
+                      <div class="booking-stat-split">
+                        <div class="booking-stat"><strong>Available Now</strong><span>Video consult</span></div>
+                        <div class="booking-stat"><strong>₦25,000</strong><span>Consultation fee</span></div>
+                      </div>
+                      <a class="booking-btn" href="#">Book appointment ›</a>
+                    </div>
+
+                    <div class="booking-card">
+                      <div class="booking-row">
+                        <div class="booking-avatar">CM</div>
+                        <div class="booking-meta">
+                          <h4>Dr. Chinedu Musa</h4>
+                          <p>General Physician · 6 years exp</p>
+                        </div>
+                        <span class="booking-pill">★ 4.7</span>
+                      </div>
+                      <div class="booking-stat-split">
+                        <div class="booking-stat"><strong>Available Now</strong><span>Video consult</span></div>
+                        <div class="booking-stat"><strong>₦18,500</strong><span>Consultation fee</span></div>
+                      </div>
+                      <a class="booking-btn" href="#">Book appointment ›</a>
+                    </div>
+
+                    <div class="booking-card">
+                      <div class="booking-row">
+                        <div class="booking-avatar">FE</div>
+                        <div class="booking-meta">
+                          <h4>Dr. Fatima Eze</h4>
+                          <p>Dermatologist · 5 years exp</p>
+                        </div>
+                        <span class="booking-pill">★ 4.8</span>
+                      </div>
+                      <div class="booking-stat-split">
+                        <div class="booking-stat"><strong>Available Today</strong><span>Video consult</span></div>
+                        <div class="booking-stat"><strong>₦20,000</strong><span>Consultation fee</span></div>
+                      </div>
+                      <a class="booking-btn" href="#">Book appointment ›</a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="booking-wrap">
+            <div class="booking-label"><span>02 Doctor profile</span><span>Trust details</span></div>
+            <div class="booking-phone">
+              <div class="booking-screen">
+                <div class="booking-status"><span>9:41</span><span>LTE 37%</span></div>
+                <div class="booking-body">
+                  <div class="booking-topbar">
+                    <button class="booking-icon">‹</button>
+                    <div class="booking-centre-title">Doctor profile</div>
+                    <button class="booking-icon">♡</button>
+                  </div>
+
+                  <div class="booking-profile">
+                    <div class="booking-avatar big">NL</div>
+                    <h3>Dr. Nneka Lane</h3>
+                    <p>Gynecologist</p>
+                    <p style="margin-top:8px">Calm, practical and human centred care for women’s health consultations.</p>
+                  </div>
+
+                  <div class="booking-mini-grid">
+                    <div class="booking-mini"><small>Total experience</small><strong>05 Years</strong></div>
+                    <div class="booking-mini"><small>Rating</small><strong>4.9 · 500</strong></div>
+                  </div>
+
+                  <div class="booking-panel">
+                    <div class="booking-bill-line total" style="border-top:0;padding-top:0;margin:0">
+                      <span>Consultation fee</span>
+                      <strong>₦20,000</strong>
+                    </div>
+                  </div>
+
+                  <h4 class="booking-subtitle">About doctor</h4>
+                  <div class="booking-panel">
+                    <p class="booking-text">Specialist support for regular checks, symptoms review, online medical advice, and follow up guidance.</p>
+                  </div>
+                </div>
+
+                <div class="booking-bottom">
+                  <a class="booking-btn soft" href="#">Continue to time slots ›</a>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="booking-wrap">
+            <div class="booking-label"><span>03 Calendar slots</span><span>Date and time</span></div>
+            <div class="booking-phone">
+              <div class="booking-screen">
+                <div class="booking-status"><span>9:41</span><span>LTE 37%</span></div>
+                <div class="booking-body">
+                  <div class="booking-topbar">
+                    <button class="booking-icon">‹</button>
+                    <div class="booking-centre-title">Available time</div>
+                    <button class="booking-icon">⌕</button>
+                  </div>
+
+                  <div class="booking-calendar">
+                    <div class="booking-calendar-head">
+                      <h4>February</h4>
+                      <div style="color:var(--color-primary);font-size:18px">‹ ›</div>
+                    </div>
+
+                    <div class="booking-date-row">
+                      <div class="booking-date">Fri<strong>12</strong></div>
+                      <div class="booking-date">Sat<strong>13</strong></div>
+                      <div class="booking-date">Sun<strong>14</strong></div>
+                      <div class="booking-date">Mon<strong>15</strong></div>
+                      <div class="booking-date">Tue<strong>16</strong></div>
+                      <div class="booking-date active">Wed<strong>17</strong></div>
+                      <div class="booking-date">Thu<strong>18</strong></div>
+                    </div>
+
+                    <div class="booking-time-grid">
+                      <button class="booking-slot">06:00 PM</button>
+                      <button class="booking-slot">06:30 PM</button>
+                      <button class="booking-slot active">07:00 PM</button>
+                      <button class="booking-slot">07:30 PM</button>
+                      <button class="booking-slot">08:00 PM</button>
+                      <button class="booking-slot">08:30 PM</button>
+                      <button class="booking-slot">09:00 PM</button>
+                      <button class="booking-slot">10:00 PM</button>
+                      <button class="booking-slot">10:30 PM</button>
+                    </div>
+                  </div>
+
+                  <h4 class="booking-subtitle">Selected appointment</h4>
+                  <div class="booking-panel">
+                    <div class="booking-bill-line"><span>Date</span><strong>17 Feb, 2024</strong></div>
+                    <div class="booking-bill-line" style="margin-bottom:0"><span>Time</span><strong>07:00 PM</strong></div>
+                  </div>
+                </div>
+
+                <div class="booking-bottom">
+                  <a class="booking-btn" href="#">Book appointment ›</a>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="booking-wrap">
+            <div class="booking-label"><span>04 Reviews</span><span>Rating breakdown</span></div>
+            <div class="booking-phone">
+              <div class="booking-screen">
+                <div class="booking-status"><span>9:41</span><span>LTE 37%</span></div>
+                <div class="booking-body">
+                  <div class="booking-topbar">
+                    <button class="booking-icon">‹</button>
+                    <div class="booking-centre-title">Patient reviews</div>
+                    <button class="booking-icon">★</button>
+                  </div>
+
+                  <div class="booking-panel">
+                    <div class="booking-bars">
+                      <div class="booking-bar-line"><span>5 ★</span><div class="booking-bar-track"><span class="booking-bar-fill" style="--w:88%"></span></div><span>Excellent</span></div>
+                      <div class="booking-bar-line"><span>4 ★</span><div class="booking-bar-track"><span class="booking-bar-fill" style="--w:72%"></span></div><span>Good</span></div>
+                      <div class="booking-bar-line"><span>3 ★</span><div class="booking-bar-track"><span class="booking-bar-fill" style="--w:50%"></span></div><span>Average</span></div>
+                      <div class="booking-bar-line"><span>2 ★</span><div class="booking-bar-track"><span class="booking-bar-fill" style="--w:29%"></span></div><span>Below</span></div>
+                      <div class="booking-bar-line"><span>1 ★</span><div class="booking-bar-track"><span class="booking-bar-fill" style="--w:12%"></span></div><span>Poor</span></div>
+                    </div>
+                  </div>
+
+                  <div class="booking-list" style="margin-top:12px">
+                    <div class="booking-review">
+                      <div class="booking-row">
+                        <div class="booking-avatar no-status">TW</div>
+                        <div class="booking-meta"><h4>Theresa Webb</h4><p>Feb 02, 2024</p></div>
+                        <span class="booking-pill">★ 4.6</span>
+                      </div>
+                      <p class="booking-text" style="margin-top:9px">The doctor explained every step clearly and made the consultation feel safe.</p>
+                    </div>
+
+                    <div class="booking-review">
+                      <div class="booking-row">
+                        <div class="booking-avatar no-status">DL</div>
+                        <div class="booking-meta"><h4>Devon Lane</h4><p>Feb 02, 2024</p></div>
+                        <span class="booking-pill">★ 4.8</span>
+                      </div>
+                      <p class="booking-text" style="margin-top:9px">Fast, calm and very practical. I got clear instructions and a follow up plan.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="booking-bottom">
+                  <a class="booking-btn soft" href="#">Book appointment ›</a>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="booking-wrap">
+            <div class="booking-label"><span>05 Review and pay</span><span>Patient and schedule</span></div>
+            <div class="booking-phone">
+              <div class="booking-screen">
+                <div class="booking-status"><span>9:41</span><span>LTE 37%</span></div>
+                <div class="booking-body">
+                  <div class="booking-topbar">
+                    <button class="booking-icon">‹</button>
+                    <div class="booking-centre-title">Review and Pay</div>
+                    <span style="width:34px"></span>
+                  </div>
+
+                  <div class="booking-profile" style="padding-top:0">
+                    <div class="booking-avatar big">NL</div>
+                    <h3>Dr. Nneka Lane</h3>
+                    <p>Gynecologist</p>
+                  </div>
+
+                  <h4 class="booking-subtitle">Patient info</h4>
+                  <div class="booking-panel">
+                    <div class="booking-row">
+                      <div class="booking-avatar no-status">MK</div>
+                      <div class="booking-meta"><h4>Mckinney</h4><p>Myself</p></div>
+                      <span class="booking-pill">Active</span>
+                    </div>
+                    <p class="booking-note">You can submit patient details, old prescriptions and test reports.</p>
+                    <span class="booking-upload">▧ Upload prescription</span>
+                  </div>
+
+                  <h4 class="booking-subtitle">Schedule</h4>
+                  <div class="booking-panel">
+                    <div class="booking-bill-line"><span>Time</span><strong>07:00 PM</strong></div>
+                    <div class="booking-bill-line" style="margin-bottom:0"><span>Date</span><strong>17 Feb, 2024</strong></div>
+                  </div>
+                </div>
+
+                <div class="booking-bottom">
+                  <a class="booking-btn" href="#">Pay ₦21,000</a>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="booking-wrap">
+            <div class="booking-label"><span>06 Payment details</span><span>Bill and card</span></div>
+            <div class="booking-phone">
+              <div class="booking-screen">
+                <div class="booking-status"><span>9:41</span><span>LTE 37%</span></div>
+                <div class="booking-body">
+                  <div class="booking-topbar">
+                    <button class="booking-icon">‹</button>
+                    <div class="booking-centre-title">Payment</div>
+                    <span style="width:34px"></span>
+                  </div>
+
+                  <h4 class="booking-subtitle">Promo code</h4>
+                  <div class="booking-panel">
+                    <div class="booking-promo">
+                      <div class="booking-code">NEVARI021</div>
+                      <button class="booking-apply">Apply</button>
+                    </div>
+                  </div>
+
+                  <h4 class="booking-subtitle">Bill details</h4>
+                  <div class="booking-panel">
+                    <div class="booking-bill-line"><span>Consultation fees</span><strong>₦20,000</strong></div>
+                    <div class="booking-bill-line"><span>Booking fee</span><strong>₦1,000</strong></div>
+                    <div class="booking-bill-line"><span>Promo applied</span><strong style="color:var(--color-success)">₦3,000</strong></div>
+                    <div class="booking-bill-line total"><span>Total pay</span><strong>₦18,000</strong></div>
+                  </div>
+
+                  <h4 class="booking-subtitle">Pay with</h4>
+                  <div class="booking-panel">
+                    <div class="booking-row">
+                      <span class="booking-card-icon"></span>
+                      <div class="booking-meta"><h4>•••• 5941</h4><p>Default card</p></div>
+                      <span class="booking-pill">Change</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="booking-bottom">
+                  <a class="booking-btn" href="#">Pay ₦18,000</a>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="booking-wrap">
+            <div class="booking-label"><span>07 Confirm payment</span><span>Bottom sheet</span></div>
+            <div class="booking-phone">
+              <div class="booking-screen">
+                <div class="booking-status"><span>9:41</span><span>LTE 37%</span></div>
+                <div class="booking-body">
+                  <div class="booking-topbar">
+                    <button class="booking-icon">‹</button>
+                    <div class="booking-centre-title">Review and Pay</div>
+                    <span style="width:34px"></span>
+                  </div>
+
+                  <div class="booking-panel">
+                    <div class="booking-bill-line"><span>Consultation fees</span><strong>₦20,000</strong></div>
+                    <div class="booking-bill-line"><span>Booking fee</span><strong>₦1,000</strong></div>
+                    <div class="booking-bill-line"><span>Promo applied</span><strong style="color:var(--color-success)">₦3,000</strong></div>
+                    <div class="booking-bill-line total"><span>Total pay</span><strong>₦18,000</strong></div>
+                  </div>
+                </div>
+
+                <div class="booking-overlay">
+                  <div class="booking-sheet">
+                    <h4>Confirm Payment</h4>
+                    <div class="booking-bill-line"><span>Pay with</span><strong>•••• 5941</strong></div>
+                    <button class="booking-btn">Swipe to Pay</button>
+                    <div class="booking-touch">◉</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="booking-wrap">
+            <div class="booking-label"><span>08 Confirmation</span><span>Success state</span></div>
+            <div class="booking-phone">
+              <div class="booking-screen">
+                <div class="booking-status"><span>9:41</span><span>LTE 37%</span></div>
+                <div class="booking-body">
+                  <div class="booking-success">
+                    <div class="booking-check">✓</div>
+                    <h3>Thanks, your booking has been confirmed.</h3>
+                    <p>Please check your email for receipt and booking details.</p>
+                  </div>
+
+                  <div class="booking-summary">
+                    <div class="booking-row">
+                      <div class="booking-avatar no-status">NL</div>
+                      <div class="booking-meta"><h4>Dr. Nneka Lane</h4><p>Gynecologist</p></div>
+                    </div>
+                    <div class="booking-summary-line"><i>▣</i><span>Online consultation</span></div>
+                    <div class="booking-summary-line"><i>▦</i><span>Wednesday, February 17, 2024<br>06:40 PM to 07:30 PM</span></div>
+                  </div>
+                </div>
+
+                <div class="booking-bottom">
+                  <a class="booking-btn" href="#">＋ Add to calendar</a>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+
+    <section id="components" class="section">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">Component library</h2>
+          <p class="section-subtitle">Reusable cards and interface blocks for consultation, appointment, order management, customer profile, and health tracking screens.</p>
+        </div>
+      </div>
+
+      <div class="kit-grid">
+        <article class="kit-card wide">
+          <h3 class="kit-title">Color tokens</h3>
+          <div class="swatch-grid">
+            <div class="swatch" style="background:var(--color-primary);color:#fff"><small>Nevari navy</small><strong>#0A2A5E</strong></div>
+            <div class="swatch" style="background:var(--color-secondary)"><small>Milk</small><strong>#E5D7C6</strong></div>
+            <div class="swatch" style="background:var(--color-accent-blue)"><small>Blue tint</small><strong>#BFD0E5</strong></div>
+            <div class="swatch" style="background:var(--color-accent-yellow)"><small>Sand accent</small><strong>#CDB98D</strong></div>
+            <div class="swatch" style="background:var(--color-bg)"><small>Page background</small><strong>#FFFFFF</strong></div>
+            <div class="swatch" style="background:var(--color-primary-dark);color:#fff"><small>Deep navy</small><strong>#061B3C</strong></div>
+          </div>
+        </article>
+
+        <article class="kit-card">
+          <h3 class="kit-title">Radii and shadows</h3>
+          <div class="token-list">
+            <div class="token-row"><span>Small radius</span><code>12px</code></div>
+            <div class="token-row"><span>Card radius</span><code>22px</code></div>
+            <div class="token-row"><span>Large card</span><code>28px</code></div>
+            <div class="token-row"><span>Pill radius</span><code>999px</code></div>
+            <div class="token-row"><span>Card shadow</span><code>soft 16px</code></div>
+          </div>
+        </article>
+
+        <article class="kit-card">
+          <h3 class="kit-title">Buttons</h3>
+          <div class="button-row">
+            <button class="button button-primary">Book now</button>
+            <button class="button green">Consult</button>
+            <button class="button lilac">Details</button>
+            <button class="button outline">Cancel</button>
+          </div>
+          <div class="divider"></div>
+          <div class="button-row">
+            <button class="icon-btn"><svg class="icon"><use href="#icon-search"></use></svg></button>
+            <button class="icon-btn dark"><svg class="icon"><use href="#icon-check"></use></svg></button>
+            <button class="icon-btn"><span class="dot"></span><svg class="icon"><use href="#icon-bell"></use></svg></button>
+          </div>
+        </article>
+
+        <article class="kit-card">
+          <h3 class="kit-title">Status badges</h3>
+          <div class="button-row">
+            <span class="status-badge success">Available</span>
+            <span class="status-badge warning">Pending</span>
+            <span class="status-badge danger">Missed</span>
+            <span class="status-badge neutral">Draft</span>
+          </div>
+          <div class="divider"></div>
+          <div class="token-row"><span>Use badges for appointment, order, payment, consultation, and profile states.</span></div>
+        </article>
+
+        <article class="kit-card wide">
+          <h3 class="kit-title">Search and form controls</h3>
+          <div class="form-grid">
+            <div class="search-box">
+              <svg class="icon"><use href="#icon-search"></use></svg>
+              <input placeholder="Search doctors, orders, medicine, appointment" />
+            </div>
+            <div class="field">
+              <label>Appointment reason</label>
+              <input class="input" placeholder="Enter consultation reason" />
+            </div>
+            <div class="field">
+              <label>Specialist</label>
+              <select class="input select">
+                <option>Cardiology</option>
+                <option>Pulmonology</option>
+                <option>Neurology</option>
+                <option>Dermatology</option>
+              </select>
+            </div>
+          </div>
+        </article>
+
+        <article class="kit-card">
+          <h3 class="kit-title">Category cards</h3>
+          <div class="category-grid">
+            <div class="category-card">
+              <div class="category-icon green"><svg class="icon"><use href="#icon-lungs"></use></svg></div>
+              <div><div class="category-meta">12 specialists</div><div class="category-name">Pulmonology</div></div>
+            </div>
+            <div class="category-card">
+              <div class="category-icon yellow"><svg class="icon"><use href="#icon-heart"></use></svg></div>
+              <div><div class="category-meta">15 specialists</div><div class="category-name">Cardiology</div></div>
+            </div>
+            <div class="category-card">
+              <div class="category-icon lilac"><svg class="icon"><use href="#icon-brain"></use></svg></div>
+              <div><div class="category-meta">8 specialists</div><div class="category-name">Neurology</div></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="kit-card wide">
+          <h3 class="kit-title">Doctor strip</h3>
+          <div class="doctor-strip">
+            <div class="doctor-mini"><div class="avatar doctor-one">JM</div><div class="card-title">James</div><div class="card-desc">Pulmonology</div></div>
+            <div class="doctor-mini"><div class="avatar doctor-two">LO</div><div class="card-title">Lisa</div><div class="card-desc">Cardiology</div></div>
+            <div class="doctor-mini"><div class="avatar doctor-three">CR</div><div class="card-title">Carlos</div><div class="card-desc">Neurology</div></div>
+            <div class="doctor-mini"><div class="avatar doctor-four">NA</div><div class="card-title">Nora</div><div class="card-desc">Dermatology</div></div>
+          </div>
+        </article>
+
+        <article class="kit-card">
+          <h3 class="kit-title">Appointment card</h3>
+          <div class="appointment-card">
+            <div class="calendar-tile"><span>May</span><strong>17</strong></div>
+            <div>
+              <div class="card-title">Video consultation</div>
+              <div class="card-desc">10:30 AM with Dr. Lisa</div>
+            </div>
+            <span class="status-badge success">Paid</span>
+          </div>
+        </article>
+
+        <article class="kit-card wide">
+          <h3 class="kit-title">Doctor list card</h3>
+          <div class="doctor-card">
+            <div class="doctor-head">
+              <div class="avatar doctor-two">LO</div>
+              <div><h4>Lisa K. Ortiz</h4><p>Cardiologist · 4yr</p></div>
+              <span class="status-badge success" style="margin-left:auto">Available</span>
+            </div>
+            <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-location"></use></svg></span>4503 Kildeer Drive, Norfolk, VA 23502</div>
+            <div class="info-line"><span class="icon-wrap"><svg class="icon"><use href="#icon-clock"></use></svg></span>Available Today</div>
+          </div>
+        </article>
+
+        <article class="kit-card">
+          <h3 class="kit-title">Health metric card</h3>
+          <div class="metric-card">
+            <div class="metric-top"><h4>Sleep</h4><span class="metric-icon"><svg class="icon"><use href="#icon-clock"></use></svg></span></div>
+            <p class="metric-desc">Your sleep duration today is 7 hours</p>
+            <div class="progress-ring">7hr</div>
+          </div>
+        </article>
+
+        <article class="kit-card">
+          <h3 class="kit-title">Order card</h3>
+          <div class="order-card">
+            <div class="order-line">
+              <div class="product-thumb"><svg class="icon"><use href="#icon-pill"></use></svg></div>
+              <div>
+                <div class="card-title">Vitamin care pack</div>
+                <div class="card-desc">Order ID 4028 · 3 items</div>
+              </div>
+              <span class="status-badge warning">Packing</span>
+            </div>
+            <div class="progress-track"><span style="--w:52%"></span></div>
+          </div>
+        </article>
+
+        <article class="kit-card wide">
+          <h3 class="kit-title">Customer profile card</h3>
+          <div class="profile-card">
+            <div class="avatar">SM</div>
+            <div>
+              <div class="card-title">Sofia Mans</div>
+              <div class="card-desc">Premium health customer · Lagos</div>
+              <div class="profile-stats">
+                <span class="profile-stat">12 orders</span>
+                <span class="profile-stat">4 consults</span>
+                <span class="profile-stat">2 active plans</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="kit-card">
+          <h3 class="kit-title">Notification card</h3>
+          <div class="notification-card">
+            <div class="notification-icon"><svg class="icon"><use href="#icon-bell"></use></svg></div>
+            <div>
+              <div class="card-title">Reminder</div>
+              <div class="card-desc">Your appointment starts in 30 minutes.</div>
+            </div>
+            <button class="icon-btn small soft"><svg class="icon"><use href="#icon-arrow-right"></use></svg></button>
+          </div>
+        </article>
+
+        <article class="kit-card wide">
+          <h3 class="kit-title">Analytics card</h3>
+          <div class="analytics-card">
+            <div class="analytics-head">
+              <h4>Medication adherence</h4>
+              <span class="status-badge success">82%</span>
+            </div>
+            <div class="mini-chart">
+              <span style="--h:32px"></span>
+              <span style="--h:60px"></span>
+              <span style="--h:42px"></span>
+              <span style="--h:72px"></span>
+              <span style="--h:52px"></span>
+              <span style="--h:80px"></span>
+              <span style="--h:64px"></span>
+            </div>
+          </div>
+        </article>
+
+        <article class="kit-card">
+          <h3 class="kit-title">Timeline</h3>
+          <div class="timeline">
+            <div class="timeline-item">
+              <div class="timeline-dot"><svg class="icon"><use href="#icon-check"></use></svg></div>
+              <div><div class="card-title">Consult booked</div><div class="card-desc">9:10 AM</div></div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background:var(--color-secondary)"><svg class="icon"><use href="#icon-pill"></use></svg></div>
+              <div><div class="card-title">Order prepared</div><div class="card-desc">10:40 AM</div></div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background:var(--color-accent-yellow)"><svg class="icon"><use href="#icon-cart"></use></svg></div>
+              <div><div class="card-title">Out for delivery</div><div class="card-desc">12:15 PM</div></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="kit-card">
+          <h3 class="kit-title">Empty state</h3>
+          <div class="empty-card">
+            <div>
+              <div class="empty-icon"><svg class="icon"><use href="#icon-calendar"></use></svg></div>
+              <div class="card-title">No appointment yet</div>
+              <div class="card-desc">Book a consultation to get started.</div>
+            </div>
+          </div>
+        </article>
+
+        <article class="kit-card full">
+          <h3 class="kit-title">Bottom navigation variations</h3>
+          <div style="display:grid;gap:14px;max-width:680px">
+            <nav class="bottom-nav" style="position:relative;left:auto;right:auto;bottom:auto">
+              <a class="nav-item active" href="#"><svg class="icon"><use href="#icon-home"></use></svg>Home</a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-heart"></use></svg></a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-calendar"></use></svg></a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-settings"></use></svg></a>
+            </nav>
+            <nav class="bottom-nav" style="position:relative;left:auto;right:auto;bottom:auto">
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-home"></use></svg></a>
+              <a class="nav-item active green-active" href="#"><svg class="icon"><use href="#icon-heart"></use></svg>Activity</a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-cart"></use></svg></a>
+              <a class="nav-item" href="#"><svg class="icon"><use href="#icon-user"></use></svg></a>
+            </nav>
+          </div>
+        </article>
+
+        <article class="code-card">
+          <div class="code-head">
+            <span class="code-dot"></span>
+            <span class="code-dot"></span>
+            <span class="code-dot"></span>
+            Design tokens
+          </div>
+          <pre>:root {
+  --color-primary: #0A2A5E;        /* Nevari navy */
+  --color-primary-soft: #DDE7F2;   /* navy tint */
+  --color-secondary: #E5D7C6;      /* milk */
+  --color-secondary-soft: #F6EFE7; /* milk tint */
+  --color-accent-blue: #BFD0E5;
+  --color-accent-sand: #CDB98D;
+  --color-bg: #FFFFFF;
+  --color-surface: #FFFFFF;
+  --color-text: #07182F;
+  --color-text-muted: #6E7480;
+  --color-border: #EBE4DA;
+  --color-dark: #0A2A5E;
+
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 16px 40px rgba(35, 40, 35, 0.07);
+  --shadow-floating: 0 22px 60px rgba(35, 40, 35, 0.11);
+}</pre>
+        </article>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

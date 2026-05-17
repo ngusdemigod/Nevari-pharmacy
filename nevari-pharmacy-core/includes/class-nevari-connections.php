@@ -24,9 +24,7 @@ final class Nevari_Connections {
 
     public static function frontend_types(): array {
         return [
-            'storefront' => __('Storefront', 'nevari-pharmacy-core'),
-            'doctors_dashboard' => __('Doctors Dashboard', 'nevari-pharmacy-core'),
-            'patient_dashboard' => __('Patient Dashboard', 'nevari-pharmacy-core'),
+            'custom_frontend' => __('Custom Frontend', 'nevari-pharmacy-core'),
         ];
     }
 
@@ -93,6 +91,21 @@ final class Nevari_Connections {
         global $wpdb;
         $rows = $wpdb->get_results("SELECT * FROM " . Nevari_Helpers::table('frontend_connections') . " ORDER BY updated_at DESC, created_at DESC");
         return array_map([__CLASS__, 'format_frontend_connection'], $rows ?: []);
+    }
+
+    public static function revoke_frontend(int $connection_id): bool {
+        global $wpdb;
+        $updated = $wpdb->update(
+            Nevari_Helpers::table('frontend_connections'),
+            [
+                'trust_status' => 'revoked',
+                'updated_at' => Nevari_Helpers::now(),
+            ],
+            ['id' => $connection_id],
+            ['%s', '%s'],
+            ['%d']
+        );
+        return $updated !== false;
     }
 
     public static function verify_pairing(WP_REST_Request $request): WP_REST_Response {
@@ -293,6 +306,16 @@ final class Nevari_Connections {
             $frontend_type,
             $frontend_origin
         ));
+
+        if (!$row && in_array($frontend_type, ['storefront', 'doctors_dashboard', 'patient_dashboard'], true)) {
+            $row = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM " . Nevari_Helpers::table('frontend_connections') . " WHERE frontend_type = 'custom_frontend' AND frontend_origin = %s AND trust_status = 'trusted' LIMIT 1",
+                $frontend_origin
+            ));
+            if ($row) {
+                $row->frontend_type = $frontend_type;
+            }
+        }
 
         if (!$row) {
             return null;

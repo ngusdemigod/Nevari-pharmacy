@@ -57,11 +57,15 @@ final class Nevari_Admin {
             check_admin_referer('nevari_connections_action');
             $action = sanitize_key(wp_unslash($_POST['nevari_connections_action']));
             if ($action === 'generate_pairing_code') {
-                $frontend_type = isset($_POST['frontend_type']) ? sanitize_key(wp_unslash($_POST['frontend_type'])) : '';
                 try {
-                    $generated = Nevari_Connections::create_pairing_code($frontend_type, get_current_user_id());
+                    $generated = Nevari_Connections::create_pairing_code('custom_frontend', get_current_user_id());
                 } catch (InvalidArgumentException $exception) {
                     echo '<div class="notice notice-error"><p>' . esc_html($exception->getMessage()) . '</p></div>';
+                }
+            } elseif ($action === 'revoke_frontend') {
+                $connection_id = isset($_POST['connection_id']) ? (int) $_POST['connection_id'] : 0;
+                if ($connection_id && Nevari_Connections::revoke_frontend($connection_id)) {
+                    echo '<div class="notice notice-success"><p>' . esc_html__('Frontend access revoked. The paired frontend is now disconnected and must complete initial setup again before it can reconnect.', 'nevari-pharmacy-core') . '</p></div>';
                 }
             }
         }
@@ -86,20 +90,17 @@ final class Nevari_Admin {
                 <p><?php echo esc_html__('Debug tip: generate a new code, then confirm a fresh pending session appears below with a new session UUID and hash prefix. If verification still returns pairing_not_found, generation and verification are not using the same stored pairing record.', 'nevari-pharmacy-core'); ?></p>
             </div>
 
-            <h2><?php echo esc_html__('Pair Frontend Applications', 'nevari-pharmacy-core'); ?></h2>
+            <h2><?php echo esc_html__('Pair Custom Frontend', 'nevari-pharmacy-core'); ?></h2>
             <div class="nevari-connection-grid">
-                <?php foreach (Nevari_Connections::frontend_types() as $key => $label) : ?>
-                    <div class="card" style="max-width:420px; padding:20px; margin:0 20px 20px 0; display:inline-block; vertical-align:top;">
-                        <h3><?php echo esc_html($label); ?></h3>
-                        <p><?php echo esc_html__('Generate a one-time pairing code for this frontend.', 'nevari-pharmacy-core'); ?></p>
-                        <form method="post">
-                            <?php wp_nonce_field('nevari_connections_action'); ?>
-                            <input type="hidden" name="nevari_connections_action" value="generate_pairing_code" />
-                            <input type="hidden" name="frontend_type" value="<?php echo esc_attr($key); ?>" />
-                            <?php submit_button(sprintf(__('Pair %s', 'nevari-pharmacy-core'), $label), 'primary', '', false); ?>
-                        </form>
-                    </div>
-                <?php endforeach; ?>
+                <div class="card" style="max-width:420px; padding:20px; margin:0 20px 20px 0; display:inline-block; vertical-align:top;">
+                    <h3><?php echo esc_html__('Custom Frontend', 'nevari-pharmacy-core'); ?></h3>
+                    <p><?php echo esc_html__('Generate a one-time pairing code for your custom frontend application.', 'nevari-pharmacy-core'); ?></p>
+                    <form method="post">
+                        <?php wp_nonce_field('nevari_connections_action'); ?>
+                        <input type="hidden" name="nevari_connections_action" value="generate_pairing_code" />
+                        <?php submit_button(__('Generate Pairing Code', 'nevari-pharmacy-core'), 'primary', '', false); ?>
+                    </form>
+                </div>
             </div>
 
             <h2><?php echo esc_html__('Recent Pairing Sessions', 'nevari-pharmacy-core'); ?></h2>
@@ -150,11 +151,12 @@ final class Nevari_Admin {
                         <th><?php esc_html_e('Trust', 'nevari-pharmacy-core'); ?></th>
                         <th><?php esc_html_e('Paired', 'nevari-pharmacy-core'); ?></th>
                         <th><?php esc_html_e('Last Seen', 'nevari-pharmacy-core'); ?></th>
+                        <th><?php esc_html_e('Actions', 'nevari-pharmacy-core'); ?></th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if (!$connections) : ?>
-                        <tr><td colspan="6"><?php esc_html_e('No frontend applications have been paired yet.', 'nevari-pharmacy-core'); ?></td></tr>
+                        <tr><td colspan="7"><?php esc_html_e('No frontend applications have been paired yet.', 'nevari-pharmacy-core'); ?></td></tr>
                     <?php else : ?>
                         <?php foreach ($connections as $connection) : ?>
                             <tr>
@@ -163,7 +165,19 @@ final class Nevari_Admin {
                                 <td><?php echo esc_html($connection['frontend_url']); ?></td>
                                 <td><?php echo esc_html($connection['trust_status']); ?></td>
                                 <td><?php echo esc_html($connection['paired_at']); ?></td>
-                                <td><?php echo esc_html($connection['last_seen_at'] ?: '—'); ?></td>
+                                <td><?php echo esc_html($connection['last_seen_at'] ?: '-'); ?></td>
+                                <td>
+                                    <?php if ($connection['trust_status'] === 'trusted') : ?>
+                                        <form method="post">
+                                            <?php wp_nonce_field('nevari_connections_action'); ?>
+                                            <input type="hidden" name="nevari_connections_action" value="revoke_frontend" />
+                                            <input type="hidden" name="connection_id" value="<?php echo esc_attr((string) $connection['id']); ?>" />
+                                            <?php submit_button(__('Revoke Access', 'nevari-pharmacy-core'), 'secondary', '', false); ?>
+                                        </form>
+                                    <?php else : ?>
+                                        <?php esc_html_e('Revoked', 'nevari-pharmacy-core'); ?>
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php endif; ?>
@@ -194,7 +208,6 @@ final class Nevari_Admin {
         if ($active === 'rate-limits' && 'POST' === strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') && self::can_manage_rate_limits()) {
             self::handle_rate_limit_settings_save();
         }
-
         $args = null;
         $result = null;
         $total_pages = 1;

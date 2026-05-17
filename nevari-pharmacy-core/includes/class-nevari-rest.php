@@ -21,15 +21,17 @@ final class Nevari_Rest {
     }
 
     public static function auth_required(): bool {
-        return is_user_logged_in();
+        return Nevari_Auth::api_session_required();
     }
 
     public static function store_admin_required(): bool {
-        return Nevari_Helpers::is_store_admin();
+        $user_id = Nevari_Auth::api_session_user_id();
+        return $user_id > 0 && Nevari_Helpers::is_store_admin($user_id);
     }
 
     public static function doctor_or_admin_required(): bool {
-        return Nevari_Helpers::is_doctor() || Nevari_Helpers::is_store_admin();
+        $user_id = Nevari_Auth::api_session_user_id();
+        return $user_id > 0 && (Nevari_Helpers::is_doctor($user_id) || Nevari_Helpers::is_store_admin($user_id));
     }
 
     private static function woo_available(): bool {
@@ -85,6 +87,18 @@ final class Nevari_Rest {
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/receipt', [
             'methods' => WP_REST_Server::READABLE,
             'callback' => [__CLASS__, 'orders_receipt'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/details-pdf', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'orders_details_pdf'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/cancel', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'orders_cancel'],
             'permission_callback' => [__CLASS__, 'auth_required'],
         ]);
 
@@ -247,6 +261,12 @@ final class Nevari_Rest {
             'callback' => [__CLASS__, 'doctors_patients'],
             'permission_callback' => [__CLASS__, 'doctor_or_admin_required'],
         ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/doctors/(?P<id>\d+)/products', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'doctors_products'],
+            'permission_callback' => [__CLASS__, 'doctor_or_admin_required'],
+        ]);
     }
 
     private static function appointments_routes(): void {
@@ -404,12 +424,18 @@ final class Nevari_Rest {
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/dashboard/patient', [
             'methods' => WP_REST_Server::READABLE,
             'callback' => [__CLASS__, 'dashboard_patient'],
-            'permission_callback' => static function () { return Nevari_Helpers::is_patient(); },
+            'permission_callback' => static function () {
+                $user_id = Nevari_Auth::api_session_user_id();
+                return $user_id > 0 && Nevari_Helpers::is_patient($user_id);
+            },
         ]);
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/dashboard/doctor', [
             'methods' => WP_REST_Server::READABLE,
             'callback' => [__CLASS__, 'dashboard_doctor'],
-            'permission_callback' => static function () { return Nevari_Helpers::is_doctor(); },
+            'permission_callback' => static function () {
+                $user_id = Nevari_Auth::api_session_user_id();
+                return $user_id > 0 && Nevari_Helpers::is_doctor($user_id);
+            },
         ]);
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/dashboard/store-admin', [
             'methods' => WP_REST_Server::READABLE,
@@ -824,6 +850,40 @@ final class Nevari_Rest {
         ]);
     }
 
+    public static function orders_details_pdf(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_read', 60, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'details_pdf'])) {
+            return $response;
+        }
+        $order = self::get_viewable_order((int) $request['id']);
+        if (is_wp_error($order)) {
+            return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) ($order->get_error_data()['status'] ?? 404));
+        }
+        $pdf = self::build_order_details_pdf($order);
+        return Nevari_Helpers::success([
+            'filename' => sprintf('nevari-order-details-%s.pdf', sanitize_file_name((string) $order->get_order_number())),
+            'content_type' => 'application/pdf',
+            'base64' => base64_encode($pdf),
+        ]);
+    }
+
+    public static function orders_cancel(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'cancel'])) {
+            return $response;
+        }
+        $order = self::get_viewable_order((int) $request['id']);
+        if (is_wp_error($order)) {
+            return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) ($order->get_error_data()['status'] ?? 404));
+        }
+        if (!Nevari_Helpers::is_store_admin() && !Nevari_Helpers::is_patient()) {
+            return Nevari_Helpers::error('forbidden', 'Only patients or admins can cancel orders.', 403);
+        }
+        if ($order->get_status() !== 'pending') {
+            return Nevari_Helpers::error('order_not_cancellable', 'Only pending orders can be cancelled.', 409);
+        }
+        $order->update_status('cancelled', __('Cancelled by customer from Nevari dashboard.', 'nevari-pharmacy-core'));
+        return Nevari_Helpers::success(self::format_order($order, true));
+    }
+
     public static function orders_send_receipt(WP_REST_Request $request): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('rest_orders_write', 10, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'send_receipt'])) {
             return $response;
@@ -1051,6 +1111,39 @@ final class Nevari_Rest {
             sprintf('Total paid: %s', wp_strip_all_tags(wc_price((float) $order->get_total(), ['currency' => $currency]))),
         ]);
 
+        return self::build_simple_pdf($lines);
+    }
+
+    private static function build_order_details_pdf($order): string {
+        $items = $order->get_items();
+        $currency = $order->get_currency() ?: get_woocommerce_currency();
+        $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) ?: 'Customer';
+        $lines = [
+            'Nevari Pharmacy',
+            'Order Details',
+            sprintf('Order #%s', $order->get_order_number()),
+            sprintf('Placed: %s', $order->get_date_created() ? $order->get_date_created()->date_i18n('M j, Y g:i a') : 'n/a'),
+            sprintf('Customer: %s', $customer_name),
+            sprintf('Email: %s', $order->get_billing_email() ?: 'n/a'),
+            sprintf('Status: %s', ucfirst((string) $order->get_status())),
+            '',
+            'Items',
+        ];
+        foreach ($items as $item) {
+            $lines[] = sprintf(
+                '%s x%s  %s',
+                wp_strip_all_tags($item->get_name()),
+                wc_format_decimal((float) $item->get_quantity(), 0),
+                wp_strip_all_tags(wc_price((float) $item->get_total(), ['currency' => $currency]))
+            );
+        }
+        $lines = array_merge($lines, [
+            '',
+            sprintf('Subtotal: %s', wp_strip_all_tags(wc_price(self::order_subtotal($order, $items), ['currency' => $currency]))),
+            sprintf('Shipping: %s', wp_strip_all_tags(wc_price((float) $order->get_shipping_total() + (float) $order->get_shipping_tax(), ['currency' => $currency]))),
+            sprintf('Tax: %s', wp_strip_all_tags(wc_price((float) $order->get_total_tax(), ['currency' => $currency]))),
+            sprintf('Total: %s', wp_strip_all_tags(wc_price((float) $order->get_total(), ['currency' => $currency]))),
+        ]);
         return self::build_simple_pdf($lines);
     }
 
@@ -1791,6 +1884,42 @@ final class Nevari_Rest {
         return Nevari_Helpers::success($items);
     }
 
+    public static function doctors_products(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_products_read', 120, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'doctor_products'])) {
+            return $response;
+        }
+        if (!self::woo_available()) {
+            return Nevari_Helpers::error('woocommerce_missing', 'WooCommerce is required for products.', 503);
+        }
+        $doctor_id = (int) $request['id'];
+        if (!Nevari_Helpers::is_store_admin() && get_current_user_id() !== $doctor_id) {
+            return Nevari_Helpers::error('forbidden', 'You can view only your own assigned products.', 403);
+        }
+        $category_ids = self::doctor_product_category_ids($doctor_id);
+        if (!$category_ids) {
+            return Nevari_Helpers::success([]);
+        }
+        $terms = get_terms([
+            'taxonomy' => 'product_cat',
+            'include' => $category_ids,
+            'hide_empty' => false,
+        ]);
+        $slugs = array_values(array_filter(array_map(static function ($term) {
+            return $term instanceof WP_Term ? $term->slug : '';
+        }, is_array($terms) ? $terms : [])));
+        if (!$slugs) {
+            return Nevari_Helpers::success([]);
+        }
+        $products = wc_get_products([
+            'limit' => min(100, max(1, (int) $request->get_param('per_page') ?: 100)),
+            'status' => Nevari_Helpers::is_store_admin() ? ['publish', 'private', 'draft'] : 'publish',
+            'category' => $slugs,
+            'orderby' => 'date',
+            'order' => 'DESC',
+        ]);
+        return Nevari_Helpers::success(array_map([__CLASS__, 'format_product'], is_array($products) ? $products : []));
+    }
+
     private static function ensure_doctor_profile(int $doctor_user_id, array $params): int {
         $existing = get_posts([
             'post_type' => 'nevari_doctor_prof',
@@ -1824,6 +1953,9 @@ final class Nevari_Rest {
         }
         if (!empty($params['languages']) && is_array($params['languages'])) {
             wp_set_object_terms($profile_id, array_map('sanitize_text_field', $params['languages']), 'nevari_doctor_language');
+        }
+        if (isset($params['product_category_ids']) && is_array($params['product_category_ids'])) {
+            self::save_doctor_product_categories($doctor_user_id, $params['product_category_ids']);
         }
         return (int) $profile_id;
     }
@@ -1871,12 +2003,57 @@ final class Nevari_Rest {
             'timezone' => $settings ? $settings->timezone : 'UTC',
             'profile_image' => $profile_id ? get_the_post_thumbnail_url($profile_id, 'medium') : null,
             'disabled' => (bool) get_user_meta((int) $user->ID, '_nevari_doctor_disabled', true),
+            'product_category_ids' => self::doctor_product_category_ids((int) $user->ID),
+            'product_categories' => self::doctor_product_categories((int) $user->ID),
         ];
         if ($include_private || Nevari_Helpers::is_store_admin()) {
             $data['license_number'] = $settings ? $settings->license_number : null;
             $data['default_appointment_duration'] = $settings ? (int) $settings->default_appointment_duration : 30;
         }
         return $data;
+    }
+
+    private static function save_doctor_product_categories(int $doctor_id, array $category_ids): void {
+        $valid_ids = [];
+        foreach ($category_ids as $category_id) {
+            $term = get_term((int) $category_id, 'product_cat');
+            if ($term instanceof WP_Term && !is_wp_error($term)) {
+                $valid_ids[] = (int) $term->term_id;
+            }
+        }
+        update_user_meta($doctor_id, '_nevari_product_category_ids', array_values(array_unique($valid_ids)));
+    }
+
+    private static function doctor_product_category_ids(int $doctor_id): array {
+        $stored = get_user_meta($doctor_id, '_nevari_product_category_ids', true);
+        if (!is_array($stored)) {
+            return [];
+        }
+        return array_values(array_filter(array_map('intval', $stored)));
+    }
+
+    private static function doctor_product_categories(int $doctor_id): array {
+        $ids = self::doctor_product_category_ids($doctor_id);
+        if (!$ids) {
+            return [];
+        }
+        $terms = get_terms([
+            'taxonomy' => 'product_cat',
+            'include' => $ids,
+            'hide_empty' => false,
+        ]);
+        if (!is_array($terms)) {
+            return [];
+        }
+        return array_values(array_map(static function ($term) {
+            return [
+                'id' => (int) $term->term_id,
+                'name' => $term->name,
+                'slug' => $term->slug,
+            ];
+        }, array_filter($terms, static function ($term) {
+            return $term instanceof WP_Term;
+        })));
     }
 
     private static function build_available_slots(int $doctor_id, string $date, array $availability): array {

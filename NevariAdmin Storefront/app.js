@@ -238,6 +238,15 @@ function setAuthFeedback(text) {
   refs.authFeedback.textContent = text;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function updateConnectionPreview() {
   const pairingCode = refs.setupPairingCode?.value || "";
   let baseUrl = state.session.baseUrl || "";
@@ -725,12 +734,12 @@ function renderQueue(search = "") {
     const prescription = prescriptionsById.get(order.prescription_id);
     return `
       <tr>
-        <td><div class="table-title"><strong>#${order.number}</strong><span class="muted">${formatDate(order.created_at, true)}</span></div></td>
-        <td><div class="table-customer-cell order-customer-cell"><strong>${customerSummary(order).name}</strong><span>${customerSummary(order).email}</span></div></td>
-        <td>${(order.items || []).length ? `${order.items.length} items: ${(order.items || []).slice(0, 2).map((item) => item.name).join(", ")}` : "order details unavailable"}</td>
-        <td>${prescription ? `${prescription.prescription_number} • ${prescription.status}` : (order.prescription_id ? `Prescription #${order.prescription_id}` : "No linked prescription")}</td>
+        <td><div class="table-title"><strong>#${escapeHtml(order.number)}</strong><span class="muted">${formatDate(order.created_at, true)}</span></div></td>
+        <td><div class="table-customer-cell order-customer-cell"><strong>${escapeHtml(customerSummary(order).name)}</strong><span>${escapeHtml(customerSummary(order).email)}</span></div></td>
+        <td>${(order.items || []).length ? `${order.items.length} items: ${(order.items || []).slice(0, 2).map((item) => escapeHtml(item.name)).join(", ")}` : "order details unavailable"}</td>
+        <td>${prescription ? `${escapeHtml(prescription.prescription_number)} • ${escapeHtml(prescription.status)}` : (order.prescription_id ? `Prescription #${order.prescription_id}` : "No linked prescription")}</td>
         <td>${formatMoney(order.total || 0, order.currency || "USD")}</td>
-        <td><span class="status-pill ${toneClass(order.rx_status || order.status)}">${order.rx_status || order.status}</span></td>
+        <td><span class="status-pill ${toneClass(order.rx_status || order.status)}">${escapeHtml(order.rx_status || order.status)}</span></td>
         <td><span class="row-actions">${order.rx_status === "on_hold" ? "Release hold" : (order.prescription_id ? "Review linkage" : "Link prescription")}</span></td>
       </tr>
     `;
@@ -760,9 +769,9 @@ function renderAppointments() {
         <div class="lane-list">
           ${items.length ? items.map((item) => `
             <div class="lane-card">
-              <strong>${patientLabel(item.patient_user_id)}</strong>
-              <small><span>${doctors.get(item.doctor_user_id) || `Doctor #${item.doctor_user_id}`}</span><span>${formatDate(item.start_at, true)}</span></small>
-              <div class="muted">${item.reason || item.type}</div>
+              <strong>${escapeHtml(patientLabel(item.patient_user_id))}</strong>
+              <small><span>${escapeHtml(doctors.get(item.doctor_user_id) || `Doctor #${item.doctor_user_id}`)}</span><span>${formatDate(item.start_at, true)}</span></small>
+              <div class="muted">${escapeHtml(item.reason || item.type)}</div>
             </div>
           `).join("") : `<div class="lane-card"><div class="muted">No appointments in this lane.</div></div>`}
         </div>
@@ -780,11 +789,11 @@ function renderHistory() {
   refs.historyList.innerHTML = history.length ? history.map((item) => `
     <article class="history-card">
       <div class="history-meta">
-        <strong>${prescriptionMap.get(item.prescription_id) || `Prescription #${item.prescription_id}`}</strong>
+        <strong>${escapeHtml(prescriptionMap.get(item.prescription_id) || `Prescription #${item.prescription_id}`)}</strong>
         <span class="audit-pill ${toneClass(item.new_status || item.action)}">${formatDate(item.created_at, true)}</span>
       </div>
-      <p>${item.action} moved ${item.previous_status || "new"} to ${item.new_status}.</p>
-      <span>Actor user #${item.actor_user_id}${item.note ? ` • ${item.note}` : ""}</span>
+      <p>${escapeHtml(item.action)} moved ${escapeHtml(item.previous_status || "new")} to ${escapeHtml(item.new_status)}.</p>
+      <span>Actor user #${item.actor_user_id}${item.note ? ` • ${escapeHtml(item.note)}` : ""}</span>
     </article>
   `).join("") : `<article class="history-card"><p>No prescription history is available yet.</p></article>`;
 }
@@ -794,11 +803,11 @@ function renderEmailLogs(search = "") {
   const emails = (state.data.emails || []).filter((email) => `${email.recipient_email} ${email.template_key} ${email.status}`.toLowerCase().includes(query));
   refs.emailLogBody.innerHTML = emails.length ? emails.map((email) => `
     <tr>
-      <td>${email.recipient_email}</td>
-      <td>${email.template_key || "custom"}</td>
-      <td>${email.related_object_type || "n/a"}${email.related_object_id ? ` #${email.related_object_id}` : ""}</td>
-      <td>${email.provider || "provider n/a"}</td>
-      <td><span class="status-pill ${toneClass(email.status)}">${email.status}</span></td>
+      <td>${escapeHtml(email.recipient_email)}</td>
+      <td>${escapeHtml(email.template_key || "custom")}</td>
+      <td>${escapeHtml(email.related_object_type || "n/a")}${email.related_object_id ? ` #${email.related_object_id}` : ""}</td>
+      <td>${escapeHtml(email.provider || "provider n/a")}</td>
+      <td><span class="status-pill ${toneClass(email.status)}">${escapeHtml(email.status)}</span></td>
       <td>${formatDate(email.sent_at || email.failed_at || email.queued_at || email.created_at, true)}</td>
     </tr>
   `).join("") : `<tr><td colspan="6" class="muted">No email log entries match the current search.</td></tr>`;
@@ -837,19 +846,19 @@ function renderAuditDetail(event) {
     <div class="audit-detail-content">
       <div>
         <span class="section-kicker">Event detail</span>
-        <h3>${event.action}</h3>
+        <h3>${escapeHtml(event.action)}</h3>
       </div>
-      <span class="audit-pill ${toneClass(event.status === "error" ? "error" : event.severity)}">${event.status} • ${event.severity}</span>
+      <span class="audit-pill ${toneClass(event.status === "error" ? "error" : event.severity)}">${escapeHtml(event.status)} • ${escapeHtml(event.severity)}</span>
       <div class="detail-grid">
         <div class="detail-block"><span>Timestamp</span><strong>${formatDate(event.created_at, true)}</strong></div>
-        <div class="detail-block"><span>Source</span><strong>${event.source}</strong></div>
+        <div class="detail-block"><span>Source</span><strong>${escapeHtml(event.source)}</strong></div>
         <div class="detail-block"><span>Actor</span><strong>${event.actor_user_id ? `User #${event.actor_user_id}` : "system"}</strong></div>
-        <div class="detail-block"><span>Role</span><strong>${event.actor_role || "n/a"}</strong></div>
-        <div class="detail-block"><span>Request ID</span><strong>${event.request_id || "n/a"}</strong></div>
-        <div class="detail-block"><span>IP Address</span><strong>${event.actor_ip || "n/a"}</strong></div>
+        <div class="detail-block"><span>Role</span><strong>${escapeHtml(event.actor_role || "n/a")}</strong></div>
+        <div class="detail-block"><span>Request ID</span><strong>${escapeHtml(event.request_id || "n/a")}</strong></div>
+        <div class="detail-block"><span>IP Address</span><strong>${escapeHtml(event.actor_ip || "n/a")}</strong></div>
       </div>
-      <div class="meta-block"><span>Message</span><pre>${event.message || event.error_message || "No message stored."}</pre></div>
-      <div class="meta-block"><span>Metadata JSON</span><pre>${JSON.stringify(event.metadata || {}, null, 2)}</pre></div>
+      <div class="meta-block"><span>Message</span><pre>${escapeHtml(event.message || event.error_message || "No message stored.")}</pre></div>
+      <div class="meta-block"><span>Metadata JSON</span><pre>${escapeHtml(JSON.stringify(event.metadata || {}, null, 2))}</pre></div>
     </div>
   `;
 }
@@ -859,13 +868,13 @@ function renderAuditTable() {
   refs.auditTableBody.innerHTML = rows.length ? rows.map((event, index) => `
     <tr class="audit-row" data-index="${index}">
       <td>${formatDate(event.created_at, true)}</td>
-      <td><span class="audit-pill ${toneClass(event.status === "error" ? "error" : event.severity)}">${event.status}</span></td>
-      <td>${event.severity}</td>
-      <td>${event.source}</td>
-      <td>${event.action}</td>
-      <td><div class="table-title"><strong>${event.actor_user_id ? `User #${event.actor_user_id}` : "system"}</strong><span class="muted">${event.actor_role || "n/a"}</span></div></td>
-      <td>${event.object_type || "n/a"}${event.object_id ? ` #${event.object_id}` : ""}</td>
-      <td>${event.message || event.error_message || "No message"}</td>
+      <td><span class="audit-pill ${toneClass(event.status === "error" ? "error" : event.severity)}">${escapeHtml(event.status)}</span></td>
+      <td>${escapeHtml(event.severity)}</td>
+      <td>${escapeHtml(event.source)}</td>
+      <td>${escapeHtml(event.action)}</td>
+      <td><div class="table-title"><strong>${event.actor_user_id ? `User #${event.actor_user_id}` : "system"}</strong><span class="muted">${escapeHtml(event.actor_role || "n/a")}</span></div></td>
+      <td>${escapeHtml(event.object_type || "n/a")}${event.object_id ? ` #${event.object_id}` : ""}</td>
+      <td>${escapeHtml(event.message || event.error_message || "No message")}</td>
     </tr>
   `).join("") : `<tr><td colspan="8" class="muted">No audit events match the current filters.</td></tr>`;
 

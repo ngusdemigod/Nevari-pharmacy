@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Nevari Admin Storefront",
-  description: "Next.js storefront admin frontend for Nevari pharmacy operations."
+  title: "Nevari Dashboard",
+  description: "Nevari dashboard and pairing experience."
 };
 
 export default function RootLayout({ children }) {
