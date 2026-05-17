@@ -2136,6 +2136,19 @@ final class Nevari_Rest {
             $start = Nevari_Helpers::normalize_datetime($params['start_at'] ?? null);
             $end = Nevari_Helpers::normalize_datetime($params['end_at'] ?? null);
             if (!$start || !$end || strtotime($end) <= strtotime($start)) { return Nevari_Helpers::error('validation_error', 'Valid start_at and end_at are required.', 422); }
+            if (strtotime($start) <= time()) {
+                return Nevari_Helpers::error('invalid_datetime', 'Appointment must be in the future.', 422);
+            }
+            $conflict = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM " . Nevari_Helpers::table('appointments') . " WHERE doctor_user_id = %d AND id <> %d AND status IN ('requested','confirmed','checked_in') AND start_at < %s AND end_at > %s",
+                (int) $appointment->doctor_user_id,
+                (int) $appointment->id,
+                $end,
+                $start
+            ));
+            if ($conflict) {
+                return Nevari_Helpers::error('appointment_slot_unavailable', 'This appointment slot is no longer available.', 409);
+            }
             $data['start_at'] = $start;
             $data['end_at'] = $end;
             $data['status'] = Nevari_Helpers::is_patient() ? 'requested' : 'confirmed';

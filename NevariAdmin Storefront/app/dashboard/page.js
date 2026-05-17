@@ -122,6 +122,7 @@ const EMPTY_CONSULTATION_FORM = {
   patientUserId: "",
   doctorUserId: "",
   startAt: "",
+  endAt: "",
   type: "video",
   reason: "",
   status: "requested"
@@ -135,6 +136,16 @@ const EMPTY_DOCTOR_FORM = {
   status: "active",
   bio: ""
 };
+
+function buildDefaultConsultationWindow() {
+  const start = new Date(Date.now() + 60 * 60 * 1000);
+  start.setMinutes(0, 0, 0);
+  const end = new Date(start.getTime() + 30 * 60 * 1000);
+  return {
+    startAt: start.toISOString().slice(0, 16),
+    endAt: end.toISOString().slice(0, 16)
+  };
+}
 
 function defaultSession() {
   const hasWindow = typeof window !== "undefined";
@@ -652,7 +663,22 @@ function describeRequestError(error) {
     }
     return "Network request failed. Verify the pharmacy URL is reachable and that the Nevari WordPress plugin allows this frontend origin.";
   }
-  return message;
+  if (/unauthorized user/i.test(message)) {
+    return "Unauthorized user.";
+  }
+  if (/stored session expired/i.test(message)) {
+    return "Stored session expired. Sign in again.";
+  }
+  if (/appointment slot is no longer available/i.test(message)) {
+    return "That appointment slot is no longer available.";
+  }
+  if (/appointment must be in the future/i.test(message)) {
+    return "Appointment time must be in the future.";
+  }
+  if (/required|invalid|not found|already exists|not available/i.test(message)) {
+    return "Please review the submitted details and try again.";
+  }
+  return "Something went wrong. Try again.";
 }
 
 function htmlToTextMessage(value) {
@@ -667,13 +693,7 @@ function htmlToTextMessage(value) {
 }
 
 function extractApiErrorMessage(payload) {
-  if (payload?.error?.message) {
-    return String(payload.error.message);
-  }
-  if (payload?.message) {
-    return String(payload.message);
-  }
-  return "";
+  return describeRequestError({ message: payload?.error?.message || payload?.message || "" });
 }
 
 function getSettledValue(result, fallbackValue) {
@@ -980,6 +1000,9 @@ export default function Page() {
   const [consultationFilter, setConsultationFilter] = useState("upcoming");
   const [selectedConsultationDate, setSelectedConsultationDate] = useState(isoDateKey());
   const [selectedConsultation, setSelectedConsultation] = useState(null);
+  const [consultationDetailForm, setConsultationDetailForm] = useState({ startAt: "", endAt: "", doctorNotes: "", cancellationReason: "" });
+  const [consultationActionLoading, setConsultationActionLoading] = useState("");
+  const [consultationActionFeedback, setConsultationActionFeedback] = useState("");
   const [selectedDoctorId, setSelectedDoctorId] = useState(null);
   const [doctorDetailTab, setDoctorDetailTab] = useState("account");
   const [orderCreateModalOpen, setOrderCreateModalOpen] = useState(false);
@@ -1032,6 +1055,53 @@ export default function Page() {
       document.body.classList.remove("modal-open");
     };
   }, [authGate.visible, createModalType, doctorAssignmentModalOpen, orderControlsModalOpen, orderCreateModalOpen, orderModalOpen, paymentReceiptModalOpen, selectedConsultation, selectedCustomerId, selectedDoctorId, selectedProductEdit]);
+
+  useEffect(() => {
+    function handleStackedModalCtaClick(event) {
+      if (!(event.target instanceof Element)) {
+        return;
+      }
+
+      const cta = event.target.closest(".app-modal-layer .button-primary");
+      if (!cta || cta.disabled) {
+        return;
+      }
+
+      const currentLayer = cta.closest(".app-modal-layer");
+      if (!currentLayer) {
+        return;
+      }
+
+      const visibleLayers = [...document.querySelectorAll(".app-modal-layer")].filter((layer) => {
+        const styles = window.getComputedStyle(layer);
+        return styles.display !== "none" && styles.visibility !== "hidden";
+      });
+
+      if (visibleLayers.length < 2) {
+        return;
+      }
+
+      const topLayer = visibleLayers.reduce((top, layer) => {
+        const topIndex = Number.parseInt(window.getComputedStyle(top).zIndex || "0", 10);
+        const layerIndex = Number.parseInt(window.getComputedStyle(layer).zIndex || "0", 10);
+        return layerIndex >= topIndex ? layer : top;
+      });
+
+      if (topLayer !== currentLayer) {
+        return;
+      }
+
+      window.setTimeout(() => {
+        if (!document.body.contains(currentLayer)) {
+          return;
+        }
+        currentLayer.querySelector(".app-modal-backdrop")?.click();
+      }, 0);
+    }
+
+    document.addEventListener("click", handleStackedModalCtaClick);
+    return () => document.removeEventListener("click", handleStackedModalCtaClick);
+  }, []);
 
   useEffect(() => {
     if (currentPage !== "orders") {
@@ -1216,9 +1286,10 @@ export default function Page() {
       return;
     }
     if (type === "consultation") {
+      const consultationWindow = buildDefaultConsultationWindow();
       setConsultationCreateForm({
         ...EMPTY_CONSULTATION_FORM,
-        startAt: new Date().toISOString().slice(0, 16),
+        ...consultationWindow,
         doctorUserId: String((data.doctors || [])[0]?.user_id || (data.doctors || [])[0]?.id || "")
       });
       setConsultationCalendarMode("week");
@@ -1450,6 +1521,7 @@ export default function Page() {
             patient_user_id: consultationCreateForm.patientUserId ? Number(consultationCreateForm.patientUserId) : 0,
             doctor_user_id: consultationCreateForm.doctorUserId ? Number(consultationCreateForm.doctorUserId) : 0,
             start_at: consultationCreateForm.startAt,
+            end_at: consultationCreateForm.endAt,
             type: consultationCreateForm.type,
             reason: consultationCreateForm.reason,
             status: consultationCreateForm.status
@@ -1606,7 +1678,6 @@ export default function Page() {
       return;
     }
     setOrderCreateModalOpen(false);
-    setOrderControlsModalOpen(false);
     setDoctorAssignmentModalOpen(true);
   }
 
@@ -2159,6 +2230,54 @@ export default function Page() {
     switchPage("consultations");
   }
 
+  function openConsultationDetails(appointment) {
+    setSelectedConsultation(appointment);
+    setConsultationDetailForm({
+      startAt: appointment.start_at ? appointment.start_at.slice(0, 16) : "",
+      endAt: appointment.end_at ? appointment.end_at.slice(0, 16) : "",
+      doctorNotes: appointment.doctor_notes || "",
+      cancellationReason: appointment.cancellation_reason || ""
+    });
+    setConsultationActionFeedback("");
+  }
+
+  function syncAppointmentState(nextAppointment) {
+    setData((prev) => ({
+      ...prev,
+      appointments: (prev.appointments || []).map((appointment) => (
+        appointment.id === nextAppointment.id ? nextAppointment : appointment
+      ))
+    }));
+    setSelectedConsultation(nextAppointment);
+  }
+
+  async function runAppointmentAction(action, body = {}) {
+    if (!selectedConsultation) {
+      return;
+    }
+    setConsultationActionLoading(action);
+    setConsultationActionFeedback("");
+    try {
+      const payload = await apiRequest(`/appointments/${selectedConsultation.id}/${action}`, {
+        method: "POST",
+        body
+      });
+      syncAppointmentState(payload.data);
+      const feedbackByAction = {
+        confirm: "Appointment confirmed.",
+        complete: "Appointment completed.",
+        cancel: "Appointment cancelled.",
+        reschedule: "Appointment rescheduled.",
+        notes: "Appointment notes updated."
+      };
+      setConsultationActionFeedback(feedbackByAction[action] || "Appointment updated.");
+    } catch (error) {
+      setConsultationActionFeedback(describeRequestError(error));
+    } finally {
+      setConsultationActionLoading("");
+    }
+  }
+
   async function apiRequest(path, { method = "GET", body, params = {}, auth = true, retry = true } = {}, activeSession = session) {
     if (!activeSession.baseUrl) {
       throw new Error("WordPress base URL is not configured.");
@@ -2209,14 +2328,14 @@ export default function Page() {
     }
 
     if (!response.ok || (payload && !payload?.success)) {
-      const message = extractApiErrorMessage(payload) || htmlToTextMessage(rawResponse);
+      const message = extractApiErrorMessage(payload);
       if (response.status === 404 && isRouteMissingPayload(payload)) {
-        throw new Error(`API route not found: ${path}. Verify the live WordPress site has the latest Nevari plugin with this endpoint enabled.`);
+        throw new Error("A required service is unavailable. Refresh and try again.");
       }
       if (!payload && response.status === 404) {
-        throw new Error(`API route not found: ${path}. Verify the live WordPress site has the latest Nevari plugin with this endpoint enabled.`);
+        throw new Error("A required service is unavailable. Refresh and try again.");
       }
-      throw new Error(message || `Request failed with status ${response.status}.`);
+      throw new Error(message);
     }
 
     if (!payload) {
@@ -2472,7 +2591,7 @@ export default function Page() {
     } catch (error) {
       console.error(error);
       setSyncStatus({ text: "Pairing error", mode: "error" });
-      setSetupFeedback(error.message || "Pairing failed.");
+      setSetupFeedback(describeRequestError(error));
     } finally {
       setSetupSubmitting(false);
     }
@@ -2512,7 +2631,7 @@ export default function Page() {
     } catch (error) {
       console.error(error);
       setSyncStatus({ text: "Authentication error", mode: "error" });
-      setAuthFeedback(error.message || "Login failed.");
+      setAuthFeedback(describeRequestError(error));
     } finally {
       setAuthSubmitting(false);
     }
@@ -4184,7 +4303,7 @@ export default function Page() {
                       {consultationList.length ? consultationList.map((item) => {
                         const ended = item.group === "past";
                         return (
-                          <button className={`consultation-card ${ended ? "" : "disabled"}`} key={item.id} type="button" disabled={!ended} onClick={() => ended && setSelectedConsultation(item)}>
+                          <button className="consultation-card" key={item.id} type="button" onClick={() => openConsultationDetails(item)}>
                             <div>
                               <strong>{patientLabel(item.patient_user_id)}</strong>
                               <span>{item.reason || item.type || "Consultation"}</span>
@@ -4984,25 +5103,20 @@ export default function Page() {
                     <button className="icon-button" type="button" aria-label="Close order details" onClick={closeOrderModal}>
                       <InlineIcon id="i-x" />
                     </button>
-                    <button className="pill-button" type="button" onClick={printSelectedOrder}>
+                    <button className="icon-button order-header-action-button" type="button" title="Print Invoice" aria-label="Print Invoice" onClick={printSelectedOrder}>
                       <InlineIcon id="i-printer" />
-                      Print Invoice
                     </button>
-                    <button className="button-primary" type="button" onClick={openOrderControlsPopup} disabled={orderMutationLoading}>
+                    <button className="icon-button order-header-action-button" type="button" title="Update Status" aria-label="Update Status" onClick={openOrderControlsPopup} disabled={orderMutationLoading}>
                       <InlineIcon id="i-package" />
-                      Update Status
                     </button>
-                    <button className="pill-button" type="button" onClick={refundSelectedOrder} disabled={orderMutationLoading}>
+                    <button className="icon-button order-header-action-button" type="button" title="Refund" aria-label="Refund" onClick={refundSelectedOrder} disabled={orderMutationLoading}>
                       <InlineIcon id="i-refresh-cw" />
-                      Refund
                     </button>
-                    <button className="pill-button" type="button" onClick={contactSelectedCustomer}>
+                    <button className="icon-button order-header-action-button" type="button" title="Contact Customer" aria-label="Contact Customer" onClick={contactSelectedCustomer}>
                       <InlineIcon id="i-mail" />
-                      Contact Customer
                     </button>
-                    <button className="pill-button" type="button" onClick={openDoctorAssignmentPopup} disabled={orderMutationLoading}>
+                    <button className="icon-button order-header-action-button" type="button" title="Assign Doctor" aria-label="Assign Doctor" onClick={openDoctorAssignmentPopup} disabled={orderMutationLoading}>
                       <InlineIcon id="i-user" />
-                      Assign Doctor
                     </button>
                     <button className="pill-button danger" type="button" onClick={deleteSelectedOrder} disabled={orderMutationLoading}>
                       Delete Order
@@ -5798,6 +5912,10 @@ export default function Page() {
                           <input type="datetime-local" value={consultationCreateForm.startAt} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, startAt: event.target.value }))} required />
                         </label>
                         <label className="detail-field">
+                          <span>End time</span>
+                          <input type="datetime-local" value={consultationCreateForm.endAt} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, endAt: event.target.value }))} required />
+                        </label>
+                        <label className="detail-field">
                           <span>Type</span>
                           <div className="select-wrap">
                             <select value={consultationCreateForm.type} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, type: event.target.value }))}>
@@ -5909,14 +6027,57 @@ export default function Page() {
             <button className="app-modal-backdrop" type="button" aria-label="Close consultation details" onClick={() => setSelectedConsultation(null)} />
             <section className="detail-section stacked-order-popup receipt-popup" role="dialog" aria-modal="true" aria-label="Consultation details">
               <div className="panel-header stacked-order-popup-header">
-                <div><p className="section-kicker">Past consultation</p><h3>{patientLabel(selectedConsultation.patient_user_id)}</h3></div>
+                <div><p className="section-kicker">Consultation</p><h3>{patientLabel(selectedConsultation.patient_user_id)}</h3></div>
                 <button className="icon-button" type="button" onClick={() => setSelectedConsultation(null)}><InlineIcon id="i-x" /></button>
               </div>
               <div className="detail-grid">
                 <div className="detail-block"><span>Doctor</span><strong>{doctorMap.get(selectedConsultation.doctor_user_id) || `Doctor #${selectedConsultation.doctor_user_id}`}</strong></div>
-                <div className="detail-block"><span>Date</span><strong>{formatDate(selectedConsultation.start_at, true)}</strong></div>
+                <div className="detail-block"><span>Starts</span><strong>{formatDate(selectedConsultation.start_at, true)}</strong></div>
+                <div className="detail-block"><span>Ends</span><strong>{formatDate(selectedConsultation.end_at, true)}</strong></div>
                 <div className="detail-block"><span>Status</span><strong>{formatStatusLabel(selectedConsultation.status)}</strong></div>
                 <div className="detail-block"><span>Reason</span><strong>{selectedConsultation.reason || selectedConsultation.type || "n/a"}</strong></div>
+              </div>
+              <div className="detail-form-grid consultation-action-grid">
+                <label className="detail-field">
+                  <span>Reschedule start</span>
+                  <input type="datetime-local" value={consultationDetailForm.startAt} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, startAt: event.target.value }))} />
+                </label>
+                <label className="detail-field">
+                  <span>Reschedule end</span>
+                  <input type="datetime-local" value={consultationDetailForm.endAt} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, endAt: event.target.value }))} />
+                </label>
+                <label className="detail-field detail-field-wide">
+                  <span>Doctor notes</span>
+                  <textarea rows={3} value={consultationDetailForm.doctorNotes} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, doctorNotes: event.target.value }))} />
+                </label>
+                <label className="detail-field detail-field-wide">
+                  <span>Cancellation reason</span>
+                  <textarea rows={2} value={consultationDetailForm.cancellationReason} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, cancellationReason: event.target.value }))} />
+                </label>
+              </div>
+              {consultationActionFeedback ? <p className="muted popup-support-copy">{consultationActionFeedback}</p> : null}
+              <div className="stacked-order-popup-actions consultation-action-buttons">
+                <button className="pill-button" type="button" onClick={() => runAppointmentAction("reschedule", { start_at: consultationDetailForm.startAt, end_at: consultationDetailForm.endAt })} disabled={Boolean(consultationActionLoading) || !consultationDetailForm.startAt || !consultationDetailForm.endAt}>
+                  {consultationActionLoading === "reschedule" ? "Rescheduling..." : "Reschedule"}
+                </button>
+                <button className="pill-button" type="button" onClick={() => runAppointmentAction("notes", { doctor_notes: consultationDetailForm.doctorNotes })} disabled={Boolean(consultationActionLoading)}>
+                  {consultationActionLoading === "notes" ? "Saving..." : "Save Notes"}
+                </button>
+                {selectedConsultation.status === "requested" ? (
+                  <button className="button-primary" type="button" onClick={() => runAppointmentAction("confirm")} disabled={Boolean(consultationActionLoading)}>
+                    {consultationActionLoading === "confirm" ? "Confirming..." : "Confirm"}
+                  </button>
+                ) : null}
+                {!["completed", "cancelled", "no_show"].includes(selectedConsultation.status) ? (
+                  <button className="button-primary" type="button" onClick={() => runAppointmentAction("complete", { doctor_notes: consultationDetailForm.doctorNotes })} disabled={Boolean(consultationActionLoading)}>
+                    {consultationActionLoading === "complete" ? "Completing..." : "Complete"}
+                  </button>
+                ) : null}
+                {!["completed", "cancelled", "no_show"].includes(selectedConsultation.status) ? (
+                  <button className="pill-button danger" type="button" onClick={() => runAppointmentAction("cancel", { reason: consultationDetailForm.cancellationReason })} disabled={Boolean(consultationActionLoading)}>
+                    {consultationActionLoading === "cancel" ? "Cancelling..." : "Cancel"}
+                  </button>
+                ) : null}
               </div>
               <div className="detail-section receipt-panel">
                 <div className="panel-header"><div><p className="section-kicker">Prescriptions given</p><h3>Linked patient prescriptions</h3></div></div>

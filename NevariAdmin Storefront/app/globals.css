@@ -2491,16 +2491,21 @@ body.auth-locked .page-shell {
 }
 
 .order-modal-topbar-content {
-  display: grid;
-  gap: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   min-width: 0;
 }
 
+.order-modal-topbar-primary {
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
 .order-modal-topbar-utility,
 .order-modal-topbar-actions {
-  width: 100%;
-  flex-wrap: wrap;
+  min-width: 0;
   gap: 10px;
 }
 
@@ -2509,13 +2514,24 @@ body.auth-locked .page-shell {
 }
 
 .order-modal-topbar-actions {
-  justify-content: flex-start;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .order-modal-topbar-actions > .pill-button,
+.order-modal-topbar-actions > .icon-button,
 .order-modal-topbar-actions > .button-primary {
   width: auto;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.order-header-action-button {
+  width: 38px;
+  min-height: 38px;
 }
 
 .order-modal-topbar-actions > .pill-button.danger {
@@ -4618,19 +4634,25 @@ body.auth-locked .page-shell {
     justify-content: flex-start;
   }
 
+  .order-modal-topbar-content {
+    align-items: stretch;
+    overflow-x: auto;
+  }
+
   .order-modal-topbar-utility > .pill-button,
+  .order-modal-topbar-actions > .icon-button,
   .order-modal-topbar-actions > .pill-button,
   .order-modal-topbar-actions > .button-primary {
     width: auto;
   }
 
   .order-modal-topbar-actions > * {
-    flex: 1 1 calc(50% - 10px);
-    min-width: 160px;
+    flex: 0 0 auto;
+    min-width: auto;
   }
 
   .order-modal-topbar-actions > .pill-button.danger {
-    flex-basis: 100%;
+    flex-basis: auto;
   }
 
   .receipt-popup {

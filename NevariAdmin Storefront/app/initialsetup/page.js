@@ -83,13 +83,24 @@ function frontendContext(session) {
 }
 
 function extractApiErrorMessage(payload) {
-  if (payload?.error?.message) {
-    return String(payload.error.message);
+  return describeRequestError({ message: payload?.error?.message || payload?.message || "" });
+}
+
+function describeRequestError(error) {
+  const message = String(error?.message || "");
+  if (/pairing code is incomplete/i.test(message)) {
+    return "Pairing code is incomplete. Paste the full code from WordPress.";
   }
-  if (payload?.message) {
-    return String(payload.message);
+  if (/pairing code format is invalid/i.test(message)) {
+    return "Pairing code format is invalid. Generate a new code and paste it exactly as shown in WordPress.";
   }
-  return "";
+  if (/valid pharmacy url/i.test(message)) {
+    return "Pairing code did not contain a valid pharmacy URL.";
+  }
+  if (/network request failed/i.test(message)) {
+    return "Network request failed. Verify the pharmacy URL is reachable and allows this frontend origin.";
+  }
+  return "Pairing failed. Try again.";
 }
 
 function InlineIcon({ id }) {
@@ -157,7 +168,7 @@ export default function InitialSetupPage() {
 
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload?.success) {
-      throw new Error(extractApiErrorMessage(payload) || `Request failed with status ${response.status}.`);
+      throw new Error(extractApiErrorMessage(payload));
     }
 
     return payload;
@@ -196,7 +207,7 @@ export default function InitialSetupPage() {
       router.replace("/dashboard");
     } catch (error) {
       console.error(error);
-      setFeedback(error.message || "Pairing failed.");
+      setFeedback(describeRequestError(error));
     } finally {
       setSubmitting(false);
     }

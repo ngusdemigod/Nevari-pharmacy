@@ -57,13 +57,7 @@ function hydrateAuthSession(session, data) {
 }
 
 function extractApiErrorMessage(payload) {
-  if (payload?.error?.message) {
-    return String(payload.error.message);
-  }
-  if (payload?.message) {
-    return String(payload.message);
-  }
-  return "";
+  return describeRequestError({ message: payload?.error?.message || payload?.message || "" });
 }
 
 function isFileProtocol() {
@@ -78,7 +72,13 @@ function describeRequestError(error) {
     }
     return "Network request failed. Verify the pharmacy URL is reachable and allows this frontend origin.";
   }
-  return message;
+  if (/unauthorized user|invalid username|invalid password/i.test(message)) {
+    return "Incorrect email or password.";
+  }
+  if (/required|invalid|not found/i.test(message)) {
+    return "Please review the submitted details and try again.";
+  }
+  return "Something went wrong. Try again.";
 }
 
 function htmlToTextMessage(value) {
@@ -190,7 +190,7 @@ export default function LoginPage() {
     }
 
     if (!response.ok || !payload?.success) {
-      throw new Error(extractApiErrorMessage(payload) || htmlToTextMessage(rawResponse) || `Request failed with status ${response.status}.`);
+      throw new Error(extractApiErrorMessage(payload));
     }
 
     return payload;
@@ -220,7 +220,7 @@ export default function LoginPage() {
       router.replace("/dashboard");
     } catch (error) {
       console.error(error);
-      setFeedback(error.message || "Login failed.");
+      setFeedback(describeRequestError(error));
     } finally {
       setAuthSubmitting(false);
     }

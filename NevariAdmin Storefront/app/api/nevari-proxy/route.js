@@ -95,7 +95,7 @@ export async function GET(request) {
     return await proxyRequest(request);
   } catch (error) {
     return Response.json(
-      { success: false, error: { message: error.message || "Proxy request failed." } },
+      { success: false, error: { message: "Proxy request failed." } },
       { status: 400 }
     );
   }
@@ -106,7 +106,7 @@ export async function POST(request) {
     return await proxyRequest(request);
   } catch (error) {
     return Response.json(
-      { success: false, error: { message: error.message || "Proxy request failed." } },
+      { success: false, error: { message: "Proxy request failed." } },
       { status: 400 }
     );
   }
@@ -117,7 +117,7 @@ export async function DELETE(request) {
     return await proxyRequest(request);
   } catch (error) {
     return Response.json(
-      { success: false, error: { message: error.message || "Proxy request failed." } },
+      { success: false, error: { message: "Proxy request failed." } },
       { status: 400 }
     );
   }
