@@ -1,4 +1,6 @@
 const API_NAMESPACE = "nevari/v1";
+const UPSTREAM_TIMEOUT_MS = 30000;
+const UPSTREAM_RETRY_COUNT = 1;
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -94,7 +96,12 @@ async function proxyRequest(request, { params } = {}) {
     init.body = await request.text();
   }
 
-  const response = await fetch(targetUrl, init);
+  let response;
+  try {
+    response = await fetchWithRetry(targetUrl, init, request.method);
+  } catch (error) {
+    return buildTransportErrorResponse(error, targetUrl);
+  }
   const responseHeaders = new Headers(response.headers);
   responseHeaders.delete("content-encoding");
   responseHeaders.delete("content-length");
@@ -102,14 +109,31 @@ async function proxyRequest(request, { params } = {}) {
   responseHeaders.set("Cache-Control", "no-store");
 
   const contentType = response.headers.get("content-type") || "";
+  if (contentType.toLowerCase().includes("text/calendar")) {
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders
+    });
+  }
   if (!contentType.toLowerCase().includes("application/json")) {
     const rawBody = await response.text();
+    const recoveredJson = extractJsonPayload(rawBody);
+
+    if (recoveredJson) {
+      return Response.json(recoveredJson, {
+        status: response.status,
+        headers: { "Cache-Control": "no-store" }
+      });
+    }
+
+    const message = normalizeUpstreamErrorMessage(rawBody, response, targetUrl);
     return Response.json(
       {
         success: false,
         error: {
-          code: "upstream_non_json_response",
-          message: htmlToTextMessage(rawBody) || `WordPress returned ${response.status} for ${targetUrl.pathname}.`,
+          code: response.status === 503 ? "upstream_unavailable" : "upstream_non_json_response",
+          message,
           details: {
             status: response.status,
             statusText: response.statusText,
@@ -127,6 +151,30 @@ async function proxyRequest(request, { params } = {}) {
     statusText: response.statusText,
     headers: responseHeaders
   });
+}
+
+async function fetchWithRetry(targetUrl, init, method) {
+  const normalizedMethod = String(method || "GET").toUpperCase();
+  const maxAttempts = ["GET", "HEAD"].includes(normalizedMethod) ? UPSTREAM_RETRY_COUNT + 1 : 1;
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fetch(targetUrl, {
+        ...init,
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
+      });
+    } catch (error) {
+      lastError = error;
+      const isTimeout = error?.name === "TimeoutError" || error?.name === "AbortError";
+      if (!isTimeout || attempt >= maxAttempts) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+    }
+  }
+
+  throw lastError;
 }
 
 export async function GET(request) {
@@ -171,4 +219,53 @@ function htmlToTextMessage(value) {
     .replace(/&amp;/gi, "&")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function extractJsonPayload(value) {
+  const text = String(value || "").trim();
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+
+  if (firstBrace === -1 || lastBrace <= firstBrace) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text.slice(firstBrace, lastBrace + 1));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeUpstreamErrorMessage(rawBody, response, targetUrl) {
+  const text = htmlToTextMessage(rawBody);
+
+  if (response.status === 503) {
+    return "The pharmacy server is temporarily unavailable. Dashboard data could not be refreshed right now.";
+  }
+
+  return text || `WordPress returned ${response.status} for ${targetUrl.pathname}.`;
+}
+
+function buildTransportErrorResponse(error, targetUrl) {
+  const isTimeout = error?.name === "TimeoutError" || error?.name === "AbortError";
+  const status = isTimeout ? 504 : 502;
+
+  return Response.json(
+    {
+      success: false,
+      error: {
+        code: isTimeout ? "upstream_timeout" : "upstream_unreachable",
+        message: isTimeout
+          ? "The pharmacy server took too long to respond. Try again shortly."
+          : "The pharmacy server could not be reached. Verify the site is online and reachable from this storefront.",
+        details: {
+          status,
+          path: targetUrl.pathname,
+          upstream: `${targetUrl.origin}${targetUrl.pathname}`
+        }
+      }
+    },
+    { status, headers: { "Cache-Control": "no-store" } }
+  );
 }

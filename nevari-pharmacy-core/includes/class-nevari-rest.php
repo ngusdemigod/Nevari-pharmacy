@@ -262,6 +262,14 @@ final class Nevari_Rest {
             'permission_callback' => [__CLASS__, 'doctor_or_admin_required'],
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/doctors/(?P<id>\d+)/reviews', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'doctor_reviews_index'],
+                'permission_callback' => [__CLASS__, 'auth_required'],
+            ],
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/doctors/(?P<id>\d+)/products', [
             'methods' => WP_REST_Server::READABLE,
             'callback' => [__CLASS__, 'doctors_products'],
@@ -308,6 +316,37 @@ final class Nevari_Rest {
                 'permission_callback' => [__CLASS__, 'auth_required'],
             ]);
         }
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/appointments/(?P<id>\d+)/checkout', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'appointment_checkout'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/appointments/(?P<id>\d+)/confirmation', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'appointment_confirmation'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/appointments/(?P<id>\d+)/calendar', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'appointment_calendar'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/appointments/(?P<id>\d+)/review', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'appointment_review_show'],
+                'permission_callback' => [__CLASS__, 'auth_required'],
+            ],
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'appointment_review_create'],
+                'permission_callback' => [__CLASS__, 'auth_required'],
+            ],
+        ]);
     }
 
     private static function prescriptions_routes(): void {
@@ -1920,6 +1959,27 @@ final class Nevari_Rest {
         return Nevari_Helpers::success(array_map([__CLASS__, 'format_product'], is_array($products) ? $products : []));
     }
 
+    public static function doctor_reviews_index(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_doctors_read', 120, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'reviews'])) {
+            return $response;
+        }
+        global $wpdb;
+        $doctor_id = (int) $request['id'];
+        $doctor = get_user_by('id', $doctor_id);
+        if (!$doctor || !in_array('doctor', (array) $doctor->roles, true)) {
+            return Nevari_Helpers::error('doctor_not_found', 'Doctor not found.', 404);
+        }
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM " . Nevari_Helpers::table('appointment_reviews') . " WHERE doctor_user_id = %d AND status = 'approved' ORDER BY created_at DESC",
+            $doctor_id
+        ));
+        return Nevari_Helpers::success([
+            'doctor_user_id' => $doctor_id,
+            'summary' => Nevari_Helpers::doctor_review_summary($doctor_id),
+            'reviews' => array_map(['Nevari_Helpers', 'format_review_row'], $rows ?: []),
+        ]);
+    }
+
     private static function ensure_doctor_profile(int $doctor_user_id, array $params): int {
         $existing = get_posts([
             'post_type' => 'nevari_doctor_prof',
@@ -1988,11 +2048,13 @@ final class Nevari_Rest {
         $profile_ids = get_posts(['post_type' => 'nevari_doctor_prof', 'meta_key' => '_nevari_doctor_user_id', 'meta_value' => $user->ID, 'fields' => 'ids', 'numberposts' => 1]);
         $profile_id = $profile_ids ? (int) $profile_ids[0] : 0;
         $settings = $wpdb->get_row($wpdb->prepare("SELECT * FROM " . Nevari_Helpers::table('doctor_settings') . " WHERE doctor_user_id = %d", (int) $user->ID));
+        $review_summary = Nevari_Helpers::doctor_review_summary((int) $user->ID);
         $data = [
             'id' => (int) $user->ID,
             'user_id' => (int) $user->ID,
             'display_name' => $user->display_name,
             'email' => $include_private || Nevari_Helpers::is_store_admin() ? $user->user_email : null,
+            'store_currency' => self::store_currency(),
             'profile_post_id' => $profile_id ?: null,
             'bio' => $profile_id ? wp_strip_all_tags(get_post_field('post_content', $profile_id)) : '',
             'bio_short' => $profile_id ? get_post_meta($profile_id, '_nevari_bio_short', true) : '',
@@ -2005,6 +2067,11 @@ final class Nevari_Rest {
             'disabled' => (bool) get_user_meta((int) $user->ID, '_nevari_doctor_disabled', true),
             'product_category_ids' => self::doctor_product_category_ids((int) $user->ID),
             'product_categories' => self::doctor_product_categories((int) $user->ID),
+            'consultation_fee' => $profile_id ? (float) get_post_meta($profile_id, '_nevari_consultation_fee', true) : 0,
+            'years_experience' => $profile_id ? (string) get_post_meta($profile_id, '_nevari_years_experience', true) : '',
+            'rating_average' => $review_summary['average'],
+            'reviews_count' => $review_summary['count'],
+            'rating_distribution' => $review_summary['distribution'],
         ];
         if ($include_private || Nevari_Helpers::is_store_admin()) {
             $data['license_number'] = $settings ? $settings->license_number : null;
@@ -2064,7 +2131,7 @@ final class Nevari_Rest {
         $weekday = strtolower(gmdate('l', strtotime($date)));
         $ranges = $availability[$weekday] ?? [['start' => '09:00', 'end' => '17:00']];
         $booked = $wpdb->get_results($wpdb->prepare(
-            "SELECT start_at, end_at FROM " . Nevari_Helpers::table('appointments') . " WHERE doctor_user_id = %d AND status IN ('requested','confirmed','checked_in') AND DATE(start_at) = %s",
+            "SELECT start_at, end_at FROM " . Nevari_Helpers::table('appointments') . " WHERE doctor_user_id = %d AND status IN ('awaiting_payment','requested','confirmed','checked_in') AND DATE(start_at) = %s",
             $doctor_id,
             $date
         ));
@@ -2168,7 +2235,7 @@ final class Nevari_Rest {
         $type = isset($params['type']) ? sanitize_key((string) $params['type']) : 'video';
         $start = Nevari_Helpers::normalize_datetime($params['start_at'] ?? null);
         $end = Nevari_Helpers::normalize_datetime($params['end_at'] ?? null);
-        $reason = isset($params['reason']) ? sanitize_textarea_field((string) $params['reason']) : '';
+        $reason = isset($params['reason']) && trim((string) $params['reason']) !== '' ? sanitize_textarea_field((string) $params['reason']) : 'Doctor consultation booking';
 
         if ($order_id) {
             $order = self::get_order_scoped($order_id);
@@ -2180,8 +2247,8 @@ final class Nevari_Rest {
             }
         }
 
-        if (!$doctor_id || !$patient_id || !$start || !$end || strtotime($end) <= strtotime($start) || !$reason) {
-            return Nevari_Helpers::error('validation_error', 'doctor_user_id, valid start_at/end_at, and reason are required.', 422);
+        if (!$doctor_id || !$patient_id || !$start || !$end || strtotime($end) <= strtotime($start)) {
+            return Nevari_Helpers::error('validation_error', 'doctor_user_id and valid start_at/end_at are required.', 422);
         }
         $doctor = get_user_by('id', $doctor_id);
         if (!$doctor || !in_array('doctor', (array) $doctor->roles, true) || get_user_meta($doctor_id, '_nevari_doctor_disabled', true)) {
@@ -2204,9 +2271,16 @@ final class Nevari_Rest {
         if (strtotime($start) <= time()) {
             return Nevari_Helpers::error('invalid_datetime', 'Appointment must be in the future.', 422);
         }
+        if (!self::woo_available()) {
+            return Nevari_Helpers::error('woocommerce_missing', 'WooCommerce is required to create the appointment checkout.', 503);
+        }
+        $fee = Nevari_Helpers::doctor_consultation_fee($doctor_id);
+        if ($fee <= 0) {
+            return Nevari_Helpers::error('consultation_fee_missing', 'This doctor does not have a consultation fee configured.', 422);
+        }
         $table = Nevari_Helpers::table('appointments');
         $conflict = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table} WHERE doctor_user_id = %d AND status IN ('requested','confirmed','checked_in') AND start_at < %s AND end_at > %s",
+            "SELECT COUNT(*) FROM {$table} WHERE doctor_user_id = %d AND status IN ('awaiting_payment','requested','confirmed','checked_in') AND start_at < %s AND end_at > %s",
             $doctor_id,
             $end,
             $start
@@ -2219,9 +2293,11 @@ final class Nevari_Rest {
         $wpdb->insert($table, [
             'patient_user_id' => $patient_id,
             'doctor_user_id' => $doctor_id,
-            'order_id' => $order_id ?: null,
+            'order_id' => null,
             'type' => $type,
-            'status' => Nevari_Helpers::is_store_admin() ? 'confirmed' : 'requested',
+            'status' => 'awaiting_payment',
+            'payment_status' => 'pending',
+            'payment_required' => 1,
             'start_at' => $start,
             'end_at' => $end,
             'timezone' => isset($params['timezone']) ? sanitize_text_field((string) $params['timezone']) : 'UTC',
@@ -2234,20 +2310,36 @@ final class Nevari_Rest {
         ]);
         $appointment_id = (int) $wpdb->insert_id;
         Nevari_Helpers::ensure_doctor_patient_link($doctor_id, $patient_id, 'appointment');
+        $checkout_order = self::create_appointment_checkout_order($appointment_id, $patient_id, $doctor_id, $fee, $reason);
+        if (is_wp_error($checkout_order)) {
+            $wpdb->delete($table, ['id' => $appointment_id], ['%d']);
+            return Nevari_Helpers::error($checkout_order->get_error_code(), $checkout_order->get_error_message(), (int) $checkout_order->get_error_data('status') ?: 500);
+        }
+        $wpdb->update($table, ['order_id' => (int) $checkout_order->get_id(), 'updated_at' => Nevari_Helpers::now()], ['id' => $appointment_id], ['%d', '%s'], ['%d']);
         Nevari_Audit::log('consultation', 'nevari', 'appointment.created', 'success', ['appointment_id' => $appointment_id, 'related_user_id' => $patient_id, 'message' => 'Appointment created.']);
 
         $patient = get_user_by('id', $patient_id);
+        $appointment = self::get_appointment_row($appointment_id);
+        $calendar = Nevari_Helpers::appointment_calendar_links($appointment);
+        $ics = [
+            'filename' => Nevari_Helpers::appointment_ics_filename($appointment),
+            'content' => Nevari_Helpers::appointment_ics_content($appointment, $doctor->display_name, $patient ? $patient->display_name : ''),
+        ];
         Nevari_Emails::queue_or_send([
             'template_key' => 'appointment_requested',
             'recipient_user_id' => $patient_id,
             'related_object_type' => 'appointment',
             'related_object_id' => $appointment_id,
+            'attachments' => [$ics],
             'variables' => [
                 'patient_name' => $patient ? $patient->display_name : '',
                 'doctor_name' => $doctor->display_name,
                 'appointment_start' => gmdate('c', strtotime($start)),
+                'payment_link' => $checkout_order->get_checkout_payment_url(false),
+                'payment_link_html' => ['html' => '<a href="' . esc_url($checkout_order->get_checkout_payment_url(false)) . '">Complete payment</a>', 'text' => $checkout_order->get_checkout_payment_url(false)],
             ],
         ], false);
+        self::queue_appointment_staff_notifications($appointment, $doctor, $patient, $calendar, $ics);
 
         return Nevari_Helpers::success(Nevari_Helpers::format_appointment(self::get_appointment_row($appointment_id)), [], 201);
     }
@@ -2317,7 +2409,7 @@ final class Nevari_Rest {
                 return Nevari_Helpers::error('invalid_datetime', 'Appointment must be in the future.', 422);
             }
             $conflict = (int) $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM " . Nevari_Helpers::table('appointments') . " WHERE doctor_user_id = %d AND id <> %d AND status IN ('requested','confirmed','checked_in') AND start_at < %s AND end_at > %s",
+                "SELECT COUNT(*) FROM " . Nevari_Helpers::table('appointments') . " WHERE doctor_user_id = %d AND id <> %d AND status IN ('awaiting_payment','requested','confirmed','checked_in') AND start_at < %s AND end_at > %s",
                 (int) $appointment->doctor_user_id,
                 (int) $appointment->id,
                 $end,
@@ -2337,13 +2429,188 @@ final class Nevari_Rest {
         }
 
         $wpdb->update(Nevari_Helpers::table('appointments'), $data, ['id' => (int) $appointment->id]);
+        $updated = self::get_appointment_row((int) $appointment->id);
+        if ($updated && $updated->status === 'confirmed' && $updated->payment_status === 'paid') {
+            Nevari_Plugin::instance()->schedule_appointment_reminder((int) $updated->id, (string) $updated->start_at);
+        }
         Nevari_Audit::log('consultation', 'nevari', $action, 'success', ['appointment_id' => (int) $appointment->id, 'related_user_id' => (int) $appointment->patient_user_id]);
-        return Nevari_Helpers::success(Nevari_Helpers::format_appointment(self::get_appointment_row((int) $appointment->id)));
+        return Nevari_Helpers::success(Nevari_Helpers::format_appointment($updated));
+    }
+
+    public static function appointment_checkout(WP_REST_Request $request): WP_REST_Response {
+        $appointment = self::get_appointment_row((int) $request['id']);
+        if (!$appointment || !Nevari_Helpers::can_view_appointment($appointment)) {
+            return Nevari_Helpers::error('appointment_not_found', 'Appointment not found.', 404);
+        }
+        if (!$appointment->order_id || !self::woo_available()) {
+            return Nevari_Helpers::error('appointment_checkout_unavailable', 'Appointment checkout is not available.', 404);
+        }
+        $order = wc_get_order((int) $appointment->order_id);
+        if (!$order) {
+            return Nevari_Helpers::error('order_not_found', 'Associated order not found.', 404);
+        }
+        return Nevari_Helpers::success([
+            'appointment' => Nevari_Helpers::format_appointment($appointment),
+            'order_id' => (int) $order->get_id(),
+            'order_number' => $order->get_order_number(),
+            'payment_url' => $order->get_checkout_payment_url(false),
+            'payment_status' => Nevari_Helpers::appointment_payment_status($appointment, $order),
+            'total' => (float) $order->get_total(),
+            'currency' => $order->get_currency(),
+        ]);
+    }
+
+    public static function appointment_confirmation(WP_REST_Request $request): WP_REST_Response {
+        $appointment = self::get_appointment_row((int) $request['id']);
+        if (!$appointment || !Nevari_Helpers::can_view_appointment($appointment)) {
+            return Nevari_Helpers::error('appointment_not_found', 'Appointment not found.', 404);
+        }
+        $order = $appointment->order_id && self::woo_available() ? wc_get_order((int) $appointment->order_id) : null;
+        return Nevari_Helpers::success([
+            'appointment' => Nevari_Helpers::format_appointment($appointment),
+            'is_confirmed' => $appointment->status === 'confirmed' && Nevari_Helpers::appointment_payment_status($appointment, $order) === 'paid',
+            'order_number' => $order ? $order->get_order_number() : null,
+            'amount' => $order ? (float) $order->get_total() : null,
+            'currency' => $order ? $order->get_currency() : null,
+            'calendar' => Nevari_Helpers::appointment_calendar_links($appointment),
+        ]);
+    }
+
+    public static function appointment_calendar(WP_REST_Request $request): WP_REST_Response {
+        $appointment = self::get_appointment_row((int) $request['id']);
+        if (!$appointment || !Nevari_Helpers::can_view_appointment($appointment)) {
+            return Nevari_Helpers::error('appointment_not_found', 'Appointment not found.', 404);
+        }
+        $doctor = get_user_by('id', (int) $appointment->doctor_user_id);
+        $patient = get_user_by('id', (int) $appointment->patient_user_id);
+        $response = new WP_REST_Response(Nevari_Helpers::appointment_ics_content($appointment, $doctor ? $doctor->display_name : '', $patient ? $patient->display_name : ''));
+        $response->set_status(200);
+        $response->header('Content-Type', 'text/calendar; charset=UTF-8');
+        $response->header('Content-Disposition', 'attachment; filename="' . Nevari_Helpers::appointment_ics_filename($appointment) . '"');
+        return $response;
+    }
+
+    public static function appointment_review_show(WP_REST_Request $request): WP_REST_Response {
+        $appointment = self::get_appointment_row((int) $request['id']);
+        if (!$appointment || !Nevari_Helpers::can_view_appointment($appointment)) {
+            return Nevari_Helpers::error('appointment_not_found', 'Appointment not found.', 404);
+        }
+        global $wpdb;
+        $review = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM " . Nevari_Helpers::table('appointment_reviews') . " WHERE appointment_id = %d LIMIT 1",
+            (int) $appointment->id
+        ));
+        return Nevari_Helpers::success([
+            'appointment_id' => (int) $appointment->id,
+            'eligible' => $appointment->status === 'completed' && Nevari_Helpers::is_patient() && (int) $appointment->patient_user_id === get_current_user_id(),
+            'review' => $review ? Nevari_Helpers::format_review_row($review) : null,
+        ]);
+    }
+
+    public static function appointment_review_create(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_appointments_write', 10, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'review'])) {
+            return $response;
+        }
+        if (!Nevari_Helpers::is_patient()) {
+            return Nevari_Helpers::error('forbidden', 'Only patients can leave appointment reviews.', 403);
+        }
+        $appointment = self::get_appointment_row((int) $request['id']);
+        if (!$appointment || (int) $appointment->patient_user_id !== get_current_user_id()) {
+            return Nevari_Helpers::error('appointment_not_found', 'Appointment not found.', 404);
+        }
+        if ($appointment->status !== 'completed') {
+            return Nevari_Helpers::error('review_not_allowed', 'Reviews are allowed only after completed appointments.', 422);
+        }
+        global $wpdb;
+        $table = Nevari_Helpers::table('appointment_reviews');
+        $existing = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE appointment_id = %d LIMIT 1", (int) $appointment->id));
+        if ($existing) {
+            return Nevari_Helpers::error('review_exists', 'A review has already been submitted for this appointment.', 409);
+        }
+        $params = Nevari_Helpers::get_json_params($request);
+        $rating = isset($params['rating']) ? (int) $params['rating'] : 0;
+        $review_text = isset($params['review_text']) ? sanitize_textarea_field((string) $params['review_text']) : '';
+        if ($rating < 1 || $rating > 5) {
+            return Nevari_Helpers::error('validation_error', 'A rating between 1 and 5 is required.', 422);
+        }
+        $now = Nevari_Helpers::now();
+        $wpdb->insert($table, [
+            'appointment_id' => (int) $appointment->id,
+            'doctor_user_id' => (int) $appointment->doctor_user_id,
+            'patient_user_id' => (int) $appointment->patient_user_id,
+            'rating' => $rating,
+            'review_text' => $review_text,
+            'status' => 'approved',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ], ['%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s']);
+        $review = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE appointment_id = %d LIMIT 1", (int) $appointment->id));
+        Nevari_Audit::log('consultation', 'nevari', 'appointment.review_created', 'success', ['appointment_id' => (int) $appointment->id, 'related_user_id' => (int) $appointment->patient_user_id]);
+        return Nevari_Helpers::success(Nevari_Helpers::format_review_row($review), [], 201);
     }
 
     private static function get_appointment_row(int $id) {
         global $wpdb;
         return $wpdb->get_row($wpdb->prepare("SELECT * FROM " . Nevari_Helpers::table('appointments') . " WHERE id = %d", $id));
+    }
+
+    private static function create_appointment_checkout_order(int $appointment_id, int $patient_id, int $doctor_id, float $fee, string $reason) {
+        if (!function_exists('wc_create_order')) {
+            return new WP_Error('woocommerce_missing', 'WooCommerce is required.', ['status' => 503]);
+        }
+        $order = wc_create_order(['customer_id' => $patient_id]);
+        if (is_wp_error($order)) {
+            return $order;
+        }
+        $doctor = get_user_by('id', $doctor_id);
+        $patient = get_user_by('id', $patient_id);
+        $fee_item = new WC_Order_Item_Fee();
+        $fee_item->set_name(sprintf('Consultation with %s', $doctor ? $doctor->display_name : 'Doctor'));
+        $fee_item->set_amount($fee);
+        $fee_item->set_total($fee);
+        $order->add_item($fee_item);
+        $order->set_customer_note($reason);
+        $order->update_meta_data('_nevari_appointment_id', $appointment_id);
+        $order->update_meta_data('_nevari_appointment_doctor_user_id', $doctor_id);
+        $order->update_meta_data('_nevari_appointment_patient_user_id', $patient_id);
+        if ($patient) {
+            $order->set_billing_email($patient->user_email);
+            $order->set_billing_first_name(get_user_meta($patient_id, 'first_name', true) ?: $patient->display_name);
+            $order->set_billing_last_name(get_user_meta($patient_id, 'last_name', true) ?: '');
+        }
+        $order->calculate_totals();
+        $order->save();
+        return $order;
+    }
+
+    private static function queue_appointment_staff_notifications($appointment, WP_User $doctor, ?WP_User $patient, array $calendar, array $ics): void {
+        $common = [
+            'doctor_name' => $doctor->display_name,
+            'patient_name' => $patient ? $patient->display_name : 'Patient',
+            'appointment_start' => Nevari_Helpers::iso_datetime($appointment->start_at),
+            'appointment_status' => 'Awaiting payment',
+            'calendar_link' => $calendar['ics_url'],
+            'calendar_link_html' => ['html' => '<a href="' . esc_url($calendar['ics_url']) . '">Download calendar invite</a>', 'text' => $calendar['ics_url']],
+        ];
+        Nevari_Emails::queue_or_send([
+            'template_key' => 'appointment_doctor_notification',
+            'recipient_user_id' => (int) $doctor->ID,
+            'related_object_type' => 'appointment',
+            'related_object_id' => (int) $appointment->id,
+            'attachments' => [$ics],
+            'variables' => $common,
+        ], false);
+        $admin_email = get_option('admin_email');
+        if ($admin_email && is_email($admin_email)) {
+            Nevari_Emails::queue_or_send([
+                'template_key' => 'appointment_admin_notification',
+                'recipient_email' => $admin_email,
+                'related_object_type' => 'appointment',
+                'related_object_id' => (int) $appointment->id,
+                'attachments' => [$ics],
+                'variables' => $common,
+            ], false);
+        }
     }
 
     public static function prescriptions_index(WP_REST_Request $request): WP_REST_Response {
@@ -2608,7 +2875,9 @@ final class Nevari_Rest {
         $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM " . Nevari_Helpers::table('email_logs') . " WHERE id = %d", (int) $request['id']));
         if (!$row) { return Nevari_Helpers::error('email_log_not_found', 'Email log not found.', 404); }
         $data = self::format_email_log($row);
-        $data['body_html'] = (string) get_option('_nevari_email_body_' . (int) $row->id, '');
+        $payload = get_option('_nevari_email_payload_' . (int) $row->id, []);
+        $payload = is_array($payload) ? $payload : [];
+        $data['body_html'] = isset($payload['body_html']) ? (string) $payload['body_html'] : '';
         return Nevari_Helpers::success($data);
     }
 
@@ -2762,6 +3031,7 @@ final class Nevari_Rest {
         $prescriptions = self::prescriptions_index(new WP_REST_Request('GET', '/prescriptions'))->get_data()['data'] ?? [];
         $appointments = self::appointments_index(new WP_REST_Request('GET', '/appointments'))->get_data()['data'] ?? [];
         return Nevari_Helpers::success([
+            'store_currency' => self::store_currency(),
             'profile' => Nevari_Helpers::user_summary($user_id),
             'prescriptions' => ['recent' => array_slice($prescriptions, 0, 5)],
             'appointments' => ['recent' => array_slice($appointments, 0, 5)],
@@ -2776,6 +3046,7 @@ final class Nevari_Rest {
         $today_start = gmdate('Y-m-d 00:00:00');
         $today_end = gmdate('Y-m-d 23:59:59');
         return Nevari_Helpers::success([
+            'store_currency' => self::store_currency(),
             'profile' => Nevari_Helpers::user_summary($doctor_id),
             'appointments_today' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$appointments_table} WHERE doctor_user_id = %d AND start_at BETWEEN %s AND %s", $doctor_id, $today_start, $today_end)),
             'appointments_requested' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$appointments_table} WHERE doctor_user_id = %d AND status = 'requested'", $doctor_id)),
@@ -2790,6 +3061,7 @@ final class Nevari_Rest {
         $prescriptions = Nevari_Helpers::table('prescriptions');
         $emails = Nevari_Helpers::table('email_logs');
         $data = [
+            'store_currency' => self::store_currency(),
             'sales' => self::sales_summary(),
             'products' => ['total' => post_type_exists('product') ? (int) wp_count_posts('product')->publish : 0],
             'doctors' => ['total' => (int) (new WP_User_Query(['role' => 'doctor', 'fields' => 'ID']))->get_total()],
@@ -2818,7 +3090,7 @@ final class Nevari_Rest {
     }
 
     private static function sales_summary(): array {
-        if (!self::woo_available()) { return ['today' => '0', 'month' => '0', 'orders_today' => 0, 'currency' => 'USD']; }
+        if (!self::woo_available()) { return ['today' => '0', 'month' => '0', 'orders_today' => 0, 'currency' => self::store_currency()]; }
         $today_orders = wc_get_orders(['limit' => -1, 'date_created' => '>' . gmdate('Y-m-d 00:00:00'), 'status' => ['processing','completed']]);
         $month_orders = wc_get_orders(['limit' => -1, 'date_created' => '>' . gmdate('Y-m-01 00:00:00'), 'status' => ['processing','completed']]);
         $today_total = 0; foreach ($today_orders as $o) { $today_total += (float) $o->get_total(); }
@@ -2827,8 +3099,19 @@ final class Nevari_Rest {
             'today' => wc_format_decimal($today_total, 2),
             'month' => wc_format_decimal($month_total, 2),
             'orders_today' => count($today_orders),
-            'currency' => get_woocommerce_currency(),
+            'currency' => self::store_currency(),
         ];
+    }
+
+    private static function store_currency(): string {
+        if (function_exists('get_woocommerce_currency')) {
+            $currency = get_woocommerce_currency();
+            if (is_string($currency) && $currency !== '') {
+                return $currency;
+            }
+        }
+        $currency = get_option('woocommerce_currency', 'USD');
+        return is_string($currency) && $currency !== '' ? $currency : 'USD';
     }
 
     public static function audit_logs_index(WP_REST_Request $request): WP_REST_Response {

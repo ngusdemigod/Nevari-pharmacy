@@ -67,6 +67,14 @@ export function buildUrl(session, path, params = {}) {
   return url.toString();
 }
 
+function createApiError(payload, response) {
+  const error = new Error(payload?.error?.message || "Request failed.");
+  error.code = payload?.error?.code || "";
+  error.status = response?.status || 0;
+  error.details = payload?.error?.details || null;
+  return error;
+}
+
 export async function apiRequest(session, path, { method = "GET", params = {}, body, suppressHttpError = false } = {}) {
   const response = await fetch(buildUrl(session, path, params), {
     method,
@@ -85,12 +93,29 @@ export async function apiRequest(session, path, { method = "GET", params = {}, b
     throw createPairingRequiredError(payload?.error?.message || payload?.message);
   }
   if ((!response.ok || !payload?.success) && !suppressHttpError) {
-    throw new Error(payload?.error?.message || "Request failed.");
+    throw createApiError(payload, response);
   }
   if (!response.ok || !payload?.success) {
     return null;
   }
   return payload.data;
+}
+
+export function describeDashboardFetchError(error) {
+  const code = String(error?.code || "");
+  const status = Number(error?.status || error?.details?.status || 0);
+  const message = String(error?.message || "");
+
+  if (code === "upstream_unavailable" || status === 503) {
+    return "The pharmacy server is temporarily unavailable. Some live dashboard sections could not be loaded.";
+  }
+  if (code === "upstream_timeout" || status === 504) {
+    return "The pharmacy server is responding too slowly. Some live dashboard sections could not be loaded.";
+  }
+  if (code === "upstream_unreachable" || status === 502) {
+    return "The pharmacy server could not be reached. Check connectivity and WordPress availability.";
+  }
+  return message || "Request failed.";
 }
 
 export function money(value, currency = "USD") {

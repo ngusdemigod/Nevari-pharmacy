@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('NEVARI_PHARMACY_VERSION', '0.3.0');
+define('NEVARI_PHARMACY_VERSION', '0.4.0');
 define('NEVARI_PHARMACY_FILE', __FILE__);
 define('NEVARI_PHARMACY_DIR', plugin_dir_path(__FILE__));
 define('NEVARI_PHARMACY_URL', plugin_dir_url(__FILE__));

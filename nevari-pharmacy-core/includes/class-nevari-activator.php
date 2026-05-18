@@ -84,6 +84,8 @@ final class Nevari_Activator {
             order_id BIGINT UNSIGNED NULL,
             type VARCHAR(30) NOT NULL,
             status VARCHAR(30) NOT NULL DEFAULT 'requested',
+            payment_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            payment_required TINYINT(1) NOT NULL DEFAULT 1,
             start_at DATETIME NOT NULL,
             end_at DATETIME NOT NULL,
             timezone VARCHAR(100) NOT NULL DEFAULT 'UTC',
@@ -93,7 +95,9 @@ final class Nevari_Activator {
             doctor_notes LONGTEXT NULL,
             cancellation_reason TEXT NULL,
             cancelled_by BIGINT UNSIGNED NULL,
+            payment_completed_at DATETIME NULL,
             completed_at DATETIME NULL,
+            reminder_sent_at DATETIME NULL,
             created_by BIGINT UNSIGNED NOT NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL,
@@ -101,7 +105,27 @@ final class Nevari_Activator {
             KEY patient_start (patient_user_id, start_at),
             KEY doctor_start (doctor_user_id, start_at),
             KEY status_start (status, start_at),
-            KEY order_id (order_id)
+            KEY order_id (order_id),
+            KEY payment_status (payment_status),
+            KEY reminder_sent_at (reminder_sent_at)
+        ) {$charset};");
+
+        $appointment_reviews = Nevari_Helpers::table('appointment_reviews');
+        dbDelta("CREATE TABLE {$appointment_reviews} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            appointment_id BIGINT UNSIGNED NOT NULL,
+            doctor_user_id BIGINT UNSIGNED NOT NULL,
+            patient_user_id BIGINT UNSIGNED NOT NULL,
+            rating TINYINT UNSIGNED NOT NULL,
+            review_text TEXT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'approved',
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY appointment_id (appointment_id),
+            KEY doctor_status (doctor_user_id, status),
+            KEY patient_status (patient_user_id, status),
+            KEY rating (rating)
         ) {$charset};");
 
         dbDelta("CREATE TABLE {$prescriptions} (
@@ -406,10 +430,42 @@ final class Nevari_Activator {
             [
                 'template_key' => 'appointment_requested',
                 'name' => 'Appointment Requested',
-                'subject' => 'Your consultation request was received',
-                'body_html' => '<p>Hello {{patient_name}},</p><p>Your consultation request with {{doctor_name}} has been received.</p>',
-                'body_text' => 'Hello {{patient_name}}, your consultation request with {{doctor_name}} has been received.',
-                'variables' => ['patient_name', 'doctor_name', 'appointment_start'],
+                'subject' => 'Your appointment with {{doctor_name}} is pending payment',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your appointment with {{doctor_name}} has been created for {{appointment_start}}.</p><p>{{payment_link_html}}</p><p>You can also view this booking inside your Nevari dashboard.</p>',
+                'body_text' => 'Hello {{patient_name}}, your appointment with {{doctor_name}} has been created for {{appointment_start}}. Pay here: {{payment_link}}',
+                'variables' => ['patient_name', 'doctor_name', 'appointment_start', 'payment_link', 'payment_link_html'],
+            ],
+            [
+                'template_key' => 'appointment_payment_receipt',
+                'name' => 'Appointment Payment Receipt',
+                'subject' => 'Payment received for your appointment with {{doctor_name}}',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Payment has been received for your appointment with {{doctor_name}} on {{appointment_start}}.</p><p>Amount paid: {{appointment_amount}}</p><p>{{calendar_link_html}}</p>',
+                'body_text' => 'Hello {{patient_name}}, payment has been received for your appointment with {{doctor_name}} on {{appointment_start}}. Amount paid: {{appointment_amount}}. Add to calendar: {{calendar_link}}',
+                'variables' => ['patient_name', 'doctor_name', 'appointment_start', 'appointment_amount', 'calendar_link', 'calendar_link_html'],
+            ],
+            [
+                'template_key' => 'appointment_doctor_notification',
+                'name' => 'Doctor Appointment Notification',
+                'subject' => 'New appointment booked with {{patient_name}}',
+                'body_html' => '<p>Hello {{doctor_name}},</p><p>{{patient_name}} booked an appointment for {{appointment_start}}.</p><p>Status: {{appointment_status}}</p><p>{{calendar_link_html}}</p>',
+                'body_text' => 'Hello {{doctor_name}}, {{patient_name}} booked an appointment for {{appointment_start}}. Status: {{appointment_status}}. Add to calendar: {{calendar_link}}',
+                'variables' => ['doctor_name', 'patient_name', 'appointment_start', 'appointment_status', 'calendar_link', 'calendar_link_html'],
+            ],
+            [
+                'template_key' => 'appointment_admin_notification',
+                'name' => 'Admin Appointment Notification',
+                'subject' => 'Appointment booked: {{patient_name}} with {{doctor_name}}',
+                'body_html' => '<p>Hello Admin,</p><p>{{patient_name}} booked an appointment with {{doctor_name}} for {{appointment_start}}.</p><p>Status: {{appointment_status}}</p><p>{{calendar_link_html}}</p>',
+                'body_text' => 'Appointment booked: {{patient_name}} with {{doctor_name}} for {{appointment_start}}. Status: {{appointment_status}}. Calendar: {{calendar_link}}',
+                'variables' => ['doctor_name', 'patient_name', 'appointment_start', 'appointment_status', 'calendar_link', 'calendar_link_html'],
+            ],
+            [
+                'template_key' => 'appointment_reminder',
+                'name' => 'Appointment Reminder',
+                'subject' => 'Reminder: your appointment starts in 15 minutes',
+                'body_html' => '<p>Hello {{recipient_name}},</p><p>This is a reminder that the appointment between {{patient_name}} and {{doctor_name}} starts at {{appointment_start}}.</p><p>{{calendar_link_html}}</p>',
+                'body_text' => 'Reminder: the appointment between {{patient_name}} and {{doctor_name}} starts at {{appointment_start}}. Calendar: {{calendar_link}}',
+                'variables' => ['recipient_name', 'patient_name', 'doctor_name', 'appointment_start', 'calendar_link', 'calendar_link_html'],
             ],
             [
                 'template_key' => 'prescription_assigned',

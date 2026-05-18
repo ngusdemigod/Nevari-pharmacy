@@ -25,6 +25,7 @@ final class Nevari_Plugin {
         add_filter('rest_post_dispatch', [$this, 'append_rest_cors_headers'], 10, 3);
         add_filter('rest_pre_serve_request', [$this, 'send_rest_cors_headers'], 10, 4);
         add_filter('wc_order_statuses', [$this, 'filter_woocommerce_order_statuses']);
+        add_action('nevari_send_appointment_reminder', [$this, 'send_appointment_reminder'], 10, 1);
 
         Nevari_Audit::init();
         Nevari_Auth::init();
@@ -193,14 +194,7 @@ final class Nevari_Plugin {
             ]);
         }, 10, 3);
 
-        add_action('woocommerce_payment_complete', static function ($order_id) {
-            Nevari_Audit::log('payments', 'woocommerce', 'payment.completed', 'success', [
-                'object_type' => 'shop_order',
-                'object_id' => (int) $order_id,
-                'order_id' => (int) $order_id,
-                'message' => 'WooCommerce payment completed.',
-            ]);
-        }, 10, 1);
+        add_action('woocommerce_payment_complete', [$this, 'handle_appointment_payment_complete'], 10, 1);
 
         add_filter('woocommerce_add_to_cart_validation', [$this, 'validate_rx_add_to_cart'], 10, 3);
         add_action('woocommerce_checkout_process', [$this, 'validate_rx_checkout']);
@@ -285,6 +279,137 @@ final class Nevari_Plugin {
             $order->set_status('awaiting-doctor', __('Awaiting doctor assignment for prescription review.', 'nevari-pharmacy-core'));
         }
         $order->save();
+    }
+
+    public function handle_appointment_payment_complete(int $order_id): void {
+        Nevari_Audit::log('payments', 'woocommerce', 'payment.completed', 'success', [
+            'object_type' => 'shop_order',
+            'object_id' => (int) $order_id,
+            'order_id' => (int) $order_id,
+            'message' => 'WooCommerce payment completed.',
+        ]);
+
+        if (!function_exists('wc_get_order')) {
+            return;
+        }
+
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
+
+        $appointment_id = (int) $order->get_meta('_nevari_appointment_id');
+        if ($appointment_id < 1) {
+            return;
+        }
+
+        global $wpdb;
+        $appointments_table = Nevari_Helpers::table('appointments');
+        $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
+        if (!$appointment) {
+            return;
+        }
+
+        $wpdb->update($appointments_table, [
+            'status' => 'confirmed',
+            'payment_status' => 'paid',
+            'payment_completed_at' => Nevari_Helpers::now(),
+            'updated_at' => Nevari_Helpers::now(),
+        ], ['id' => $appointment_id], ['%s', '%s', '%s', '%s'], ['%d']);
+
+        $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
+        $doctor = get_user_by('id', (int) $appointment->doctor_user_id);
+        $patient = get_user_by('id', (int) $appointment->patient_user_id);
+        $calendar = Nevari_Helpers::appointment_calendar_links($appointment);
+        $ics = [
+            'filename' => Nevari_Helpers::appointment_ics_filename($appointment),
+            'content' => Nevari_Helpers::appointment_ics_content($appointment, $doctor ? $doctor->display_name : '', $patient ? $patient->display_name : ''),
+        ];
+
+        Nevari_Emails::queue_or_send([
+            'template_key' => 'appointment_payment_receipt',
+            'recipient_user_id' => (int) $appointment->patient_user_id,
+            'related_object_type' => 'appointment',
+            'related_object_id' => $appointment_id,
+            'attachments' => [$ics],
+            'variables' => [
+                'patient_name' => $patient ? $patient->display_name : 'Patient',
+                'doctor_name' => $doctor ? $doctor->display_name : 'Doctor',
+                'appointment_start' => Nevari_Helpers::iso_datetime($appointment->start_at),
+                'appointment_amount' => html_entity_decode(wp_strip_all_tags($order->get_formatted_order_total())),
+                'calendar_link' => $calendar['ics_url'],
+                'calendar_link_html' => ['html' => '<a href="' . esc_url($calendar['ics_url']) . '">Download calendar invite</a>', 'text' => $calendar['ics_url']],
+            ],
+        ], false);
+
+        $this->schedule_appointment_reminder($appointment_id, $appointment->start_at);
+    }
+
+    public function schedule_appointment_reminder(int $appointment_id, string $start_at): void {
+        $timestamp = strtotime($start_at . ' UTC') - (15 * MINUTE_IN_SECONDS);
+        if ($timestamp <= time()) {
+            return;
+        }
+        if (function_exists('as_has_scheduled_action') && as_has_scheduled_action('nevari_send_appointment_reminder', [$appointment_id], 'nevari')) {
+            return;
+        }
+        if (function_exists('as_schedule_single_action')) {
+            as_schedule_single_action($timestamp, 'nevari_send_appointment_reminder', [$appointment_id], 'nevari');
+        } else {
+            wp_schedule_single_event($timestamp, 'nevari_send_appointment_reminder', [$appointment_id]);
+        }
+    }
+
+    public function send_appointment_reminder(int $appointment_id): void {
+        global $wpdb;
+        $appointments_table = Nevari_Helpers::table('appointments');
+        $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
+        if (!$appointment || $appointment->status !== 'confirmed' || $appointment->payment_status !== 'paid' || !empty($appointment->reminder_sent_at)) {
+            return;
+        }
+
+        $doctor = get_user_by('id', (int) $appointment->doctor_user_id);
+        $patient = get_user_by('id', (int) $appointment->patient_user_id);
+        $calendar = Nevari_Helpers::appointment_calendar_links($appointment);
+        $ics = [
+            'filename' => Nevari_Helpers::appointment_ics_filename($appointment),
+            'content' => Nevari_Helpers::appointment_ics_content($appointment, $doctor ? $doctor->display_name : '', $patient ? $patient->display_name : ''),
+        ];
+        $recipients = [];
+        if ($patient) {
+            $recipients[] = ['user_id' => (int) $patient->ID, 'email' => $patient->user_email, 'name' => $patient->display_name];
+        }
+        if ($doctor) {
+            $recipients[] = ['user_id' => (int) $doctor->ID, 'email' => $doctor->user_email, 'name' => $doctor->display_name];
+        }
+        $admin_email = get_option('admin_email');
+        if ($admin_email) {
+            $recipients[] = ['user_id' => null, 'email' => $admin_email, 'name' => 'Admin'];
+        }
+
+        foreach ($recipients as $recipient) {
+            Nevari_Emails::queue_or_send([
+                'template_key' => 'appointment_reminder',
+                'recipient_user_id' => $recipient['user_id'],
+                'recipient_email' => $recipient['email'],
+                'related_object_type' => 'appointment',
+                'related_object_id' => $appointment_id,
+                'attachments' => [$ics],
+                'variables' => [
+                    'recipient_name' => $recipient['name'],
+                    'patient_name' => $patient ? $patient->display_name : 'Patient',
+                    'doctor_name' => $doctor ? $doctor->display_name : 'Doctor',
+                    'appointment_start' => Nevari_Helpers::iso_datetime($appointment->start_at),
+                    'calendar_link' => $calendar['ics_url'],
+                    'calendar_link_html' => ['html' => '<a href="' . esc_url($calendar['ics_url']) . '">Download calendar invite</a>', 'text' => $calendar['ics_url']],
+                ],
+            ], false);
+        }
+
+        $wpdb->update($appointments_table, [
+            'reminder_sent_at' => Nevari_Helpers::now(),
+            'updated_at' => Nevari_Helpers::now(),
+        ], ['id' => $appointment_id], ['%s', '%s'], ['%d']);
     }
 
     public function handle_rest_preflight(): void {

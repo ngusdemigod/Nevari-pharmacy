@@ -500,13 +500,28 @@ final class Nevari_Helpers {
     }
 
     public static function format_appointment($row): array {
+        global $wpdb;
+        $order = null;
+        if (!empty($row->order_id) && function_exists('wc_get_order')) {
+            $order = wc_get_order((int) $row->order_id);
+        }
+        $review = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM " . self::table('appointment_reviews') . " WHERE appointment_id = %d LIMIT 1",
+            (int) $row->id
+        ));
+        $doctor = self::user_summary((int) $row->doctor_user_id);
+        $patient = self::user_summary((int) $row->patient_user_id);
         return [
             'id' => (int) $row->id,
             'patient_user_id' => (int) $row->patient_user_id,
             'doctor_user_id' => (int) $row->doctor_user_id,
             'order_id' => $row->order_id ? (int) $row->order_id : null,
+            'doctor' => $doctor,
+            'patient' => $patient,
             'type' => $row->type,
             'status' => $row->status,
+            'payment_status' => self::appointment_payment_status($row, $order),
+            'payment_required' => isset($row->payment_required) ? (bool) $row->payment_required : true,
             'start_at' => self::iso_datetime($row->start_at),
             'end_at' => self::iso_datetime($row->end_at),
             'timezone' => $row->timezone,
@@ -514,9 +529,111 @@ final class Nevari_Helpers {
             'symptoms' => self::json_decode_safe($row->symptoms),
             'intake_form' => self::json_decode_safe($row->intake_form),
             'doctor_notes' => $row->doctor_notes,
+            'payment_completed_at' => isset($row->payment_completed_at) ? self::iso_datetime($row->payment_completed_at) : null,
+            'completed_at' => self::iso_datetime($row->completed_at),
+            'checkout_url' => $order && in_array(self::appointment_payment_status($row, $order), ['pending', 'failed'], true) ? $order->get_checkout_payment_url(false) : null,
+            'calendar' => self::appointment_calendar_links($row),
+            'review' => $review ? self::format_review_row($review) : null,
+            'review_eligible' => $row->status === 'completed' && !$review,
             'created_at' => self::iso_datetime($row->created_at),
             'updated_at' => self::iso_datetime($row->updated_at),
         ];
+    }
+
+    public static function appointment_payment_status($appointment, $order = null): string {
+        if ($order && is_object($order) && method_exists($order, 'is_paid')) {
+            if ($order->is_paid()) {
+                return 'paid';
+            }
+            $status = $order->get_status();
+            if (in_array($status, ['failed', 'cancelled', 'refunded'], true)) {
+                return $status;
+            }
+            return 'pending';
+        }
+        return isset($appointment->payment_status) && $appointment->payment_status ? (string) $appointment->payment_status : 'pending';
+    }
+
+    public static function doctor_consultation_fee(int $doctor_id): float {
+        $profile_ids = get_posts([
+            'post_type' => 'nevari_doctor_prof',
+            'meta_key' => '_nevari_doctor_user_id',
+            'meta_value' => $doctor_id,
+            'fields' => 'ids',
+            'numberposts' => 1,
+        ]);
+        $profile_id = $profile_ids ? (int) $profile_ids[0] : 0;
+        return $profile_id ? (float) get_post_meta($profile_id, '_nevari_consultation_fee', true) : 0.0;
+    }
+
+    public static function appointment_calendar_links($appointment): array {
+        $appointment_id = (int) $appointment->id;
+        $title = rawurlencode('Nevari Appointment');
+        $details = rawurlencode('Nevari doctor consultation appointment');
+        $start = gmdate('Ymd\THis\Z', strtotime((string) $appointment->start_at . ' UTC'));
+        $end = gmdate('Ymd\THis\Z', strtotime((string) $appointment->end_at . ' UTC'));
+        return [
+            'ics_url' => rest_url(NEVARI_PHARMACY_REST_NS . '/appointments/' . $appointment_id . '/calendar'),
+            'google_url' => 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=' . $title . '&dates=' . $start . '/' . $end . '&details=' . $details,
+            'outlook_url' => 'https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=' . $title . '&startdt=' . rawurlencode(self::iso_datetime($appointment->start_at)) . '&enddt=' . rawurlencode(self::iso_datetime($appointment->end_at)) . '&body=' . $details,
+        ];
+    }
+
+    public static function appointment_ics_filename($appointment): string {
+        return 'nevari-appointment-' . (int) $appointment->id . '.ics';
+    }
+
+    public static function appointment_ics_content($appointment, string $doctor_name = '', string $patient_name = ''): string {
+        $uid = 'nevari-appointment-' . (int) $appointment->id . '@' . wp_parse_url(home_url(), PHP_URL_HOST);
+        $summary = self::ics_escape('Nevari Appointment - ' . ($doctor_name ?: 'Doctor Consultation'));
+        $description = self::ics_escape('Patient: ' . $patient_name . '\nDoctor: ' . $doctor_name . '\nReason: ' . (string) $appointment->reason);
+        $dt_start = gmdate('Ymd\THis\Z', strtotime((string) $appointment->start_at . ' UTC'));
+        $dt_end = gmdate('Ymd\THis\Z', strtotime((string) $appointment->end_at . ' UTC'));
+        $dt_stamp = gmdate('Ymd\THis\Z');
+        return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Nevari//Appointments//EN\r\nCALSCALE:GREGORIAN\r\nBEGIN:VEVENT\r\nUID:{$uid}\r\nDTSTAMP:{$dt_stamp}\r\nDTSTART:{$dt_start}\r\nDTEND:{$dt_end}\r\nSUMMARY:{$summary}\r\nDESCRIPTION:{$description}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    }
+
+    public static function format_review_row($row): array {
+        return [
+            'id' => (int) $row->id,
+            'appointment_id' => (int) $row->appointment_id,
+            'doctor_user_id' => (int) $row->doctor_user_id,
+            'patient_user_id' => (int) $row->patient_user_id,
+            'patient' => self::user_summary((int) $row->patient_user_id),
+            'rating' => (int) $row->rating,
+            'review_text' => $row->review_text,
+            'status' => $row->status,
+            'created_at' => self::iso_datetime($row->created_at),
+            'updated_at' => self::iso_datetime($row->updated_at),
+        ];
+    }
+
+    public static function doctor_review_summary(int $doctor_id): array {
+        global $wpdb;
+        $table = self::table('appointment_reviews');
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT rating, COUNT(*) AS count FROM {$table} WHERE doctor_user_id = %d AND status = 'approved' GROUP BY rating",
+            $doctor_id
+        ));
+        $distribution = [1 => 0, 2 => 0, 3 => 0, 4 => 0, 5 => 0];
+        $total = 0;
+        $weighted = 0;
+        foreach ($rows ?: [] as $row) {
+            $rating = max(1, min(5, (int) $row->rating));
+            $count = (int) $row->count;
+            $distribution[$rating] = $count;
+            $total += $count;
+            $weighted += $rating * $count;
+        }
+        return [
+            'average' => $total > 0 ? round($weighted / $total, 1) : 0,
+            'count' => $total,
+            'distribution' => $distribution,
+        ];
+    }
+
+    private static function ics_escape(string $value): string {
+        return str_replace(["\\", ";", ",", "\r\n", "\n", "\r"], ["\\\\", "\;", "\,", "\\n", "\\n", "\\n"], $value);
     }
 
     public static function format_prescription($row, bool $include_items = true): array {

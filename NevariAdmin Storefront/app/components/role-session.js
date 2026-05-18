@@ -97,6 +97,19 @@ export function saveSession(config, session) {
   localStorage.setItem(config.storageKey, JSON.stringify(session));
 }
 
+export function clearSessionAuth(config, session) {
+  const nextSession = {
+    ...defaultSession(config),
+    ...session,
+    accessToken: "",
+    refreshToken: "",
+    expiresAt: 0,
+    user: null
+  };
+  saveSession(config, nextSession);
+  return nextSession;
+}
+
 export function buildUrl(session, path) {
   const url = new URL("/api/nevari-proxy", typeof window !== "undefined" ? window.location.origin : "http://localhost");
   url.searchParams.set("baseUrl", String(session.baseUrl || "").replace(/\/+$/, ""));

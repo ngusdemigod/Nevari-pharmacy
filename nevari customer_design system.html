@@ -83,6 +83,10 @@
       overflow-x: hidden;
     }
 
+    body.modal-open {
+      overflow: hidden;
+    }
+
     body::before,
     body::after {
       content: "";
@@ -1127,6 +1131,246 @@
       border-radius: inherit;
       background: var(--color-primary-dark);
       width: var(--w);
+    }
+
+    .order-detail-screen {
+      background:
+        radial-gradient(circle at top right, rgba(229, 215, 198, 0.55), transparent 32%),
+        linear-gradient(180deg, #FFFFFF 0%, #FBF8F3 100%);
+    }
+
+    .order-detail-screen .screen-scroll {
+      padding-bottom: 26px;
+    }
+
+    .phone.modal-active .screen-scroll {
+      overflow: hidden;
+    }
+
+    .order-detail-shell {
+      display: grid;
+      gap: 18px;
+      padding-top: 6px;
+    }
+
+    .order-hero-card {
+      border-radius: 30px;
+      background: rgba(255,255,255,.94);
+      box-shadow: var(--shadow-card);
+      padding: 18px 14px 16px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .order-hero-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .order-hero-copy {
+      min-width: 0;
+    }
+
+    .order-hero-id {
+      font-size: 24px;
+      font-weight: 820;
+      letter-spacing: -0.05em;
+      color: var(--color-primary-dark);
+      line-height: 1;
+      margin-top: 8px;
+    }
+
+    .status-badge.processing {
+      background: rgba(229, 215, 198, 0.62);
+      color: var(--color-warning);
+    }
+
+    .order-detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .order-meta-card {
+      min-height: 82px;
+      border-radius: 18px;
+      background: #F7F4EF;
+      border: 1px solid var(--color-border);
+      padding: 14px 12px;
+      display: grid;
+      align-content: space-between;
+      gap: 8px;
+    }
+
+    .order-meta-label {
+      font-size: 12px;
+      color: var(--color-text-muted);
+      font-weight: 600;
+    }
+
+    .order-meta-value {
+      font-size: 14px;
+      font-weight: 780;
+      letter-spacing: -0.03em;
+      color: var(--color-primary-dark);
+    }
+
+    .order-view-btn {
+      width: 100%;
+      min-height: 46px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--color-border);
+      background: #fff;
+      color: var(--color-primary-dark);
+      font-size: 14px;
+      font-weight: 760;
+      cursor: pointer;
+      box-shadow: var(--shadow-soft);
+      transition: transform .2s ease, box-shadow .2s ease;
+    }
+
+    .order-view-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-card);
+    }
+
+    .order-modal {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 18px 12px 14px;
+      background: rgba(7, 24, 47, 0.68);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity .24s ease, visibility .24s ease;
+      z-index: 15;
+    }
+
+    .order-modal.is-open {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+
+    .order-modal-sheet {
+      width: 100%;
+      border-radius: 26px;
+      background: linear-gradient(180deg, #FFFFFF 0%, #F8F4EE 100%);
+      box-shadow: 0 22px 60px rgba(7,24,47,.32);
+      padding: 18px 16px 16px;
+      display: grid;
+      gap: 14px;
+      transform: translateY(18px);
+      transition: transform .24s ease;
+    }
+
+    .order-modal.is-open .order-modal-sheet {
+      transform: translateY(0);
+    }
+
+    .order-modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .order-modal-head h3 {
+      font-size: 18px;
+      line-height: 1.1;
+      letter-spacing: -0.04em;
+      color: var(--color-primary-dark);
+    }
+
+    .order-modal-close {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 0;
+      background: var(--color-primary-dark);
+      color: #fff;
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .order-modal-total {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-radius: 20px;
+      background: var(--color-primary-dark);
+      color: #fff;
+    }
+
+    .order-modal-total span {
+      font-size: 12px;
+      opacity: .82;
+    }
+
+    .order-modal-total strong {
+      font-size: 26px;
+      line-height: 1;
+      letter-spacing: -0.05em;
+    }
+
+    .order-modal-group {
+      border-radius: 20px;
+      background: rgba(255,255,255,.96);
+      border: 1px solid var(--color-border);
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .order-modal-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .order-modal-row + .order-modal-row {
+      padding-top: 12px;
+      border-top: 1px solid var(--color-border);
+    }
+
+    .order-modal-row span {
+      font-size: 12px;
+      color: var(--color-text-muted);
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .order-modal-row strong {
+      font-size: 14px;
+      font-weight: 760;
+      color: var(--color-primary-dark);
+      letter-spacing: -0.02em;
+    }
+
+    .order-modal-row p {
+      font-size: 13px;
+      color: var(--color-text);
+      font-weight: 640;
+    }
+
+    .order-modal-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .order-modal-actions .button {
+      min-height: 42px;
+      padding-inline: 14px;
     }
 
     .profile-card {
@@ -2712,7 +2956,7 @@
       <div class="section-head">
         <div>
           <h2 class="section-title">Screen templates</h2>
-          <p class="section-subtitle">Three ready to adapt mobile screens using the same tokens, icons, cards, spacing, and navigation rules.</p>
+          <p class="section-subtitle">Four ready to adapt mobile screens using the same tokens, icons, cards, spacing, navigation rules, and an interactive order details popup state.</p>
         </div>
         <div class="tabs" aria-label="Screen filter">
           <button class="tab active">Dashboard</button>
@@ -2923,6 +3167,114 @@
               <a class="nav-item" href="#"><svg class="icon"><use href="#icon-calendar"></use></svg></a>
               <a class="nav-item" href="#"><svg class="icon"><use href="#icon-settings"></use></svg></a>
             </nav>
+          </div>
+        </article>
+
+        <article class="phone" data-order-phone>
+          <div class="screen order-detail-screen">
+            <div class="screen-scroll">
+              <div class="topbar">
+                <button class="icon-btn small" aria-label="Back to orders"><svg class="icon"><use href="#icon-arrow-left"></use></svg></button>
+                <button class="icon-btn small" aria-label="Order notifications"><span class="dot"></span><svg class="icon"><use href="#icon-bell"></use></svg></button>
+              </div>
+              <h2 class="screen-title">Order details</h2>
+
+              <div class="order-detail-shell">
+                <div class="order-hero-card">
+                  <div class="order-hero-top">
+                    <div class="order-hero-copy">
+                      <div class="card-title">Order #1409</div>
+                      <div class="card-desc">Order ID 1409 · 1 items</div>
+                    </div>
+                    <span class="status-badge processing">Processing</span>
+                  </div>
+
+                  <div class="order-hero-id">NGN 4,022.00</div>
+
+                  <div class="progress-track"><span style="--w:62%"></span></div>
+
+                  <div class="order-detail-grid">
+                    <div class="order-meta-card">
+                      <div class="order-meta-label">Payment</div>
+                      <div class="order-meta-value">Processing</div>
+                    </div>
+                    <div class="order-meta-card">
+                      <div class="order-meta-label">Items</div>
+                      <div class="order-meta-value">1</div>
+                    </div>
+                    <div class="order-meta-card">
+                      <div class="order-meta-label">Doctor</div>
+                      <div class="order-meta-value">Not assigned</div>
+                    </div>
+                    <div class="order-meta-card">
+                      <div class="order-meta-label">Prescription</div>
+                      <div class="order-meta-value">None</div>
+                    </div>
+                  </div>
+
+                  <button class="order-view-btn" type="button" data-order-modal-open>View</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="order-modal" data-order-modal aria-hidden="true" hidden>
+              <div class="order-modal-sheet" role="dialog" aria-modal="true" aria-labelledby="order-modal-title">
+                <div class="order-modal-head">
+                  <h3 id="order-modal-title">Order #1409 details</h3>
+                  <button class="order-modal-close" type="button" aria-label="Close order details" data-order-modal-close>&times;</button>
+                </div>
+
+                <div class="order-modal-total">
+                  <div>
+                    <span>Total amount</span>
+                    <strong>NGN 4,022.00</strong>
+                  </div>
+                  <span class="status-badge processing">Processing</span>
+                </div>
+
+                <div class="order-modal-group">
+                  <div class="order-modal-row">
+                    <div>
+                      <span>Item</span>
+                      <p>Blood pressure medication pack</p>
+                    </div>
+                    <strong>Qty 1</strong>
+                  </div>
+                  <div class="order-modal-row">
+                    <div>
+                      <span>Delivery address</span>
+                      <p>14 Admiralty Way, Lekki Phase 1, Lagos</p>
+                    </div>
+                  </div>
+                  <div class="order-modal-row">
+                    <div>
+                      <span>Order status</span>
+                      <p>Payment confirmed. Pharmacist review in progress.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="order-modal-group">
+                  <div class="order-modal-row">
+                    <div>
+                      <span>Prescription</span>
+                      <p>No prescription attached</p>
+                    </div>
+                  </div>
+                  <div class="order-modal-row">
+                    <div>
+                      <span>Assigned doctor</span>
+                      <p>Not assigned yet</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="order-modal-actions">
+                  <button class="button button-soft" type="button" data-order-modal-close>Close</button>
+                  <button class="button button-primary" type="button">Track order</button>
+                </div>
+              </div>
+            </div>
           </div>
         </article>
       </div>
@@ -3608,5 +3960,56 @@
       </div>
     </section>
   </div>
+
+  <script>
+    (() => {
+      const phone = document.querySelector("[data-order-phone]");
+      const modal = document.querySelector("[data-order-modal]");
+      const openButton = document.querySelector("[data-order-modal-open]");
+      const closeButtons = document.querySelectorAll("[data-order-modal-close]");
+
+      if (!phone || !modal || !openButton) {
+        return;
+      }
+
+      const openModal = () => {
+        modal.hidden = false;
+        requestAnimationFrame(() => modal.classList.add("is-open"));
+        modal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("modal-open");
+        phone.classList.add("modal-active");
+      };
+
+      const closeModal = () => {
+        modal.classList.remove("is-open");
+        modal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("modal-open");
+        phone.classList.remove("modal-active");
+        window.setTimeout(() => {
+          if (modal.getAttribute("aria-hidden") === "true") {
+            modal.hidden = true;
+          }
+        }, 240);
+      };
+
+      openButton.addEventListener("click", openModal);
+
+      closeButtons.forEach((button) => {
+        button.addEventListener("click", closeModal);
+      });
+
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) {
+          closeModal();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && modal.classList.contains("is-open")) {
+          closeModal();
+        }
+      });
+    })();
+  </script>
 </body>
 </html>

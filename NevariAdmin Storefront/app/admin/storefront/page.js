@@ -698,7 +698,14 @@ function htmlToTextMessage(value) {
 }
 
 function extractApiErrorMessage(payload) {
-  return describeRequestError({ message: payload?.error?.message || payload?.message || "" });
+  const message = payload?.error?.message || payload?.message || "";
+  const code = payload?.error?.code || payload?.code || "";
+
+  if (["order_not_found", "product_not_found", "doctor_not_found", "prescription_not_found", "appointment_not_found"].includes(code)) {
+    return message || "The requested record no longer exists.";
+  }
+
+  return describeRequestError({ message });
 }
 
 function getSettledValue(result, fallbackValue) {
@@ -2915,7 +2922,7 @@ export default function Page() {
 
   const dashboard = data.dashboard || {};
   const sales = dashboard.sales || {};
-  const storeCurrency = sales.currency || (data.orderDetails || []).find((order) => order.currency)?.currency || "USD";
+  const storeCurrency = dashboard.store_currency || sales.currency || (data.orderDetails || []).find((order) => order.currency)?.currency || "USD";
   const consultations = dashboard.consultations || {};
   const prescriptionsSummary = dashboard.prescriptions || {};
   const emailsSummary = dashboard.emails || {};
@@ -4911,6 +4918,7 @@ export default function Page() {
                   <div className="banner-actions">
                     <button className="button-primary" type="button" onClick={() => showAuthGate("auth")}>Manage session</button>
                     <button className="pill-button" type="button" onClick={() => switchPage("settings")}>Open settings</button>
+                    <button className="pill-button danger" type="button" onClick={handleLogout}>Logout</button>
                   </div>
                 </section>
                 <section className="settings-grid profile-grid">

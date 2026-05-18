@@ -627,7 +627,7 @@ final class Nevari_Auth {
         }
 
         if ($frontend_type === 'patient_dashboard') {
-            return in_array('customer', (array) $resolved_user->roles, true);
+            return (bool) array_intersect(['patient', 'customer'], (array) $resolved_user->roles);
         }
 
         return false;
