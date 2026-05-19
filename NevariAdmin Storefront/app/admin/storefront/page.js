@@ -1,8 +1,13 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { startTransition, useDeferredValue, useEffect, useRef, useState } from "react";
+import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import useSWR, { useSWRConfig } from "swr";
+import { removeById, replaceById, updateListPayload, upsertById } from "../../../lib/fetcher";
+import { isAdminSummaryKey, isAppointmentListKey, isCustomerListKey, isDoctorListKey, isOrderListKey, isProductCategoryListKey, isProductListKey, isProductTagListKey, swrKeys, withBaseUrl } from "../../../lib/swrKeys";
+import { useCreateProduct, useDeleteProduct, useUpdateProduct } from "../../../hooks/products";
+import { useUpdateOrderStatus } from "../../../hooks/orders/useUpdateOrderStatus";
 import { setDocumentMetadata } from "../../components/page-metadata";
 import { clearStoredSessions, createPairingRequiredError, isPairingRequiredError, isPairingRequiredPayload } from "../../components/role-session";
 
@@ -11,6 +16,32 @@ const API_NAMESPACE = "nevari/v1";
 const FRONTEND_TYPE = "storefront";
 const PAIRING_FRONTEND_TYPE = "custom_frontend";
 const DEFAULT_SITE_NAME = "Nevari Pharmacy";
+const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
+const EMAIL_TEMPLATE_STORAGE_KEY = "nevari_admin_email_templates";
+
+const EMAIL_HOOKS = [
+  { key: "{content}", label: "Body content injected by the sending workflow." },
+  { key: "{customer_firstname}", label: "Customer first name." },
+  { key: "{customer_lastname}", label: "Customer last name." },
+  { key: "{order_id}", label: "WooCommerce order number or ID." },
+  { key: "{appointment_date}", label: "Formatted consultation date and time." },
+  { key: "{site_name}", label: "Configured pharmacy site name." },
+  { key: "{support_email}", label: "Primary support inbox." },
+  { key: "{doctor_name}", label: "Assigned doctor display name." },
+  { key: "{invoice_total}", label: "Formatted invoice or order total." }
+];
+
+const DEFAULT_EMAIL_TEMPLATES = [
+  { id: "welcome", name: "Welcome Email", category: "Account", status: "active", subject: "Welcome to {site_name}", html: "<h1>Welcome, {customer_firstname}</h1><p>{content}</p><p>Contact us at {support_email}.</p>" },
+  { id: "password-reset", name: "Password Reset", category: "Account", status: "active", subject: "Reset your {site_name} password", html: "<h1>Password reset</h1><p>{content}</p>" },
+  { id: "order-confirmation", name: "Order Confirmation", category: "Orders", status: "active", subject: "Order #{order_id} confirmed", html: "<h1>Order #{order_id}</h1><p>Hello {customer_firstname},</p><p>{content}</p><p>Total: {invoice_total}</p>" },
+  { id: "appointment-approved", name: "Appointment Approved", category: "Consultations", status: "active", subject: "Appointment approved for {appointment_date}", html: "<h1>Appointment approved</h1><p>Your consultation with {doctor_name} is set for {appointment_date}.</p><p>{content}</p>" },
+  { id: "appointment-cancelled", name: "Appointment Cancelled", category: "Consultations", status: "draft", subject: "Appointment cancelled", html: "<h1>Appointment cancelled</h1><p>{content}</p>" },
+  { id: "invoice-email", name: "Invoice Email", category: "Orders", status: "active", subject: "Invoice for order #{order_id}", html: "<h1>Invoice #{order_id}</h1><p>{content}</p><p>Total due: {invoice_total}</p>" },
+  { id: "subscription-renewal", name: "Subscription Renewal", category: "Subscriptions", status: "draft", subject: "Subscription renewal reminder", html: "<h1>Renewal reminder</h1><p>{content}</p>" },
+  { id: "admin-notification", name: "Admin Notification", category: "System", status: "active", subject: "{site_name} admin notification", html: "<h1>Admin notification</h1><p>{content}</p>" },
+  { id: "vendor-notification", name: "Vendor Notification", category: "System", status: "draft", subject: "{site_name} vendor notification", html: "<h1>Vendor notification</h1><p>{content}</p>" }
+];
 
 const LEGACY_PAGE_ALIASES = {
   queue: "orders",
@@ -24,6 +55,7 @@ const FRONTEND_PAGES = [
     label: "Command",
     items: [
       ["overview", "Overview", "i-layout"],
+      ["products", "Products", "i-pill"],
       ["orders", "Orders", "i-cart"],
       ["payments", "Payments", "i-credit-card"],
       ["customers", "Customers", "i-users"]
@@ -32,10 +64,9 @@ const FRONTEND_PAGES = [
   {
     label: "Care Ops",
     items: [
+      ["doctors", "Doctors", "i-briefcase-medical"],
       ["consultations", "Consultations", "i-stethoscope"],
-      ["prescriptions", "Prescriptions", "i-clipboard"],
-      ["products", "Products", "i-pill"],
-      ["doctors", "Doctors", "i-briefcase-medical"]
+      ["prescriptions", "Prescriptions", "i-clipboard"]
     ]
   },
   {
@@ -74,7 +105,7 @@ const EMPTY_ORDER_FORM = {
   country: "US",
   productId: "",
   quantity: 1,
-  status: "pending",
+  status: "awaiting-doctor",
   doctorId: "",
   note: ""
 };
@@ -138,8 +169,29 @@ const EMPTY_DOCTOR_FORM = {
   location: "",
   status: "active",
   bio: "",
+  pricingTier: "specialist",
   productCategoryIds: []
 };
+
+const DOCTOR_PRICING_TIER_OPTIONS = [
+  { value: "junior", label: "Junior" },
+  { value: "senior", label: "Senior" },
+  { value: "specialist", label: "Specialist" }
+];
+
+const BOOKING_SLOT_TIMES = [
+  "08:00", "08:30", "09:00", "09:30", "10:00", "10:30",
+  "11:00", "11:30", "12:00", "13:00", "13:30", "14:00",
+  "14:30", "15:00", "15:30", "16:00", "16:30", "17:00"
+];
+
+const BOOKING_DURATION_OPTIONS = [30, 45, 60, 90, 120];
+
+const CUSTOMER_STATUS_EMAILS = new Set(["awaiting-doctor", "processing", "completed", "failed", "refunded"]);
+
+function shouldNotifyCustomerForOrderStatus(status) {
+  return CUSTOMER_STATUS_EMAILS.has(String(status || "").toLowerCase().replace(/\s+/g, "-"));
+}
 
 function buildDefaultConsultationWindow() {
   const start = new Date(Date.now() + 60 * 60 * 1000);
@@ -181,11 +233,62 @@ function emptyData() {
     prescriptionDetails: [],
     prescriptionHistory: [],
     emails: [],
+    customers: [],
     doctors: [],
     products: [],
     productCategories: [],
     auditEvents: []
   };
+}
+
+function defaultAdminAppointmentSettings() {
+  return {
+    googleMeetEnabled: true,
+    livePaymentsEnabled: false,
+    externalMeetingServiceUrl: "/api/create-meeting",
+    emailNotificationsEnabled: true,
+    reminderMinutesPrimary: 15,
+    reminderMinutesSecondary: 5,
+    smtpHost: "smtp.nevari.local",
+    smtpPort: "587",
+    smtpSender: "care@nevarihealth.com",
+    idempotencyProtection: true,
+    minimumConsultationMinutes: 30,
+    apiKeyRotationEnabled: true,
+    auditLogRetention: 90,
+    rolePermissionsLocked: true,
+    pricingTiers: {
+      junior: "5000",
+      senior: "8000",
+      specialist: "12000"
+    },
+    categoryPricing: {
+      cardiology: "12000",
+      dermatology: "9000",
+      general: "6000"
+    }
+  };
+}
+
+function loadAdminAppointmentSettings() {
+  if (typeof window === "undefined") {
+    return defaultAdminAppointmentSettings();
+  }
+  try {
+    return {
+      ...defaultAdminAppointmentSettings(),
+      ...JSON.parse(window.localStorage.getItem(ADMIN_APPOINTMENT_SETTINGS_KEY) || "{}")
+    };
+  } catch {
+    return defaultAdminAppointmentSettings();
+  }
+}
+
+function persistAdminAppointmentSettings(settings) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(ADMIN_APPOINTMENT_SETTINGS_KEY, JSON.stringify(settings));
 }
 
 function normalizeBaseUrl(value) {
@@ -376,19 +479,58 @@ function joinNonEmpty(values, separator = " ") {
   return values.map((value) => String(value || "").trim()).filter(Boolean).join(separator);
 }
 
+function firstNonEmpty(...values) {
+  return values.map((value) => String(value || "").trim()).find(Boolean) || "";
+}
+
+function isPlaceholderCustomerName(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return !normalized || normalized === "guest checkout" || /^customer\s*#?\d+$/.test(normalized) || /^patient\s*#?\d+$/.test(normalized);
+}
+
+function customerEmail(orderOrCustomer) {
+  const metaEmail = Array.isArray(orderOrCustomer?.meta_data)
+    ? orderOrCustomer.meta_data.find((item) => ["billing_email", "email", "_billing_email"].includes(item?.key))?.value
+    : "";
+  return firstNonEmpty(
+    orderOrCustomer?.billing?.email,
+    orderOrCustomer?.billing_address?.email,
+    orderOrCustomer?.customer?.email,
+    orderOrCustomer?.customer?.billing?.email,
+    orderOrCustomer?.customer_email,
+    orderOrCustomer?.billing_email,
+    orderOrCustomer?.email,
+    orderOrCustomer?.user?.email,
+    orderOrCustomer?.user_email,
+    orderOrCustomer?.meta?.billing_email,
+    metaEmail,
+    orderOrCustomer?.shipping?.email
+  );
+}
+
+function customerNameFromRecord(record) {
+  const billingName = joinNonEmpty([record?.billing?.first_name, record?.billing?.last_name]);
+  const billingAddressName = joinNonEmpty([record?.billing_address?.first_name, record?.billing_address?.last_name]);
+  const customerBillingName = joinNonEmpty([record?.customer?.billing?.first_name, record?.customer?.billing?.last_name]);
+  const explicitName = joinNonEmpty([record?.first_name, record?.last_name]);
+  const directName = firstNonEmpty(record?.display_name, record?.name, record?.full_name, record?.customer_name, record?.username);
+  return billingName || billingAddressName || customerBillingName || explicitName || (isPlaceholderCustomerName(directName) ? "" : directName);
+}
+
 function customerFullName(order) {
-  const shippingName = joinNonEmpty([order?.shipping?.first_name, order?.shipping?.last_name]);
-  if (shippingName) {
-    return shippingName;
-  }
   const billingName = joinNonEmpty([order?.billing?.first_name, order?.billing?.last_name]);
-  return billingName || patientLabel(order?.customer_id);
+  const customerName = customerNameFromRecord(order?.customer);
+  const rootName = customerNameFromRecord(order);
+  const shippingName = joinNonEmpty([order?.shipping?.first_name, order?.shipping?.last_name]);
+  const email = customerEmail(order);
+  return billingName || customerName || rootName || shippingName || (email ? email.split("@")[0] : "") || patientLabel(order?.customer_id);
 }
 
 function customerSummary(order) {
+  const email = customerEmail(order);
   return {
     name: customerFullName(order),
-    email: order?.billing?.email || "No email on file",
+    email: email || "No email on file",
   };
 }
 
@@ -406,6 +548,114 @@ function formatAddress(address) {
   ].filter(Boolean);
 
   return lines.length ? lines.join(", ") : "No delivery address on file";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function buildInvoiceHtml(order, { siteName = DEFAULT_SITE_NAME, storeCurrency = "USD" } = {}) {
+  const customer = customerSummary(order);
+  const currency = order?.currency || storeCurrency;
+  const lineItems = (order?.items || []).map((item) => {
+    const quantity = Number(item.quantity || 0);
+    const total = item.total ?? ((Number(item.unit_price || item.price || 0)) * quantity);
+    return `
+      <tr>
+        <td><strong>${escapeHtml(item.name || "Item")}</strong><small>${escapeHtml(item.sku || "")}</small></td>
+        <td>${escapeHtml(quantity || 1)}</td>
+        <td>${escapeHtml(formatMoney(total, currency))}</td>
+      </tr>
+    `;
+  }).join("");
+
+  return `<!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Invoice #${escapeHtml(order?.number || order?.id || "")}</title>
+        <style>
+          body { margin: 0; padding: 40px; color: #0e2955; font-family: Inter, Manrope, Arial, sans-serif; background: #f8f5ef; }
+          .invoice { max-width: 860px; margin: 0 auto; background: #fff; border: 1px solid rgba(14,41,85,.12); border-radius: 18px; padding: 34px; }
+          header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 1px solid rgba(14,41,85,.12); padding-bottom: 24px; }
+          h1, h2, p { margin: 0; }
+          h1 { font-size: 34px; }
+          .muted, small { color: #5f6470; }
+          .meta { display: grid; gap: 7px; text-align: right; }
+          .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin: 26px 0; }
+          .box { border: 1px solid rgba(14,41,85,.10); border-radius: 14px; padding: 16px; background: #fbfaf7; display: grid; gap: 6px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+          th { text-align: left; color: #5f6470; font-size: 12px; text-transform: uppercase; border-bottom: 1px solid rgba(14,41,85,.12); padding: 12px 10px; }
+          td { border-bottom: 1px solid rgba(14,41,85,.08); padding: 14px 10px; vertical-align: top; }
+          td small { display: block; margin-top: 4px; }
+          th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align: right; }
+          .total { display: flex; justify-content: flex-end; margin-top: 22px; }
+          .total div { min-width: 260px; border-radius: 14px; background: #e7eef8; padding: 18px; display: flex; justify-content: space-between; align-items: center; }
+          .total strong { font-size: 24px; }
+          @media print { body { background: #fff; padding: 0; } .invoice { border: 0; border-radius: 0; } }
+        </style>
+      </head>
+      <body>
+        <main class="invoice">
+          <header>
+            <div><p class="muted">${escapeHtml(siteName)}</p><h1>Invoice</h1></div>
+            <div class="meta">
+              <strong>#${escapeHtml(order?.number || order?.id || "")}</strong>
+              <span>${escapeHtml(formatDate(order?.created_at, true))}</span>
+              <span>${escapeHtml(formatStatusLabel(order?.status))}</span>
+            </div>
+          </header>
+          <section class="grid">
+            <div class="box"><span class="muted">Bill to</span><strong>${escapeHtml(customer.name)}</strong><span>${escapeHtml(customer.email)}</span><span>${escapeHtml(order?.billing?.phone || "No phone number on file")}</span></div>
+            <div class="box"><span class="muted">Billing address</span><span>${escapeHtml(formatAddress(order?.billing))}</span></div>
+          </section>
+          <table>
+            <thead><tr><th>Item</th><th>Qty</th><th>Total</th></tr></thead>
+            <tbody>${lineItems || `<tr><td colspan="3">No line items available.</td></tr>`}</tbody>
+          </table>
+          <section class="total"><div><span>Total</span><strong>${escapeHtml(formatMoney(order?.total || 0, currency))}</strong></div></section>
+        </main>
+      </body>
+    </html>`;
+}
+
+function loadEmailTemplates() {
+  if (typeof window === "undefined") {
+    return DEFAULT_EMAIL_TEMPLATES;
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(EMAIL_TEMPLATE_STORAGE_KEY) || "[]");
+    return Array.isArray(saved) && saved.length ? saved : DEFAULT_EMAIL_TEMPLATES;
+  } catch {
+    return DEFAULT_EMAIL_TEMPLATES;
+  }
+}
+
+function renderEmailTemplate(html, values = {}) {
+  const hookValues = {
+    content: "Your care team has an update for you.",
+    customer_firstname: "Ada",
+    customer_lastname: "Okafor",
+    order_id: "1048",
+    appointment_date: "May 22, 2026 at 10:00 AM",
+    site_name: DEFAULT_SITE_NAME,
+    support_email: "support@nevarihealth.com",
+    doctor_name: "Dr. Morgan Lee",
+    invoice_total: "$128.00",
+    ...values
+  };
+  return String(html || "").replace(/\{([a-z0-9_]+)\}/gi, (match, key) => hookValues[key] ?? match);
+}
+
+function unsupportedEmailHooks(template) {
+  const supported = new Set(EMAIL_HOOKS.map((hook) => hook.key));
+  const found = String(`${template?.subject || ""} ${template?.html || ""}`).match(/\{[a-z0-9_]+\}/gi) || [];
+  return Array.from(new Set(found.filter((hook) => !supported.has(hook))));
 }
 
 function itemQuantityTotal(order) {
@@ -456,6 +706,15 @@ function normalizeText(value) {
   return String(value || "").toLowerCase();
 }
 
+function normalizePricingTier(value) {
+  return String(value || "").trim().toLowerCase() || "specialist";
+}
+
+function formatPricingTierLabel(value) {
+  const normalized = normalizePricingTier(value);
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
 function safeNumber(value) {
   return Number(value || 0);
 }
@@ -466,6 +725,44 @@ function isoDateKey(value) {
     return "";
   }
   return date.toISOString().slice(0, 10);
+}
+
+function localDateKey(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function localTimeKey(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function buildDateTimeLocalValue(dateValue, timeValue) {
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const [hours = "09", minutes = "00"] = String(timeValue || "09:00").split(":");
+  date.setHours(Number(hours), Number(minutes), 0, 0);
+  return `${localDateKey(date)}T${localTimeKey(date)}`;
+}
+
+function addMinutesToLocalValue(value, minutes) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  date.setMinutes(date.getMinutes() + Number(minutes || 30));
+  return `${localDateKey(date)}T${localTimeKey(date)}`;
 }
 
 function getProductImage(product) {
@@ -486,6 +783,151 @@ function getProductCategories(product) {
     return categories.map((item) => item?.name || item?.label || item).filter(Boolean).join(", ") || "Uncategorized";
   }
   return categories || "Uncategorized";
+}
+
+function getDoctorCategoryEntries(doctor) {
+  const categories = doctor?.product_categories || doctor?.categories || [];
+  if (Array.isArray(categories)) {
+    return categories
+      .map((item) => ({
+        id: item?.id ?? item?.term_id ?? item?.category_id ?? item?.value ?? null,
+        name: item?.name || item?.label || item?.slug || item?.title || "",
+        slug: item?.slug || normalizeCategoryKey(item?.name || item?.label || item?.title || ""),
+        raw: item
+      }))
+      .filter((item) => item.name);
+  }
+  if (typeof categories === "string" && categories.trim()) {
+    return categories.split(",").map((item) => item.trim()).filter(Boolean).map((name) => ({
+      id: null,
+      name,
+      slug: normalizeCategoryKey(name),
+      raw: name
+    }));
+  }
+  return [];
+}
+
+function getDoctorCategoryIds(doctor) {
+  const ids = new Set();
+  if (Array.isArray(doctor?.product_category_ids)) {
+    doctor.product_category_ids.forEach((id) => {
+      const value = Number(id);
+      if (Number.isFinite(value) && value > 0) {
+        ids.add(value);
+      }
+    });
+  }
+  getDoctorCategoryEntries(doctor).forEach((item) => {
+    const value = Number(item.id);
+    if (Number.isFinite(value) && value > 0) {
+      ids.add(value);
+    }
+  });
+  return [...ids];
+}
+
+function getDoctorCategoryNames(doctor) {
+  return getDoctorCategoryEntries(doctor).map((item) => item.name);
+}
+
+function replaceCategoryNameInProduct(product, oldName, nextName) {
+  const nextCategories = getProductCategories(product)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((name) => (name === oldName ? nextName : name));
+
+  return {
+    ...product,
+    categories: nextCategories
+  };
+}
+
+function removeCategoryNameFromProduct(product, categoryName) {
+  const nextCategories = getProductCategories(product)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((name) => name !== categoryName);
+
+  return {
+    ...product,
+    categories: nextCategories
+  };
+}
+
+function replaceCategoryNameInDoctor(doctor, oldCategoryId, oldName, nextName, nextCategoryId) {
+  const nextIds = new Set(getDoctorCategoryIds(doctor));
+  const currentEntries = getDoctorCategoryEntries(doctor);
+  const matched = currentEntries.some((item) => (
+    (oldCategoryId && Number(item.id) === Number(oldCategoryId)) ||
+    item.name === oldName ||
+    item.slug === normalizeCategoryKey(oldName)
+  ));
+
+  if (!matched) {
+    return doctor;
+  }
+
+  const nextCategories = currentEntries.map((item) => {
+    const baseCategory = typeof item.raw === "object" && item.raw !== null ? item.raw : {};
+    if (
+      (oldCategoryId && Number(item.id) === Number(oldCategoryId)) ||
+      item.name === oldName ||
+      item.slug === normalizeCategoryKey(oldName)
+    ) {
+      return {
+        ...baseCategory,
+        id: nextCategoryId ?? item.id,
+        name: nextName,
+        label: nextName,
+        slug: normalizeCategoryKey(nextName)
+      };
+    }
+    return baseCategory.id ? baseCategory : {
+      id: item.id,
+      name: item.name,
+      label: item.name,
+      slug: item.slug
+    };
+  });
+
+  if (oldCategoryId) {
+    nextIds.delete(Number(oldCategoryId));
+  }
+  if (nextCategoryId) {
+    nextIds.add(Number(nextCategoryId));
+  }
+
+  return {
+    ...doctor,
+    product_categories: nextCategories,
+    product_category_ids: [...nextIds]
+  };
+}
+
+function normalizeCategoryKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function resolveCategoryConsultationPrice(category, categoryPricing = {}) {
+  const candidates = [category?.slug, category?.name, category?.label]
+    .map((value) => normalizeCategoryKey(value))
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (categoryPricing?.[candidate] !== undefined && categoryPricing?.[candidate] !== "") {
+      return categoryPricing[candidate];
+    }
+  }
+
+  return categoryPricing?.general || "";
 }
 
 function getProductTerms(product, keys = []) {
@@ -680,10 +1122,13 @@ function describeRequestError(error) {
   if (/appointment must be in the future/i.test(message)) {
     return "Appointment time must be in the future.";
   }
-  if (/required|invalid|not found|already exists|not available/i.test(message)) {
-    return "Please review the submitted details and try again.";
+  if (/already exists|duplicate|conflict/i.test(message)) {
+    return message;
   }
-  return "Something went wrong. Try again.";
+  if (/required|invalid|not found|not available|validation/i.test(message)) {
+    return message || "Please review the submitted details and try again.";
+  }
+  return message || "Something went wrong. Try again.";
 }
 
 function htmlToTextMessage(value) {
@@ -703,6 +1148,10 @@ function extractApiErrorMessage(payload) {
 
   if (["order_not_found", "product_not_found", "doctor_not_found", "prescription_not_found", "appointment_not_found"].includes(code)) {
     return message || "The requested record no longer exists.";
+  }
+
+  if (message) {
+    return describeRequestError({ message });
   }
 
   return describeRequestError({ message });
@@ -728,6 +1177,18 @@ function buildUrl(session, path, params = {}) {
   const url = new URL("/api/nevari-proxy", typeof window !== "undefined" ? window.location.origin : "http://localhost");
   url.searchParams.set("baseUrl", normalizeBaseUrl(session.baseUrl));
   url.searchParams.set("path", path);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") {
+      return;
+    }
+    url.searchParams.set(key, String(value));
+  });
+  return url.toString();
+}
+
+function buildAdminUrl(session, route, params = {}) {
+  const url = new URL(`/api/admin/${route}`, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  url.searchParams.set("baseUrl", normalizeBaseUrl(session.baseUrl));
   Object.entries(params).forEach(([key, value]) => {
     if (value === undefined || value === null || value === "") {
       return;
@@ -769,6 +1230,190 @@ function InlineIcon({ id }) {
 
 function StatusPill({ value, children, className = "status-pill" }) {
   return <span className={`${className} ${toneClass(value)}`}>{children}</span>;
+}
+
+function BookingCalendarWidget({
+  title = "Book an Appointment",
+  subtitle = "Select a date and your preferred time slot",
+  appointments = [],
+  selectedDate,
+  selectedStartAt,
+  viewDate,
+  duration,
+  contextualFlow = false,
+  loading = false,
+  onViewDateChange,
+  onClearDate,
+  onDateSelect,
+  onSlotSelect,
+  onDurationChange,
+  showTimeSlots = true
+}) {
+  const currentView = viewDate instanceof Date && !Number.isNaN(viewDate.getTime()) ? viewDate : new Date();
+  const selectedDateKey = selectedStartAt ? localDateKey(selectedStartAt) : (selectedDate || "");
+  const selectedTimeKey = selectedStartAt ? localTimeKey(selectedStartAt) : "";
+  const todayKey = localDateKey();
+  const monthLabel = currentView.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const first = new Date(currentView.getFullYear(), currentView.getMonth(), 1);
+  const cursor = new Date(first);
+  cursor.setDate(first.getDate() - first.getDay());
+  const days = Array.from({ length: 42 }, () => {
+    const date = new Date(cursor);
+    cursor.setDate(cursor.getDate() + 1);
+    return date;
+  });
+  const selectedDateObject = selectedDateKey ? new Date(`${selectedDateKey}T00:00:00`) : new Date();
+  const selectedDayAppointments = appointments.filter((appointment) => localDateKey(appointment.start_at) === selectedDateKey);
+  const selectedBookedSlots = new Set(selectedDayAppointments.map((appointment) => localTimeKey(appointment.start_at)).filter(Boolean));
+  const showDatePanel = !contextualFlow || !selectedDateKey;
+  const showSlotPanel = showTimeSlots && (!contextualFlow || Boolean(selectedDateKey));
+
+  function appointmentsForDay(date) {
+    const key = localDateKey(date);
+    return appointments.filter((appointment) => localDateKey(appointment.start_at) === key);
+  }
+
+  function statusForDay(date) {
+    if (localDateKey(date) < todayKey) {
+      return "past";
+    }
+    const count = appointmentsForDay(date).length;
+    if (count >= 6) {
+      return "full";
+    }
+    if (count >= 3) {
+      return "partial";
+    }
+    return "avail";
+  }
+
+  function changeMonth(offset) {
+    const next = new Date(currentView);
+    next.setMonth(next.getMonth() + offset, 1);
+    onViewDateChange?.(next);
+  }
+
+  function selectToday() {
+    const today = new Date();
+    onViewDateChange?.(today);
+    onDateSelect?.(localDateKey(today), today);
+  }
+
+  return (
+    <div className="booking-widget admin-booking-widget">
+      <div className="booking-steps-header">
+        <div className="booking-title-row">
+          <div>
+            <div className="booking-widget-title">{title}</div>
+            <div className="booking-widget-subtitle">{subtitle}</div>
+          </div>
+          <div className="booking-legend">
+            <div className="booking-legend-item"><span className="booking-legend-dot avail" />Available</div>
+            <div className="booking-legend-item"><span className="booking-legend-dot partial" />Limited</div>
+            <div className="booking-legend-item"><span className="booking-legend-dot full" />Full</div>
+          </div>
+        </div>
+        <div className="booking-steps-track">
+          <div className="booking-step-item active">
+            <div className="booking-step-circle">1</div>
+            <div className="booking-step-label">Select Date</div>
+          </div>
+          {showTimeSlots ? (
+            <div className={`booking-step-item ${selectedDateKey ? "active" : ""}`}>
+              <div className="booking-step-circle">2</div>
+              <div className="booking-step-label">Choose Time</div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {showDatePanel ? <div className="booking-panel">
+        <div className="booking-panel-head">
+          <div>
+            <div className="booking-panel-heading">Pick a Date</div>
+            <div className="booking-panel-sub">Tap any available day to continue</div>
+          </div>
+          <div className="booking-month-controls">
+            <button className="booking-calendar-nav" type="button" aria-label="Previous month" onClick={() => changeMonth(-1)}>‹</button>
+            <button className="booking-pill-btn" type="button" onClick={selectToday}>Today</button>
+            <button className="booking-calendar-nav" type="button" aria-label="Next month" onClick={() => changeMonth(1)}>›</button>
+          </div>
+        </div>
+        <div className="booking-month-row">
+          <div className="booking-month-label">{monthLabel}</div>
+        </div>
+        <div className="booking-day-names">
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <div className="booking-day-name" key={day}>{day}</div>)}
+        </div>
+        <div className="booking-cal-grid">
+          {loading ? Array.from({ length: 42 }, (_, index) => (
+            <SkeletonBox className="booking-cal-day-skeleton" key={index} />
+          )) : days.map((date) => {
+            const key = localDateKey(date);
+            const otherMonth = date.getMonth() !== currentView.getMonth();
+            const status = statusForDay(date);
+            const dayAppointments = appointmentsForDay(date);
+            const disabled = otherMonth || status === "past" || status === "full";
+            return (
+              <button
+                className={`booking-cal-day ${status} ${otherMonth ? "other-month" : ""} ${key === todayKey ? "today" : ""} ${key === selectedDateKey ? "selected" : ""}`.trim()}
+                type="button"
+                key={`${key}-${otherMonth ? "other" : "current"}`}
+                disabled={disabled}
+                onClick={() => onDateSelect?.(key, date)}
+              >
+                <span className="booking-d-num">{date.getDate()}</span>
+                <span className="booking-d-dots">
+                  {Array.from({ length: Math.min(Math.max(dayAppointments.length, 1), 3) }, (_, index) => <span key={index} />)}
+                </span>
+                <span className="booking-d-slots">{Math.max(0, BOOKING_SLOT_TIMES.length - dayAppointments.length)} slots</span>
+              </button>
+            );
+          })}
+        </div>
+      </div> : null}
+
+      {showSlotPanel ? (
+        <div className="booking-panel booking-time-panel">
+          <div className="booking-panel-head">
+            <div>
+              <div className="booking-panel-heading">Choose a Time</div>
+              <div className="booking-panel-sub">{formatDayLabel(selectedDateObject)}</div>
+            </div>
+            {contextualFlow ? <button className="booking-pill-btn" type="button" onClick={onClearDate}>Change day</button> : null}
+          </div>
+          <div className="booking-section-label">Session Duration</div>
+          <div className="booking-duration-row">
+            {BOOKING_DURATION_OPTIONS.map((minutes) => (
+              <button className={`booking-dur-pill ${Number(duration) === minutes ? "active" : ""}`} type="button" key={minutes} onClick={() => onDurationChange?.(minutes)}>
+                {minutes < 60 ? `${minutes} min` : minutes === 60 ? "1 hr" : `${minutes / 60} hr`}
+              </button>
+            ))}
+          </div>
+          <div className="booking-section-label">Available Slots</div>
+          <div className="booking-slots-grid">
+            {loading ? Array.from({ length: 10 }, (_, index) => (
+              <SkeletonBox className="booking-t-slot-skeleton" key={index} />
+            )) : BOOKING_SLOT_TIMES.map((time) => {
+              const taken = selectedBookedSlots.has(time);
+              return (
+                <button
+                  className={`booking-t-slot ${taken ? "taken" : ""} ${selectedTimeKey === time ? "chosen" : ""}`.trim()}
+                  type="button"
+                  key={time}
+                  disabled={taken}
+                  onClick={() => onSlotSelect?.(selectedDateKey, time)}
+                >
+                  <span className="booking-t-time">{time}</span>
+                  <span className="booking-t-label">{taken ? "Booked" : "Open"}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function SkeletonBox({ className = "" }) {
@@ -931,6 +1576,7 @@ function IconSprite() {
 
 export default function Page() {
   const router = useRouter();
+  const { mutate: globalMutate } = useSWRConfig();
   const [session, setSession] = useState(defaultSession);
   const [currentPage, setCurrentPage] = useState("overview");
   const [trendMode, setTrendMode] = useState("week");
@@ -966,9 +1612,11 @@ export default function Page() {
   const [orderDetailLoading, setOrderDetailLoading] = useState(false);
   const [orderMutationLoading, setOrderMutationLoading] = useState(false);
   const [orderActionFeedback, setOrderActionFeedback] = useState("");
+  const [deletingOrderIds, setDeletingOrderIds] = useState([]);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [orderControlsModalOpen, setOrderControlsModalOpen] = useState(false);
   const [doctorAssignmentModalOpen, setDoctorAssignmentModalOpen] = useState(false);
+  const [snackbar, setSnackbar] = useState(null);
   const [selectedPaymentReceipt, setSelectedPaymentReceipt] = useState(null);
   const [paymentReceiptModalOpen, setPaymentReceiptModalOpen] = useState(false);
   const [paymentReceiptFeedback, setPaymentReceiptFeedback] = useState("");
@@ -978,12 +1626,19 @@ export default function Page() {
   const [createModalType, setCreateModalType] = useState("");
   const [createFeedback, setCreateFeedback] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
+  const [orderCreateSearch, setOrderCreateSearch] = useState("");
   const [productEditorMode, setProductEditorMode] = useState("edit");
   const [productCreateForm, setProductCreateForm] = useState(buildEmptyProductDraft());
   const [consultationCreateForm, setConsultationCreateForm] = useState(EMPTY_CONSULTATION_FORM);
   const [consultationCalendarMode, setConsultationCalendarMode] = useState("week");
+  const [consultationDuration, setConsultationDuration] = useState(30);
+  const [consultationBookingDate, setConsultationBookingDate] = useState("");
+  const [consultationCalendarViewDate, setConsultationCalendarViewDate] = useState(() => new Date());
+  const [consultationCreateCalendarViewDate, setConsultationCreateCalendarViewDate] = useState(() => new Date());
   const [consultationPatientSearch, setConsultationPatientSearch] = useState("");
+  const [consultationDoctorSearch, setConsultationDoctorSearch] = useState("");
   const [doctorCreateForm, setDoctorCreateForm] = useState(EMPTY_DOCTOR_FORM);
+  const [doctorCreateCategorySearch, setDoctorCreateCategorySearch] = useState("");
   const [customerCreateForm, setCustomerCreateForm] = useState(EMPTY_CUSTOMER_FORM);
   const [orderCreateItems, setOrderCreateItems] = useState([{ ...EMPTY_ORDER_LINE, key: "line-1" }]);
   const [selectedProductEdit, setSelectedProductEdit] = useState(null);
@@ -996,7 +1651,21 @@ export default function Page() {
   const [productEditLoading, setProductEditLoading] = useState(false);
   const [productMediaUploading, setProductMediaUploading] = useState(false);
   const [duplicatingProductId, setDuplicatingProductId] = useState(null);
+  const [productCatalogView, setProductCatalogView] = useState("products");
   const [productListFilter, setProductListFilter] = useState("all");
+  const [selectedProductCategoryName, setSelectedProductCategoryName] = useState("");
+  const [categoryProductSearch, setCategoryProductSearch] = useState("");
+  const [categoryAssignmentLoading, setCategoryAssignmentLoading] = useState("");
+  const [categoryAssignmentFeedback, setCategoryAssignmentFeedback] = useState("");
+  const [categoryDoctorSearch, setCategoryDoctorSearch] = useState("");
+  const [categoryMutationLoading, setCategoryMutationLoading] = useState("");
+  const [categoryMutationFeedback, setCategoryMutationFeedback] = useState("");
+  const [categoryCreateOpen, setCategoryCreateOpen] = useState(false);
+  const [categoryCreateForm, setCategoryCreateForm] = useState({ name: "", pricePerMinute: "" });
+  const [categoryEditDraft, setCategoryEditDraft] = useState({ name: "", pricePerMinute: "" });
+  const [categoryInlineField, setCategoryInlineField] = useState("");
+  const [categorySaveNotice, setCategorySaveNotice] = useState("");
+  const [categoryProductPage, setCategoryProductPage] = useState(1);
   const [productPage, setProductPage] = useState(1);
   const [selectedProductIds, setSelectedProductIds] = useState([]);
   const [deletingProductIds, setDeletingProductIds] = useState([]);
@@ -1017,19 +1686,35 @@ export default function Page() {
   const [consultationActionLoading, setConsultationActionLoading] = useState("");
   const [consultationActionFeedback, setConsultationActionFeedback] = useState("");
   const [selectedDoctorId, setSelectedDoctorId] = useState(null);
+  const [emailTemplates, setEmailTemplates] = useState(DEFAULT_EMAIL_TEMPLATES);
+  const [selectedEmailTemplateId, setSelectedEmailTemplateId] = useState(DEFAULT_EMAIL_TEMPLATES[0].id);
+  const [emailTemplateSearch, setEmailTemplateSearch] = useState("");
+  const [emailTemplateCategory, setEmailTemplateCategory] = useState("all");
+  const [emailEditorMode, setEmailEditorMode] = useState("edit");
+  const [emailPreviewMode, setEmailPreviewMode] = useState("desktop");
+  const [emailTemplateFeedback, setEmailTemplateFeedback] = useState("");
   const [doctorDetailTab, setDoctorDetailTab] = useState("account");
   const [orderCreateModalOpen, setOrderCreateModalOpen] = useState(false);
   const [orderCreateForm, setOrderCreateForm] = useState(EMPTY_ORDER_FORM);
   const [orderCreateLoading, setOrderCreateLoading] = useState(false);
   const [orderCreateFeedback, setOrderCreateFeedback] = useState("");
   const [appDataLoaded, setAppDataLoaded] = useState(false);
+  const [appointmentSettings, setAppointmentSettings] = useState(() => loadAdminAppointmentSettings());
+  const [doctorDetailTierLoading, setDoctorDetailTierLoading] = useState(false);
   const latestSessionRef = useRef(session);
   const refreshPromiseRef = useRef(null);
   const bootstrapStartedRef = useRef(false);
+  const categoryNameInputRef = useRef(null);
+  const categoryPriceInputRef = useRef(null);
   const productMediaInputRef = useRef(null);
   const productMediaUploadModeRef = useRef({ type: "append", index: null });
   const productMediaDragIndexRef = useRef(null);
   const productDescriptionEditorRef = useRef(null);
+  const DELETE_EXIT_DURATION = 220;
+  const createProductMutation = useCreateProduct(session);
+  const updateProductMutation = useUpdateProduct(session);
+  const deleteProductMutation = useDeleteProduct(session);
+  const updateOrderStatusMutation = useUpdateOrderStatus(session);
 
   function forcePairingReset(message = "Frontend access was revoked. Pair this dashboard again to continue.") {
     const nextSession = defaultSession();
@@ -1055,6 +1740,29 @@ export default function Page() {
     const pageLabel = FRONTEND_PAGES.flatMap((group) => group.items).find(([id]) => id === currentPage)?.[1] || "Dashboard";
     setDocumentMetadata(`Nevari Admin | ${pageLabel}`, `${pageLabel} view for the Nevari Admin dashboard.`);
   }, [currentPage]);
+
+  useEffect(() => {
+    persistAdminAppointmentSettings(appointmentSettings);
+  }, [appointmentSettings]);
+
+  useEffect(() => {
+    setEmailTemplates(loadEmailTemplates());
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    localStorage.setItem(EMAIL_TEMPLATE_STORAGE_KEY, JSON.stringify(emailTemplates));
+  }, [emailTemplates]);
+
+  useEffect(() => {
+    if (!snackbar) {
+      return undefined;
+    }
+    const timeout = window.setTimeout(() => setSnackbar(null), 3200);
+    return () => window.clearTimeout(timeout);
+  }, [snackbar]);
 
   useEffect(() => {
     try {
@@ -1177,6 +1885,13 @@ export default function Page() {
   }, [productListFilter, deferredSearch, data.products]);
 
   useEffect(() => {
+    if (productCatalogView !== "categories") {
+      return;
+    }
+    setCategoryProductSearch("");
+  }, [productCatalogView]);
+
+  useEffect(() => {
     setSelectedProductIds((prev) => prev.filter((id) => (data.products || []).some((product) => product.id === id)));
   }, [data.products]);
 
@@ -1239,6 +1954,110 @@ export default function Page() {
     setReceiptActionLoading("");
   }
 
+  function showSnackbar(message, tone = "info") {
+    if (!message) {
+      return;
+    }
+    setSnackbar({ message, tone });
+  }
+
+  function updateSelectedEmailTemplate(patch) {
+    setEmailTemplates((prev) => prev.map((template) => (
+      template.id === selectedEmailTemplateId ? { ...template, ...patch } : template
+    )));
+    setEmailTemplateFeedback("");
+  }
+
+  function duplicateSelectedEmailTemplate() {
+    const source = emailTemplates.find((template) => template.id === selectedEmailTemplateId);
+    if (!source) {
+      return;
+    }
+    const duplicate = {
+      ...source,
+      id: `${source.id}-${Date.now()}`,
+      name: `${source.name} Copy`,
+      status: "draft"
+    };
+    setEmailTemplates((prev) => [duplicate, ...prev]);
+    setSelectedEmailTemplateId(duplicate.id);
+    setEmailTemplateFeedback("Template duplicated as draft.");
+  }
+
+  function createEmailTemplate() {
+    const template = {
+      id: `custom-${Date.now()}`,
+      name: "Custom Template",
+      category: "Custom",
+      status: "draft",
+      subject: "New message from {site_name}",
+      html: "<h1>{site_name}</h1><p>{content}</p>"
+    };
+    setEmailTemplates((prev) => [template, ...prev]);
+    setSelectedEmailTemplateId(template.id);
+    setEmailTemplateFeedback("New template created.");
+  }
+
+  function saveSelectedEmailTemplate(status = "active") {
+    const template = emailTemplates.find((item) => item.id === selectedEmailTemplateId);
+    const unsupported = unsupportedEmailHooks(template);
+    if (unsupported.length) {
+      setEmailTemplateFeedback(`Unsupported hooks: ${unsupported.join(", ")}`);
+      showSnackbar(`Unsupported hooks: ${unsupported.join(", ")}`, "error");
+      return;
+    }
+    updateSelectedEmailTemplate({ status });
+    setEmailTemplateFeedback(status === "draft" ? "Template saved as draft." : "Template saved.");
+    showSnackbar(status === "draft" ? "Template saved as draft." : "Template saved.", "success");
+  }
+
+  function insertHookIntoSelectedTemplate(hookKey) {
+    const template = emailTemplates.find((item) => item.id === selectedEmailTemplateId);
+    updateSelectedEmailTemplate({ html: `${template?.html || ""}${template?.html ? "\n" : ""}${hookKey}` });
+  }
+
+  function parseCreateError(error, entityLabel) {
+    const message = String(error?.message || "");
+    const status = Number(error?.status || error?.details?.status || 0);
+    const code = String(error?.code || error?.details?.code || "").toLowerCase();
+    if (/invalid email/i.test(message) || code.includes("invalid_email") || status === 422) {
+      return `Enter a valid ${entityLabel} email address.`;
+    }
+    if (/already exists|duplicate|conflict|exists/i.test(message) || status === 409) {
+      return `A ${entityLabel} with that email already exists.`;
+    }
+    return extractApiErrorMessage(error);
+  }
+
+  function normalizeDoctorTierOption(value) {
+    return normalizePricingTier(value);
+  }
+
+  function consultationFeeForTier(pricingTier) {
+    const tier = normalizeDoctorTierOption(pricingTier);
+    const fee = appointmentSettings.pricingTiers?.[tier];
+    return fee === undefined || fee === null ? "" : String(fee);
+  }
+
+  function addDoctorCreateCategory(categoryId) {
+    const nextId = String(categoryId || "");
+    if (!nextId) {
+      return;
+    }
+    setDoctorCreateForm((prev) => ({
+      ...prev,
+      productCategoryIds: Array.from(new Set([...(prev.productCategoryIds || []), nextId]))
+    }));
+    setDoctorCreateCategorySearch("");
+  }
+
+  function removeDoctorCreateCategory(categoryId) {
+    setDoctorCreateForm((prev) => ({
+      ...prev,
+      productCategoryIds: (prev.productCategoryIds || []).filter((id) => String(id) !== String(categoryId))
+    }));
+  }
+
   async function fetchReceiptDocument(order) {
     const payload = await apiRequest(`/orders/${order.id}/receipt`);
     return {
@@ -1299,11 +2118,9 @@ export default function Page() {
 
   function openOrderCreateModal() {
     closeAllOrderPopups();
-    setOrderCreateForm((prev) => ({
-      ...EMPTY_ORDER_FORM,
-      productId: prev.productId || String((data.products || [])[0]?.id || "")
-    }));
-    setOrderCreateItems((data.products || []).length ? [{ ...EMPTY_ORDER_LINE, key: "line-1", productId: String((data.products || [])[0]?.id || "") }] : [{ ...EMPTY_ORDER_LINE, key: "line-1" }]);
+    setOrderCreateForm(EMPTY_ORDER_FORM);
+    setOrderCreateItems([]);
+    setOrderCreateSearch("");
     setOrderCreateFeedback("");
     setOrderCreateModalOpen(true);
   }
@@ -1320,19 +2137,23 @@ export default function Page() {
       return;
     }
     if (type === "consultation") {
-      const consultationWindow = buildDefaultConsultationWindow();
+      const firstDoctor = (data.doctors || [])[0] || null;
       setConsultationCreateForm({
         ...EMPTY_CONSULTATION_FORM,
-        ...consultationWindow,
-        doctorUserId: String((data.doctors || [])[0]?.user_id || (data.doctors || [])[0]?.id || "")
+        doctorUserId: String(firstDoctor?.user_id || firstDoctor?.id || "")
       });
       setConsultationCalendarMode("week");
+      setConsultationDuration(30);
+      setConsultationBookingDate("");
+      setConsultationCreateCalendarViewDate(new Date());
+      setConsultationDoctorSearch(firstDoctor?.display_name || firstDoctor?.email || "");
       setConsultationPatientSearch("");
       setCreateModalType("consultation");
       return;
     }
     if (type === "doctor") {
       setDoctorCreateForm(EMPTY_DOCTOR_FORM);
+      setDoctorCreateCategorySearch("");
       setCreateModalType("doctor");
       return;
     }
@@ -1345,28 +2166,48 @@ export default function Page() {
   function closeCreateModal() {
     setCreateModalType("");
     setCreateFeedback("");
+    setOrderCreateSearch("");
     setCustomerCreateForm(EMPTY_CUSTOMER_FORM);
     setDoctorCreateForm(EMPTY_DOCTOR_FORM);
+    setDoctorCreateCategorySearch("");
     setConsultationCreateForm(EMPTY_CONSULTATION_FORM);
     setConsultationCalendarMode("week");
+    setConsultationDuration(30);
+    setConsultationBookingDate("");
     setConsultationPatientSearch("");
+    setConsultationDoctorSearch("");
   }
 
   function closeOrderCreateModal() {
     setOrderCreateModalOpen(false);
     setOrderCreateFeedback("");
-    setOrderCreateItems([{ ...EMPTY_ORDER_LINE, key: "line-1" }]);
+    setOrderCreateItems([]);
+    setOrderCreateSearch("");
   }
 
-  function addOrderCreateItem() {
-    setOrderCreateItems((prev) => [
-      ...prev,
-      {
-        ...EMPTY_ORDER_LINE,
-        key: `line-${Date.now()}-${prev.length + 1}`,
-        productId: String((data.products || [])[0]?.id || "")
+  function addOrderCreateItem(product = null) {
+    if (!product) {
+      return;
+    }
+    const productId = String(product.id);
+    setOrderCreateItems((prev) => {
+      const existingIndex = prev.findIndex((item) => String(item.productId) === productId);
+      if (existingIndex >= 0) {
+        return prev.map((item, index) => (
+          index === existingIndex ? { ...item, quantity: Math.max(1, Number(item.quantity || 1)) + 1 } : item
+        ));
       }
-    ]);
+      return [
+        ...prev,
+        {
+          ...EMPTY_ORDER_LINE,
+          key: `line-${Date.now()}-${prev.length + 1}`,
+          productId,
+          quantity: 1
+        }
+      ];
+    });
+    setOrderCreateSearch("");
   }
 
   function updateOrderCreateItem(index, patch) {
@@ -1374,7 +2215,63 @@ export default function Page() {
   }
 
   function removeOrderCreateItem(index) {
-    setOrderCreateItems((prev) => prev.length === 1 ? prev : prev.filter((_, itemIndex) => itemIndex !== index));
+    setOrderCreateItems((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function selectConsultationCalendarSlot(dateValue, timeValue = "09:00", minutes = consultationDuration) {
+    const startAt = buildDateTimeLocalValue(dateValue, timeValue);
+    if (!startAt) {
+      return;
+    }
+    const endAt = addMinutesToLocalValue(startAt, minutes);
+    setConsultationCreateForm((prev) => ({
+      ...prev,
+      startAt,
+      endAt
+    }));
+    setConsultationBookingDate(localDateKey(startAt));
+    setConsultationCreateCalendarViewDate(new Date(`${localDateKey(startAt)}T00:00:00`));
+  }
+
+  function selectConsultationBookingDate(dateKey, date) {
+    const bookedSlots = new Set(
+      consultationDoctorAppointments
+        .filter((appointment) => localDateKey(appointment.start_at) === dateKey)
+        .map((appointment) => localTimeKey(appointment.start_at))
+        .filter(Boolean)
+    );
+    const nextTime = BOOKING_SLOT_TIMES.find((time) => !bookedSlots.has(time)) || "";
+    setConsultationBookingDate(dateKey);
+    setConsultationCreateCalendarViewDate(date || new Date(`${dateKey}T00:00:00`));
+    if (nextTime) {
+      selectConsultationCalendarSlot(dateKey, nextTime, consultationDuration);
+      return;
+    }
+    setConsultationCreateForm((prev) => ({
+      ...prev,
+      startAt: "",
+      endAt: ""
+    }));
+  }
+
+  function clearConsultationBookingDate() {
+    setConsultationBookingDate("");
+    setConsultationCreateForm((prev) => ({
+      ...prev,
+      startAt: "",
+      endAt: ""
+    }));
+  }
+
+  function selectConsultationDoctor(doctorId, label = "") {
+    setConsultationCreateForm((prev) => ({
+      ...prev,
+      doctorUserId: String(doctorId || ""),
+      startAt: "",
+      endAt: ""
+    }));
+    setConsultationDoctorSearch(label);
+    setConsultationBookingDate("");
   }
 
   function switchPage(pageId) {
@@ -1382,6 +2279,32 @@ export default function Page() {
       setCurrentPage(normalizePageId(pageId));
       setSidebarOpen(false);
     });
+  }
+
+  function patchCacheList(predicate, updater, { revalidate = false } = {}) {
+    globalMutate(predicate, (current) => updateListPayload(current, updater), { revalidate });
+  }
+
+  function revalidateCacheGroups(...predicates) {
+    predicates.forEach((predicate) => {
+      globalMutate(predicate, undefined, { revalidate: true });
+    });
+  }
+
+  function patchOrderCache(order) {
+    patchCacheList(isOrderListKey, (list) => upsertById(list, order));
+  }
+
+  function patchAppointmentCache(appointment) {
+    patchCacheList(isAppointmentListKey, (list) => upsertById(list, appointment));
+  }
+
+  function patchDoctorCache(doctor) {
+    patchCacheList(isDoctorListKey, (list) => upsertById(list, doctor));
+  }
+
+  function patchCustomerCache(customer) {
+    patchCacheList(isCustomerListKey, (list) => upsertById(list, customer));
   }
 
   function syncOrderState(nextOrder) {
@@ -1396,6 +2319,8 @@ export default function Page() {
     }));
     setSelectedOrderDetail(nextOrder);
     setSelectedOrderId(nextOrder.id);
+    patchOrderCache(nextOrder);
+    revalidateCacheGroups(isOrderListKey, isAdminSummaryKey);
   }
 
   function removeOrderState(orderId) {
@@ -1410,6 +2335,20 @@ export default function Page() {
     setSelectedOrderStatus("");
     setSelectedOrderNote("");
     closeOrderModal();
+    patchCacheList(isOrderListKey, (list) => removeById(list, orderId));
+    revalidateCacheGroups(isOrderListKey, isAdminSummaryKey);
+  }
+
+  function waitForDeleteExit() {
+    return new Promise((resolve) => window.setTimeout(resolve, DELETE_EXIT_DURATION));
+  }
+
+  function markOrderDeleting(orderId) {
+    setDeletingOrderIds((prev) => (prev.includes(orderId) ? prev : [...prev, orderId]));
+  }
+
+  function clearOrderDeleting(orderId) {
+    setDeletingOrderIds((prev) => prev.filter((id) => id !== orderId));
   }
 
   async function openOrderDetails(orderId) {
@@ -1454,13 +2393,22 @@ export default function Page() {
     setOrderMutationLoading(true);
     setOrderActionFeedback("");
     try {
-      const payload = await apiRequest(`/orders/${selectedOrderDetail.id}`, {
-        method: "POST",
-        body: {
+      const payload = await updateOrderStatusMutation.updateOrderStatus(
+        selectedOrderDetail.id,
+        {
+          status: selectedOrderStatus,
+          customer_note: selectedOrderNote,
+          notify_status_change: selectedOrderStatus !== selectedOrderDetail.status,
+          notify_doctor: selectedOrderStatus !== selectedOrderDetail.status,
+          notify_admin: selectedOrderStatus !== selectedOrderDetail.status,
+          notify_customer: selectedOrderStatus !== selectedOrderDetail.status && shouldNotifyCustomerForOrderStatus(selectedOrderStatus)
+        },
+        {
+          ...selectedOrderDetail,
           status: selectedOrderStatus,
           customer_note: selectedOrderNote
         }
-      });
+      );
       syncOrderState(payload.data);
       setOrderActionFeedback("Order updated.");
       setOrderControlsModalOpen(false);
@@ -1482,6 +2430,7 @@ export default function Page() {
 
     if (!lineItems.length) {
       setOrderCreateFeedback("Add at least one product before creating the order.");
+      showSnackbar("Add at least one product before creating the order.", "warning");
       return;
     }
 
@@ -1495,6 +2444,10 @@ export default function Page() {
           quantity: lineItems[0].quantity,
           items: lineItems,
           status: orderCreateForm.status,
+          notify_status_change: true,
+          notify_doctor: true,
+          notify_admin: true,
+          notify_customer: shouldNotifyCustomerForOrderStatus(orderCreateForm.status),
           doctor_user_id: orderCreateForm.doctorId ? Number(orderCreateForm.doctorId) : 0,
           customer_note: orderCreateForm.note,
           billing: {
@@ -1512,12 +2465,16 @@ export default function Page() {
       });
       syncOrderState(payload.data);
       setOrderCreateForm(EMPTY_ORDER_FORM);
-      setOrderCreateItems([{ ...EMPTY_ORDER_LINE, key: "line-1" }]);
+      setOrderCreateItems([]);
+      setOrderCreateSearch("");
       setOrderCreateFeedback("Order created.");
+      showSnackbar("Order created.", "success");
       setOrderCreateModalOpen(false);
       setOrderModalOpen(true);
     } catch (error) {
-      setOrderCreateFeedback(describeRequestError(error));
+      const message = parseCreateError(error, "customer");
+      setOrderCreateFeedback(message);
+      showSnackbar(message, "error");
     } finally {
       setOrderCreateLoading(false);
     }
@@ -1547,8 +2504,27 @@ export default function Page() {
           setData((prev) => ({ ...prev, products: [payload.data, ...(prev.products || [])] }));
         }
         setCreateFeedback("Product created.");
+        showSnackbar("Product created.", "success");
         closeCreateModal();
       } else if (createModalType === "consultation") {
+        if (!consultationCreateForm.doctorUserId || !consultationCreateForm.patientUserId || !consultationCreateForm.startAt || !consultationCreateForm.endAt || !consultationCreateForm.type) {
+          const message = "Select a doctor, patient, date, time, and consultation type before creating the consultation.";
+          setCreateFeedback(message);
+          showSnackbar(message, "warning");
+          setCreateLoading(false);
+          return;
+        }
+        const doubleBooked = consultationDoctorAppointments.some((appointment) => (
+          localDateKey(appointment.start_at) === localDateKey(consultationCreateForm.startAt)
+          && localTimeKey(appointment.start_at) === localTimeKey(consultationCreateForm.startAt)
+        ));
+        if (doubleBooked) {
+          const message = "That time slot is no longer available. Choose another slot.";
+          setCreateFeedback(message);
+          showSnackbar(message, "error");
+          setCreateLoading(false);
+          return;
+        }
         const payload = await apiRequest("/appointments", {
           method: "POST",
           body: {
@@ -1558,13 +2534,31 @@ export default function Page() {
             end_at: consultationCreateForm.endAt,
             type: consultationCreateForm.type,
             reason: consultationCreateForm.reason,
-            status: consultationCreateForm.status
+            status: consultationCreateForm.status,
+            generate_google_meet: consultationCreateForm.type === "video",
+            create_meeting: consultationCreateForm.type === "video",
+            notify_patient: true,
+            notify_doctor: true,
+            notify_admin: true,
+            email_template_key: "appointment-approved",
+            email_hooks: {
+              patient_name: consultationSelectedPatient?.name || "",
+              doctor_name: consultationDoctorProfile?.display_name || "",
+              booking_date: formatDate(consultationCreateForm.startAt),
+              booking_time: localTimeKey(consultationCreateForm.startAt),
+              consultation_type: consultationCreateForm.type,
+              consultation_status: consultationCreateForm.status,
+              google_meet_link: "{google_meet_link}"
+            }
           }
         });
         if (payload?.data) {
           setData((prev) => ({ ...prev, appointments: [payload.data, ...(prev.appointments || [])] }));
+          patchAppointmentCache(payload.data);
+          revalidateCacheGroups(isAppointmentListKey, isAdminSummaryKey);
         }
         setCreateFeedback("Consultation created.");
+        showSnackbar("Consultation created.", "success");
         closeCreateModal();
       } else if (createModalType === "doctor") {
         const payload = await apiRequest("/doctors", {
@@ -1576,13 +2570,18 @@ export default function Page() {
             location: doctorCreateForm.location,
             status: doctorCreateForm.status,
             bio: doctorCreateForm.bio,
+            pricing_tier: normalizeDoctorTierOption(doctorCreateForm.pricingTier),
+            consultation_fee: consultationFeeForTier(doctorCreateForm.pricingTier),
             product_category_ids: doctorCreateForm.productCategoryIds.map(Number)
           }
         });
         if (payload?.data) {
           setData((prev) => ({ ...prev, doctors: [payload.data, ...(prev.doctors || [])] }));
+          patchDoctorCache(payload.data);
+          revalidateCacheGroups(isDoctorListKey);
         }
         setCreateFeedback("Doctor created.");
+        showSnackbar("Doctor created.", "success");
         closeCreateModal();
       } else if (createModalType === "customer") {
         const { firstName, lastName, fullName } = splitFullName(customerCreateForm.fullName);
@@ -1598,13 +2597,19 @@ export default function Page() {
           }
         });
         if (payload?.data) {
-          setData((prev) => ({ ...prev }));
+          setData((prev) => ({ ...prev, customers: [payload.data, ...(prev.customers || [])] }));
+          patchCustomerCache(payload.data);
+          revalidateCacheGroups(isCustomerListKey);
         }
         setCreateFeedback("Customer created.");
+        showSnackbar("Customer created.", "success");
         closeCreateModal();
       }
     } catch (error) {
-      setCreateFeedback(describeRequestError(error));
+      const entityLabel = createModalType === "doctor" ? "doctor" : "customer";
+      const message = parseCreateError(error, entityLabel);
+      setCreateFeedback(message);
+      showSnackbar(message, "error");
     } finally {
       setCreateLoading(false);
     }
@@ -1631,6 +2636,151 @@ export default function Page() {
     }
   }
 
+  async function updateDoctorPricingTier(doctor, pricingTier) {
+    if (!doctor) {
+      return;
+    }
+    const doctorId = doctor.user_id || doctor.id;
+    if (!doctorId) {
+      return;
+    }
+    setDoctorDetailTierLoading(true);
+    try {
+      const consultationFee = consultationFeeForTier(pricingTier);
+      const payload = await apiRequest(`/doctors/${doctorId}`, {
+        method: "POST",
+        body: {
+          pricing_tier: normalizeDoctorTierOption(pricingTier),
+          consultation_fee: consultationFee
+        }
+      });
+      const nextDoctor = payload?.data || { ...doctor, pricing_tier: normalizeDoctorTierOption(pricingTier), consultation_fee: consultationFee };
+      setData((prev) => ({
+        ...prev,
+        doctors: (prev.doctors || []).map((item) => (
+          String(item.user_id || item.id) === String(doctorId)
+            ? { ...item, ...nextDoctor }
+            : item
+        ))
+      }));
+      patchDoctorCache(nextDoctor);
+      revalidateCacheGroups(isDoctorListKey);
+      showSnackbar(`${nextDoctor.display_name || doctor.display_name || "Doctor"} moved to the ${formatPricingTierLabel(pricingTier)} tier.`, "success");
+    } catch (error) {
+      const message = extractApiErrorMessage(error) || "Doctor tier could not be updated.";
+      showSnackbar(message, "error");
+    } finally {
+      setDoctorDetailTierLoading(false);
+    }
+  }
+
+  async function suspendSelectedDoctor() {
+    if (!selectedDoctorProfile) {
+      return;
+    }
+    const doctorId = selectedDoctorProfile.user_id || selectedDoctorProfile.id;
+    if (!doctorId) {
+      return;
+    }
+    if (typeof window !== "undefined" && !window.confirm(`Suspend ${selectedDoctorProfile.display_name || "this doctor"}?`)) {
+      return;
+    }
+    setDoctorDetailTierLoading(true);
+    try {
+      let payload;
+      try {
+        payload = await apiRequest(`/doctors/${doctorId}/suspend`, {
+          method: "POST",
+          body: {
+            status: "suspended"
+          }
+        });
+      } catch (error) {
+        if (!/required service is unavailable|not found|no route/i.test(String(error?.message || ""))) {
+          throw error;
+        }
+        payload = await apiRequest(`/doctors/${doctorId}`, {
+          method: "POST",
+          body: {
+            status: "suspended"
+          }
+        });
+      }
+      const nextDoctor = payload?.data || { ...selectedDoctorProfile, status: "suspended" };
+      setData((prev) => ({
+        ...prev,
+        doctors: (prev.doctors || []).map((doctor) => (
+          String(doctor.user_id || doctor.id) === String(doctorId)
+            ? { ...doctor, ...nextDoctor }
+            : doctor
+        ))
+      }));
+      patchDoctorCache(nextDoctor);
+      revalidateCacheGroups(isDoctorListKey);
+      showSnackbar(`${nextDoctor.display_name || selectedDoctorProfile.display_name || "Doctor"} suspended.`, "success");
+    } catch (error) {
+      const message = extractApiErrorMessage(error) || "Doctor could not be suspended.";
+      showSnackbar(message, "error");
+    } finally {
+      setDoctorDetailTierLoading(false);
+    }
+  }
+
+  async function resetSelectedDoctorPassword() {
+    if (!selectedDoctorProfile) {
+      return;
+    }
+    const doctorId = selectedDoctorProfile.user_id || selectedDoctorProfile.id;
+    if (!doctorId) {
+      return;
+    }
+    setDoctorDetailTierLoading(true);
+    try {
+      await apiRequest(`/doctors/${doctorId}/reset-password`, {
+        method: "POST",
+        body: {
+          send_email: true
+        }
+      });
+      showSnackbar(`Password reset email sent to ${selectedDoctorProfile.email || "the doctor"}.`, "success");
+    } catch (error) {
+      const message = extractApiErrorMessage(error) || "Password reset email could not be sent.";
+      showSnackbar(message, "error");
+    } finally {
+      setDoctorDetailTierLoading(false);
+    }
+  }
+
+  async function deleteSelectedDoctor() {
+    if (!selectedDoctorProfile) {
+      return;
+    }
+    const doctorId = selectedDoctorProfile.user_id || selectedDoctorProfile.id;
+    if (!doctorId) {
+      return;
+    }
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${selectedDoctorProfile.display_name || "this doctor"}?`)) {
+      return;
+    }
+    setDoctorDetailTierLoading(true);
+    try {
+      await apiRequest(`/doctors/${doctorId}`, { method: "DELETE" });
+      setData((prev) => ({
+        ...prev,
+        doctors: (prev.doctors || []).filter((doctor) => String(doctor.user_id || doctor.id) !== String(doctorId))
+      }));
+      patchCacheList(isDoctorListKey, (list) => list.filter((doctor) => String(doctor.user_id || doctor.id) !== String(doctorId)));
+      revalidateCacheGroups(isDoctorListKey);
+      setSelectedDoctorId(null);
+      showSnackbar("Doctor deleted.", "success");
+    } catch (error) {
+      const message = extractApiErrorMessage(error) || "Doctor could not be deleted.";
+      showSnackbar(message, "error");
+    } finally {
+      setDoctorDetailTierLoading(false);
+    }
+  }
+
   async function deleteSelectedOrder() {
     if (!selectedOrderDetail || typeof window === "undefined") {
       return;
@@ -1642,7 +2792,10 @@ export default function Page() {
     setOrderActionFeedback("");
     try {
       await apiRequest(`/orders/${selectedOrderDetail.id}`, { method: "DELETE" });
+      markOrderDeleting(selectedOrderDetail.id);
+      await waitForDeleteExit();
       removeOrderState(selectedOrderDetail.id);
+      clearOrderDeleting(selectedOrderDetail.id);
       setOrderActionFeedback("Order deleted.");
     } catch (error) {
       setOrderActionFeedback(describeRequestError(error));
@@ -1655,7 +2808,26 @@ export default function Page() {
     if (typeof window === "undefined" || !selectedOrderDetail) {
       return;
     }
-    window.print();
+    const invoiceWindow = window.open("", "_blank", "noopener,noreferrer");
+    const invoiceHtml = buildInvoiceHtml(selectedOrderDetail, { siteName, storeCurrency });
+    if (!invoiceWindow) {
+      const blob = new Blob([invoiceHtml], { type: "text/html" });
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `invoice-order-${selectedOrderDetail.number || selectedOrderDetail.id}.html`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      setOrderActionFeedback("Invoice generated as an HTML document.");
+      return;
+    }
+    invoiceWindow.document.open();
+    invoiceWindow.document.write(invoiceHtml);
+    invoiceWindow.document.close();
+    invoiceWindow.addEventListener("load", () => {
+      invoiceWindow.focus();
+      invoiceWindow.print();
+    }, { once: true });
   }
 
   async function refundSelectedOrder() {
@@ -1682,21 +2854,39 @@ export default function Page() {
     }
   }
 
-  function contactSelectedCustomer() {
+  async function contactSelectedCustomer() {
     if (typeof window === "undefined" || !selectedOrderDetail) {
       return;
     }
-    const email = selectedOrderDetail.billing?.email;
-    const phone = selectedOrderDetail.billing?.phone;
-    if (email) {
-      window.location.href = `mailto:${email}?subject=${encodeURIComponent(`Order #${selectedOrderDetail.number}`)}`;
+    const email = customerEmail(selectedOrderDetail);
+    if (!email) {
+      setOrderActionFeedback("No customer email is available for contact.");
       return;
     }
-    if (phone) {
-      window.location.href = `tel:${phone}`;
-      return;
+    setOrderMutationLoading(true);
+    setOrderActionFeedback("");
+    try {
+      let payload;
+      try {
+        payload = await apiRequest(`/orders/${selectedOrderDetail.id}/contact-customer`, {
+          method: "POST",
+          body: { template: "order_update", order_id: selectedOrderDetail.id }
+        });
+      } catch (error) {
+        if (!/required service is unavailable|not found|no route/i.test(String(error?.message || ""))) {
+          throw error;
+        }
+        payload = await apiRequest(`/orders/${selectedOrderDetail.id}/send-receipt`, { method: "POST" });
+      }
+      setOrderActionFeedback(`Order email sent to ${payload?.data?.recipient_email || email}.`);
+      showSnackbar(`Order email sent to ${payload?.data?.recipient_email || email}.`, "success");
+    } catch (error) {
+      const message = describeRequestError(error);
+      setOrderActionFeedback(message);
+      showSnackbar(message, "error");
+    } finally {
+      setOrderMutationLoading(false);
     }
-    setOrderActionFeedback("No customer email or phone number is available for contact.");
   }
 
   function openOrderControlsPopup() {
@@ -1734,7 +2924,7 @@ export default function Page() {
     setCustomerHistoryFeedback("");
 
     const cachedOrders = (data.orderDetails || []).filter((order) => (
-      customer.id === (order.customer_id || `guest-${order.billing?.email || order.number || order.id}`)
+      customer.id === (order.customer_id || `guest-${customerEmail(order) || order.number || order.id}`)
     ));
     setCustomerHistoryOrders(cachedOrders);
 
@@ -1804,7 +2994,10 @@ export default function Page() {
     }
     await performTableOrderAction("delete", order, async () => {
       await apiRequest(`/orders/${order.id}`, { method: "DELETE" });
+      markOrderDeleting(order.id);
+      await waitForDeleteExit();
       removeOrderState(order.id);
+      clearOrderDeleting(order.id);
     });
   }
 
@@ -1865,7 +3058,7 @@ export default function Page() {
     setPaymentReceiptFeedback("");
     try {
       const payload = await apiRequest(`/orders/${selectedPaymentReceipt.id}/send-receipt`, { method: "POST" });
-      setPaymentReceiptFeedback(`Receipt sent to ${payload?.data?.recipient_email || selectedPaymentReceipt.billing?.email || "the customer"}.`);
+      setPaymentReceiptFeedback(`Receipt sent to ${payload?.data?.recipient_email || customerEmail(selectedPaymentReceipt) || "the customer"}.`);
     } catch (error) {
       setPaymentReceiptFeedback(describeRequestError(error));
     } finally {
@@ -2097,23 +3290,21 @@ export default function Page() {
       };
 
       if (productEditorMode === "create") {
-        const createdPayload = await apiRequest("/products", {
-          method: "POST",
-          body: {
-            ...productPayload,
-            catalog_visibility: "visible"
-          }
+        const createdPayload = await createProductMutation.createProduct({
+          ...productPayload,
+          catalog_visibility: "visible"
         });
         const createdProduct = createdPayload?.data;
         if (!createdProduct) {
           throw new Error("Product creation returned no data.");
         }
-        const mediaUpdatePayload = productEditMedia.length ? await apiRequest(`/products/${createdProduct.id}`, {
-          method: "POST",
-          body: {
+        const mediaUpdatePayload = productEditMedia.length ? await updateProductMutation.updateProduct(
+          createdProduct.id,
+          {
             images: productEditMedia.map((item, index) => ({ id: item.attachmentId, src: item.src, position: index }))
-          }
-        }) : null;
+          },
+          createdProduct
+        ) : null;
         const nextProduct = mediaUpdatePayload?.data || createdProduct;
         setData((prev) => ({
           ...prev,
@@ -2122,16 +3313,14 @@ export default function Page() {
         setProductEditFeedback("Product created.");
         closeProductEditModal();
       } else {
-        const payload = await apiRequest(`/products/${selectedProductEdit.id}`, {
-          method: "POST",
-          body: productPayload
-        });
-
-        const nextProduct = payload?.data || {
+        const optimisticProduct = {
           ...selectedProductEdit,
           ...productPayload,
           images: productEditMedia.map((item) => ({ id: item.attachmentId, src: item.src, alt: item.alt }))
         };
+        const payload = await updateProductMutation.updateProduct(selectedProductEdit.id, productPayload, optimisticProduct);
+
+        const nextProduct = payload?.data || optimisticProduct;
 
         setData((prev) => ({
           ...prev,
@@ -2162,9 +3351,9 @@ export default function Page() {
     }
 
     try {
-      await apiRequest(`/products/${product.id}`, { method: "DELETE" });
       setDeletingProductIds((prev) => (prev.includes(product.id) ? prev : [...prev, product.id]));
-      await new Promise((resolve) => window.setTimeout(resolve, 220));
+      await deleteProductMutation.deleteProduct(product.id);
+      await waitForDeleteExit();
       setData((prev) => ({
         ...prev,
         products: (prev.products || []).filter((item) => item.id !== product.id)
@@ -2197,11 +3386,295 @@ export default function Page() {
           ...prev,
           products: [payload.data, ...(prev.products || [])]
         }));
+        patchCacheList(isProductListKey, (list) => upsertById(list, payload.data));
+        revalidateCacheGroups(isProductListKey, isProductCategoryListKey, isProductTagListKey);
       }
     } catch (error) {
       setProductEditFeedback(describeRequestError(error));
     } finally {
       setDuplicatingProductId(null);
+    }
+  }
+
+  async function addProductToCategory(product, category) {
+    if (!product || !category) {
+      return;
+    }
+    const loadingKey = `${product.id}:${category.name}`;
+    setCategoryAssignmentLoading(loadingKey);
+    setCategoryAssignmentFeedback("");
+    try {
+      const existingCategories = getProductCategories(product).split(",").map((item) => item.trim()).filter(Boolean);
+      const nextCategories = Array.from(new Set([...existingCategories, category.name]));
+      const payload = await apiRequest(`/products/${product.id}`, {
+        method: "POST",
+        body: {
+          categories: nextCategories
+        }
+      });
+      const nextProduct = payload?.data || { ...product, categories: nextCategories };
+      setData((prev) => ({
+        ...prev,
+        products: (prev.products || []).map((item) => (item.id === product.id ? { ...item, ...nextProduct } : item))
+      }));
+      patchCacheList(isProductListKey, (list) => replaceById(list, nextProduct));
+      revalidateCacheGroups(isProductListKey, isProductCategoryListKey, isProductTagListKey);
+      setCategoryAssignmentFeedback(`${product.name || "Product"} added to ${category.name}.`);
+      setCategoryProductSearch("");
+    } catch (error) {
+      setCategoryAssignmentFeedback(describeRequestError(error));
+    } finally {
+      setCategoryAssignmentLoading("");
+    }
+  }
+
+  async function removeProductFromCategory(product, category) {
+    if (!product || !category) {
+      return;
+    }
+    const loadingKey = `${product.id}:${category.name}:remove`;
+    setCategoryAssignmentLoading(loadingKey);
+    setCategoryAssignmentFeedback("");
+    try {
+      const existingCategories = getProductCategories(product).split(",").map((item) => item.trim()).filter(Boolean);
+      const nextCategories = existingCategories.filter((item) => item !== category.name);
+      if (!nextCategories.length) {
+        const message = "Product must belong to atleast 1 category";
+        setCategoryAssignmentFeedback(message);
+        showSnackbar(message, "warning");
+        return;
+      }
+      const payload = await apiRequest(`/products/${product.id}`, {
+        method: "POST",
+        body: {
+          categories: nextCategories
+        }
+      });
+      const nextProduct = payload?.data || { ...product, categories: nextCategories };
+      setData((prev) => ({
+        ...prev,
+        products: (prev.products || []).map((item) => (item.id === product.id ? { ...item, ...nextProduct } : item))
+      }));
+      patchCacheList(isProductListKey, (list) => replaceById(list, nextProduct));
+      revalidateCacheGroups(isProductListKey, isProductCategoryListKey, isProductTagListKey);
+      setCategoryAssignmentFeedback(`${product.name || "Product"} removed from ${category.name}.`);
+    } catch (error) {
+      setCategoryAssignmentFeedback(describeRequestError(error));
+    } finally {
+      setCategoryAssignmentLoading("");
+    }
+  }
+
+  function openCategoryCreateForm() {
+    setCategoryCreateOpen(true);
+    setCategoryCreateForm({ name: "", pricePerMinute: String(selectedCategory?.price || appointmentSettings.categoryPricing?.general || "") });
+    setCategoryMutationFeedback("");
+  }
+
+  function closeCategoryCreateForm() {
+    setCategoryCreateOpen(false);
+    setCategoryCreateForm({ name: "", pricePerMinute: "" });
+  }
+
+  async function saveNewCategory(event) {
+    event.preventDefault();
+    const nextName = String(categoryCreateForm.name || "").trim();
+    if (!nextName) {
+      setCategoryMutationFeedback("Enter a category name.");
+      return;
+    }
+    const nextPrice = String(categoryCreateForm.pricePerMinute || "").trim();
+    setCategoryMutationLoading("create-category");
+    setCategoryMutationFeedback("");
+    try {
+      const payload = await apiRequest("/products/categories", {
+        method: "POST",
+        body: {
+          name: nextName,
+          slug: normalizeCategoryKey(nextName)
+        }
+      });
+
+      const createdCategory = payload?.data || {
+        id: nextName,
+        name: nextName,
+        slug: normalizeCategoryKey(nextName)
+      };
+
+      setData((prev) => ({
+        ...prev,
+        productCategories: [createdCategory, ...(prev.productCategories || [])]
+      }));
+      patchCacheList(isProductCategoryListKey, (list) => upsertById(list, createdCategory));
+      revalidateCacheGroups(isProductListKey, isProductCategoryListKey, isProductTagListKey);
+      setAppointmentSettings((prev) => ({
+        ...prev,
+        categoryPricing: {
+          ...prev.categoryPricing,
+          [normalizeCategoryKey(createdCategory.slug || createdCategory.name || nextName)]: nextPrice
+        }
+      }));
+      setSelectedProductCategoryName(createdCategory.name || nextName);
+      closeCategoryCreateForm();
+      setCategoryMutationFeedback(`Created ${createdCategory.name || nextName}.`);
+    } catch (error) {
+      setCategoryMutationFeedback(describeRequestError(error));
+    } finally {
+      setCategoryMutationLoading("");
+    }
+  }
+
+  async function saveCategoryEdit(field = "all") {
+    if (!selectedCategory) {
+      return;
+    }
+    const existingCategory = selectedCategoryRecord || selectedCategory;
+    const nextName = String(categoryEditDraft?.name || "").trim();
+    if ((field === "all" || field === "name") && !nextName) {
+      setCategoryMutationFeedback("Enter a category name.");
+      return;
+    }
+    const resolvedName = nextName || String(existingCategory.name || "").trim();
+    const oldKey = normalizeCategoryKey(existingCategory.slug || existingCategory.name || "");
+    const nextKey = normalizeCategoryKey(resolvedName);
+    const previousPrice = String(existingCategory.price || appointmentSettings.categoryPricing?.[oldKey] || "");
+    const nextPrice = String(categoryEditDraft?.pricePerMinute ?? previousPrice).trim();
+    const nameChanged = resolvedName !== String(existingCategory.name || "");
+    const priceChanged = nextPrice !== previousPrice;
+    if ((field === "name" && !nameChanged) || (field === "price" && !priceChanged) || (field === "all" && !nameChanged && !priceChanged)) {
+      setCategoryInlineField("");
+      return;
+    }
+    const previousCategoryName = existingCategory.name || "";
+    const snapshotData = data;
+    const snapshotSettings = appointmentSettings;
+    setCategoryMutationLoading("edit-category");
+    setCategoryMutationFeedback("");
+    try {
+      let nextCategory = {
+        ...existingCategory,
+        name: resolvedName,
+        slug: nextKey
+      };
+      if (nameChanged) {
+        setData((prev) => ({
+          ...prev,
+          productCategories: (prev.productCategories || []).map((category) => (
+            String(category.id || category.slug || category.name || "") === String(existingCategory.id || existingCategory.slug || existingCategory.name || "")
+              ? { ...category, name: resolvedName, slug: nextKey }
+              : category
+          )),
+          products: (prev.products || []).map((product) => replaceCategoryNameInProduct(product, previousCategoryName, resolvedName)),
+          doctors: (prev.doctors || []).map((doctor) => replaceCategoryNameInDoctor(doctor, existingCategory.id, previousCategoryName, resolvedName, nextCategory.id))
+        }));
+        setSelectedProductCategoryName(resolvedName);
+        const payload = await apiRequest(`/products/categories/${existingCategory.id}`, {
+          method: "POST",
+          body: {
+            name: resolvedName,
+            slug: nextKey
+          }
+        });
+        nextCategory = payload?.data || nextCategory;
+      }
+
+      setData((prev) => ({
+        ...prev,
+        productCategories: (prev.productCategories || []).map((category) => (
+          String(category.id || category.slug || category.name || "") === String(existingCategory.id || existingCategory.slug || existingCategory.name || "")
+            ? { ...category, ...nextCategory, name: resolvedName, slug: nextKey }
+            : category
+        )),
+        products: nameChanged ? (prev.products || []).map((product) => replaceCategoryNameInProduct(product, existingCategory.name || "", resolvedName)) : (prev.products || []),
+        doctors: nameChanged ? (prev.doctors || []).map((doctor) => replaceCategoryNameInDoctor(doctor, existingCategory.id, existingCategory.name || "", resolvedName, nextCategory.id)) : (prev.doctors || [])
+      }));
+      patchCacheList(isProductCategoryListKey, (list) => replaceById(list, { ...nextCategory, name: resolvedName, slug: nextKey }));
+      revalidateCacheGroups(isProductListKey, isProductCategoryListKey, isProductTagListKey, isDoctorListKey);
+
+      setAppointmentSettings((prev) => {
+        const nextPricing = { ...(prev.categoryPricing || {}) };
+        if (oldKey && oldKey !== nextKey) {
+          delete nextPricing[oldKey];
+        }
+        nextPricing[nextKey] = nextPrice;
+        return {
+          ...prev,
+          categoryPricing: nextPricing
+        };
+      });
+      setSelectedProductCategoryName(resolvedName);
+      setCategoryEditDraft({
+        name: resolvedName,
+          pricePerMinute: nextPrice
+        });
+      setCategoryInlineField("");
+      setCategorySaveNotice("Saved");
+    } catch (error) {
+      if (nameChanged) {
+        setData(snapshotData);
+        setSelectedProductCategoryName(previousCategoryName);
+      }
+      setAppointmentSettings(snapshotSettings);
+      setCategoryMutationFeedback(describeRequestError(error));
+    } finally {
+      setCategoryMutationLoading("");
+    }
+  }
+
+  async function updateCategoryDoctorAssignment(doctor, assign = true) {
+    if (!selectedCategory || !doctor) {
+      return;
+    }
+    const doctorId = doctor.user_id || doctor.id;
+    const categoryId = selectedCategoryRecord?.id || selectedCategory.id;
+    if (!categoryId) {
+      setCategoryMutationFeedback("This category needs a saved category ID before doctors can be assigned.");
+      return;
+    }
+
+    const loadingKey = `${doctorId}:${assign ? "assign" : "remove"}`;
+    setCategoryMutationLoading(loadingKey);
+    setCategoryMutationFeedback("");
+    try {
+      const currentIds = new Set(getDoctorCategoryIds(doctor));
+      const resolvedCategoryId = Number(categoryId);
+      if (Number.isFinite(resolvedCategoryId) && resolvedCategoryId > 0) {
+        if (assign) {
+          currentIds.add(resolvedCategoryId);
+        } else {
+          currentIds.delete(resolvedCategoryId);
+        }
+      }
+
+      const payload = await apiRequest(`/doctors/${doctorId}`, {
+        method: "POST",
+        body: {
+          product_category_ids: [...currentIds]
+        }
+      });
+
+      const nextDoctor = payload?.data || {
+        ...doctor,
+        product_category_ids: [...currentIds]
+      };
+      setData((prev) => ({
+        ...prev,
+        doctors: (prev.doctors || []).map((item) => (
+          String(item.user_id || item.id) === String(doctorId)
+            ? { ...item, ...nextDoctor }
+            : item
+        ))
+      }));
+      patchDoctorCache(nextDoctor);
+      revalidateCacheGroups(isDoctorListKey);
+      setCategoryDoctorSearch("");
+      setCategoryMutationFeedback(assign
+        ? `${doctor.display_name || "Doctor"} assigned to ${selectedCategory.name}.`
+        : `${doctor.display_name || "Doctor"} removed from ${selectedCategory.name}.`);
+    } catch (error) {
+      setCategoryMutationFeedback(describeRequestError(error));
+    } finally {
+      setCategoryMutationLoading("");
     }
   }
 
@@ -2284,6 +3757,8 @@ export default function Page() {
       ))
     }));
     setSelectedConsultation(nextAppointment);
+    patchAppointmentCache(nextAppointment);
+    revalidateCacheGroups(isAppointmentListKey, isAdminSummaryKey);
   }
 
   async function runAppointmentAction(action, body = {}) {
@@ -2385,6 +3860,43 @@ export default function Page() {
     return payload;
   }
 
+  async function adminApiRequest(route, { params = {}, retry = true } = {}, activeSession = session) {
+    if (!activeSession.baseUrl) {
+      throw new Error("WordPress base URL is not configured.");
+    }
+
+    if (activeSession.refreshToken && Date.now() > (Number(activeSession.expiresAt) - 30_000)) {
+      activeSession = await refreshSession(activeSession);
+    }
+
+    let response;
+    try {
+      response = await fetch(buildAdminUrl(activeSession, route, params), {
+        headers: {
+          Accept: "application/json",
+          Authorization: activeSession.accessToken ? `Bearer ${activeSession.accessToken}` : "",
+          "X-Nevari-Frontend-Type": activeSession.frontendType,
+          "X-Nevari-Frontend-Origin": activeSession.frontendOrigin
+        }
+      });
+    } catch (error) {
+      throw new Error(describeRequestError(error));
+    }
+
+    const payload = await response.json().catch(() => null);
+    if ((response.status === 401 || response.status === 403) && retry && activeSession.refreshToken) {
+      const refreshed = await refreshSession(activeSession);
+      return adminApiRequest(route, { params, retry: false }, refreshed);
+    }
+    if (!response.ok || (payload && !payload?.success)) {
+      throw new Error(extractApiErrorMessage(payload));
+    }
+    if (!payload) {
+      throw new Error("Unexpected API response.");
+    }
+    return payload;
+  }
+
   async function refreshSession(activeSession = session) {
     const workingSession = activeSession?.refreshToken ? activeSession : latestSessionRef.current;
     if (!workingSession?.refreshToken) {
@@ -2452,6 +3964,35 @@ export default function Page() {
     const rows = payload.data || [];
     setData((prev) => ({ ...prev, auditEvents: rows }));
     setSelectedAuditIndex(0);
+  }
+
+  async function fetchDashboardSummary(activeSession = session) {
+    setSyncStatus({ text: "Loading summary...", mode: "" });
+    setRefreshing(true);
+    try {
+      const payload = await adminApiRequest("summary", {}, activeSession);
+      const summary = payload.data || {};
+      const recentOrders = summary.recent_orders || summary.orders || [];
+      setData((prev) => ({
+        ...prev,
+        dashboard: summary.dashboard || summary,
+        orders: recentOrders,
+        orderDetails: recentOrders
+      }));
+      setLiveSnapshots((prev) => ([
+        ...prev,
+        {
+          label: formatLiveLabel(),
+          total: safeNumber(summary.dashboard?.sales?.today || summary.sales?.today || 0),
+          volume: Number(summary.dashboard?.orders?.today || summary.orders_today || recentOrders.length || 0)
+        }
+      ].slice(-7)));
+      setSyncStatus({ text: `Live | ${formatLiveLabel()}`, mode: "live" });
+      setAppDataLoaded(true);
+      return payload;
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   async function fetchAllData(activeSession = session) {
@@ -2783,7 +4324,7 @@ export default function Page() {
     }
 
     try {
-      await fetchAllData(session);
+      await fetchDashboardSummary(session);
     } catch (error) {
       console.error(error);
       setSyncStatus({ text: "Sync error", mode: "error" });
@@ -2854,7 +4395,7 @@ export default function Page() {
       }
 
       try {
-        await fetchAllData(refreshed);
+        await fetchDashboardSummary(refreshed);
         if (cancelled) {
           return;
         }
@@ -2879,7 +4420,7 @@ export default function Page() {
   }, [hydrated, router]);
 
   useEffect(() => {
-    if (!session.accessToken) {
+    if (!session.accessToken || currentPage !== "audit") {
       return;
     }
 
@@ -2898,7 +4439,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, [audit.category, audit.status, audit.source, deferredSearch, session.accessToken]);
+  }, [audit.category, audit.status, audit.source, currentPage, deferredSearch, session.accessToken]);
 
   useEffect(() => {
     if (trendMode !== "live" || !session.accessToken) {
@@ -2911,7 +4452,7 @@ export default function Page() {
         return;
       }
 
-      fetchAllData(activeSession).catch((error) => {
+      fetchDashboardSummary(activeSession).catch((error) => {
         console.error(error);
         setSyncStatus({ text: "Sync error", mode: "error" });
       });
@@ -2919,6 +4460,191 @@ export default function Page() {
 
     return () => window.clearInterval(intervalId);
   }, [trendMode, session.accessToken, refreshing]);
+
+  const canLoadSections = hydrated && Boolean(session.accessToken) && !authGate.visible;
+  const lazyQueryOptions = {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+    dedupingInterval: 10_000
+  };
+  const ordersListKey = canLoadSections && ["orders", "payments"].includes(currentPage)
+    ? swrKeys.admin.orders(withBaseUrl(session, { per_page: 24, page: 1, status: orderQueueFilter === "all" ? "" : orderQueueFilter, search: deferredSearch }))
+    : null;
+  const productsListKey = canLoadSections && currentPage === "products"
+    ? swrKeys.admin.products(withBaseUrl(session, { per_page: 24, page: 1, search: deferredSearch }))
+    : null;
+  const productCategoriesListKey = canLoadSections && currentPage === "products"
+    ? swrKeys.admin.categories(withBaseUrl(session, { per_page: 100, page: 1 }))
+    : null;
+  const customersListKey = canLoadSections && currentPage === "customers"
+    ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 24, page: 1, search: deferredSearch }))
+    : null;
+  const consultationsListKey = canLoadSections && currentPage === "consultations"
+    ? swrKeys.admin.appointments(withBaseUrl(session, { per_page: 30, page: 1, status: consultationFilter === "all" ? "" : consultationFilter, date: selectedConsultationDate, search: deferredSearch }))
+    : null;
+  const prescriptionsListKey = canLoadSections && currentPage === "prescriptions"
+    ? swrKeys.admin.prescriptions(withBaseUrl(session, { per_page: 30, page: 1, search: deferredSearch }))
+    : null;
+  const doctorsListKey = canLoadSections && currentPage === "doctors"
+    ? swrKeys.admin.doctors(withBaseUrl(session, { per_page: 50, page: 1, search: deferredSearch }))
+    : null;
+  const emailsListKey = canLoadSections && currentPage === "emails"
+    ? swrKeys.admin.emails(withBaseUrl(session, { per_page: 20, page: 1, search: deferredSearch }))
+    : null;
+  const ordersQuery = useSWR(
+    ordersListKey,
+    () => adminApiRequest("orders", { params: { per_page: 24, page: 1, status: orderQueueFilter === "all" ? "" : orderQueueFilter, search: deferredSearch } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, refreshInterval: 0, dedupingInterval: 30_000 }
+  );
+  const productsQuery = useSWR(
+    productsListKey,
+    () => adminApiRequest("products", { params: { per_page: 24, page: 1, search: deferredSearch } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 120_000 }
+  );
+  const productCategoriesQuery = useSWR(
+    productCategoriesListKey,
+    () => adminApiRequest("categories", { params: { per_page: 100, page: 1 } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 120_000 }
+  );
+  const customersQuery = useSWR(
+    customersListKey,
+    () => adminApiRequest("customers", { params: { per_page: 24, page: 1, search: deferredSearch } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 120_000 }
+  );
+  const consultationsQuery = useSWR(
+    consultationsListKey,
+    () => adminApiRequest("appointments", { params: { per_page: 30, page: 1, status: consultationFilter === "all" ? "" : consultationFilter, date: selectedConsultationDate, search: deferredSearch } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 60_000 }
+  );
+  const prescriptionsQuery = useSWR(
+    prescriptionsListKey,
+    () => adminApiRequest("prescriptions", { params: { per_page: 30, page: 1, search: deferredSearch } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 60_000 }
+  );
+  const doctorsQuery = useSWR(
+    doctorsListKey,
+    () => adminApiRequest("doctors", { params: { per_page: 50, page: 1, search: deferredSearch } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 120_000 }
+  );
+  const emailsQuery = useSWR(
+    emailsListKey,
+    () => adminApiRequest("emails", { params: { per_page: 20, page: 1, search: deferredSearch } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 60_000 }
+  );
+  const popupQueryOptions = {
+    ...lazyQueryOptions,
+    keepPreviousData: true,
+    dedupingInterval: 120_000
+  };
+  const orderCreateProductsQuery = useSWR(
+    canLoadSections && orderCreateModalOpen
+      ? swrKeys.admin.products(withBaseUrl(session, { per_page: 20, page: 1, search: orderCreateSearch }))
+      : null,
+    () => adminApiRequest("products", { params: { per_page: 20, page: 1, search: orderCreateSearch } }, session),
+    { ...popupQueryOptions, fallbackData: data.products?.length ? { data: data.products.slice(0, 20) } : undefined }
+  );
+  const orderCreateDoctorsQuery = useSWR(
+    canLoadSections && orderCreateModalOpen
+      ? swrKeys.admin.doctors(withBaseUrl(session, { per_page: 50, page: 1 }))
+      : null,
+    () => adminApiRequest("doctors", { params: { per_page: 50, page: 1 } }, session),
+    { ...popupQueryOptions, fallbackData: data.doctors?.length ? { data: data.doctors } : undefined }
+  );
+  const orderAssignmentDoctorsQuery = useSWR(
+    canLoadSections && doctorAssignmentModalOpen
+      ? swrKeys.admin.doctors(withBaseUrl(session, { per_page: 50, page: 1 }))
+      : null,
+    () => adminApiRequest("doctors", { params: { per_page: 50, page: 1 } }, session),
+    { ...popupQueryOptions, fallbackData: data.doctors?.length ? { data: data.doctors } : undefined }
+  );
+  const orderCreateCustomersQuery = useSWR(
+    canLoadSections && orderCreateModalOpen
+      ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 20, page: 1, search: orderCreateForm.email || `${orderCreateForm.firstName} ${orderCreateForm.lastName}`.trim() }))
+      : null,
+    () => adminApiRequest("customers", { params: { per_page: 20, page: 1, search: orderCreateForm.email || `${orderCreateForm.firstName} ${orderCreateForm.lastName}`.trim() } }, session),
+    { ...popupQueryOptions, fallbackData: data.customers?.length ? { data: data.customers.slice(0, 20) } : undefined }
+  );
+  const productEditorCategoriesQuery = useSWR(
+    canLoadSections && Boolean(productEditForm && (selectedProductEdit || productEditorMode === "create"))
+      ? swrKeys.admin.categories(withBaseUrl(session, { per_page: 100, page: 1 }))
+      : null,
+    () => adminApiRequest("categories", { params: { per_page: 100, page: 1 } }, session),
+    { ...popupQueryOptions, fallbackData: data.productCategories?.length ? { data: data.productCategories } : undefined }
+  );
+  const productEditorTagsQuery = useSWR(
+    canLoadSections && Boolean(productEditForm && (selectedProductEdit || productEditorMode === "create"))
+      ? swrKeys.admin.tags(withBaseUrl(session, { per_page: 100, page: 1 }))
+      : null,
+    () => adminApiRequest("tags", { params: { per_page: 100, page: 1 } }, session),
+    { ...popupQueryOptions }
+  );
+  const doctorCreateCategoriesQuery = useSWR(
+    canLoadSections && createModalType === "doctor"
+      ? swrKeys.admin.categories(withBaseUrl(session, { per_page: 100, page: 1 }))
+      : null,
+    () => adminApiRequest("categories", { params: { per_page: 100, page: 1 } }, session),
+    { ...popupQueryOptions, fallbackData: data.productCategories?.length ? { data: data.productCategories } : undefined }
+  );
+  const consultationCreatePatientsQuery = useSWR(
+    canLoadSections && createModalType === "consultation"
+      ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 20, page: 1, search: consultationPatientSearch }))
+      : null,
+    () => adminApiRequest("customers", { params: { per_page: 20, page: 1, search: consultationPatientSearch } }, session),
+    { ...popupQueryOptions, fallbackData: data.customers?.length ? { data: data.customers.slice(0, 20) } : undefined }
+  );
+  const consultationCreateDoctorsQuery = useSWR(
+    canLoadSections && createModalType === "consultation"
+      ? swrKeys.admin.doctors(withBaseUrl(session, { per_page: 50, page: 1 }))
+      : null,
+    () => adminApiRequest("doctors", { params: { per_page: 50, page: 1 } }, session),
+    { ...popupQueryOptions, fallbackData: data.doctors?.length ? { data: data.doctors } : undefined }
+  );
+  const consultationCreateAppointmentsQuery = useSWR(
+    canLoadSections && createModalType === "consultation"
+      ? swrKeys.admin.appointments(withBaseUrl(session, { per_page: 40, page: 1, doctor_user_id: consultationCreateForm.doctorUserId, date: normalizeDateKey(consultationCreateForm.startAt ? new Date(consultationCreateForm.startAt) : new Date()) }))
+      : null,
+    () => adminApiRequest("appointments", { params: { per_page: 40, page: 1, doctor_user_id: consultationCreateForm.doctorUserId, date: normalizeDateKey(consultationCreateForm.startAt ? new Date(consultationCreateForm.startAt) : new Date()) } }, session),
+    { ...popupQueryOptions, fallbackData: data.appointments?.length ? { data: data.appointments } : undefined }
+  );
+
+  useEffect(() => {
+    if (!ordersQuery.data?.data) return;
+    setData((prev) => ({ ...prev, orders: ordersQuery.data.data, orderDetails: ordersQuery.data.data }));
+  }, [ordersQuery.data]);
+
+  useEffect(() => {
+    if (!productsQuery.data?.data && !productCategoriesQuery.data?.data) return;
+    setData((prev) => ({
+      ...prev,
+      products: productsQuery.data?.data || prev.products || [],
+      productCategories: productCategoriesQuery.data?.data || prev.productCategories || []
+    }));
+  }, [productsQuery.data, productCategoriesQuery.data]);
+
+  useEffect(() => {
+    if (!customersQuery.data?.data) return;
+    setData((prev) => ({ ...prev, customers: customersQuery.data.data }));
+  }, [customersQuery.data]);
+
+  useEffect(() => {
+    if (!consultationsQuery.data?.data) return;
+    setData((prev) => ({ ...prev, appointments: consultationsQuery.data.data }));
+  }, [consultationsQuery.data]);
+
+  useEffect(() => {
+    if (!prescriptionsQuery.data?.data) return;
+    setData((prev) => ({ ...prev, prescriptions: prescriptionsQuery.data.data, prescriptionDetails: prescriptionsQuery.data.data }));
+  }, [prescriptionsQuery.data]);
+
+  useEffect(() => {
+    if (!doctorsQuery.data?.data) return;
+    setData((prev) => ({ ...prev, doctors: doctorsQuery.data.data }));
+  }, [doctorsQuery.data]);
+
+  useEffect(() => {
+    if (!emailsQuery.data?.data) return;
+    setData((prev) => ({ ...prev, emails: emailsQuery.data.data }));
+  }, [emailsQuery.data]);
 
   const dashboard = data.dashboard || {};
   const sales = dashboard.sales || {};
@@ -3044,6 +4770,19 @@ export default function Page() {
       { label: "Templates in use", value: templates.size, note: "visible in the current email log" }
     ];
   })();
+  const emailTemplateCategories = ["all", ...Array.from(new Set(emailTemplates.map((template) => template.category).filter(Boolean)))];
+  const selectedEmailTemplate = emailTemplates.find((template) => template.id === selectedEmailTemplateId) || emailTemplates[0] || DEFAULT_EMAIL_TEMPLATES[0];
+  const emailTemplateSearchQuery = normalizeText(emailTemplateSearch);
+  const filteredEmailTemplates = emailTemplates.filter((template) => {
+    const matchesCategory = emailTemplateCategory === "all" || template.category === emailTemplateCategory;
+    const matchesTemplateSearch = !emailTemplateSearchQuery || normalizeText(`${template.name} ${template.category} ${template.subject}`).includes(emailTemplateSearchQuery);
+    return matchesCategory && matchesTemplateSearch;
+  });
+  const selectedEmailTemplateUnsupportedHooks = unsupportedEmailHooks(selectedEmailTemplate);
+  const selectedEmailTemplatePreview = renderEmailTemplate(selectedEmailTemplate?.html, {
+    site_name: siteName,
+    support_email: appointmentSettings.smtpSender || "support@nevarihealth.com"
+  });
 
   const orderQueueRows = data.orderDetails || [];
   const orderQueueCounts = {
@@ -3055,7 +4794,8 @@ export default function Page() {
 
   const filteredOrders = orderQueueRows.filter((order) => {
     const names = (order.items || []).map((item) => item.name).join(" ");
-    const searchText = `${order.number} ${order.status} ${order.rx_status || ""} ${names} ${order.customer_id || ""}`;
+    const customer = customerSummary(order);
+    const searchText = `${order.number} ${order.status} ${order.rx_status || ""} ${names} ${order.customer_id || ""} ${customer.name} ${customer.email}`;
     return matchesSearch(searchText, currentPage === "orders") && matchesOrderQueueFilter(order, orderQueueFilter);
   });
 
@@ -3118,21 +4858,201 @@ export default function Page() {
   const paginatedProducts = filteredProducts.slice((activeProductPage - 1) * productsPerPage, activeProductPage * productsPerPage);
   const visibleProductIds = paginatedProducts.map((product) => product.id);
   const allVisibleProductsSelected = visibleProductIds.length > 0 && visibleProductIds.every((id) => selectedProductIds.includes(id));
+  const deferredCategoryProductSearch = useDeferredValue(categoryProductSearch);
+  const productCategoryRows = (() => {
+    const categoryMap = new Map();
+
+    (data.productCategories || []).forEach((category) => {
+      const name = category?.name || category?.label;
+      if (!name) {
+        return;
+      }
+      const key = String(category.id || category.slug || name);
+      categoryMap.set(key, {
+        id: category.id || key,
+        key,
+        name,
+        slug: category.slug || normalizeCategoryKey(name),
+        price: resolveCategoryConsultationPrice(category, appointmentSettings.categoryPricing),
+        productCount: 0
+      });
+    });
+
+    (data.products || []).forEach((product) => {
+      getProductCategories(product).split(",").map((item) => item.trim()).filter(Boolean).forEach((categoryName) => {
+        const existing = [...categoryMap.values()].find((item) => item.name === categoryName);
+        const nextKey = existing?.key || categoryName;
+        const nextRow = existing || {
+          id: nextKey,
+          key: nextKey,
+          name: categoryName,
+          slug: normalizeCategoryKey(categoryName),
+          price: resolveCategoryConsultationPrice({ name: categoryName }, appointmentSettings.categoryPricing),
+          productCount: 0
+        };
+        nextRow.productCount += 1;
+        categoryMap.set(nextKey, nextRow);
+      });
+    });
+
+    return [...categoryMap.values()].sort((left, right) => left.name.localeCompare(right.name));
+  })();
+  const selectedCategory = productCategoryRows.find((category) => category.name === selectedProductCategoryName) || productCategoryRows[0] || null;
+  const selectedCategoryRecord = selectedCategory
+    ? (data.productCategories || []).find((category) => (
+      String(category.id || category.slug || category.name || category.label || "") === String(selectedCategory.id || "")
+      || normalizeCategoryKey(category.slug || category.name || category.label) === normalizeCategoryKey(selectedCategory.slug || selectedCategory.name)
+    ))
+    : null;
+  const selectedCategoryProducts = selectedCategory
+    ? (data.products || []).filter((product) => getProductCategories(product).split(",").map((item) => item.trim()).includes(selectedCategory.name))
+    : [];
+  const categorySearchQuery = deferredCategoryProductSearch.trim().toLowerCase();
+  const categoryDoctorSearchQuery = categoryDoctorSearch.trim().toLowerCase();
+  const selectedCategoryId = selectedCategoryRecord?.id || selectedCategory?.id || null;
+  const selectedCategoryName = selectedCategory?.name || "";
+  const minimumConsultationMinutes = Number(appointmentSettings.minimumConsultationMinutes || 0) || 0;
+  const minimumConsultationLabel = minimumConsultationMinutes > 0
+    ? `${formatNumber(minimumConsultationMinutes)}min`
+    : "minimum consultation time";
+  const formatCategoryPricing = (value) => (
+    value ? (
+      <>
+        <strong>{formatMoney(value, storeCurrency)}</strong>
+        <span className="product-category-price-suffix"> per {minimumConsultationLabel}</span>
+      </>
+    ) : "Not set"
+  );
+  const categoryDoctorRows = selectedCategory
+    ? (data.doctors || [])
+      .map((doctor) => {
+        const assigned = getDoctorCategoryEntries(doctor).some((item) => (
+          String(item.id || "") === String(selectedCategoryId || "")
+          || item.name === selectedCategoryName
+          || item.slug === normalizeCategoryKey(selectedCategoryName)
+        ));
+        return {
+          doctor,
+          assigned
+        };
+      })
+      .filter(({ doctor }) => (
+        !categoryDoctorSearchQuery ||
+        normalizeText(`${doctor.display_name} ${doctor.email} ${doctor.specialty || ""} ${doctor.specialties?.join(" ") || ""} ${doctor.location || ""} ${doctor.user_id || doctor.id || ""}`).includes(categoryDoctorSearchQuery)
+      ))
+      .sort((left, right) => {
+        if (left.assigned !== right.assigned) {
+          return left.assigned ? -1 : 1;
+        }
+        return String(left.doctor.display_name || "").localeCompare(String(right.doctor.display_name || ""));
+      })
+    : [];
+  const assignedCategoryDoctorRows = categoryDoctorRows.filter(({ assigned }) => assigned);
+  const availableCategoryDoctorRows = categoryDoctorRows.filter(({ assigned }) => !assigned);
+  const categoryProductCandidates = selectedCategory
+    ? (data.products || []).filter((product) => {
+      const categoryNames = getProductCategories(product).split(",").map((item) => item.trim()).filter(Boolean);
+      if (categoryNames.includes(selectedCategory.name)) {
+        return false;
+      }
+      if (!categorySearchQuery) {
+        return false;
+      }
+      return `${product.name} ${product.sku} ${getProductCategories(product)}`.toLowerCase().includes(categorySearchQuery);
+    }).slice(0, 8)
+    : [];
+  const categoryProductsPerPage = 6;
+  const categoryProductPageCount = Math.max(1, Math.ceil(selectedCategoryProducts.length / categoryProductsPerPage));
+  const activeCategoryProductPage = Math.min(categoryProductPage, categoryProductPageCount);
+  const paginatedSelectedCategoryProducts = selectedCategoryProducts.slice(
+    (activeCategoryProductPage - 1) * categoryProductsPerPage,
+    activeCategoryProductPage * categoryProductsPerPage
+  );
+
+  useEffect(() => {
+    setCategoryDoctorSearch("");
+    setCategoryAssignmentFeedback("");
+    setCategoryMutationFeedback("");
+    setCategoryInlineField("");
+    setCategorySaveNotice("");
+    setCategoryProductPage(1);
+    setCategoryEditDraft({
+      name: selectedCategory?.name || "",
+      pricePerMinute: String(selectedCategory?.price || "")
+    });
+  }, [selectedCategory?.id, selectedCategory?.name]);
+
+  useEffect(() => {
+    setCategoryProductPage((prev) => Math.min(prev, categoryProductPageCount));
+  }, [categoryProductPageCount]);
+
+  useEffect(() => {
+    if (categoryInlineField === "name") {
+      categoryNameInputRef.current?.focus();
+      categoryNameInputRef.current?.select();
+    }
+    if (categoryInlineField === "price") {
+      categoryPriceInputRef.current?.focus();
+      categoryPriceInputRef.current?.select();
+    }
+  }, [categoryInlineField]);
+
+  useEffect(() => {
+    if (!categorySaveNotice) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => setCategorySaveNotice(""), 1400);
+    return () => window.clearTimeout(timeoutId);
+  }, [categorySaveNotice]);
 
   const filteredDoctors = (data.doctors || []).filter((doctor) =>
     matchesSearch(`${doctor.display_name} ${doctor.email} ${doctor.specialties?.join(" ")} ${doctor.location} ${doctor.user_id}`, currentPage === "doctors")
   );
 
-  const productCategoryOptions = Array.from(new Set((data.products || [])
+  const popupOrderProducts = orderCreateProductsQuery.data?.data || data.products || [];
+  const popupOrderDoctors = orderCreateDoctorsQuery.data?.data || data.doctors || [];
+  const popupAssignmentDoctors = orderAssignmentDoctorsQuery.data?.data || data.doctors || [];
+  const popupProductCategories = productEditorCategoriesQuery.data?.data || data.productCategories || [];
+  const popupProductTags = productEditorTagsQuery.data?.data || [];
+  const popupDoctorCategories = doctorCreateCategoriesQuery.data?.data || data.productCategories || [];
+  const selectedDoctorCreateCategories = popupDoctorCategories.filter((category) => (
+    (doctorCreateForm.productCategoryIds || []).some((id) => String(id) === String(category.id))
+  ));
+  const availableDoctorCreateCategories = popupDoctorCategories
+    .filter((category) => !(doctorCreateForm.productCategoryIds || []).some((id) => String(id) === String(category.id)))
+    .filter((category) => {
+      const searchTerm = normalizeText(doctorCreateCategorySearch);
+      return !searchTerm || normalizeText(`${category.name || ""} ${category.slug || ""}`).includes(searchTerm);
+    })
+    .slice(0, 8);
+  const popupConsultationDoctors = consultationCreateDoctorsQuery.data?.data || data.doctors || [];
+  const popupConsultationAppointments = consultationCreateAppointmentsQuery.data?.data || data.appointments || [];
+  const popupConsultationPatients = (consultationCreatePatientsQuery.data?.data || []).map((customer) => ({
+    id: customer.id || customer.user_id || customer.customer_id,
+    label: customer.label || customerNameFromRecord(customer) || customerEmail(customer) || `Customer #${customer.id || customer.user_id}`,
+    name: customerNameFromRecord(customer) || customerEmail(customer) || `Customer #${customer.id || customer.user_id}`,
+    email: customerEmail(customer) || "No email on file",
+    orders: Number(customer.orders || customer.order_count || 0),
+    spend: safeNumber(customer.spend || customer.total_spend || 0),
+    lastActivity: customer.updated_at || customer.created_at || null,
+    prescriptions: Number(customer.prescriptions || 0),
+    appointments: Number(customer.appointments || 0)
+  })).filter((row) => row.id);
+
+  const productCategoryOptions = Array.from(new Set([
+    ...popupProductCategories.map((category) => category.name || category.label).filter(Boolean),
+    ...(data.products || [])
     .flatMap((product) => getProductCategories(product).split(","))
     .map((item) => item.trim())
     .filter(Boolean)
-  ));
-  const productTagOptions = Array.from(new Set((data.products || [])
+  ]));
+  const productTagOptions = Array.from(new Set([
+    ...popupProductTags.map((tag) => tag.name || tag.label).filter(Boolean),
+    ...(data.products || [])
     .flatMap((product) => getProductTags(product).split(","))
     .map((item) => item.trim())
     .filter(Boolean)
-  ));
+  ]));
   const productBrandOptions = Array.from(new Set((data.products || [])
     .flatMap((product) => getProductBrands(product).split(","))
     .map((item) => item.trim())
@@ -3149,18 +5069,33 @@ export default function Page() {
         : { thumbMin: "88px" };
   const productEditorCurrency = getEditorCurrency(selectedProductEdit, storeCurrency);
 
+  useEffect(() => {
+    if (!productCategoryRows.length) {
+      if (selectedProductCategoryName) {
+        setSelectedProductCategoryName("");
+      }
+      return;
+    }
+    if (!selectedProductCategoryName || !productCategoryRows.some((category) => category.name === selectedProductCategoryName)) {
+      setSelectedProductCategoryName(productCategoryRows[0].name);
+    }
+  }, [productCategoryRows, selectedProductCategoryName]);
+
   const allPaymentRows = (data.orderDetails || [])
     .filter((order) => {
       const paymentStatus = order.payment_status || order.status || "pending";
-      return matchesSearch(`${order.number} ${paymentStatus} ${order.rx_status || ""} ${order.customer_id || ""} ${order.total || 0}`, currentPage === "payments");
+      const customer = customerSummary(order);
+      return matchesSearch(`${order.number} ${paymentStatus} ${order.rx_status || ""} ${order.customer_id || ""} ${customer.name} ${customer.email} ${order.total || 0}`, currentPage === "payments");
     })
     .map((order) => {
       const paymentStatus = order.payment_status || order.status || "pending";
       const held = ["on_hold", "on-hold"].includes(order.rx_status || "");
+      const customer = customerSummary(order);
       return {
         id: order.id,
         number: order.number,
-        customerLabel: patientLabel(order.customer_id),
+        customerLabel: customer.name,
+        customerEmail: customer.email,
         amount: safeNumber(order.total),
         currency: order.currency || storeCurrency,
         paymentStatus,
@@ -3203,13 +5138,33 @@ export default function Page() {
   const allCustomerRows = (() => {
     const customerMap = new Map();
 
+    (data.customers || []).forEach((customer) => {
+      const id = customer.id || customer.user_id || customer.customer_id;
+      if (!id) {
+        return;
+      }
+      const name = customerNameFromRecord(customer) || customerEmail(customer) || `Customer #${id}`;
+      customerMap.set(id, {
+        id,
+        label: name,
+        name,
+        email: customerEmail(customer) || "No email on file",
+        orders: Number(customer.orders || customer.order_count || 0),
+        spend: safeNumber(customer.spend || customer.total_spend || 0),
+        lastActivity: customer.updated_at || customer.created_at || null,
+        prescriptions: Number(customer.prescriptions || 0),
+        appointments: Number(customer.appointments || 0)
+      });
+    });
+
     (data.orderDetails || []).forEach((order) => {
-      const key = order.customer_id || `guest-${order.billing?.email || order.number || order.id}`;
+      const summary = customerSummary(order);
+      const key = order.customer_id || `guest-${customerEmail(order) || order.number || order.id}`;
       const current = customerMap.get(key) || {
         id: key,
-        label: patientLabel(order.customer_id),
-        name: customerFullName(order),
-        email: order.billing?.email || "No email on file",
+        label: summary.name,
+        name: summary.name,
+        email: summary.email,
         orders: 0,
         spend: 0,
         lastActivity: order.created_at || null,
@@ -3218,11 +5173,14 @@ export default function Page() {
       };
       current.orders += 1;
       current.spend += safeNumber(order.total);
-      if (!current.name || current.name === patientLabel(order.customer_id)) {
-        current.name = customerFullName(order);
+      if (isPlaceholderCustomerName(current.name) || current.name === patientLabel(order.customer_id)) {
+        current.name = summary.name;
+      }
+      if (isPlaceholderCustomerName(current.label) || current.label === patientLabel(order.customer_id)) {
+        current.label = summary.name;
       }
       if (!current.email || current.email === "No email on file") {
-        current.email = order.billing?.email || current.email;
+        current.email = customerEmail(order) || current.email;
       }
       if (order.created_at && (!current.lastActivity || new Date(order.created_at) > new Date(current.lastActivity))) {
         current.lastActivity = order.created_at;
@@ -3276,23 +5234,54 @@ export default function Page() {
       .slice(0, 18);
   })();
 
-  const consultationDoctorProfile = (data.doctors || []).find((doctor) => String(doctor.user_id || doctor.id) === String(consultationCreateForm.doctorUserId)) || (data.doctors || [])[0] || null;
-  const consultationDoctorAppointments = (data.appointments || [])
+  const consultationDoctorProfile = popupConsultationDoctors.find((doctor) => String(doctor.user_id || doctor.id) === String(consultationCreateForm.doctorUserId)) || null;
+  const consultationDoctorAppointments = popupConsultationAppointments
     .filter((appointment) => String(appointment.doctor_user_id) === String(consultationDoctorProfile?.user_id || consultationDoctorProfile?.id || ""))
     .sort((a, b) => new Date(a.start_at || 0) - new Date(b.start_at || 0));
   const consultationCalendarDate = consultationCreateForm.startAt ? new Date(consultationCreateForm.startAt) : new Date();
   const consultationWeekStart = startOfWeek(consultationCalendarDate);
-  const consultationPatientOptions = allCustomerRows.filter((row) => {
+  const consultationPatientRows = popupConsultationPatients.length ? popupConsultationPatients : allCustomerRows;
+  const consultationPatientOptions = consultationPatientRows.filter((row) => {
     if (!consultationPatientSearch.trim()) {
       return true;
     }
     return `${row.name} ${row.email} ${row.label} ${row.id}`.toLowerCase().includes(consultationPatientSearch.trim().toLowerCase());
   });
+  const consultationDoctorOptions = popupConsultationDoctors.filter((doctor) => {
+    const searchTerm = consultationDoctorSearch.trim().toLowerCase();
+    if (!searchTerm) {
+      return true;
+    }
+    return normalizeText(`${doctor.display_name || ""} ${doctor.email || ""} ${doctor.specialty || ""} ${doctor.location || ""}`).includes(searchTerm);
+  }).slice(0, 8);
   const consultationCalendarDays = Array.from({ length: 7 }, (_, index) => addDays(consultationWeekStart, index));
   const consultationSelectedDayKey = normalizeDateKey(consultationCalendarDate);
   const consultationDayAppointments = consultationDoctorAppointments.filter((appointment) => normalizeDateKey(appointment.start_at) === consultationSelectedDayKey);
   const consultationVisiblePatientOptions = consultationPatientOptions.slice(0, 6);
   const consultationSelectedPatient = consultationPatientOptions.find((row) => String(row.id) === String(consultationCreateForm.patientUserId)) || null;
+  const consultationCanSubmit = createModalType !== "consultation" || Boolean(
+    consultationCreateForm.doctorUserId
+    && consultationCreateForm.patientUserId
+    && consultationCreateForm.startAt
+    && consultationCreateForm.endAt
+    && consultationCreateForm.type
+  );
+
+  useEffect(() => {
+    if (createModalType !== "consultation" || consultationCreateForm.doctorUserId || !popupConsultationDoctors.length) {
+      return;
+    }
+    const firstDoctor = popupConsultationDoctors[0];
+    const firstDoctorId = firstDoctor?.user_id || firstDoctor?.id;
+    if (!firstDoctorId) {
+      return;
+    }
+    setConsultationCreateForm((prev) => ({
+      ...prev,
+      doctorUserId: String(firstDoctorId)
+    }));
+    setConsultationDoctorSearch(firstDoctor.display_name || firstDoctor.email || "");
+  }, [createModalType, consultationCreateForm.doctorUserId, popupConsultationDoctors]);
 
   const customerRows = allCustomerRows.filter((row) => {
     if (customerFilter === "repeat") {
@@ -3409,6 +5398,16 @@ export default function Page() {
   const selectedDoctorPrescriptions = selectedDoctorProfile
     ? (data.prescriptionDetails || []).filter((item) => Number(item.doctor_user_id) === Number(selectedDoctorProfile.user_id || selectedDoctorProfile.id))
     : [];
+  const orderProductCandidates = useMemo(() => {
+    const query = normalizeText(orderCreateSearch).trim();
+    const products = popupOrderProducts || [];
+    if (!query) {
+      return products.slice(0, 8);
+    }
+    return products
+      .filter((product) => normalizeText(`${product.name || ""} ${product.sku || ""} ${getProductCategories(product)} ${getProductTags(product)} ${getProductBrands(product)}`).includes(query))
+      .slice(0, 8);
+  }, [popupOrderProducts, orderCreateSearch]);
 
   const todayAppointments = filteredAppointments
     .filter((appointment) => {
@@ -3703,8 +5702,8 @@ export default function Page() {
         <div className="product-term-field">
           <div className="product-term-chips">
             {activeValues.length ? activeValues.map((value) => (
-              <button className="product-chip" key={`${field}-${value}`} type="button" onClick={() => toggleProductTerm(field, value)}>
-                {value} <span aria-hidden="true">×</span>
+              <button className="product-chip removable-chip" key={`${field}-${value}`} type="button" aria-label={`Remove ${value}`} onClick={() => toggleProductTerm(field, value)}>
+                {value} <InlineIcon id="i-x" />
               </button>
             )) : <span className="muted">No {label.toLowerCase()} assigned yet.</span>}
           </div>
@@ -4112,7 +6111,7 @@ export default function Page() {
                     </div>
                     <div className="toolbar">
                       
-                      <div className="order-queue-tabs" role="tablist" aria-label="Order queue filters">
+                      <div className="filter-bar order-queue-tabs" role="tablist" aria-label="Order queue filters">
                         {[
                           ["all", "All"],
                           ["needs_rx", "Needs RX"],
@@ -4120,7 +6119,7 @@ export default function Page() {
                           ["doctor_follow_up", "Doctor follow-up"]
                         ].map(([key, label]) => (
                           <button
-                            className={`pill-button order-queue-tab ${orderQueueFilter === key ? "active" : ""}`.trim()}
+                            className={`filter-btn order-queue-tab ${orderQueueFilter === key ? "active" : ""}`.trim()}
                             type="button"
                             key={key}
                             role="tab"
@@ -4153,7 +6152,7 @@ export default function Page() {
                           return (
                             <tr
                               key={order.id}
-                              className={`interactive-row ${selectedOrderId === order.id ? "active" : ""}`}
+                              className={`interactive-row ${selectedOrderId === order.id ? "active" : ""} ${deletingOrderIds.includes(order.id) ? "order-row-deleting" : ""}`}
                               onClick={() => openOrderDetails(order.id)}
                             >
                               <td><div className="table-title"><strong>#{order.number}</strong><span className="muted">{formatDate(order.created_at, true)}</span></div></td>
@@ -4414,25 +6413,21 @@ export default function Page() {
                   </article>
 
                   <article className="panel table-panel">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Calendar</p>
-                        <h2>{new Date(`${selectedConsultationDate}T00:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" })}</h2>
-                      </div>
-                    </div>
-                    <div className="calendar-widget">
-                      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span className="calendar-weekday" key={day}>{day}</span>)}
-                      {calendarDays.map((day) => (
-                        <button
-                          className={`calendar-day ${day.muted ? "muted-day" : ""} ${day.active ? "active" : ""} ${day.hasAppointment ? "has-appointment" : ""}`}
-                          type="button"
-                          key={day.key}
-                          onClick={() => setSelectedConsultationDate(day.key)}
-                        >
-                          {day.label}
-                        </button>
-                      ))}
-                    </div>
+                    <BookingCalendarWidget
+                      title="Consultation Calendar"
+                      subtitle="Review availability and filter the consultation list"
+                      appointments={data.appointments || []}
+                      selectedDate={selectedConsultationDate}
+                      viewDate={consultationCalendarViewDate}
+                      duration={consultationDuration}
+                      onViewDateChange={setConsultationCalendarViewDate}
+                      onDateSelect={(dateKey, date) => {
+                        setSelectedConsultationDate(dateKey);
+                        setConsultationCalendarViewDate(date);
+                      }}
+                      onSlotSelect={(dateKey) => setSelectedConsultationDate(dateKey)}
+                      onDurationChange={setConsultationDuration}
+                    />
                     <div className="history-list removed-history" hidden>
                       {sortedHistory.length ? sortedHistory.map((item, index) => {
                         const prescription = (data.prescriptionDetails || []).find((entry) => entry.id === item.prescription_id);
@@ -4529,12 +6524,23 @@ export default function Page() {
                   </article>
                 </section>
                 <section className="panel table-panel">
-                  <div className="panel-header">
+                  <div className="panel-header products-panel-header">
                     <div>
                       <p className="section-kicker">All Products</p>
                       <h2>Pharmaceutical Products</h2>
                     </div>
+                    <div className="filter-bar products-segmented-bar" aria-label="Products and categories view">
+                      {[
+                        ["products", "All products", formatNumber((data.products || []).length)],
+                        ["categories", "Categories", formatNumber(productCategoryRows.length)]
+                      ].map(([key, label, count]) => (
+                        <button className={`filter-btn ${productCatalogView === key ? "active" : ""}`} type="button" key={key} onClick={() => startTransition(() => setProductCatalogView(key))}>
+                          {label} <span className="filter-count">{count}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
+                  {productCatalogView === "products" ? <>
                   <div className="filter-bar products-filter-bar" aria-label="Product list filters">
                     {[
                       ["all", "All"],
@@ -4655,6 +6661,248 @@ export default function Page() {
                     </div>
                     <div className="pagination-summary">Showing {filteredProducts.length ? `${formatNumber(((activeProductPage - 1) * productsPerPage) + 1)}-${formatNumber(Math.min(activeProductPage * productsPerPage, filteredProducts.length))}` : "0"} of {formatNumber(filteredProducts.length)} products</div>
                   </div>
+                  </> : <div className="product-categories-pane">
+                    <aside className="product-categories-sidebar">
+                      <div className="product-categories-pane-head">
+                        <div>
+                          <p className="section-kicker">Category consultation pricing</p>
+                          <h3>Product categories</h3>
+                        </div>
+                        <span className="pagination-summary">{formatNumber(productCategoryRows.length)} categories</span>
+                      </div>
+                      <div className="product-category-list" role="tablist" aria-label="Product categories">
+                        {productCategoryRows.length ? productCategoryRows.map((category) => (
+                          <button
+                            className={`product-category-row ${selectedCategory?.name === category.name ? "active" : ""}`}
+                            type="button"
+                            role="tab"
+                            aria-selected={selectedCategory?.name === category.name}
+                            key={category.key}
+                            onClick={() => startTransition(() => setSelectedProductCategoryName(category.name))}
+                          >
+                            <div>
+                              <strong>{category.name}</strong>
+                              <span>{formatNumber(category.productCount)} products linked</span>
+                            </div>
+                            <div className="product-category-row-price">
+                              {formatCategoryPricing(category.price)}
+                          
+                            </div>
+                          </button>
+                        )) : <div className="empty-card compact-empty"><div className="card-title">No product categories available.</div></div>}
+                      </div>
+                    </aside>
+                    <section className="product-categories-content">
+                      <div className="product-categories-pane-head product-category-inline-head">
+                        <div className="product-category-inline-group">
+                          
+                          {selectedCategory ? (
+                            categoryInlineField === "name" ? (
+                              <div className="product-category-name-editor">
+                                <input
+                                  ref={categoryNameInputRef}
+                                  className="product-category-inline-input product-category-name-input"
+                                  value={categoryEditDraft.name}
+                                  onChange={(event) => setCategoryEditDraft((prev) => ({ ...prev, name: event.target.value }))}
+                                  onBlur={() => saveCategoryEdit("name")}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      saveCategoryEdit("name");
+                                    }
+                                    if (event.key === "Escape") {
+                                      setCategoryEditDraft((prev) => ({ ...prev, name: selectedCategory.name || "" }));
+                                      setCategoryInlineField("");
+                                    }
+                                  }}
+                                />
+                                {categoryMutationLoading === "edit-category" ? <span className="category-saving-spinner" aria-label="Saving category name" role="status" /> : null}
+                              </div>
+                            ) : (
+                              <button className="product-category-inline-trigger product-category-name-trigger" type="button" onClick={() => setCategoryInlineField("name")}>
+                                <strong>{selectedCategory.name}</strong>
+                                <InlineIcon id="i-pencil" />
+                              </button>
+                            )
+                          ) : <h3>Select a category</h3>}
+                        </div>
+                        <div className="product-category-price-chip product-category-inline-group">
+                          <span>Per {minimumConsultationLabel}</span>
+                          {selectedCategory ? (
+                            categoryInlineField === "price" ? (
+                              <div className="product-category-price-editor">
+                                <span className="product-category-currency">NGN</span>
+                                <input
+                                  ref={categoryPriceInputRef}
+                                  className="product-category-inline-input product-category-price-input"
+                                  type="number"
+                                  step="0.01"
+                                  value={categoryEditDraft.pricePerMinute}
+                                  onChange={(event) => setCategoryEditDraft((prev) => ({ ...prev, pricePerMinute: event.target.value }))}
+                                  onBlur={() => saveCategoryEdit("price")}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      saveCategoryEdit("price");
+                                    }
+                                    if (event.key === "Escape") {
+                                      setCategoryEditDraft((prev) => ({ ...prev, pricePerMinute: String(selectedCategory.price || "") }));
+                                      setCategoryInlineField("");
+                                    }
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <button className="product-category-inline-trigger product-category-price-trigger" type="button" onClick={() => setCategoryInlineField("price")}>
+                                {formatCategoryPricing(selectedCategory.price)}
+                                <InlineIcon id="i-pencil" />
+                              </button>
+                            )
+                          ) : <strong>Not set</strong>}
+                          {categorySaveNotice ? <small className="product-category-save-notice">{categorySaveNotice}</small> : null}
+                        </div>
+                      </div>
+                      {selectedCategory ? <>
+                        <div className="product-category-doctor-strip-card">
+                          <div className="panel-header product-category-products-header">
+                            <div>
+                              <h3 className="section-kicker">Assign doctors to {selectedCategory.name} </h3>
+                            
+                            </div>
+                            <span className="pagination-summary">{formatNumber(assignedCategoryDoctorRows.length)} assigned</span>
+                          </div>
+                          <label className="product-category-searchfield category-doctor-searchfield">
+                            
+                            <input value={categoryDoctorSearch} onChange={(event) => setCategoryDoctorSearch(event.target.value)} placeholder="Search by doctor name, specialty, or email" />
+                          </label>
+                          {categoryMutationFeedback ? <p className="receipt-feedback">{categoryMutationFeedback}</p> : null}
+                          {assignedCategoryDoctorRows.length ? (
+                            <div className="doctor-strip" aria-label={`Assigned doctors for ${selectedCategory.name}`}>
+                              {assignedCategoryDoctorRows.map(({ doctor }) => {
+                                const doctorId = doctor.user_id || doctor.id;
+                                const loadingKey = `${doctorId}:remove`;
+                                return (
+                                  <article className="doctor-mini" key={`doctor-strip-${doctorId}`}>
+                                    <button
+                                      className="doctor-mini-close"
+                                      type="button"
+                                      aria-label={`Remove ${doctor.display_name || "doctor"} from ${selectedCategory.name}`}
+                                      disabled={categoryMutationLoading === loadingKey}
+                                      onClick={() => updateCategoryDoctorAssignment(doctor, false)}
+                                    >
+                                      <InlineIcon id="i-x" />
+                                    </button>
+                                    <div className={`avatar ${doctorId ? `doctor-${String(doctorId).toString().slice(-1)}` : ""}`}>{getInitials(doctor.display_name || doctor.email || "Dr")}</div>
+                                    <div className="card-title">{doctor.display_name || `Doctor #${doctorId}`}</div>
+                                    <div className="card-desc">{doctor.specialty || doctor.specialties?.join(", ") || "General practice"}</div>
+                                  </article>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="empty-card compact-empty">
+                              <div className="card-title">No doctors assigned yet. Search to add one.</div>
+                            </div>
+                          )}
+                          {categoryDoctorSearch ? (
+                            <div className="doctor-assignment-results">
+                              <div className="doctor-assignment-results-label">Search results</div>
+                              {availableCategoryDoctorRows.length ? availableCategoryDoctorRows.map(({ doctor }) => {
+                                const doctorId = doctor.user_id || doctor.id;
+                                const loadingKey = `${doctorId}:assign`;
+                                return (
+                                  <div className="doctor-assignment-row" key={`doctor-search-${doctorId}`}>
+                                    <div className="doctor-assignment-row-profile">
+                                      <div className={`avatar ${doctorId ? `doctor-${String(doctorId).toString().slice(-1)}` : ""}`}>{getInitials(doctor.display_name || doctor.email || "Dr")}</div>
+                                      <div>
+                                        <strong>{doctor.display_name || `Doctor #${doctorId}`}</strong>
+                                        <span>{doctor.specialty || doctor.specialties?.join(", ") || "General practice"}</span>
+                                      </div>
+                                    </div>
+                                    <button
+                                      className="pill-button"
+                                      type="button"
+                                      disabled={categoryMutationLoading === loadingKey}
+                                      onClick={() => updateCategoryDoctorAssignment(doctor, true)}
+                                    >
+                                      {categoryMutationLoading === loadingKey ? "Saving..." : "Assign"}
+                                    </button>
+                                  </div>
+                                );
+                              }) : (
+                                <div className="empty-card compact-empty">
+                                  <div className="card-title">No doctors match the current search.</div>
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                        
+                        <div className="product-category-products">
+                          <div className="panel-header product-category-products-header">
+                            <div>
+                          
+                              <p className="section-kicker">Products in category</p>
+                              <div className="product-category-searchbar">
+                            
+                          <label className="product-category-searchfield">
+                            
+                            <input value={categoryProductSearch} onChange={(event) => setCategoryProductSearch(event.target.value)} placeholder={`Search product name to add to ${selectedCategory.name}`} />
+                          </label>
+                          {categoryAssignmentFeedback ? <p className="receipt-feedback">{categoryAssignmentFeedback}</p> : null}
+                        {categorySearchQuery ? <div className="product-category-add-results">
+                          {categoryProductCandidates.length ? categoryProductCandidates.map((product) => {
+                            const loadingKey = `${product.id}:${selectedCategory.name}`;
+                            return <div className="product-category-add-row" key={`add-${product.id}`}>
+                              <div className="table-title">
+                                <strong>{product.name || `Product #${product.id}`}</strong>
+                                <span>{product.sku || "No SKU"} • {getProductPriceLabel(product, storeCurrency)}</span>
+                              </div>
+                              <button className="pill-button" type="button" disabled={categoryAssignmentLoading === loadingKey} onClick={() => addProductToCategory(product, selectedCategory)}>
+                                {categoryAssignmentLoading === loadingKey ? "Adding..." : "Add"}
+                              </button>
+                            </div>;
+                          }) : <div className="empty-card compact-empty"><div className="card-title">No matching products available to add.</div></div>}
+                        </div> : null}
+                        </div>
+                              <h3>{formatNumber(selectedCategoryProducts.length)} linked products</h3>
+                            </div>
+                          </div>
+                          <div className="product-category-linked-list">
+                            {paginatedSelectedCategoryProducts.length ? paginatedSelectedCategoryProducts.map((product) => (
+                              <article className="product-category-product-card" key={`linked-${product.id}`}>
+                                <button
+                                  className="product-category-product-remove"
+                                  type="button"
+                                  aria-label={`Remove ${product.name || "product"} from ${selectedCategory.name}`}
+                                  disabled={categoryAssignmentLoading === `${product.id}:${selectedCategory.name}:remove`}
+                                  onClick={() => removeProductFromCategory(product, selectedCategory)}
+                                >
+                                  <InlineIcon id="i-x" />
+                                </button>
+                                <div className="product-thumb">{getProductImage(product) ? <img src={getProductImage(product)} alt={product.name || "Product"} /> : <InlineIcon id="i-pill" />}</div>
+                                <div className="table-title">
+                                  <strong>{product.name || `Product #${product.id}`}</strong>
+                                  <span>{product.sku || "No SKU"} • {getProductPriceLabel(product, storeCurrency)}</span>
+                                </div>
+                                <span className={`status-pill ${getProductStatus(product) === "publish" ? "success" : "warning"}`}>{formatStatusLabel(getProductStatus(product))}</span>
+                              </article>
+                            )) : <div className="empty-card compact-empty"><div className="card-title">No products linked to this category yet.</div></div>}
+                          </div>
+                          <div className="pagination-row product-category-pagination-row">
+                            <div className="pagination">
+                              <button className="page-item" type="button" disabled={activeCategoryProductPage === 1} onClick={() => setCategoryProductPage((prev) => Math.max(1, prev - 1))}>Prev</button>
+                              {Array.from({ length: categoryProductPageCount }, (_, index) => index + 1).slice(0, 7).map((page) => (
+                                <button className={`page-item ${activeCategoryProductPage === page ? "active" : ""}`} type="button" key={page} onClick={() => setCategoryProductPage(page)}>{page}</button>
+                              ))}
+                              <button className="page-item" type="button" disabled={activeCategoryProductPage === categoryProductPageCount} onClick={() => setCategoryProductPage((prev) => Math.min(categoryProductPageCount, prev + 1))}>Next</button>
+                            </div>
+                            <div className="pagination-summary">Showing {selectedCategoryProducts.length ? `${formatNumber(((activeCategoryProductPage - 1) * categoryProductsPerPage) + 1)}-${formatNumber(Math.min(activeCategoryProductPage * categoryProductsPerPage, selectedCategoryProducts.length))}` : "0"} of {formatNumber(selectedCategoryProducts.length)} products</div>
+                          </div>
+                        </div>
+                      </> : <div className="empty-card compact-empty"><div className="card-title">Select a category to manage linked products.</div></div>}
+                    </section>
+                  </div>}
                 </section>
               </section>
             )}
@@ -4717,53 +6965,117 @@ export default function Page() {
 
             {currentPage === "emails" && (
               <section className="page-view active">
-                <section className="operations-grid single-page-grid">
-                  <article className="panel compact">
+                <section className="email-template-manager panel">
+                  <aside className="email-template-list">
                     <div className="panel-header">
                       <div>
-                        <p className="section-kicker">Comms</p>
-                        <h2>Email delivery health</h2>
+                        <p className="section-kicker">Email Templates</p>
+                        <h2>Global templates</h2>
                       </div>
                     </div>
-                    {renderEmailBlock()}
-                  </article>
-                </section>
-                <section className="panel table-panel">
-                  <div className="panel-header">
-                    <div>
-                      <p className="section-kicker">Messaging</p>
-                      <h2>Recent email log</h2>
+                    <div className="email-template-controls">
+                      <label className="email-template-search">
+                        <InlineIcon id="i-search" />
+                        <input value={emailTemplateSearch} onChange={(event) => setEmailTemplateSearch(event.target.value)} placeholder="Search templates" />
+                      </label>
+                      <div className="email-segmented-tabs" role="tablist" aria-label="Email template categories">
+                        {emailTemplateCategories.map((category) => (
+                          <button className={`email-segmented-tab ${emailTemplateCategory === category ? "active" : ""}`} type="button" role="tab" aria-selected={emailTemplateCategory === category} key={category} onClick={() => setEmailTemplateCategory(category)}>
+                            {category === "all" ? "All" : category}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div className="toolbar">
-                      <button className="pill-button" type="button">Assignment notices</button>
-                      <button className="pill-button" type="button">Failures</button>
+                    <div className="email-template-scroll">
+                      {filteredEmailTemplates.map((template) => (
+                        <button className={`email-template-row ${selectedEmailTemplate?.id === template.id ? "active" : ""}`} type="button" key={template.id} onClick={() => setSelectedEmailTemplateId(template.id)}>
+                          <span>
+                            <strong>{template.name}</strong>
+                            <small>{template.category}</small>
+                          </span>
+                          <StatusPill value={template.status}>{template.status}</StatusPill>
+                        </button>
+                      ))}
                     </div>
-                  </div>
-                  <div className="table-scroll">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Recipient</th>
-                          <th>Template</th>
-                          <th>Related object</th>
-                          <th>Provider</th>
-                          <th>Status</th>
-                          <th>Time</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredEmails.length ? filteredEmails.map((email, index) => (
-                          <tr key={`${email.recipient_email}-${email.created_at || index}`}>
-                            <td>{email.recipient_email}</td>
-                            <td>{email.template_key || "custom"}</td>
-                            <td>{email.related_object_type || "n/a"}{email.related_object_id ? ` #${email.related_object_id}` : ""}</td>
-                            <td>{email.provider || "provider n/a"}</td>
-                            <td><StatusPill value={email.status}>{email.status}</StatusPill></td>
-                            <td>{formatDate(email.sent_at || email.failed_at || email.queued_at || email.created_at, true)}</td>
-                          </tr>
-                        )) : <tr><td colSpan="6" className="muted">No email log entries match the current search.</td></tr>}
-                      </tbody>
-                    </table>
+                  </aside>
+
+                  <div className="email-template-editor">
+                    <div className="panel-header">
+                      <div>
+                        <p className="section-kicker">Template editor</p>
+                        <h2>{selectedEmailTemplate?.name}</h2>
+                      </div>
+                      <div className="toolbar">
+                        <div className="email-mode-toggle" role="tablist" aria-label="Email editor mode">
+                          {["edit", "preview"].map((mode) => (
+                            <button className={`email-mode-tab ${emailEditorMode === mode ? "active" : ""}`} type="button" role="tab" aria-selected={emailEditorMode === mode} key={mode} onClick={() => setEmailEditorMode(mode)}>
+                              {formatStatusLabel(mode)}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="email-editor-actions">
+                          <button className="pill-button" type="button" onClick={() => saveSelectedEmailTemplate("draft")}>Save Draft</button>
+                          <button className="pill-button" type="button" onClick={duplicateSelectedEmailTemplate}>Duplicate</button>
+                          <button className="button-primary" type="button" onClick={() => saveSelectedEmailTemplate("active")}>Save</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="email-mode-panel" hidden={emailEditorMode !== "edit"}>
+                    <div className="email-editor-grid">
+                      <div className="email-editor-fields">
+                        <label className="detail-field">
+                          <span>Name</span>
+                          <input value={selectedEmailTemplate?.name || ""} onChange={(event) => updateSelectedEmailTemplate({ name: event.target.value })} />
+                        </label>
+                        <label className="detail-field">
+                          <span>Category</span>
+                          <input value={selectedEmailTemplate?.category || ""} onChange={(event) => updateSelectedEmailTemplate({ category: event.target.value })} />
+                        </label>
+                        <label className="detail-field detail-field-wide">
+                          <span>Subject</span>
+                          <input value={selectedEmailTemplate?.subject || ""} onChange={(event) => updateSelectedEmailTemplate({ subject: event.target.value })} />
+                        </label>
+                        <label className="detail-field detail-field-wide">
+                          <span>HTML</span>
+                          <textarea rows={12} value={selectedEmailTemplate?.html || ""} onChange={(event) => updateSelectedEmailTemplate({ html: event.target.value })} />
+                        </label>
+                        {selectedEmailTemplateUnsupportedHooks.length ? <p className="receipt-feedback">Unsupported hooks: {selectedEmailTemplateUnsupportedHooks.join(", ")}</p> : null}
+                        {emailTemplateFeedback ? <p className="receipt-feedback">{emailTemplateFeedback}</p> : null}
+                      </div>
+                      <aside className="email-hook-panel">
+                        <div className="panel-header compact-header">
+                          <div>
+                            <p className="section-kicker">Hooks</p>
+                            <h3>Reusable variables</h3>
+                          </div>
+                        </div>
+                        <div className="email-hook-list">
+                          {EMAIL_HOOKS.map((hook) => (
+                            <button className="email-hook-row" type="button" key={hook.key} onClick={() => insertHookIntoSelectedTemplate(hook.key)}>
+                              <strong>{hook.key}</strong>
+                              <span>{hook.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </aside>
+                    </div>
+                    </div>
+                    <div className="email-mode-panel" hidden={emailEditorMode !== "preview"}>
+                    <div className="email-preview-panel">
+                      <div className="panel-header">
+                        <div>
+                          <p className="section-kicker">Live preview</p>
+                          <h3>{renderEmailTemplate(selectedEmailTemplate?.subject, { site_name: siteName })}</h3>
+                        </div>
+                        <div className="filter-bar">
+                          {["desktop", "mobile"].map((mode) => (
+                            <button className={`filter-btn ${emailPreviewMode === mode ? "active" : ""}`} type="button" key={mode} onClick={() => setEmailPreviewMode(mode)}>{formatStatusLabel(mode)}</button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className={`email-preview-frame ${emailPreviewMode}`} dangerouslySetInnerHTML={{ __html: selectedEmailTemplatePreview }} />
+                    </div>
+                    </div>
                   </div>
                 </section>
               </section>
@@ -4887,8 +7199,8 @@ export default function Page() {
                 <section className="page-banner panel">
                   <div>
                     <p className="section-kicker">Storefront settings</p>
-                    <h2>Connection and session state</h2>
-                    <p className="hero-text">This page keeps the operational frontend grounded in the paired WordPress environment without touching the auth screens.</p>
+                    <h2>Appointment system controls</h2>
+                    <p className="hero-text">Manage frontend test controls for booking automation, reminders, pricing tiers, security, and the external meeting service without leaving the admin dashboard.</p>
                   </div>
                   <div className="banner-actions">
                     <button className="button-primary" type="button" onClick={() => showAuthGate("auth")}>Manage session</button>
@@ -4903,6 +7215,61 @@ export default function Page() {
                       <small>{card.note}</small>
                     </article>
                   ))}
+                </section>
+                <div className="filter-bar admin-settings-filter-bar" role="tablist" aria-label="Settings groups">
+                  <button className="filter-btn active" type="button">Automation <span className="filter-count">4</span></button>
+                  <button className="filter-btn" type="button">Reminders <span className="filter-count">3</span></button>
+                  <button className="filter-btn" type="button">Pricing <span className="filter-count">2</span></button>
+                  <div className="filter-divider" />
+                  <button className="filter-btn" type="button">Security <span className="filter-count">3</span></button>
+                </div>
+                <div className="status-pill-grid admin-settings-status-grid">
+                  <div className={`status-pill ${appointmentSettings.googleMeetEnabled ? "success" : "error"}`}><span className="dot" />Meeting service</div>
+                  <div className={`status-pill ${appointmentSettings.emailNotificationsEnabled ? "info" : "warning"}`}><span className="dot" />Notifications</div>
+                  <div className={`status-pill ${appointmentSettings.livePaymentsEnabled ? "success" : "warning"}`}><span className="dot" />{appointmentSettings.livePaymentsEnabled ? "Live payments" : "Test mode"}</div>
+                  <div className={`status-pill ${appointmentSettings.idempotencyProtection ? "success" : "warning"}`}><span className="dot" />Idempotency</div>
+                </div>
+                <section className="doctor-settings-grid admin-settings-grid">
+                  <article className="doctor-settings-card">
+                    <h3>Meeting service</h3>
+                    <label className="customer-toggle-row"><span>Google Meet integration</span><input type="checkbox" checked={appointmentSettings.googleMeetEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, googleMeetEnabled: event.target.checked }))} /></label>
+                    <label className="customer-toggle-row"><span>{appointmentSettings.livePaymentsEnabled ? "Live mode" : "Test mode"}</span><input type="checkbox" checked={appointmentSettings.livePaymentsEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, livePaymentsEnabled: event.target.checked }))} /></label>
+                    <label className="customer-toggle-row"><span>Idempotency protection</span><input type="checkbox" checked={appointmentSettings.idempotencyProtection} onChange={(event) => setAppointmentSettings((current) => ({ ...current, idempotencyProtection: event.target.checked }))} /></label>
+                    <label className="customer-toggle-row"><span>API key rotation</span><input type="checkbox" checked={appointmentSettings.apiKeyRotationEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, apiKeyRotationEnabled: event.target.checked }))} /></label>
+                    <label className="detail-field detail-field-wide">
+                      <span>External meeting service endpoint</span>
+                      <input value={appointmentSettings.externalMeetingServiceUrl} onChange={(event) => setAppointmentSettings((current) => ({ ...current, externalMeetingServiceUrl: event.target.value }))} />
+                    </label>
+                  </article>
+
+                  <article className="doctor-settings-card">
+                    <h3>Reminder and email rules</h3>
+                    <label className="customer-toggle-row"><span>Email notifications enabled</span><input type="checkbox" checked={appointmentSettings.emailNotificationsEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, emailNotificationsEnabled: event.target.checked }))} /></label>
+                    <label><span>Primary reminder (minutes before)</span><input type="number" min="1" value={appointmentSettings.reminderMinutesPrimary} onChange={(event) => setAppointmentSettings((current) => ({ ...current, reminderMinutesPrimary: event.target.value }))} /></label>
+                    <label><span>Secondary reminder (minutes before)</span><input type="number" min="1" value={appointmentSettings.reminderMinutesSecondary} onChange={(event) => setAppointmentSettings((current) => ({ ...current, reminderMinutesSecondary: event.target.value }))} /></label>
+                    <label><span>SMTP host</span><input value={appointmentSettings.smtpHost} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpHost: event.target.value }))} /></label>
+                    <label><span>SMTP port</span><input value={appointmentSettings.smtpPort} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpPort: event.target.value }))} /></label>
+                    <label><span>Sender address</span><input value={appointmentSettings.smtpSender} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpSender: event.target.value }))} /></label>
+                  </article>
+
+                  <article className="doctor-settings-card">
+                    <h3>Consultation pricing</h3>
+                    <label><span>Minimum consultation minutes</span><input type="number" min="5" value={appointmentSettings.minimumConsultationMinutes} onChange={(event) => setAppointmentSettings((current) => ({ ...current, minimumConsultationMinutes: event.target.value }))} /></label>
+                    <label><span>Junior tier</span><input value={appointmentSettings.pricingTiers.junior} onChange={(event) => setAppointmentSettings((current) => ({ ...current, pricingTiers: { ...current.pricingTiers, junior: event.target.value } }))} /></label>
+                    <label><span>Senior tier</span><input value={appointmentSettings.pricingTiers.senior} onChange={(event) => setAppointmentSettings((current) => ({ ...current, pricingTiers: { ...current.pricingTiers, senior: event.target.value } }))} /></label>
+                    <label><span>Specialist tier</span><input value={appointmentSettings.pricingTiers.specialist} onChange={(event) => setAppointmentSettings((current) => ({ ...current, pricingTiers: { ...current.pricingTiers, specialist: event.target.value } }))} /></label>
+                    <label><span>General category price</span><input value={appointmentSettings.categoryPricing.general} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, general: event.target.value } }))} /></label>
+                    <label><span>Cardiology category price</span><input value={appointmentSettings.categoryPricing.cardiology} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, cardiology: event.target.value } }))} /></label>
+                  </article>
+
+                  <article className="doctor-settings-card">
+                    <h3>Security and logging</h3>
+                    <label className="customer-toggle-row"><span>Role permissions locked</span><input type="checkbox" checked={appointmentSettings.rolePermissionsLocked} onChange={(event) => setAppointmentSettings((current) => ({ ...current, rolePermissionsLocked: event.target.checked }))} /></label>
+                    <label><span>Audit log retention (days)</span><input type="number" min="7" value={appointmentSettings.auditLogRetention} onChange={(event) => setAppointmentSettings((current) => ({ ...current, auditLogRetention: event.target.value }))} /></label>
+                    <div className="doctor-settings-summary"><span>Visible consultations</span><strong>{formatNumber((data.appointments || []).length)}</strong></div>
+                    <div className="doctor-settings-summary"><span>Doctors in scope</span><strong>{formatNumber((data.doctors || []).length)}</strong></div>
+                    <div className="doctor-settings-summary"><span>Queued emails</span><strong>{formatNumber(emailItems[0]?.value || 0)}</strong></div>
+                  </article>
                 </section>
               </section>
             )}
@@ -5040,7 +7407,7 @@ export default function Page() {
                           value={orderCreateForm.status}
                           onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, status: event.target.value }))}
                         >
-                          {["pending", "processing", "on-hold", "completed"].map((status) => (
+                            {["awaiting-doctor", "pending", "processing", "on-hold", "completed", "failed", "refunded"].map((status) => (
                             <option key={status} value={status}>{formatStatusLabel(status)}</option>
                           ))}
                         </select>
@@ -5048,13 +7415,14 @@ export default function Page() {
                     </label>
                     <label className="detail-field detail-field-wide">
                       <span>Assign Doctor</span>
+                      {orderCreateDoctorsQuery.isLoading ? <small className="product-field-note">Loading doctors...</small> : null}
                       <div className="select-wrap">
                         <select
                           value={orderCreateForm.doctorId}
                           onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, doctorId: event.target.value }))}
                         >
                           <option value="">No doctor assigned</option>
-                          {(data.doctors || []).map((doctor) => (
+                          {popupOrderDoctors.map((doctor) => (
                             <option key={doctor.user_id} value={doctor.user_id}>{doctor.display_name}</option>
                           ))}
                         </select>
@@ -5075,9 +7443,47 @@ export default function Page() {
                   <div className="panel-header order-create-items-header">
                     <div>
                       <p className="section-kicker">Products</p>
-                      <h4>Line items</h4>
+                      <h4>Search and add products</h4>
                     </div>
                     <span className="order-create-line-count">{orderCreateItems.length} item{orderCreateItems.length === 1 ? "" : "s"}</span>
+                  </div>
+                  {orderCreateProductsQuery.isLoading ? <p className="muted popup-support-copy">Loading product matches...</p> : null}
+                  {orderCreateProductsQuery.error ? <p className="muted popup-support-copy">Products could not be loaded. Try again shortly.</p> : null}
+
+                  <label className="detail-field detail-field-wide order-product-search-field">
+                    <span>Search product</span>
+                    <div className="product-term-search-row">
+                      <input
+                        value={orderCreateSearch}
+                        onChange={(event) => setOrderCreateSearch(event.target.value)}
+                        placeholder="Search by name, SKU, brand, or category"
+                      />
+                    </div>
+                  </label>
+
+                  {orderCreateSearch ? (
+                    <div className="product-term-options order-product-search-results" role="listbox" aria-label="Product search results">
+                      {orderProductCandidates.length ? orderProductCandidates.map((product) => {
+                        const productId = String(product.id);
+                        const alreadySelected = orderCreateItems.some((item) => String(item.productId) === productId);
+                        return (
+                          <button
+                            key={productId}
+                            className={`product-term-option order-product-search-result ${alreadySelected ? "active" : ""}`}
+                            type="button"
+                            onClick={() => addOrderCreateItem(product)}
+                          >
+                            <strong>{product.name || `Product #${productId}`}</strong>
+                            <span>{getProductPriceLabel(product, storeCurrency)}</span>
+                          </button>
+                        );
+                      }) : <div className="empty-card compact-empty"><div className="card-title">No matching products found.</div></div>}
+                    </div>
+                  ) : null}
+
+                  <div className="order-create-line-summary">
+                    <span>Added items</span>
+                    <strong>{orderCreateItems.length}</strong>
                   </div>
 
                   <div className="table-scroll order-create-table-scroll">
@@ -5088,12 +7494,12 @@ export default function Page() {
                           <th>Qty</th>
                           <th>Price</th>
                           <th>Total</th>
-                          <th />
+                          <th></th>
                         </tr>
                       </thead>
                       <tbody>
                         {orderCreateItems.length ? orderCreateItems.map((item, index) => {
-                          const product = (data.products || []).find((entry) => String(entry.id) === String(item.productId)) || null;
+                          const product = popupOrderProducts.find((entry) => String(entry.id) === String(item.productId)) || null;
                           const quantity = Math.max(1, Number(item.quantity || 1));
                           const unitPrice = product ? Number(hasActiveSalePrice(product) ? getProductPrice(product, "sale_price") : (getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0)) : 0;
                           const lineTotal = unitPrice * quantity;
@@ -5108,41 +7514,25 @@ export default function Page() {
                                       <div className="order-product-image order-product-fallback"><InlineIcon id="i-pill" /></div>
                                     )}
                                   </div>
-                                  <div className="select-wrap">
-                                    <select value={item.productId} onChange={(event) => updateOrderCreateItem(index, { productId: event.target.value })} required>
-                                      <option value="">Select product</option>
-                                      {(data.products || []).map((productOption) => (
-                                        <option key={productOption.id} value={productOption.id}>
-                                          {productOption.name || `Product #${productOption.id}`}
-                                        </option>
-                                      ))}
-                                    </select>
+                                  <div className="order-product-copy">
+                                    <strong>{product ? (product.name || `Product #${item.productId}`) : "Choose a product"}</strong>
+                                    <span className="muted order-product-meta">
+                                      {product ? getProductPriceLabel(product, storeCurrency) : "Add products using the search bar above"}
+                                    </span>
                                   </div>
-                                  <span className="muted order-product-meta">
-                                    {product ? getProductPriceLabel(product, storeCurrency) : "Choose a product"}
-                                  </span>
                                 </div>
                               </td>
                               <td>
-                                <input
-                                  className="order-quantity-input"
-                                  type="number"
-                                  min="1"
-                                  value={item.quantity}
-                                  onChange={(event) => updateOrderCreateItem(index, { quantity: event.target.value })}
-                                  required
-                                />
+                                <div className="qty-widget">
+                                  <button type="button" aria-label="Decrease quantity" onClick={() => updateOrderCreateItem(index, { quantity: Math.max(1, quantity - 1) })}>−</button>
+                                  <span>{quantity}</span>
+                                  <button type="button" aria-label="Increase quantity" onClick={() => updateOrderCreateItem(index, { quantity: quantity + 1 })}>+</button>
+                                </div>
                               </td>
                               <td>{product ? formatMoney(unitPrice, product.currency || storeCurrency) : "—"}</td>
                               <td>{product ? formatMoney(lineTotal, product.currency || storeCurrency) : "—"}</td>
                               <td>
-                                <button
-                                  className="icon-button subtle order-line-remove"
-                                  type="button"
-                                  aria-label={`Remove product line ${index + 1}`}
-                                  onClick={() => removeOrderCreateItem(index)}
-                                  disabled={orderCreateItems.length === 1}
-                                >
+                                <button className="icon-button order-line-remove" type="button" aria-label="Remove product" onClick={() => removeOrderCreateItem(index)}>
                                   <InlineIcon id="i-x" />
                                 </button>
                               </td>
@@ -5150,17 +7540,12 @@ export default function Page() {
                           );
                         }) : (
                           <tr>
-                            <td colSpan="5" className="muted">No products available.</td>
+                            <td colSpan="5" className="muted">Add products using the search bar above.</td>
                           </tr>
                         )}
                       </tbody>
                     </table>
                   </div>
-
-                  <button className="pill-button order-line-add" type="button" onClick={addOrderCreateItem}>
-                    <span className="order-line-add-icon">+</span>
-                    Add product
-                  </button>
                 </section>
               </div>
 
@@ -5182,7 +7567,7 @@ export default function Page() {
         <div className="app-modal-layer app-modal-layer-base">
           <button className="app-modal-backdrop" type="button" aria-label="Close order details" onClick={closeOrderModal} />
           <section
-            className={`panel order-detail-panel order-modal ${orderModalOpen ? "is-open" : "is-hidden"}`}
+            className={`panel order-detail-panel order-modal ${orderModalOpen ? "is-open" : "is-hidden"} ${selectedOrderDetail && deletingOrderIds.includes(selectedOrderDetail.id) ? "order-modal-deleting" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label={selectedOrderDetail ? `Order #${selectedOrderDetail.number}` : "Order details"}
@@ -5207,7 +7592,7 @@ export default function Page() {
                     <button className="icon-button order-header-action-button" type="button" title="Refund" aria-label="Refund" onClick={refundSelectedOrder} disabled={orderMutationLoading}>
                       <InlineIcon id="i-refresh-cw" />
                     </button>
-                    <button className="icon-button order-header-action-button" type="button" title="Contact Customer" aria-label="Contact Customer" onClick={contactSelectedCustomer}>
+                    <button className="icon-button order-header-action-button" type="button" title="Contact Customer" aria-label="Contact Customer" onClick={contactSelectedCustomer} disabled={orderMutationLoading || !customerEmail(selectedOrderDetail)}>
                       <InlineIcon id="i-mail" />
                     </button>
                     <button className="icon-button order-header-action-button" type="button" title="Assign Doctor" aria-label="Assign Doctor" onClick={openDoctorAssignmentPopup} disabled={orderMutationLoading}>
@@ -5265,7 +7650,7 @@ export default function Page() {
                     </div>
                     <div className="detail-list customer-info-grid">
                       <div className="detail-item-card"><strong>Full Name</strong><span className="muted">{customerFullName(selectedOrderDetail)}</span></div>
-                      <div className="detail-item-card"><strong>Email Address</strong><span className="muted">{selectedOrderDetail.billing?.email || "No email on file"}</span></div>
+                      <div className="detail-item-card"><strong>Email Address</strong><span className="muted">{customerSummary(selectedOrderDetail).email}</span></div>
                       <div className="detail-item-card"><strong>Phone Number</strong><span className="muted">{selectedOrderDetail.billing?.phone || "No phone number on file"}</span></div>
                       <div className="detail-item-card"><strong>Delivery Address</strong><span className="muted">{formatAddress(selectedOrderDetail.shipping)}</span></div>
                       <div className="detail-item-card customer-note-card"><strong>Customer Notes</strong><span className="muted">{selectedOrderNote || "No customer note recorded."}</span></div>
@@ -5460,11 +7845,13 @@ export default function Page() {
             <div className="detail-form-grid">
               <label className="detail-field detail-field-wide">
                 <span>Select doctor</span>
+                {orderAssignmentDoctorsQuery.isLoading ? <small className="product-field-note">Loading doctors...</small> : null}
+                {orderAssignmentDoctorsQuery.error ? <small className="product-field-note">Doctor list could not be refreshed. Cached doctors are shown.</small> : null}
                 <div className="select-wrap">
                   <select value={selectedOrderDoctorId} onChange={(event) => setSelectedOrderDoctorId(event.target.value)}>
                     <option value="">Select doctor</option>
-                    {(data.doctors || []).map((doctor) => (
-                      <option key={doctor.user_id} value={doctor.user_id}>{doctor.display_name}</option>
+                    {popupAssignmentDoctors.map((doctor) => (
+                      <option key={doctor.user_id || doctor.id} value={doctor.user_id || doctor.id}>{doctor.display_name}</option>
                     ))}
                   </select>
                 </div>
@@ -5520,7 +7907,7 @@ export default function Page() {
                   <InlineIcon id="i-printer" />
                   {receiptActionLoading === "print" ? "Preparing..." : "Print"}
                 </button>
-                <button className="button-primary receipt-send-button" type="button" onClick={sendPaymentReceipt} disabled={Boolean(receiptActionLoading) || !selectedPaymentReceipt.billing?.email}>
+                <button className="button-primary receipt-send-button" type="button" onClick={sendPaymentReceipt} disabled={Boolean(receiptActionLoading) || !customerEmail(selectedPaymentReceipt)}>
                   <InlineIcon id="i-mail" />
                   {receiptActionLoading === "send" ? "Sending..." : "Send Receipt"}
                 </button>
@@ -5531,7 +7918,7 @@ export default function Page() {
               <div className="mini-stat receipt-stat">
                 <span>Customer</span>
                 <strong>{customerFullName(selectedPaymentReceipt)}</strong>
-                <small>{selectedPaymentReceipt.billing?.email || "No email on file"}</small>
+                <small>{customerSummary(selectedPaymentReceipt).email}</small>
               </div>
               <div className="mini-stat receipt-stat">
                 <span>RX state</span>
@@ -5554,7 +7941,7 @@ export default function Page() {
                   </div>
                 </div>
                 <div className="detail-list receipt-info-grid">
-                  <div className="detail-item-card"><strong>Email</strong><span className="muted">{selectedPaymentReceipt.billing?.email || "No email on file"}</span></div>
+                  <div className="detail-item-card"><strong>Email</strong><span className="muted">{customerSummary(selectedPaymentReceipt).email}</span></div>
                   <div className="detail-item-card"><strong>Phone</strong><span className="muted">{selectedPaymentReceipt.billing?.phone || "No phone number on file"}</span></div>
                   <div className="detail-item-card"><strong>Billing address</strong><span className="muted">{formatAddress(selectedPaymentReceipt.billing)}</span></div>
                   <div className="detail-item-card"><strong>Shipping address</strong><span className="muted">{formatAddress(selectedPaymentReceipt.shipping)}</span></div>
@@ -5622,7 +8009,7 @@ export default function Page() {
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <button className="app-modal-backdrop" type="button" aria-label="Close product editor" onClick={closeProductEditModal} />
-            <section className="detail-section product-editor-popup product-editor-modal" role="dialog" aria-modal="true" aria-label={productEditorMode === "create" ? "Create product" : `Edit ${selectedProductEdit?.name || "product"}`}>
+            <section className={`detail-section product-editor-popup product-editor-modal ${selectedProductEdit && deletingProductIds.includes(selectedProductEdit.id) ? "product-editor-modal-deleting" : ""}`} role="dialog" aria-modal="true" aria-label={productEditorMode === "create" ? "Create product" : `Edit ${selectedProductEdit?.name || "product"}`}>
               <form className="product-editor-form" onSubmit={saveProductEdits}>
                 <input ref={productMediaInputRef} type="file" accept="image/*" multiple hidden onChange={handleProductMediaUpload} />
                 <div className="panel-header stacked-order-popup-header product-editor-header">
@@ -5789,6 +8176,8 @@ export default function Page() {
 
                       {productEditTab === "organization" ? (
                         <div className="product-editor-stack product-editor-stack-inline">
+                          {productEditorCategoriesQuery.isLoading || productEditorTagsQuery.isLoading ? <p className="muted popup-support-copy">Loading taxonomy options...</p> : null}
+                          {productEditorCategoriesQuery.error || productEditorTagsQuery.error ? <p className="muted popup-support-copy">Some taxonomy options could not be loaded.</p> : null}
                           {renderProductTermField("categories", "Category", productCategoryOptions)}
                           {renderProductTermField("tags", "Tags", productTagOptions)}
                           {renderProductTermField("brands", "Brand", productBrandOptions)}
@@ -5845,7 +8234,7 @@ export default function Page() {
           <div className="app-modal-layer app-modal-layer-top is-open">
             <button className="app-modal-backdrop" type="button" aria-label="Close create form" onClick={closeCreateModal} />
             <section className={`detail-section stacked-order-popup create-record-popup ${createModalType === "consultation" ? "consultation-create-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-label={`Create ${createModalType}`}>
-              <form onSubmit={submitGenericCreate}>
+              <form className="create-record-form" onSubmit={submitGenericCreate}>
                 <div className="panel-header stacked-order-popup-header">
                   <div>
                     <p className="section-kicker">Create record</p>
@@ -5856,113 +8245,82 @@ export default function Page() {
 
                 {createModalType === "consultation" ? (
                   <div className="consultation-create-shell">
-                    <aside className="consultation-calendar-panel">
-                      <div className="consultation-calendar-header">
-                        <div>
-                          <p className="section-kicker">Doctor calendar</p>
-                          <h4>{consultationDoctorProfile?.display_name || "Select a doctor"}</h4>
-                        </div>
-                        <div className="consultation-zoom-toggle" role="tablist" aria-label="Calendar zoom">
-                          {["week", "day", "hour"].map((mode) => (
-                            <button
-                              key={mode}
-                              type="button"
-                              className={`pill-button ${consultationCalendarMode === mode ? "active" : ""}`}
-                              onClick={() => setConsultationCalendarMode(mode)}
-                            >
-                              {mode === "week" ? "Week" : mode === "day" ? "Day" : "Hour"}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="consultation-calendar-surface">
-                        {consultationCalendarMode === "week" ? (
-                          <div className="consultation-week-grid">
-                            {consultationCalendarDays.map((day) => {
-                              const dayKey = normalizeDateKey(day);
-                              const dayItems = consultationDoctorAppointments.filter((appointment) => normalizeDateKey(appointment.start_at) === dayKey);
-                              return (
-                                <article className="consultation-day-column" key={dayKey}>
-                                  <div className="consultation-day-head">
-                                    <strong>{formatDayLabel(day)}</strong>
-                                    <span>{dayItems.length} booked</span>
-                                  </div>
-                                  <div className="consultation-day-list">
-                                    {dayItems.length ? dayItems.map((item) => (
-                                      <div className="consultation-event-card" key={item.id}>
-                                        <strong>{formatDate(item.start_at, true)}</strong>
-                                        <span>{patientLabel(item.patient_user_id)}</span>
-                                      </div>
-                                    )) : <div className="consultation-empty-slot">Open</div>}
-                                  </div>
-                                </article>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-
-                        {consultationCalendarMode === "day" ? (
-                          <div className="consultation-day-view">
-                            <div className="consultation-day-head consultation-day-head-sticky">
-                              <strong>{formatDayLabel(consultationCalendarDate)}</strong>
-                              <span>{consultationDayAppointments.length} booked slots</span>
-                            </div>
-                            <div className="consultation-time-grid">
-                              {Array.from({ length: 24 }, (_, hour) => {
-                                const slotItems = consultationDayAppointments.filter((item) => new Date(item.start_at).getHours() === hour);
-                                return (
-                                  <div className="consultation-time-row" key={hour}>
-                                    <span className="consultation-time-label">{formatHourLabel(hour)}</span>
-                                    <div className="consultation-time-content">
-                                      {slotItems.length ? slotItems.map((item) => (
-                                        <div className="consultation-event-card" key={item.id}>
-                                          <strong>{patientLabel(item.patient_user_id)}</strong>
-                                          <span>{formatDate(item.start_at, true)}</span>
-                                        </div>
-                                      )) : <div className="consultation-empty-slot">Available</div>}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ) : null}
-
-                        {consultationCalendarMode === "hour" ? (
-                          <div className="consultation-hour-view">
-                            <div className="consultation-day-head consultation-day-head-sticky">
-                              <strong>Hour view</strong>
-                              <span>{consultationDayAppointments.length} bookings on selected day</span>
-                            </div>
-                            <div className="consultation-hour-grid">
-                              {Array.from({ length: 24 }, (_, hour) => {
-                                const slotItems = consultationDayAppointments.filter((item) => new Date(item.start_at).getHours() === hour);
-                                return (
-                                  <div className="consultation-hour-slot" key={hour}>
-                                    <span>{formatHourLabel(hour)}</span>
-                                    {slotItems.length ? slotItems.map((item) => (
-                                      <article className="consultation-event-card" key={item.id}>
-                                        <strong>{patientLabel(item.patient_user_id)}</strong>
-                                        <span>{formatStatusLabel(item.status)}</span>
-                                      </article>
-                                    )) : <div className="consultation-empty-slot">No booking</div>}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
+                    {consultationCreateDoctorsQuery.isLoading || consultationCreatePatientsQuery.isLoading || consultationCreateAppointmentsQuery.isLoading ? (
+                      <p className="muted popup-support-copy detail-field-wide">Loading consultation dependencies...</p>
+                    ) : null}
+                    {consultationCreateDoctorsQuery.error || consultationCreatePatientsQuery.error || consultationCreateAppointmentsQuery.error ? (
+                      <p className="muted popup-support-copy detail-field-wide">Some consultation dependencies could not be loaded. Existing cached options are shown where available.</p>
+                    ) : null}
+                    <aside className="consultation-calendar-panel consultation-booking-panel">
+                      <BookingCalendarWidget
+                        title={consultationDoctorProfile?.display_name || "Doctor Calendar"}
+                        subtitle="Select the booking day and time slot"
+                        appointments={consultationDoctorAppointments}
+                        selectedDate={consultationBookingDate}
+                        selectedStartAt={consultationCreateForm.startAt}
+                        viewDate={consultationCreateCalendarViewDate}
+                        duration={consultationDuration}
+                        contextualFlow
+                        loading={consultationCreateAppointmentsQuery.isLoading && !consultationCreateAppointmentsQuery.data}
+                        onViewDateChange={setConsultationCreateCalendarViewDate}
+                        onClearDate={clearConsultationBookingDate}
+                        onDateSelect={selectConsultationBookingDate}
+                        onSlotSelect={(dateKey, time) => selectConsultationCalendarSlot(dateKey, time, consultationDuration)}
+                        onDurationChange={(minutes) => {
+                          setConsultationDuration(minutes);
+                          if (consultationCreateForm.startAt) {
+                            setConsultationCreateForm((prev) => ({
+                              ...prev,
+                              endAt: addMinutesToLocalValue(prev.startAt, minutes)
+                            }));
+                          }
+                        }}
+                      />
                     </aside>
 
-                    <div className="consultation-form-panel">
+                    <div className="consultation-form-panel consultation-booking-form-panel">
                       <div className="consultation-doctor-banner">
                         <span>Selected doctor</span>
                         <strong>{consultationDoctorProfile?.display_name || "Choose a doctor"}</strong>
                         <small>{consultationDoctorAppointments.length} bookings visible</small>
                       </div>
                       <div className="detail-form-grid consultation-form-grid">
+                        <label className="detail-field detail-field-wide">
+                          <span>Doctor</span>
+                          <div className="consultation-search-combo">
+                            <input
+                              value={consultationDoctorSearch}
+                              onChange={(event) => {
+                                setConsultationDoctorSearch(event.target.value);
+                                setConsultationCreateForm((prev) => ({ ...prev, doctorUserId: "", startAt: "", endAt: "" }));
+                                setConsultationBookingDate("");
+                              }}
+                              placeholder="Search by doctor name, specialty, or email"
+                              aria-label="Search doctors for consultation"
+                            />
+                            <div className="consultation-search-results">
+                              {consultationCreateDoctorsQuery.isLoading ? <div className="consultation-search-empty">Loading doctors...</div> : null}
+                              {consultationDoctorOptions.length ? consultationDoctorOptions.map((doctor) => {
+                                const doctorId = doctor.user_id || doctor.id;
+                                return (
+                                  <button
+                                    key={doctorId}
+                                    type="button"
+                                    className={`consultation-search-result consultation-strip-result ${String(consultationCreateForm.doctorUserId) === String(doctorId) ? "active" : ""}`}
+                                    onClick={() => selectConsultationDoctor(doctorId, doctor.display_name || doctor.email || `Doctor #${doctorId}`)}
+                                  >
+                                    <span className="consultation-strip-avatar">{getNameInitials(doctor.display_name || doctor.email || `Doctor ${doctorId}`, "DR")}</span>
+                                    <span className="consultation-strip-copy">
+                                      <strong>{doctor.display_name || `Doctor #${doctorId}`}</strong>
+                                      <span>{[doctor.specialty || doctor.specialties?.[0], doctor.email].filter(Boolean).join(" - ") || "Doctor profile"}</span>
+                                    </span>
+                                  </button>
+                                );
+                              }) : <div className="consultation-search-empty">No matching doctors.</div>}
+                            </div>
+                          </div>
+                          <small className="product-field-note">{consultationDoctorProfile ? `Selected: ${consultationDoctorProfile.display_name || "Doctor"} - ${consultationDoctorProfile.email || "No email on file"}` : "Search and choose a doctor to load availability."}</small>
+                        </label>
                         <label className="detail-field detail-field-wide">
                           <span>Patient</span>
                           <div className="consultation-search-combo">
@@ -5975,49 +8333,51 @@ export default function Page() {
                               placeholder="Search by email, username, or name"
                             />
                             <div className="consultation-search-results">
+                              {consultationCreatePatientsQuery.isLoading ? <div className="consultation-search-empty">Loading patients...</div> : null}
                               {consultationVisiblePatientOptions.length ? consultationVisiblePatientOptions.map((option) => (
                                 <button
                                   key={option.id}
                                   type="button"
-                                  className="consultation-search-result"
+                                  className={`consultation-search-result consultation-strip-result ${String(consultationCreateForm.patientUserId) === String(option.id) ? "active" : ""}`}
                                   onClick={() => {
                                     setConsultationCreateForm((prev) => ({ ...prev, patientUserId: String(option.id) }));
                                     setConsultationPatientSearch(option.name || option.label || option.email);
                                   }}
                                 >
-                                  <strong>{option.name || option.label}</strong>
-                                  <span>{option.email}</span>
+                                  <span className="consultation-strip-avatar patient">{getNameInitials(option.name || option.label || option.email || "PT", "PT")}</span>
+                                  <span className="consultation-strip-copy">
+                                    <strong>{option.name || option.label}</strong>
+                                    <span>{option.email}</span>
+                                  </span>
                                 </button>
                               )) : <div className="consultation-search-empty">No matching customers.</div>}
                             </div>
                           </div>
-                          <small className="product-field-note">{consultationSelectedPatient ? `Selected: ${consultationSelectedPatient.name} · ${consultationSelectedPatient.email}` : "Search and choose a patient from the list."}</small>
+                          <small className="product-field-note">{consultationSelectedPatient ? `Selected: ${consultationSelectedPatient.name} - ${consultationSelectedPatient.email}` : "Search and choose a patient from the list."}</small>
                         </label>
-                        <label className="detail-field">
+                        <label className="detail-field consultation-hidden-time-field">
                           <span>Doctor</span>
                           <div className="select-wrap">
                             <select value={consultationCreateForm.doctorUserId} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, doctorUserId: event.target.value }))}>
                               <option value="">Select doctor</option>
-                              {(data.doctors || []).map((doctor) => <option key={doctor.user_id || doctor.id} value={doctor.user_id || doctor.id}>{doctor.display_name}</option>)}
+                              {popupConsultationDoctors.map((doctor) => <option key={doctor.user_id || doctor.id} value={doctor.user_id || doctor.id}>{doctor.display_name}</option>)}
                             </select>
                           </div>
                         </label>
-                        <label className="detail-field">
+                        <label className="detail-field consultation-hidden-time-field">
                           <span>Start time</span>
-                          <input type="datetime-local" value={consultationCreateForm.startAt} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, startAt: event.target.value }))} required />
+                          <input type="datetime-local" value={consultationCreateForm.startAt} readOnly required />
                         </label>
-                        <label className="detail-field">
+                        <label className="detail-field consultation-hidden-time-field">
                           <span>End time</span>
-                          <input type="datetime-local" value={consultationCreateForm.endAt} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, endAt: event.target.value }))} required />
+                          <input type="datetime-local" value={consultationCreateForm.endAt} readOnly required />
                         </label>
                         <label className="detail-field">
                           <span>Type</span>
                           <div className="select-wrap">
                             <select value={consultationCreateForm.type} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, type: event.target.value }))}>
                               <option value="video">Video</option>
-                              <option value="phone">Phone</option>
-                              <option value="in_person">In person</option>
-                              <option value="async_form">Async form</option>
+                              <option value="audio">Audio</option>
                             </select>
                           </div>
                         </label>
@@ -6035,6 +8395,15 @@ export default function Page() {
                           <span>Reason</span>
                           <textarea rows={4} value={consultationCreateForm.reason} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, reason: event.target.value }))} />
                         </label>
+                        <article className="consultation-summary-card detail-field-wide">
+                          <div><span>Selected doctor</span><strong>{consultationDoctorProfile?.display_name || "Not selected"}</strong></div>
+                          <div><span>Selected patient</span><strong>{consultationSelectedPatient?.name || "Not selected"}</strong></div>
+                          <div><span>Date</span><strong>{consultationCreateForm.startAt ? formatDate(consultationCreateForm.startAt) : "Choose a day"}</strong></div>
+                          <div><span>Time</span><strong>{consultationCreateForm.startAt ? `${localTimeKey(consultationCreateForm.startAt)} - ${consultationDuration} min` : "Choose a slot"}</strong></div>
+                          <div><span>Type</span><strong>{formatStatusLabel(consultationCreateForm.type)}</strong></div>
+                          <div><span>Status</span><strong>{formatStatusLabel(consultationCreateForm.status)}</strong></div>
+                        </article>
+                        {!consultationCanSubmit ? <p className="consultation-validation-message detail-field-wide">Select a doctor, patient, booking day, booking time, and consultation type to continue.</p> : null}
                       </div>
                     </div>
                   </div>
@@ -6068,6 +8437,16 @@ export default function Page() {
                             </div>
                           </label>
                           <label className="detail-field">
+                            <span>Pricing tier</span>
+                            <div className="select-wrap">
+                              <select value={doctorCreateForm.pricingTier} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, pricingTier: event.target.value }))}>
+                                {DOCTOR_PRICING_TIER_OPTIONS.map((tier) => (
+                                  <option key={tier.value} value={tier.value}>{tier.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </label>
+                          <label className="detail-field">
                             <span>Specialty</span>
                             <input value={doctorCreateForm.specialty} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, specialty: event.target.value }))} />
                           </label>
@@ -6075,20 +8454,33 @@ export default function Page() {
                             <span>Location</span>
                             <input value={doctorCreateForm.location} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, location: event.target.value }))} />
                           </label>
-                          <label className="detail-field">
+                          <label className="detail-field detail-field-wide">
                             <span>Product categories</span>
-                            <select
-                              multiple
-                              value={doctorCreateForm.productCategoryIds}
-                              onChange={(event) => setDoctorCreateForm((prev) => ({
-                                ...prev,
-                                productCategoryIds: Array.from(event.target.selectedOptions, (option) => option.value)
-                              }))}
-                            >
-                              {(data.productCategories || []).map((category) => (
-                                <option key={category.id} value={category.id}>{category.name}</option>
-                              ))}
-                            </select>
+                            {doctorCreateCategoriesQuery.isLoading ? <small className="product-field-note">Loading categories...</small> : null}
+                            {doctorCreateCategoriesQuery.error ? <small className="product-field-note">Category options could not be refreshed.</small> : null}
+                            <div className="assignment-search-field">
+                              <div className="product-term-chips">
+                                {selectedDoctorCreateCategories.length ? selectedDoctorCreateCategories.map((category) => (
+                                  <button className="product-chip removable-chip" key={category.id} type="button" aria-label={`Remove ${category.name}`} onClick={() => removeDoctorCreateCategory(category.id)}>
+                                    {category.name} <InlineIcon id="i-x" />
+                                  </button>
+                                )) : <span className="muted">No products assigned yet.</span>}
+                              </div>
+                              <input
+                                value={doctorCreateCategorySearch}
+                                onChange={(event) => setDoctorCreateCategorySearch(event.target.value)}
+                                placeholder="Search product categories to assign"
+                              />
+                              {doctorCreateCategorySearch ? (
+                                <div className="product-term-options assignment-search-results">
+                                  {availableDoctorCreateCategories.length ? availableDoctorCreateCategories.map((category) => (
+                                    <button className="product-term-option" type="button" key={category.id} onClick={() => addDoctorCreateCategory(category.id)}>
+                                      {category.name}
+                                    </button>
+                                  )) : <div className="consultation-search-empty">No matching categories.</div>}
+                                </div>
+                              ) : null}
+                            </div>
                           </label>
                           <label className="detail-field detail-field-wide">
                             <span>Bio</span>
@@ -6123,7 +8515,7 @@ export default function Page() {
                 {createFeedback ? <p className="muted popup-support-copy">{createFeedback}</p> : null}
                 <div className="stacked-order-popup-actions">
                   <button className="pill-button" type="button" onClick={closeCreateModal}>Cancel</button>
-                  <button className="button-primary" type="submit" disabled={createLoading}>{createLoading ? "Submitting..." : "Create"}</button>
+                  <button className="button-primary" type="submit" disabled={createLoading || !consultationCanSubmit}>{createLoading ? "Submitting..." : "Create"}</button>
                 </div>
               </form>
             </section>
@@ -6222,10 +8614,28 @@ export default function Page() {
                     <div className="detail-block"><span>Specialty</span><strong>{selectedDoctorProfile.specialty || "General practice"}</strong></div>
                     <div className="detail-block"><span>Location</span><strong>{selectedDoctorProfile.location || "Nevari network"}</strong></div>
                     <div className="detail-block"><span>Status</span><strong>{formatStatusLabel(getDoctorStatus(selectedDoctorProfile))}</strong></div>
+                    <div className="detail-block">
+                      <span>Pricing tier</span>
+                      <div className="select-wrap doctor-tier-select">
+                        <select
+                          value={normalizeDoctorTierOption(selectedDoctorProfile.pricing_tier || selectedDoctorProfile.pricingTier || "specialist")}
+                          onChange={(event) => updateDoctorPricingTier(selectedDoctorProfile, event.target.value)}
+                          disabled={doctorDetailTierLoading}
+                        >
+                          {DOCTOR_PRICING_TIER_OPTIONS.map((tier) => (
+                            <option key={tier.value} value={tier.value}>{tier.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                     <div className="detail-block customer-detail-wide"><span>Product categories</span><strong>{(selectedDoctorProfile.product_categories || []).map((item) => item.name).join(", ") || "No categories assigned"}</strong></div>
                   </div>
                   <div className="detail-section receipt-panel"><div className="panel-header"><div><p className="section-kicker">Linked patients</p><h3>Contacts</h3></div></div>{selectedDoctorPatients.length ? selectedDoctorPatients.map((patient) => <div className="signal-row" key={patient.id}><div><strong>{patient.name}</strong><span>{patient.email}</span></div><button className="pill-button" type="button">Unlink</button></div>) : <div className="muted">No linked patients found.</div>}</div>
-                  <div className="toolbar"><button className="pill-button" type="button">Reset password</button><button className="pill-button danger" type="button">Suspend account</button><button className="pill-button" type="button">Other admin actions</button></div>
+                  <div className="toolbar doctor-detail-actions">
+                    <button className="pill-button" type="button" onClick={resetSelectedDoctorPassword} disabled={doctorDetailTierLoading}>Reset password</button>
+                    <button className="pill-button danger" type="button" onClick={suspendSelectedDoctor} disabled={doctorDetailTierLoading}>Suspend doctor</button>
+                    <button className="pill-button danger" type="button" onClick={deleteSelectedDoctor} disabled={doctorDetailTierLoading}>Delete doctor</button>
+                  </div>
                 </div>
               ) : (
                 <div className="history-list">
@@ -6384,6 +8794,13 @@ export default function Page() {
               </div>
             </section>
           </div>
+        </div>
+      ) : null}
+
+      {snackbar ? (
+        <div className={`snackbar ${snackbar.tone || "info"}`} role="status" aria-live="polite">
+          <strong className="snackbar-title">{snackbar.tone === "success" ? "Success" : snackbar.tone === "error" ? "Error" : snackbar.tone === "warning" ? "Warning" : "Notice"}</strong>
+          <span className="snackbar-message">{snackbar.message}</span>
         </div>
       ) : null}
 

@@ -4,6 +4,7 @@ import { FRONTENDS } from "./frontend-config";
 import { createPairingRequiredError, isPairingRequiredPayload, resetToPairingState } from "./role-session";
 
 export const STORAGE_KEY = FRONTENDS.patient.storageKey;
+export const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
 export const DEFAULT_SESSION = {
   baseUrl: "",
   frontendType: FRONTENDS.patient.type,
@@ -116,6 +117,41 @@ export function describeDashboardFetchError(error) {
     return "The pharmacy server could not be reached. Check connectivity and WordPress availability.";
   }
   return message || "Request failed.";
+}
+
+export function buildDashboardCacheKey(frontend, scope = "dashboard", userId = "anonymous") {
+  return `nevari:${frontend}:${scope}:${userId}`;
+}
+
+export function readDashboardCache(key, maxAgeMs = DASHBOARD_CACHE_TTL_MS) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(key) || "null");
+    if (!cached?.cachedAt || !cached?.data) {
+      return null;
+    }
+    if (maxAgeMs > 0 && (Date.now() - Number(cached.cachedAt)) > maxAgeMs) {
+      window.localStorage.removeItem(key);
+      return null;
+    }
+    return cached.data;
+  } catch {
+    return null;
+  }
+}
+
+export function writeDashboardCache(key, data) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, JSON.stringify({
+      cachedAt: Date.now(),
+      data
+    }));
+  } catch {}
 }
 
 export function money(value, currency = "USD") {

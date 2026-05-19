@@ -1,6 +1,7 @@
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
 const UPSTREAM_RETRY_COUNT = 1;
+const inflightGetRequests = new Map();
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -98,7 +99,7 @@ async function proxyRequest(request, { params } = {}) {
 
   let response;
   try {
-    response = await fetchWithRetry(targetUrl, init, request.method);
+    response = await fetchWithDedupe(targetUrl, init, request.method, request.headers.get("authorization"));
   } catch (error) {
     return buildTransportErrorResponse(error, targetUrl);
   }
@@ -151,6 +152,24 @@ async function proxyRequest(request, { params } = {}) {
     statusText: response.statusText,
     headers: responseHeaders
   });
+}
+
+async function fetchWithDedupe(targetUrl, init, method, authorization = "") {
+  const normalizedMethod = String(method || "GET").toUpperCase();
+  if (!["GET", "HEAD"].includes(normalizedMethod)) {
+    return fetchWithRetry(targetUrl, init, method);
+  }
+
+  const dedupeKey = `${normalizedMethod}:${targetUrl.toString()}:${authorization || ""}`;
+  if (inflightGetRequests.has(dedupeKey)) {
+    return inflightGetRequests.get(dedupeKey);
+  }
+
+  const requestPromise = fetchWithRetry(targetUrl, init, method).finally(() => {
+    inflightGetRequests.delete(dedupeKey);
+  });
+  inflightGetRequests.set(dedupeKey, requestPromise);
+  return requestPromise;
 }
 
 async function fetchWithRetry(targetUrl, init, method) {

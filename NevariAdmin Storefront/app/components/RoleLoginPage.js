@@ -22,6 +22,7 @@ export default function RoleLoginPage({ config }) {
   useEffect(() => {
     const next = loadSession(config);
     setSession(next);
+    router.prefetch(config.dashboardPath);
     if (!next.paired) {
       router.replace(config.setupPath || FRONTENDS.admin.setupPath);
     } else if (next.refreshToken) {
@@ -79,6 +80,7 @@ export default function RoleLoginPage({ config }) {
       user: payload.data.user
     };
     saveSession(config, next);
+    router.prefetch(config.dashboardPath);
     router.replace(config.dashboardPath);
   }
 
@@ -116,6 +118,7 @@ export default function RoleLoginPage({ config }) {
       user: payload.data.user
     };
     saveSession(config, next);
+    router.prefetch(config.dashboardPath);
     router.replace(config.dashboardPath);
   }
 
