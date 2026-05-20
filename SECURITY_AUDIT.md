@@ -1,0 +1,520 @@
+# Nevari Pharmacy Core - Security Vulnerability Audit Report
+
+**Plugin:** Nevari Pharmacy Core  
+**Version:** 0.1.0  
+**Scan Date:** May 13, 2026
+
+---
+
+## Executive Summary
+
+This WordPress plugin contains **multiple critical and high-severity security vulnerabilities** that could lead to unauthorized access, data exposure, SQL injection, and privilege escalation. The plugin requires significant security improvements before production use.
+
+**Risk Level:** 🔴 **CRITICAL**
+
+---
+
+## Critical Vulnerabilities
+
+### 1. **Missing CSRF (Cross-Site Request Forgery) Protection** ⚠️ CRITICAL
+
+**Location:** REST API endpoints throughout `class-nevari-rest.php`
+
+**Issue:** REST API endpoints accept POST/PUT/DELETE requests without nonce verification or CSRF tokens.
+
+**Example:**
+```php
+register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)', [
+    'methods' => WP_REST_Server::EDITABLE,
+    'callback' => [__CLASS__, 'orders_update'],
+    'permission_callback' => [__CLASS__, 'store_admin_required'],
+]);
+```
+
+**Risk:** Attackers can perform state-changing operations on behalf of authenticated users via malicious websites.
+
+**Recommendation:** 
+- Add `rest_ensure_request_valid` middleware
+- Use nonce verification: `check_ajax_referer()` or implement OAuth2
+- Use `_wpnonce` parameters in requests
+
+---
+
+### 2. **Insecure Direct Object Reference (IDOR)** ⚠️ CRITICAL
+
+**Location:** `class-nevari-rest.php`, lines 400-450 (orders_action, doctors_update, etc.)
+
+**Issue:** Authorization checks are insufficient. The `doctor_or_admin_required()` permission callback allows doctors to modify ANY doctor's profile without verifying ownership.
+
+**Example - Vulnerable Code:**
+```php
+public static function doctors_update(WP_REST_Request $request): WP_REST_Response {
+    $doctor_id = (int) $request['id'];
+    if (!Nevari_Helpers::is_store_admin() && get_current_user_id() !== $doctor_id) {
+        return Nevari_Helpers::error('forbidden', 'You can update only your own doctor profile.', 403);
+    }
+    // This check is good, but...
+}
+```
+
+**Problem:** The permission callback uses `doctor_or_admin_required()` which returns TRUE for any doctor, but the function only verifies ownership INSIDE the callback. A doctor could bypass this by requesting another doctor's endpoint directly.
+
+**Risk:** Doctors can view/modify other doctors' data, appointments, and patient information.
+
+**Recommendation:**
+```php
+// Better approach:
+'permission_callback' => static function (WP_REST_Request $request) {
+    $doctor_id = (int) $request['id'];
+    if (!Nevari_Helpers::is_store_admin() && get_current_user_id() !== $doctor_id) {
+        return false;
+    }
+    return Nevari_Helpers::is_doctor() || Nevari_Helpers::is_store_admin();
+},
+```
+
+---
+
+### 3. **SQL Injection via Table Name** ⚠️ CRITICAL
+
+**Location:** `class-nevari-helpers.php`, line ~18-20
+
+**Issue:** The `table()` function concatenates table names without escaping:
+
+```php
+public static function table(string $name): string {
+    global $wpdb;
+    return $wpdb->prefix . 'nevari_' . $name;  // Direct concatenation
+}
+```
+
+While this is used with `$wpdb->prepare()`, if any user input reaches this function, it could cause SQL injection.
+
+**Location:** `class-nevari-audit.php`, line ~200
+```php
+$sql = "SELECT * FROM {$table} WHERE {$where_sql} ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d";
+```
+
+**Risk:** Attacker could inject SQL commands through table names.
+
+**Recommendation:**
+```php
+public static function table(string $name): string {
+    global $wpdb;
+    $safe_name = preg_replace('/[^a-z0-9_-]/i', '', $name);
+    return $wpdb->prefix . 'nevari_' . $safe_name;
+}
+```
+
+---
+
+## High-Severity Vulnerabilities
+
+### 4. **Weak JWT Secret Generation** ⚠️ HIGH
+
+**Location:** `class-nevari-helpers.php`, lines ~60-70
+
+**Issue:** JWT secret is built from WordPress authentication keys that may be weak or reused:
+
+```php
+public static function jwt_secret(): string {
+    $parts = [];
+    foreach (['AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY'] as $constant) {
+        if (defined($constant)) {
+            $parts[] = constant($constant);
+        }
+    }
+    $parts[] = site_url();
+    return hash('sha256', implode('|', $parts));
+}
+```
+
+**Risk:** 
+- WordPress keys might be generated automatically by hosts with weak entropy
+- If any key is compromised, JWT tokens can be forged
+- No rotation mechanism exists
+
+**Recommendation:**
+```php
+// Generate a proper secret on activation
+public static function jwt_secret(): string {
+    $secret = get_option('nevari_jwt_secret');
+    if (!$secret) {
+        $secret = bin2hex(random_bytes(32));
+        update_option('nevari_jwt_secret', $secret);
+    }
+    return $secret;
+}
+```
+
+---
+
+### 5. **Authentication Bypass via Refresh Token** ⚠️ HIGH
+
+**Location:** `class-nevari-auth.php`, line ~110
+
+**Issue:** Refresh token validation only checks the hash, but multiple refresh tokens could be issued for the same session without proper session tracking:
+
+```php
+$row = $wpdb->get_row($wpdb->prepare(
+    "SELECT * FROM {$table} WHERE token_hash = %s AND revoked_at IS NULL AND expires_at > %s LIMIT 1",
+    $hash,
+    $now
+));
+```
+
+**Risk:** 
+- No device/session fingerprinting
+- No rate limiting on refresh attempts
+- Old tokens aren't invalidated on logout (only marked revoked)
+
+**Recommendation:**
+- Add device/IP fingerprinting
+- Implement rate limiting
+- Revoke all refresh tokens on logout: `UPDATE ... WHERE user_id = %d`
+
+---
+
+### 6. **Insufficient Prescription Access Control** ⚠️ HIGH
+
+**Location:** `class-nevari-helpers.php` (missing implementation check)
+
+**Issue:** The `can_view_prescription()` function is called but its implementation is not fully reviewed. Similar IDOR issues likely exist for prescriptions.
+
+**Risk:** Patients could access other patients' prescriptions; doctors could access any prescription.
+
+**Recommendation:**
+```php
+public static function can_view_prescription($prescription): bool {
+    $user_id = get_current_user_id();
+    
+    if (Nevari_Helpers::is_store_admin()) {
+        return true;
+    }
+    
+    if (Nevari_Helpers::is_patient()) {
+        return (int)$prescription->patient_user_id === $user_id;
+    }
+    
+    if (Nevari_Helpers::is_doctor()) {
+        return (int)$prescription->assigned_doctor_user_id === $user_id;
+    }
+    
+    return false;
+}
+```
+
+---
+
+### 7. **No Rate Limiting on Authentication Endpoints** ⚠️ HIGH
+
+**Location:** `class-nevari-auth.php`, lines 60-100
+
+**Issue:** Login and refresh endpoints have no rate limiting:
+
+```php
+public static function login(WP_REST_Request $request): WP_REST_Response {
+    // No rate limit check
+    $username = isset($params['username']) ? sanitize_text_field((string) $params['username']) : '';
+    $password = isset($params['password']) ? (string) $params['password'] : '';
+    // ...
+    $user = wp_authenticate($username, $password);
+}
+```
+
+**Risk:** Brute force attacks, credential stuffing attacks.
+
+**Recommendation:**
+```php
+// Add rate limiting
+private static function check_rate_limit(string $key, int $max = 5, int $window = 300): bool {
+    $transient = 'nevari_rate_limit_' . md5($key);
+    $count = get_transient($transient) ?? 0;
+    
+    if ($count >= $max) {
+        return false;
+    }
+    
+    set_transient($transient, $count + 1, $window);
+    return true;
+}
+```
+
+---
+
+### 8. **Sensitive Data in Audit Logs** ⚠️ HIGH
+
+**Location:** `class-nevari-audit.php`, line ~55
+
+**Issue:** Audit logs store sensitive metadata without sanitization:
+
+```php
+'metadata' => isset($args['metadata']) ? Nevari_Helpers::json_encode_safe($args['metadata']) : null,
+```
+
+**Risk:** 
+- Failed login attempts store usernames (enumeration)
+- Sensitive patient data could be logged
+- Audit logs are accessible to store admins
+
+**Example:**
+```php
+Nevari_Audit::log('security', 'nevari', 'auth.login_failed', 'error', [
+    'severity' => 'warning',
+    'error_code' => 'invalid_credentials',
+    'message' => 'API login failed.',
+    'metadata' => ['username' => $username],  // ⚠️ Username exposed
+]);
+```
+
+**Recommendation:**
+```php
+// Don't log usernames, use user ID or hash
+'metadata' => ['username_hash' => hash('sha256', $username)],
+```
+
+---
+
+## Medium-Severity Vulnerabilities
+
+### 9. **No Input Validation on Email Templates** ⚠️ MEDIUM
+
+**Location:** `class-nevari-emails.php`, lines 40-60
+
+**Issue:** Email templates use basic variable replacement without validating template syntax:
+
+```php
+foreach ($variables as $key => $value) {
+    if (is_scalar($value) || $value === null) {
+        $safe_html = esc_html((string) $value);
+        // ...
+        $body_html = str_replace('{{' . $key . '}}', $safe_html, $body_html);
+    }
+}
+```
+
+**Risk:** Template injection attacks if `$variables` contains malicious keys.
+
+**Recommendation:**
+```php
+// Validate variable keys
+foreach ($variables as $key => $value) {
+    if (!preg_match('/^[a-z_][a-z0-9_]*$/i', $key)) {
+        continue;  // Skip invalid keys
+    }
+    // ... rest of code
+}
+```
+
+---
+
+### 10. **Incomplete Authorization in Products Endpoint** ⚠️ MEDIUM
+
+**Location:** `class-nevari-rest.php`, line ~600-650
+
+**Issue:** Product visibility checks are incomplete:
+
+```php
+if (!Nevari_Helpers::is_store_admin() && Nevari_Helpers::bool_param(get_post_meta($product->get_id(), '_nevari_restricted_visibility', true))) {
+    return Nevari_Helpers::error('product_not_found', 'Product not found.', 404);
+}
+```
+
+This only hides restricted products from non-admins but doesn't prevent enumeration.
+
+**Risk:** Information disclosure of product IDs.
+
+---
+
+### 11. **No Request Size Limits** ⚠️ MEDIUM
+
+**Location:** All REST endpoints
+
+**Issue:** No validation of request payload size or JSON depth.
+
+**Risk:** DoS attacks via large payloads, XXE in JSON parsers.
+
+**Recommendation:**
+```php
+// Add to all endpoints
+$params = Nevari_Helpers::get_json_params($request);
+if (strlen(wp_json_encode($params)) > 1000000) {  // 1MB limit
+    return Nevari_Helpers::error('payload_too_large', 'Request payload too large.', 413);
+}
+```
+
+---
+
+### 12. **Missing Verification for Doctor Assignment** ⚠️ MEDIUM
+
+**Location:** `class-nevari-rest.php` (prescriptions handling)
+
+**Issue:** When assigning prescriptions to doctors, there's no verification that the doctor is qualified or accepting new patients.
+
+**Recommendation:**
+```php
+$doctor = get_user_by('id', $doctor_id);
+if (!$doctor || !in_array('doctor', (array) $doctor->roles)) {
+    return Nevari_Helpers::error('invalid_doctor', 'Doctor not found.', 404);
+}
+
+$settings = self::get_doctor_settings($doctor_id);
+if (!$settings['accepts_new_patients']) {
+    return Nevari_Helpers::error('doctor_unavailable', 'Doctor is not accepting new patients.', 409);
+}
+```
+
+---
+
+### 13. **No Expiration on Verification Codes** ⚠️ MEDIUM
+
+**Location:** Audit logs show password reset but no code expiration tracking.
+
+**Issue:** If 2FA or email verification is implemented, codes need expiration.
+
+**Recommendation:**
+- Store verification codes with timestamp
+- Expire codes after 15 minutes
+- Invalidate after 3 failed attempts
+
+---
+
+## Low-Severity Vulnerabilities & Best Practices
+
+### 14. **Information Disclosure in Error Messages** ⚠️ LOW
+
+Database errors might be exposed in debug mode.
+
+**Recommendation:**
+```php
+if (false === $result && defined('WP_DEBUG') && WP_DEBUG) {
+    error_log('Nevari audit insert failed: ' . $wpdb->last_error);
+    return Nevari_Helpers::error('database_error', 'Internal server error.', 500);
+}
+```
+
+---
+
+### 15. **Missing Security Headers** ⚠️ LOW
+
+No security headers configured for REST API.
+
+**Recommendation:**
+```php
+add_action('rest_api_init', function() {
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: DENY');
+    header('X-XSS-Protection: 1; mode=block');
+    header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+});
+```
+
+---
+
+### 16. **No API Versioning** ⚠️ LOW
+
+Current API is `nevari/v1` but no backward compatibility strategy.
+
+**Recommendation:**
+- Document API deprecation timelines
+- Support multiple versions
+- Plan for v2 API with breaking changes
+
+---
+
+### 17. **Missing Audit Trail for Sensitive Operations** ⚠️ LOW
+
+Some sensitive operations (prescription creation, doctor assignment) may not be fully logged.
+
+**Recommendation:**
+- Log all CRUD operations on sensitive data
+- Include request context (IP, user agent)
+- Encrypt sensitive audit log data
+
+---
+
+## Recommended Fixes Priority
+
+### 🔴 Immediate (Before Production)
+1. Add CSRF protection to all state-changing endpoints
+2. Fix IDOR vulnerabilities in doctors and prescriptions endpoints
+3. Implement proper JWT secret storage
+4. Add rate limiting to authentication
+5. Secure table name handling
+
+### 🟡 High Priority (Within 1 week)
+6. Improve refresh token security
+7. Add request size limits
+8. Enhance permission checks for prescriptions
+9. Remove sensitive data from audit logs
+10. Add security headers
+
+### 🟢 Medium Priority (Within 1 month)
+11. Add input validation for email templates
+12. Implement doctor verification for assignments
+13. Add API versioning strategy
+14. Enhanced logging for sensitive operations
+
+---
+
+## Additional Security Recommendations
+
+### Database Security
+- Use strong passwords for WordPress user accounts
+- Implement proper database backup procedures
+- Consider encrypting sensitive fields (SSNs, prescriptions data)
+
+### API Security
+- Implement API key/Secret pair for programmatic access
+- Add request signing with HMAC
+- Consider implementing OAuth2 for third-party integrations
+- Add webhook signing for external integrations
+
+### Deployment Security
+- Use HTTPS only (enforce via `force_ssl_admin`)
+- Keep WordPress and all plugins updated
+- Regular security audits and penetration testing
+- Implement WAF (Web Application Firewall)
+- Enable WordPress security logging
+
+### Code Quality
+- Implement automated security scanning in CI/CD
+- Code review process for all changes
+- SAST (Static Application Security Testing)
+- Dependency scanning for vulnerabilities
+
+---
+
+## Testing Recommendations
+
+### Security Testing
+- OWASP Top 10 testing
+- JWT token manipulation tests
+- Authorization bypass attempts
+- SQL injection tests
+- XSS payload testing
+- CSRF attack simulation
+
+### Load Testing
+- Rate limiting verification
+- DoS resistance testing
+- Database connection pool limits
+
+---
+
+## Conclusion
+
+This plugin requires **significant security hardening** before it can be safely used in a production environment, especially given the sensitive nature of healthcare data (prescriptions, patient information). 
+
+**Do not deploy to production** without addressing at least the **Critical** and **High-severity** vulnerabilities listed above.
+
+Consider engaging professional security consultants for:
+- Full penetration testing
+- HIPAA compliance assessment (if handling PHI)
+- Security code review
+- Compliance auditing
+
+---
+
+**Report Generated:** May 13, 2026  
+**Severity Rating:** 🔴 CRITICAL - Production Deployment NOT RECOMMENDED

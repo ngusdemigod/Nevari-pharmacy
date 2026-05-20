@@ -1,0 +1,2492 @@
+
+# Nevari Pharmacy Consultation & Prescription Management Architecture
+
+## 0. Executive Architecture Summary
+
+This system uses **Next.js 14+ with TypeScript** as the primary dashboard UI and **WordPress + WooCommerce** as the commerce, identity, product, order, and payment backend.
+
+A custom WordPress plugin, referred to here as **Nevari Pharmacy Core**, provides:
+
+```text
+Next.js Dashboard
+      |
+      | HTTPS / REST / JWT
+      v
+WordPress REST API
+      |
+      v
+Nevari Pharmacy Core Plugin
+      |
+      |-- WooCommerce products, orders, payments
+      |-- Custom consultation system
+      |-- Prescription management
+      |-- Email templates and logs
+      |-- Audit logging
+      |-- Role-based access control
+```
+
+The plugin should avoid replacing WooCommerce functionality. Instead, it should extend WooCommerce where appropriate and use custom tables for pharmacy-specific workflows such as appointments, prescription assignment, email logs, and audit logs.
+
+---
+
+# 1. Plugin Architecture & Database Schema
+
+## 1.1 Plugin Module Layout
+
+Recommended plugin name:
+
+```text
+nevari-pharmacy-core/
+```
+
+Suggested structure:
+
+```text
+nevari-pharmacy-core/
+├── nevari-pharmacy-core.php
+├── composer.json
+├── includes/
+│   ├── Core/
+│   │   ├── Plugin.php
+│   │   ├── Activator.php
+│   │   ├── Deactivator.php
+│   │   ├── Migrations.php
+│   │   └── Capabilities.php
+│   │
+│   ├── Auth/
+│   │   ├── JwtService.php
+│   │   ├── RefreshTokenRepository.php
+│   │   └── AuthController.php
+│   │
+│   ├── Rest/
+│   │   ├── Routes.php
+│   │   ├── Controllers/
+│   │   │   ├── OrdersController.php
+│   │   │   ├── ProductsController.php
+│   │   │   ├── DoctorsController.php
+│   │   │   ├── AppointmentsController.php
+│   │   │   ├── PrescriptionsController.php
+│   │   │   ├── EmailsController.php
+│   │   │   ├── DashboardController.php
+│   │   │   └── AuditLogsController.php
+│   │   └── Middleware/
+│   │       ├── PermissionGuard.php
+│   │       └── RequestValidator.php
+│   │
+│   ├── Doctors/
+│   ├── Appointments/
+│   ├── Prescriptions/
+│   ├── Emails/
+│   ├── Products/
+│   ├── Woo/
+│   ├── Audit/
+│   └── Admin/
+│       ├── AdminMenu.php
+│       └── AuditLogsPage.php
+│
+├── assets/
+│   ├── admin.css
+│   └── admin.js
+│
+└── templates/
+    └── emails/
+```
+
+---
+
+## 1.2 Data Ownership Model
+
+Use WooCommerce native data for commerce. Use custom tables for workflow-heavy pharmacy operations.
+
+| Domain                        |                                              Storage Strategy | Reason                                            |
+| ----------------------------- | ------------------------------------------------------------: | ------------------------------------------------- |
+| Users                         |                                               WordPress users | Native authentication, roles, capabilities        |
+| Patients                      |                           WordPress users with `patient` role | Can also be WooCommerce customers                 |
+| Doctors                       | WordPress users with `doctor` role + doctor profile CPT/table | Need role-based login plus searchable profile     |
+| Store admins                  |                       WordPress users with `store_admin` role | Custom operational role                           |
+| Products                      |                                          WooCommerce products | Native catalog, stock, pricing, categories        |
+| Product categories/tags       |                                        WooCommerce taxonomies | Native dashboard compatibility                    |
+| Orders                        |                                            WooCommerce orders | Payments, statuses, refunds, emails               |
+| Prescription requirement flag |                                      WooCommerce product meta | Extends product catalog                           |
+| Appointments                  |                                                  Custom table | High-volume querying, calendar performance        |
+| Prescriptions                 |                                                 Custom tables | Complex lifecycle, item-level product links       |
+| Email templates               |                                                  Custom table | Fast rendering, versioning, API-driven management |
+| Email logs                    |                                                  Custom table | Searchable delivery/audit history                 |
+| Audit logs                    |                                                  Custom table | High-volume, append-only logging                  |
+| Custom roles                  |                                  WordPress roles/capabilities | Native WordPress permission system                |
+
+---
+
+## 1.3 Custom Roles
+
+Create these roles on plugin activation:
+
+```php
+add_role('patient', 'Patient', [
+    'read' => true,
+    'nevari_read_own_profile' => true,
+    'nevari_read_own_orders' => true,
+    'nevari_read_own_prescriptions' => true,
+    'nevari_create_appointment' => true,
+]);
+
+add_role('doctor', 'Doctor', [
+    'read' => true,
+    'nevari_read_assigned_patients' => true,
+    'nevari_read_assigned_appointments' => true,
+    'nevari_update_assigned_appointments' => true,
+    'nevari_create_prescription' => true,
+    'nevari_update_own_prescription' => true,
+]);
+
+add_role('store_admin', 'Store Admin', [
+    'read' => true,
+    'manage_woocommerce' => true,
+    'edit_products' => true,
+    'edit_shop_orders' => true,
+    'nevari_manage_doctors' => true,
+    'nevari_manage_appointments' => true,
+    'nevari_manage_prescriptions' => true,
+    'nevari_manage_email_templates' => true,
+    'nevari_read_email_logs' => true,
+    'nevari_read_audit_logs' => true,
+]);
+```
+
+Administrators should automatically receive all `nevari_*` capabilities.
+
+---
+
+## 1.4 Custom Post Types
+
+### `nevari_doctor_profile`
+
+Stores public-facing doctor profile content while the actual doctor account remains a WordPress user.
+
+```php
+register_post_type('nevari_doctor_profile', [
+    'label' => 'Doctor Profiles',
+    'public' => false,
+    'show_ui' => true,
+    'show_in_rest' => false,
+    'supports' => ['title', 'editor', 'thumbnail'],
+    'capability_type' => 'post',
+]);
+```
+
+Recommended meta fields:
+
+| Meta Key                     |    Type | Description                  |
+| ---------------------------- | ------: | ---------------------------- |
+| `_nevari_doctor_user_id`     | integer | Linked WordPress user        |
+| `_nevari_license_number`     |  string | Medical license              |
+| `_nevari_npi_number`         |  string | Optional provider identifier |
+| `_nevari_bio_short`          |  string | Card summary                 |
+| `_nevari_years_experience`   | integer | Display/reporting            |
+| `_nevari_consultation_fee`   | decimal | Optional                     |
+| `_nevari_accepting_patients` | boolean | Availability flag            |
+
+---
+
+## 1.5 Custom Taxonomies
+
+### For Doctors
+
+| Taxonomy                  | Attached To             | Purpose                                   |
+| ------------------------- | ----------------------- | ----------------------------------------- |
+| `nevari_doctor_specialty` | `nevari_doctor_profile` | Cardiology, dermatology, general practice |
+| `nevari_doctor_language`  | `nevari_doctor_profile` | English, Spanish, Arabic                  |
+| `nevari_doctor_location`  | `nevari_doctor_profile` | Clinic/region grouping                    |
+
+### For Appointments
+
+Appointments should be stored in custom tables, but controlled values can still be represented as enums or lookup tables. Avoid using WordPress taxonomies for high-volume appointment filtering.
+
+Recommended enum-style values:
+
+```text
+appointment_type:
+- video
+- phone
+- in_person
+- async_form
+
+appointment_status:
+- requested
+- confirmed
+- checked_in
+- completed
+- cancelled
+- no_show
+```
+
+### For Products
+
+Use WooCommerce native taxonomies:
+
+```text
+product_cat
+product_tag
+```
+
+Add a custom badge taxonomy only if badges need flexible management:
+
+```text
+nevari_product_badge:
+- otc
+- prescription_needed
+- consultation_required
+- controlled_item
+```
+
+For strict business rules, use product meta instead of only taxonomy labels.
+
+---
+
+# 2. Database Schema
+
+## 2.1 Doctor Settings Table
+
+Doctor users exist in `wp_users`. This table stores operational settings that do not belong in post meta.
+
+```sql
+CREATE TABLE wp_nevari_doctor_settings (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    doctor_user_id BIGINT UNSIGNED NOT NULL,
+    profile_post_id BIGINT UNSIGNED NULL,
+    license_number VARCHAR(100) NULL,
+    default_appointment_duration INT UNSIGNED NOT NULL DEFAULT 30,
+    timezone VARCHAR(100) NOT NULL DEFAULT 'UTC',
+    accepts_new_patients TINYINT(1) NOT NULL DEFAULT 1,
+    telehealth_enabled TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY doctor_user_id (doctor_user_id),
+    KEY profile_post_id (profile_post_id)
+);
+```
+
+---
+
+## 2.2 Patient-Doctor Relationship Table
+
+Used to determine whether a doctor can see a patient’s data.
+
+```sql
+CREATE TABLE wp_nevari_patient_doctor_links (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    patient_user_id BIGINT UNSIGNED NOT NULL,
+    doctor_user_id BIGINT UNSIGNED NOT NULL,
+    source VARCHAR(50) NOT NULL DEFAULT 'appointment',
+    status VARCHAR(30) NOT NULL DEFAULT 'active',
+    first_linked_at DATETIME NOT NULL,
+    last_interaction_at DATETIME NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY patient_doctor (patient_user_id, doctor_user_id),
+    KEY doctor_status (doctor_user_id, status),
+    KEY patient_status (patient_user_id, status)
+);
+```
+
+---
+
+## 2.3 Appointments Table
+
+```sql
+CREATE TABLE wp_nevari_appointments (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    patient_user_id BIGINT UNSIGNED NOT NULL,
+    doctor_user_id BIGINT UNSIGNED NOT NULL,
+    order_id BIGINT UNSIGNED NULL,
+    type VARCHAR(30) NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'requested',
+    start_at DATETIME NOT NULL,
+    end_at DATETIME NOT NULL,
+    timezone VARCHAR(100) NOT NULL DEFAULT 'UTC',
+    reason TEXT NULL,
+    symptoms JSON NULL,
+    intake_form JSON NULL,
+    doctor_notes LONGTEXT NULL,
+    cancellation_reason TEXT NULL,
+    cancelled_by BIGINT UNSIGNED NULL,
+    completed_at DATETIME NULL,
+    created_by BIGINT UNSIGNED NOT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    KEY patient_start (patient_user_id, start_at),
+    KEY doctor_start (doctor_user_id, start_at),
+    KEY status_start (status, start_at),
+    KEY order_id (order_id)
+);
+```
+
+Use UTC in database and keep the original timezone for display.
+
+---
+
+## 2.4 Prescription Table
+
+```sql
+CREATE TABLE wp_nevari_prescriptions (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    prescription_number VARCHAR(64) NOT NULL,
+    patient_user_id BIGINT UNSIGNED NOT NULL,
+    doctor_user_id BIGINT UNSIGNED NOT NULL,
+    appointment_id BIGINT UNSIGNED NULL,
+    order_id BIGINT UNSIGNED NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'draft',
+    diagnosis TEXT NULL,
+    instructions LONGTEXT NULL,
+    valid_from DATETIME NOT NULL,
+    valid_until DATETIME NULL,
+    issued_at DATETIME NULL,
+    assigned_at DATETIME NULL,
+    fulfilled_at DATETIME NULL,
+    cancelled_at DATETIME NULL,
+    cancelled_reason TEXT NULL,
+    created_by BIGINT UNSIGNED NOT NULL,
+    updated_by BIGINT UNSIGNED NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY prescription_number (prescription_number),
+    KEY patient_status (patient_user_id, status),
+    KEY doctor_status (doctor_user_id, status),
+    KEY appointment_id (appointment_id),
+    KEY order_id (order_id),
+    KEY valid_until (valid_until)
+);
+```
+
+Prescription statuses:
+
+```text
+draft
+issued
+assigned_to_patient
+partially_fulfilled
+fulfilled
+expired
+cancelled
+```
+
+---
+
+## 2.5 Prescription Items Table
+
+Each prescription may reference one or more WooCommerce products.
+
+```sql
+CREATE TABLE wp_nevari_prescription_items (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    prescription_id BIGINT UNSIGNED NOT NULL,
+    product_id BIGINT UNSIGNED NOT NULL,
+    variation_id BIGINT UNSIGNED NULL,
+    dosage VARCHAR(255) NULL,
+    quantity DECIMAL(10,2) NOT NULL DEFAULT 1,
+    unit VARCHAR(50) NULL,
+    frequency VARCHAR(255) NULL,
+    duration_days INT UNSIGNED NULL,
+    refills_allowed INT UNSIGNED NOT NULL DEFAULT 0,
+    refills_used INT UNSIGNED NOT NULL DEFAULT 0,
+    substitution_allowed TINYINT(1) NOT NULL DEFAULT 0,
+    notes TEXT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    KEY prescription_id (prescription_id),
+    KEY product_id (product_id),
+    KEY variation_id (variation_id)
+);
+```
+
+---
+
+## 2.6 Prescription Assignment History
+
+```sql
+CREATE TABLE wp_nevari_prescription_assignment_history (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    prescription_id BIGINT UNSIGNED NOT NULL,
+    patient_user_id BIGINT UNSIGNED NOT NULL,
+    doctor_user_id BIGINT UNSIGNED NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    previous_status VARCHAR(30) NULL,
+    new_status VARCHAR(30) NOT NULL,
+    actor_user_id BIGINT UNSIGNED NOT NULL,
+    note TEXT NULL,
+    created_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    KEY prescription_id (prescription_id),
+    KEY patient_user_id (patient_user_id),
+    KEY doctor_user_id (doctor_user_id),
+    KEY action_created (action, created_at)
+);
+```
+
+---
+
+## 2.7 Email Templates Table
+
+```sql
+CREATE TABLE wp_nevari_email_templates (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    template_key VARCHAR(100) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    subject VARCHAR(255) NOT NULL,
+    body_html LONGTEXT NOT NULL,
+    body_text LONGTEXT NULL,
+    variables JSON NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'active',
+    version INT UNSIGNED NOT NULL DEFAULT 1,
+    created_by BIGINT UNSIGNED NOT NULL,
+    updated_by BIGINT UNSIGNED NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY template_key_version (template_key, version),
+    KEY template_key_status (template_key, status)
+);
+```
+
+Example template keys:
+
+```text
+appointment_requested
+appointment_confirmed
+appointment_cancelled
+prescription_issued
+prescription_assigned
+order_rx_hold
+order_completed
+doctor_welcome
+patient_welcome
+```
+
+---
+
+## 2.8 Email Logs Table
+
+```sql
+CREATE TABLE wp_nevari_email_logs (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    template_key VARCHAR(100) NULL,
+    template_version INT UNSIGNED NULL,
+    recipient_email VARCHAR(255) NOT NULL,
+    recipient_user_id BIGINT UNSIGNED NULL,
+    sender_email VARCHAR(255) NULL,
+    subject VARCHAR(255) NOT NULL,
+    body_preview TEXT NULL,
+    related_object_type VARCHAR(50) NULL,
+    related_object_id BIGINT UNSIGNED NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'queued',
+    provider VARCHAR(50) NULL,
+    provider_message_id VARCHAR(255) NULL,
+    error_code VARCHAR(100) NULL,
+    error_message TEXT NULL,
+    sent_by BIGINT UNSIGNED NULL,
+    queued_at DATETIME NULL,
+    sent_at DATETIME NULL,
+    failed_at DATETIME NULL,
+    created_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    KEY recipient_user_id (recipient_user_id),
+    KEY recipient_email (recipient_email),
+    KEY template_key (template_key),
+    KEY related_object (related_object_type, related_object_id),
+    KEY status_created (status, created_at)
+);
+```
+
+---
+
+## 2.9 Audit Logs Table
+
+```sql
+CREATE TABLE wp_nevari_audit_logs (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    event_uuid CHAR(36) NOT NULL,
+    category VARCHAR(30) NOT NULL,
+    source VARCHAR(50) NOT NULL,
+    action VARCHAR(100) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    severity VARCHAR(20) NOT NULL DEFAULT 'info',
+    actor_user_id BIGINT UNSIGNED NULL,
+    actor_role VARCHAR(50) NULL,
+    actor_ip VARCHAR(45) NULL,
+    user_agent TEXT NULL,
+    object_type VARCHAR(50) NULL,
+    object_id BIGINT UNSIGNED NULL,
+    related_user_id BIGINT UNSIGNED NULL,
+    order_id BIGINT UNSIGNED NULL,
+    product_id BIGINT UNSIGNED NULL,
+    appointment_id BIGINT UNSIGNED NULL,
+    prescription_id BIGINT UNSIGNED NULL,
+    email_log_id BIGINT UNSIGNED NULL,
+    request_id VARCHAR(100) NULL,
+    message TEXT NULL,
+    error_code VARCHAR(100) NULL,
+    error_message TEXT NULL,
+    metadata JSON NULL,
+    created_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY event_uuid (event_uuid),
+    KEY category_status_created (category, status, created_at),
+    KEY source_action_created (source, action, created_at),
+    KEY actor_created (actor_user_id, created_at),
+    KEY object_lookup (object_type, object_id),
+    KEY order_id (order_id),
+    KEY appointment_id (appointment_id),
+    KEY prescription_id (prescription_id),
+    KEY email_log_id (email_log_id)
+);
+```
+
+---
+
+## 2.10 Refresh Tokens Table
+
+For secure Next.js authentication.
+
+```sql
+CREATE TABLE wp_nevari_refresh_tokens (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NOT NULL,
+    token_hash CHAR(64) NOT NULL,
+    user_agent TEXT NULL,
+    ip_address VARCHAR(45) NULL,
+    expires_at DATETIME NOT NULL,
+    revoked_at DATETIME NULL,
+    created_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY token_hash (token_hash),
+    KEY user_active (user_id, revoked_at, expires_at)
+);
+```
+
+---
+
+# 3. Relationship Model
+
+```text
+WP User
+├── role: patient
+│   ├── WooCommerce orders
+│   ├── appointments
+│   ├── prescriptions
+│   └── email logs
+│
+├── role: doctor
+│   ├── doctor profile CPT
+│   ├── doctor settings
+│   ├── appointments
+│   ├── prescriptions issued
+│   └── linked patients
+│
+└── role: store_admin
+    ├── manages WooCommerce products
+    ├── manages WooCommerce orders
+    ├── manages doctors
+    ├── manages prescriptions
+    ├── views email logs
+    └── views audit logs
+```
+
+Detailed entity relationship:
+
+```text
+patient_user_id ─────┐
+                     │
+                     ▼
+              appointment
+                     │
+doctor_user_id ──────┘
+                     │
+                     ▼
+              prescription
+                     │
+                     ▼
+        prescription_items
+                     │
+                     ▼
+          WooCommerce product
+
+prescription ─────── optional ─────── WooCommerce order
+appointment  ─────── optional ─────── WooCommerce order
+```
+
+WooCommerce order linkage:
+
+```text
+wc_order.meta:
+- _nevari_prescription_id
+- _nevari_appointment_id
+- _nevari_rx_validation_status
+
+wc_order_item.meta:
+- _nevari_prescription_item_id
+- _nevari_rx_required
+```
+
+---
+
+# 4. Custom REST API Architecture
+
+Base namespace:
+
+```text
+/wp-json/nevari/v1
+```
+
+All protected endpoints require:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+Standard response envelope:
+
+```json
+{
+  "success": true,
+  "data": {},
+  "meta": {
+    "request_id": "req_123",
+    "pagination": {
+      "page": 1,
+      "per_page": 20,
+      "total": 100,
+      "total_pages": 5
+    }
+  }
+}
+```
+
+Standard error envelope:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "forbidden",
+    "message": "You do not have permission to view this resource.",
+    "details": {}
+  },
+  "meta": {
+    "request_id": "req_123"
+  }
+}
+```
+
+---
+
+# 5. Authentication Endpoints
+
+## 5.1 Auth Endpoint Table
+
+| Method | Endpoint        |           Type | Roles                           | Purpose                                      |
+| ------ | --------------- | -------------: | ------------------------------- | -------------------------------------------- |
+| `POST` | `/auth/login`   | Business logic | Public                          | Authenticate user                            |
+| `POST` | `/auth/refresh` | Business logic | Authenticated via refresh token | Rotate token                                 |
+| `POST` | `/auth/logout`  | Business logic | Authenticated                   | Revoke refresh token                         |
+| `GET`  | `/auth/me`      |           Read | All roles                       | Return current user profile and capabilities |
+
+### `POST /auth/login`
+
+Request:
+
+```json
+{
+  "username": "patient@example.com",
+  "password": "password"
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "access_token": "jwt",
+    "expires_in": 900,
+    "user": {
+      "id": 123,
+      "email": "patient@example.com",
+      "display_name": "Jane Patient",
+      "roles": ["patient"],
+      "capabilities": ["nevari_read_own_prescriptions"]
+    }
+  }
+}
+```
+
+Validation:
+
+```text
+username: required, email or username string
+password: required
+account status: active
+role: must be patient, doctor, store_admin, administrator, or shop_manager
+```
+
+Security notes:
+
+```text
+- Access tokens should be short-lived, for example 15 minutes.
+- Refresh tokens should be stored hashed in wp_nevari_refresh_tokens.
+- Refresh tokens should be rotated on every refresh.
+- Failed login attempts should be audit logged under SECURITY.
+```
+
+---
+
+# 6. Orders API
+
+Orders are backed by WooCommerce. Access them through WooCommerce CRUD classes, not direct SQL.
+
+## 6.1 Orders Endpoint Table
+
+| Method  | Endpoint                         |           Type | Roles                        | Purpose                          |
+| ------- | -------------------------------- | -------------: | ---------------------------- | -------------------------------- |
+| `GET`   | `/orders`                        |      CRUD/read | patient, store_admin         | List orders                      |
+| `GET`   | `/orders/{id}`                   |      CRUD/read | patient, store_admin         | View order details               |
+| `PATCH` | `/orders/{id}`                   |    CRUD/update | store_admin                  | Update order status/notes        |
+| `POST`  | `/orders/{id}/notes`             | Business logic | store_admin                  | Add order note                   |
+| `POST`  | `/orders/{id}/rx-hold`           | Business logic | store_admin                  | Place order on prescription hold |
+| `POST`  | `/orders/{id}/release-rx-hold`   | Business logic | store_admin                  | Release prescription hold        |
+| `GET`   | `/orders/{id}/prescriptions`     |           Read | patient, doctor, store_admin | Linked prescriptions             |
+| `POST`  | `/orders/{id}/link-prescription` | Business logic | store_admin                  | Attach prescription to order     |
+
+### `GET /orders`
+
+Query:
+
+```text
+?page=1
+&per_page=20
+&status=processing
+&patient_id=123
+&rx_status=requires_prescription
+&date_from=2025-01-01
+&date_to=2025-01-31
+```
+
+Role behavior:
+
+| Role          | Data Scope                                                                  |
+| ------------- | --------------------------------------------------------------------------- |
+| patient       | Own orders only                                                             |
+| doctor        | No general order listing unless linked to their prescription or appointment |
+| store_admin   | All orders                                                                  |
+| administrator | All orders                                                                  |
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 501,
+      "number": "501",
+      "status": "processing",
+      "currency": "USD",
+      "total": "152.00",
+      "patient": {
+        "id": 123,
+        "name": "Jane Patient"
+      },
+      "rx_status": "requires_prescription",
+      "prescription_id": 88,
+      "created_at": "2025-04-22T12:00:00Z"
+    }
+  ]
+}
+```
+
+Validation:
+
+```text
+page: integer >= 1
+per_page: integer between 1 and 100
+status: valid WooCommerce order status
+patient_id: store_admin only
+rx_status: enum
+```
+
+---
+
+# 7. Products API
+
+Products are backed by WooCommerce products. Pharmacy-specific flags are stored in product meta and optional custom badge taxonomy.
+
+## 7.1 Product Meta Fields
+
+| Meta Key                        |    Type | Purpose                                  |
+| ------------------------------- | ------: | ---------------------------------------- |
+| `_nevari_rx_required`           | boolean | Requires prescription                    |
+| `_nevari_consultation_required` | boolean | Requires consultation before purchase    |
+| `_nevari_otc`                   | boolean | Over-the-counter product                 |
+| `_nevari_badge_label`           |  string | Custom badge text                        |
+| `_nevari_badge_color`           |  string | Optional UI color token                  |
+| `_nevari_dosage_form`           |  string | Tablet, cream, liquid                    |
+| `_nevari_strength`              |  string | Example: `500mg`                         |
+| `_nevari_active_ingredient`     |  string | Pharmacy display/search                  |
+| `_nevari_restricted_visibility` | boolean | Hide from patients without authorization |
+
+## 7.2 Products Endpoint Table
+
+| Method   | Endpoint                        |           Type | Roles                        | Purpose                       |
+| -------- | ------------------------------- | -------------: | ---------------------------- | ----------------------------- |
+| `GET`    | `/products`                     |      CRUD/read | patient, doctor, store_admin | List products                 |
+| `GET`    | `/products/{id}`                |      CRUD/read | patient, doctor, store_admin | View product                  |
+| `POST`   | `/products`                     |    CRUD/create | store_admin                  | Create product                |
+| `PATCH`  | `/products/{id}`                |    CRUD/update | store_admin                  | Update product                |
+| `DELETE` | `/products/{id}`                |    CRUD/delete | store_admin                  | Trash product                 |
+| `GET`    | `/products/categories`          |      CRUD/read | all authenticated            | List categories               |
+| `POST`   | `/products/categories`          |    CRUD/create | store_admin                  | Create category               |
+| `PATCH`  | `/products/categories/{id}`     |    CRUD/update | store_admin                  | Update category               |
+| `DELETE` | `/products/categories/{id}`     |    CRUD/delete | store_admin                  | Delete category               |
+| `GET`    | `/products/tags`                |      CRUD/read | all authenticated            | List tags                     |
+| `POST`   | `/products/tags`                |    CRUD/create | store_admin                  | Create tag                    |
+| `GET`    | `/products/badges`              |           Read | all authenticated            | Available badges              |
+| `PATCH`  | `/products/{id}/pharmacy-rules` | Business logic | store_admin                  | Update prescription/OTC flags |
+
+### `PATCH /products/{id}/pharmacy-rules`
+
+Request:
+
+```json
+{
+  "rx_required": true,
+  "consultation_required": false,
+  "otc": false,
+  "badge": "prescription_needed",
+  "restricted_visibility": true
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 901,
+    "name": "Medicine One",
+    "rx_required": true,
+    "badge": {
+      "key": "prescription_needed",
+      "label": "Prescription needed"
+    }
+  }
+}
+```
+
+Validation:
+
+```text
+rx_required: boolean
+consultation_required: boolean
+otc: boolean
+rx_required and otc cannot both be true
+badge: allowed badge key
+restricted_visibility: boolean
+product must exist and be a WooCommerce product
+```
+
+---
+
+# 8. Doctors API
+
+## 8.1 Doctors Endpoint Table
+
+| Method   | Endpoint                      |           Type | Roles                        | Purpose                    |
+| -------- | ----------------------------- | -------------: | ---------------------------- | -------------------------- |
+| `GET`    | `/doctors`                    |           Read | patient, store_admin         | List doctors               |
+| `GET`    | `/doctors/{id}`               |           Read | patient, doctor, store_admin | Doctor profile             |
+| `POST`   | `/doctors`                    |    CRUD/create | store_admin                  | Create doctor user/profile |
+| `PATCH`  | `/doctors/{id}`               |    CRUD/update | doctor, store_admin          | Update doctor profile      |
+| `DELETE` | `/doctors/{id}`               |    CRUD/delete | store_admin                  | Disable doctor             |
+| `GET`    | `/doctors/{id}/availability`  |           Read | patient, doctor, store_admin | Available slots            |
+| `PATCH`  | `/doctors/{id}/availability`  | Business logic | doctor, store_admin          | Update schedule            |
+| `GET`    | `/doctors/{id}/patients`      |           Read | doctor, store_admin          | Assigned patients          |
+| `GET`    | `/doctors/{id}/appointments`  |           Read | doctor, store_admin          | Doctor appointments        |
+| `GET`    | `/doctors/{id}/prescriptions` |           Read | doctor, store_admin          | Doctor prescriptions       |
+
+### `GET /doctors`
+
+Query:
+
+```text
+?specialty=cardiology
+&language=en
+&accepting_patients=true
+&page=1
+&per_page=20
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 45,
+      "user_id": 45,
+      "display_name": "Dr. Lisa K. Ortiz",
+      "specialties": ["Cardiology"],
+      "languages": ["English"],
+      "accepting_patients": true,
+      "telehealth_enabled": true,
+      "profile_image": "https://example.com/image.jpg",
+      "next_available_at": "2025-04-23T14:00:00Z"
+    }
+  ]
+}
+```
+
+Doctor visibility rules:
+
+```text
+patient:
+- can see public doctor profiles
+- cannot see doctor private notes or internal metrics
+
+doctor:
+- can see own profile
+- cannot see other doctors' patient lists
+
+store_admin:
+- can see all doctors and operational metadata
+```
+
+---
+
+# 9. Appointments API
+
+## 9.1 Appointments Endpoint Table
+
+| Method   | Endpoint                        |           Type | Roles                        | Purpose                 |
+| -------- | ------------------------------- | -------------: | ---------------------------- | ----------------------- |
+| `GET`    | `/appointments`                 |      CRUD/read | patient, doctor, store_admin | List appointments       |
+| `GET`    | `/appointments/{id}`            |      CRUD/read | patient, doctor, store_admin | View appointment        |
+| `POST`   | `/appointments`                 |    CRUD/create | patient, store_admin         | Book appointment        |
+| `PATCH`  | `/appointments/{id}`            |    CRUD/update | patient, doctor, store_admin | Update allowed fields   |
+| `DELETE` | `/appointments/{id}`            |    CRUD/delete | store_admin                  | Hard delete only admin  |
+| `POST`   | `/appointments/{id}/cancel`     | Business logic | patient, doctor, store_admin | Cancel appointment      |
+| `POST`   | `/appointments/{id}/confirm`    | Business logic | doctor, store_admin          | Confirm appointment     |
+| `POST`   | `/appointments/{id}/complete`   | Business logic | doctor, store_admin          | Complete appointment    |
+| `POST`   | `/appointments/{id}/reschedule` | Business logic | patient, doctor, store_admin | Reschedule              |
+| `POST`   | `/appointments/{id}/notes`      | Business logic | doctor, store_admin          | Add/update doctor notes |
+
+### `POST /appointments`
+
+Request:
+
+```json
+{
+  "doctor_user_id": 45,
+  "type": "video",
+  "start_at": "2025-04-23T14:00:00Z",
+  "end_at": "2025-04-23T14:30:00Z",
+  "timezone": "America/New_York",
+  "reason": "Follow-up consultation",
+  "symptoms": {
+    "duration": "3 days",
+    "description": "Headache and nausea"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 3001,
+    "status": "requested",
+    "patient_user_id": 123,
+    "doctor_user_id": 45,
+    "start_at": "2025-04-23T14:00:00Z",
+    "end_at": "2025-04-23T14:30:00Z"
+  }
+}
+```
+
+Validation:
+
+```text
+doctor_user_id: required, must be active doctor
+type: video, phone, in_person, async_form
+start_at: required ISO datetime, must be future
+end_at: required ISO datetime, after start_at
+timezone: valid IANA timezone
+reason: required, max 2000 chars
+doctor must be available
+no overlapping confirmed appointment for same doctor
+patient cannot book duplicate appointment in same time slot
+```
+
+Booking transaction flow:
+
+```text
+1. Validate JWT and role.
+2. Resolve patient_user_id from current user unless store_admin is booking on behalf.
+3. Validate doctor exists and accepts appointments.
+4. Check slot availability using indexed doctor_start query.
+5. Insert appointment as requested or confirmed.
+6. Create patient-doctor link.
+7. Queue confirmation/requested email.
+8. Write CONSULTATION audit success event.
+9. Return appointment.
+```
+
+---
+
+# 10. Prescriptions API
+
+## 10.1 Prescriptions Endpoint Table
+
+| Method   | Endpoint                         |           Type | Roles                        | Purpose                                |
+| -------- | -------------------------------- | -------------: | ---------------------------- | -------------------------------------- |
+| `GET`    | `/prescriptions`                 |      CRUD/read | patient, doctor, store_admin | List prescriptions                     |
+| `GET`    | `/prescriptions/{id}`            |      CRUD/read | patient, doctor, store_admin | View prescription                      |
+| `POST`   | `/prescriptions`                 |    CRUD/create | doctor, store_admin          | Create prescription                    |
+| `PATCH`  | `/prescriptions/{id}`            |    CRUD/update | doctor, store_admin          | Update draft prescription              |
+| `DELETE` | `/prescriptions/{id}`            |    CRUD/delete | store_admin                  | Delete draft only                      |
+| `POST`   | `/prescriptions/{id}/issue`      | Business logic | doctor, store_admin          | Issue prescription                     |
+| `POST`   | `/prescriptions/{id}/assign`     | Business logic | doctor, store_admin          | Assign to patient                      |
+| `POST`   | `/prescriptions/{id}/cancel`     | Business logic | doctor, store_admin          | Cancel prescription                    |
+| `POST`   | `/prescriptions/{id}/link-order` | Business logic | store_admin                  | Link to Woo order                      |
+| `POST`   | `/prescriptions/{id}/fulfill`    | Business logic | store_admin                  | Mark fulfilled                         |
+| `GET`    | `/prescriptions/{id}/history`    |           Read | patient, doctor, store_admin | Assignment/status history              |
+| `POST`   | `/prescriptions/validate-cart`   | Business logic | patient, store_admin         | Validate products against prescription |
+
+### `POST /prescriptions`
+
+Request:
+
+```json
+{
+  "patient_user_id": 123,
+  "appointment_id": 3001,
+  "diagnosis": "Example diagnosis",
+  "instructions": "Take as directed.",
+  "valid_from": "2025-04-23T00:00:00Z",
+  "valid_until": "2025-05-23T00:00:00Z",
+  "items": [
+    {
+      "product_id": 901,
+      "variation_id": null,
+      "dosage": "500mg",
+      "quantity": 30,
+      "unit": "tablets",
+      "frequency": "Twice daily",
+      "duration_days": 15,
+      "refills_allowed": 0,
+      "substitution_allowed": false
+    }
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 88,
+    "prescription_number": "RX-2025-000088",
+    "status": "draft",
+    "patient_user_id": 123,
+    "doctor_user_id": 45,
+    "items": [
+      {
+        "product_id": 901,
+        "name": "Medicine One",
+        "dosage": "500mg",
+        "quantity": 30
+      }
+    ]
+  }
+}
+```
+
+Validation:
+
+```text
+patient_user_id: required, must be patient
+doctor_user_id: inferred from current doctor unless store_admin specifies
+appointment_id: optional but, if present, must belong to patient and doctor
+items: required, at least 1
+product_id: required, must exist
+product must be purchasable or prescription-trackable
+quantity: numeric > 0
+valid_until: after valid_from
+doctor can prescribe only to assigned patients or patients from own appointment
+```
+
+### `POST /prescriptions/{id}/assign`
+
+Business purpose: makes prescription visible to the patient and usable for RX product purchase.
+
+Request:
+
+```json
+{
+  "patient_user_id": 123,
+  "notify_patient": true,
+  "note": "Prescription assigned after consultation."
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 88,
+    "status": "assigned_to_patient",
+    "assigned_at": "2025-04-23T15:00:00Z"
+  }
+}
+```
+
+Validation:
+
+```text
+prescription must exist
+prescription status must be issued or draft, depending on workflow
+actor must be prescribing doctor or store_admin
+patient_user_id must match prescription patient
+notify_patient: boolean
+```
+
+---
+
+# 11. Email API
+
+## 11.1 Email Endpoint Table
+
+| Method   | Endpoint                         |           Type | Roles       | Purpose                     |
+| -------- | -------------------------------- | -------------: | ----------- | --------------------------- |
+| `GET`    | `/emails/logs`                   |           Read | store_admin | View sent/failed emails     |
+| `GET`    | `/emails/logs/{id}`              |           Read | store_admin | View email log detail       |
+| `POST`   | `/emails/send`                   | Business logic | store_admin | Send custom templated email |
+| `GET`    | `/emails/templates`              |      CRUD/read | store_admin | List templates              |
+| `GET`    | `/emails/templates/{id}`         |      CRUD/read | store_admin | View template               |
+| `POST`   | `/emails/templates`              |    CRUD/create | store_admin | Create template             |
+| `PATCH`  | `/emails/templates/{id}`         |    CRUD/update | store_admin | Update template             |
+| `DELETE` | `/emails/templates/{id}`         |    CRUD/delete | store_admin | Archive template            |
+| `POST`   | `/emails/templates/{id}/preview` | Business logic | store_admin | Render preview              |
+| `POST`   | `/emails/templates/{id}/test`    | Business logic | store_admin | Send test email             |
+
+### `POST /emails/send`
+
+Request:
+
+```json
+{
+  "template_key": "prescription_assigned",
+  "recipient_user_id": 123,
+  "related_object_type": "prescription",
+  "related_object_id": 88,
+  "variables": {
+    "patient_name": "Jane Patient",
+    "doctor_name": "Dr. Lisa K. Ortiz",
+    "prescription_number": "RX-2025-000088"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "email_log_id": 9001,
+    "status": "queued"
+  }
+}
+```
+
+Validation:
+
+```text
+template_key: required, active template
+recipient_user_id or recipient_email: required
+recipient_email: valid email
+related_object_type: allowed enum
+variables: object, keys must match allowed template variables where configured
+store_admin only for manual sends
+system-triggered sends are internal service calls
+```
+
+---
+
+# 12. Dashboard API
+
+These endpoints exist to avoid forcing the frontend to make excessive requests.
+
+## 12.1 Dashboard Endpoint Table
+
+| Method | Endpoint                               | Roles       | Purpose                       |
+| ------ | -------------------------------------- | ----------- | ----------------------------- |
+| `GET`  | `/dashboard/patient`                   | patient     | Patient dashboard summary     |
+| `GET`  | `/dashboard/doctor`                    | doctor      | Doctor dashboard summary      |
+| `GET`  | `/dashboard/store-admin`               | store_admin | Store admin dashboard summary |
+| `GET`  | `/dashboard/store-admin/sales`         | store_admin | Sales chart data              |
+| `GET`  | `/dashboard/store-admin/prescriptions` | store_admin | Prescription counts           |
+| `GET`  | `/dashboard/store-admin/consultations` | store_admin | Appointment counts            |
+| `GET`  | `/dashboard/store-admin/emails`        | store_admin | Email performance             |
+| `GET`  | `/dashboard/store-admin/audit-summary` | store_admin | Audit counts by tab/status    |
+
+Example store admin response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "sales": {
+      "today": "95.00",
+      "month": "298000.00",
+      "orders_today": 12
+    },
+    "products": {
+      "total": 255000,
+      "rx_required": 1840,
+      "otc": 4500
+    },
+    "consultations": {
+      "requested": 8,
+      "confirmed": 22,
+      "completed_this_month": 140
+    },
+    "prescriptions": {
+      "draft": 6,
+      "assigned": 48,
+      "fulfilled": 120,
+      "expired": 4
+    },
+    "emails": {
+      "sent_today": 80,
+      "failed_today": 2
+    }
+  }
+}
+```
+
+---
+
+# 13. RBAC Matrix
+
+## 13.1 Resource Permission Matrix
+
+| Module          | Patient                            | Doctor                                         | Store Admin      |
+| --------------- | ---------------------------------- | ---------------------------------------------- | ---------------- |
+| Own profile     | Read/update limited                | Read/update own doctor profile                 | Read/update all  |
+| Doctors         | Read public profiles               | Read own profile                               | CRUD all doctors |
+| Products        | Read visible products              | Read visible products                          | CRUD products    |
+| Categories/tags | Read                               | Read                                           | CRUD             |
+| Own orders      | Read                               | No, unless linked to own prescription workflow | Read/update all  |
+| Appointments    | Create/read/update own, cancel own | Read/update assigned, confirm/complete         | CRUD all         |
+| Prescriptions   | Read own assigned prescriptions    | Create/read/update own assigned patients       | CRUD/manage all  |
+| Email templates | None                               | None                                           | CRUD             |
+| Email logs      | None                               | None                                           | Read all         |
+| Audit logs      | None                               | None                                           | Read all         |
+| Dashboard stats | Own stats                          | Own doctor stats                               | Global stats     |
+
+## 13.2 Prescription Visibility Rule
+
+A doctor **cannot view all patients’ prescriptions**.
+
+A doctor can view a prescription only when at least one condition is true:
+
+```text
+1. prescription.doctor_user_id equals current_user_id
+2. prescription belongs to an appointment assigned to the doctor
+3. patient-doctor link exists with status active
+4. store_admin explicitly grants temporary review access
+```
+
+Patients can view only:
+
+```text
+prescription.patient_user_id === current_user_id
+AND prescription.status IN:
+- assigned_to_patient
+- partially_fulfilled
+- fulfilled
+- expired
+- cancelled
+```
+
+Patients should not see doctor draft prescriptions.
+
+---
+
+# 14. Endpoint Access Matrix
+
+| Endpoint Group           |      Patient |                Doctor | Store Admin |
+| ------------------------ | -----------: | --------------------: | ----------: |
+| `/auth/*`                |          Yes |                   Yes |         Yes |
+| `/orders`                |     Own only |           Linked only |         All |
+| `/products`              |         Read |                  Read |        Full |
+| `/doctors`               |  Read public |      Own/read limited |        Full |
+| `/appointments`          |          Own |              Assigned |        Full |
+| `/prescriptions`         | Own assigned | Own/assigned patients |        Full |
+| `/emails/*`              |           No |                    No |        Full |
+| `/dashboard/patient`     |          Yes |                    No |          No |
+| `/dashboard/doctor`      |           No |                   Yes |          No |
+| `/dashboard/store-admin` |           No |                    No |         Yes |
+| `/audit-logs/*`          |           No |                    No |         Yes |
+
+---
+
+# 15. Frontend-to-Backend Communication
+
+## 15.1 Recommended Authentication Strategy
+
+Use a **Next.js BFF pattern**.
+
+```text
+Browser
+  |
+  | Cookie session, HttpOnly, Secure, SameSite=Lax
+  v
+Next.js Route Handler
+  |
+  | Authorization: Bearer access_token
+  v
+WordPress Nevari REST API
+```
+
+Do not store JWTs in `localStorage`.
+
+Recommended token setup:
+
+| Token         | Storage                                  |   Lifetime | Notes                          |
+| ------------- | ---------------------------------------- | ---------: | ------------------------------ |
+| Access token  | HttpOnly cookie or Next.js server memory | 15 minutes | Used for REST calls            |
+| Refresh token | HttpOnly cookie                          |  7-30 days | Rotated on refresh             |
+| CSRF token    | Non-HttpOnly cookie/header               |    Session | Required for browser mutations |
+
+---
+
+## 15.2 Next.js API Client Pattern
+
+```ts
+type ApiResponse<T> =
+  | { success: true; data: T; meta?: Record<string, unknown> }
+  | { success: false; error: { code: string; message: string; details?: unknown } };
+
+export async function nevariFetch<T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<ApiResponse<T>> {
+  const response = await fetch(`${process.env.WP_API_BASE}/wp-json/nevari/v1${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+    cache: 'no-store',
+  });
+
+  const json = await response.json();
+
+  if (!response.ok) {
+    return {
+      success: false,
+      error: json.error ?? {
+        code: 'request_failed',
+        message: 'Request failed',
+      },
+    };
+  }
+
+  return json;
+}
+```
+
+For server-side route handlers, add the access token from HttpOnly cookies.
+
+---
+
+# 16. Major User Journey Data Flows
+
+## 16.1 Patient Books Consultation
+
+```text
+Patient UI
+  |
+  | GET /doctors?specialty=...
+  v
+Doctor listing
+  |
+  | GET /doctors/{id}/availability
+  v
+Available slots
+  |
+  | POST /appointments
+  v
+Nevari plugin
+  |
+  | Validate doctor availability
+  | Create appointment
+  | Create patient-doctor link
+  | Queue email
+  | Write audit log
+  v
+Patient sees booking confirmation
+```
+
+Failure cases:
+
+| Case                              | Response                            |
+| --------------------------------- | ----------------------------------- |
+| Slot unavailable                  | `409 appointment_slot_unavailable`  |
+| Doctor inactive                   | `422 doctor_not_accepting_patients` |
+| Patient tries to book in the past | `422 invalid_datetime`              |
+| Missing reason/intake fields      | `422 validation_error`              |
+| Unauthenticated user              | `401 unauthenticated`               |
+
+---
+
+## 16.2 Doctor Views Appointments
+
+```text
+Doctor UI
+  |
+  | GET /appointments?date_from=today&status=confirmed
+  v
+Nevari plugin
+  |
+  | Resolve current doctor_user_id
+  | Query appointments by doctor_user_id
+  | Hide unrelated patients
+  v
+Doctor appointment list
+```
+
+Doctor completes appointment:
+
+```text
+Doctor UI
+  |
+  | POST /appointments/{id}/complete
+  v
+Nevari plugin
+  |
+  | Confirm appointment belongs to doctor
+  | Update status to completed
+  | Store doctor notes
+  | Write consultation audit log
+  v
+Optional prescription creation flow
+```
+
+---
+
+## 16.3 Doctor Creates and Assigns Prescription
+
+```text
+Doctor UI
+  |
+  | POST /prescriptions
+  v
+Draft prescription
+  |
+  | POST /prescriptions/{id}/issue
+  v
+Issued prescription
+  |
+  | POST /prescriptions/{id}/assign
+  v
+Patient can view prescription
+  |
+  | Queue prescription_assigned email
+  | Write consultation + email audit logs
+```
+
+Edge case:
+
+```text
+If a doctor tries to prescribe to a patient who is not linked to them:
+403 forbidden_patient_scope
+```
+
+---
+
+## 16.4 Store Admin Manages Orders
+
+```text
+Store Admin UI
+  |
+  | GET /orders?rx_status=requires_prescription
+  v
+Orders needing prescription review
+  |
+  | GET /orders/{id}/prescriptions
+  v
+Linked prescription details
+  |
+  | POST /orders/{id}/release-rx-hold
+  v
+WooCommerce order status update
+  |
+  | Audit log under ORDERS and CONSULTATION
+```
+
+Failure cases:
+
+| Case                                      | Response                            |
+| ----------------------------------------- | ----------------------------------- |
+| Order does not exist                      | `404 order_not_found`               |
+| Prescription expired                      | `422 prescription_expired`          |
+| Prescription belongs to different patient | `409 prescription_patient_mismatch` |
+| Product does not match prescription item  | `409 product_not_authorized`        |
+
+---
+
+# 17. Email System Architecture
+
+## 17.1 Template Rendering
+
+Template body example:
+
+```html
+<p>Hello {{ patient.first_name }},</p>
+<p>Your prescription {{ prescription.number }} has been assigned by {{ doctor.display_name }}.</p>
+```
+
+Rendering process:
+
+```text
+1. Load active template by template_key.
+2. Build context from related object.
+3. Merge supplied variables.
+4. Validate allowed variables.
+5. Escape variables by default.
+6. Render HTML and text.
+7. Insert email log with status queued.
+8. Send through wp_mail or provider adapter.
+9. Update email log status to sent or failed.
+10. Write EMAILS audit event.
+```
+
+## 17.2 Email Log Statuses
+
+```text
+queued
+sending
+sent
+failed
+cancelled
+```
+
+## 17.3 Email Providers
+
+Use an adapter interface:
+
+```php
+interface EmailProviderInterface {
+    public function send(array $message): EmailSendResult;
+}
+```
+
+Implementations:
+
+```text
+WpMailProvider
+SendGridProvider
+PostmarkProvider
+AmazonSesProvider
+```
+
+Start with `wp_mail`, but keep the interface provider-agnostic.
+
+---
+
+# 18. Product Management Integration
+
+## 18.1 Prescription Required vs OTC
+
+Use product meta for enforceable logic:
+
+```text
+_nevari_rx_required = yes/no
+_nevari_otc = yes/no
+_nevari_consultation_required = yes/no
+```
+
+Use badges for presentation:
+
+```text
+OTC
+Prescription needed
+Consultation required
+```
+
+Recommended rule:
+
+```text
+Business validation must use product meta.
+UI labels may use badge taxonomy or badge meta.
+```
+
+## 18.2 Cart and Checkout Validation
+
+Hook into WooCommerce:
+
+```php
+add_filter('woocommerce_add_to_cart_validation', 'nevari_validate_rx_product', 10, 3);
+add_action('woocommerce_checkout_process', 'nevari_validate_rx_checkout');
+add_action('woocommerce_checkout_create_order_line_item', 'nevari_add_rx_order_item_meta', 10, 4);
+```
+
+Validation logic:
+
+```text
+1. Product added to cart.
+2. Check _nevari_rx_required.
+3. If false, allow.
+4. If true, look for valid assigned prescription for current patient.
+5. Prescription must not be expired or cancelled.
+6. Product must exist in prescription_items.
+7. Quantity must not exceed allowed amount/refills.
+8. If invalid, block add-to-cart or place order on RX hold.
+```
+
+## 18.3 Product Dashboard Data
+
+For each product card/list row, return:
+
+```json
+{
+  "id": 901,
+  "name": "Medicine One",
+  "sku": "MED-001",
+  "price": "27.00",
+  "stock_status": "instock",
+  "categories": ["Pain Relief"],
+  "tags": ["tablet"],
+  "pharmacy_rules": {
+    "rx_required": true,
+    "otc": false,
+    "consultation_required": false,
+    "badge": {
+      "key": "prescription_needed",
+      "label": "Prescription needed"
+    }
+  }
+}
+```
+
+---
+
+# 19. Dashboard-Specific Data Requirements
+
+## 19.1 Patient Dashboard
+
+Required data:
+
+```text
+- Current user profile
+- Recent WooCommerce orders
+- Active prescriptions
+- Expired prescriptions
+- Upcoming appointments
+- Past appointments
+- Available doctors
+- Recommended consultation categories
+- Prescription-required products available to the patient
+```
+
+Recommended endpoint:
+
+```http
+GET /dashboard/patient
+```
+
+Response shape:
+
+```json
+{
+  "success": true,
+  "data": {
+    "profile": {
+      "id": 123,
+      "name": "Jane Patient",
+      "email": "jane@example.com"
+    },
+    "orders": {
+      "recent": []
+    },
+    "prescriptions": {
+      "active": [],
+      "expired": []
+    },
+    "appointments": {
+      "upcoming": [],
+      "past": []
+    },
+    "booking": {
+      "specialties": [],
+      "featured_doctors": []
+    }
+  }
+}
+```
+
+---
+
+## 19.2 Doctor Dashboard
+
+Required data:
+
+```text
+- Today's appointments
+- Upcoming appointments
+- Assigned patients
+- Draft prescriptions
+- Prescriptions awaiting assignment
+- Recently completed consultations
+```
+
+Recommended endpoint:
+
+```http
+GET /dashboard/doctor
+```
+
+---
+
+## 19.3 Store Admin Dashboard
+
+Required data:
+
+```text
+- Total sales
+- Sales by day/month
+- Order counts by status
+- Products by badge/type
+- Doctors count
+- Appointment counts by status
+- Prescription counts by status
+- Prescription assignment history
+- Recent email logs
+- Email failure rate
+- Audit log summaries by category
+```
+
+Recommended endpoint:
+
+```http
+GET /dashboard/store-admin
+```
+
+Aggregation requirements:
+
+```text
+- Sales totals should use WooCommerce order stats where available.
+- Appointment and prescription counts should query custom indexed tables.
+- Email failure rate should query wp_nevari_email_logs.
+- Audit summaries should query wp_nevari_audit_logs grouped by category/status.
+- Cache expensive dashboard aggregations for 60-300 seconds.
+```
+
+---
+
+# 20. Audit Logging System
+
+## 20.1 WordPress Admin Navigation
+
+Create a new WordPress admin menu item:
+
+```text
+Nevari store
+```
+
+Inside it, display five tabs:
+
+```text
+ORDERS
+PAYMENTS
+SECURITY
+CONSULTATION
+EMAILS
+```
+
+Each tab should show both success and error events.
+
+```text
+Nevari store
+├── ORDERS
+├── PAYMENTS
+├── SECURITY
+├── CONSULTATION
+└── EMAILS
+```
+
+---
+
+## 20.2 Audit Categories
+
+| Tab          | Category Key   | Examples                                       |
+| ------------ | -------------- | ---------------------------------------------- |
+| ORDERS       | `orders`       | Order created, status changed, RX hold applied |
+| PAYMENTS     | `payments`     | Payment captured, refund failed                |
+| SECURITY     | `security`     | Login success/failure, forbidden access        |
+| CONSULTATION | `consultation` | Appointment booked, prescription assigned      |
+| EMAILS       | `emails`       | Email sent, template render failed             |
+
+---
+
+## 20.3 Audit Event Sources
+
+Each event should identify its source:
+
+```text
+woocommerce
+wordpress
+nevari
+system
+```
+
+Examples:
+
+| Source         | Event                                           |
+| -------------- | ----------------------------------------------- |
+| WooCommerce    | Order created, payment completed, refund failed |
+| WordPress core | Login success, login failure, password reset    |
+| Nevari         | Appointment booked, prescription assigned       |
+| System         | Email queue retry, scheduled cleanup            |
+
+---
+
+## 20.4 Event Data Fields
+
+Every audit event should attempt to store:
+
+```json
+{
+  "event_uuid": "uuid",
+  "category": "consultation",
+  "source": "nevari",
+  "action": "prescription.assigned",
+  "status": "success",
+  "severity": "info",
+  "actor_user_id": 45,
+  "actor_role": "doctor",
+  "actor_ip": "192.0.2.10",
+  "user_agent": "Mozilla/5.0",
+  "object_type": "prescription",
+  "object_id": 88,
+  "related_user_id": 123,
+  "order_id": null,
+  "product_id": null,
+  "appointment_id": 3001,
+  "prescription_id": 88,
+  "email_log_id": 9001,
+  "request_id": "req_abc123",
+  "message": "Prescription assigned to patient.",
+  "error_code": null,
+  "error_message": null,
+  "metadata": {
+    "previous_status": "issued",
+    "new_status": "assigned_to_patient"
+  },
+  "created_at": "2025-04-23T15:00:00Z"
+}
+```
+
+---
+
+## 20.5 Events by Tab
+
+### ORDERS
+
+Success events:
+
+```text
+order.created
+order.status_changed
+order.note_added
+order.rx_hold_applied
+order.rx_hold_released
+order.prescription_linked
+order.completed
+```
+
+Error events:
+
+```text
+order.create_failed
+order.status_update_failed
+order.prescription_link_failed
+order.rx_validation_failed
+order.not_found
+```
+
+### PAYMENTS
+
+Success events:
+
+```text
+payment.authorized
+payment.captured
+payment.completed
+refund.created
+```
+
+Error events:
+
+```text
+payment.failed
+payment.webhook_failed
+payment.capture_failed
+refund.failed
+```
+
+### SECURITY
+
+Success events:
+
+```text
+auth.login_success
+auth.logout
+auth.refresh_success
+user.role_changed
+user.password_reset_requested
+```
+
+Error events:
+
+```text
+auth.login_failed
+auth.refresh_failed
+auth.forbidden_access
+auth.invalid_token
+auth.csrf_failed
+user.role_change_failed
+```
+
+### CONSULTATION
+
+Success events:
+
+```text
+appointment.created
+appointment.confirmed
+appointment.rescheduled
+appointment.completed
+appointment.cancelled
+prescription.created
+prescription.issued
+prescription.assigned
+prescription.fulfilled
+prescription.cancelled
+doctor.created
+doctor.updated
+```
+
+Error events:
+
+```text
+appointment.slot_unavailable
+appointment.create_failed
+appointment.forbidden_access
+prescription.create_failed
+prescription.assignment_failed
+prescription.expired
+prescription.patient_mismatch
+doctor.create_failed
+```
+
+### EMAILS
+
+Success events:
+
+```text
+email.queued
+email.sent
+email.template_created
+email.template_updated
+email.preview_rendered
+```
+
+Error events:
+
+```text
+email.send_failed
+email.render_failed
+email.template_not_found
+email.invalid_recipient
+email.provider_error
+```
+
+---
+
+## 20.6 Audit Event Flow
+
+```text
+Application action
+  |
+  v
+Try operation
+  |
+  |-- success --> write success audit event
+  |
+  |-- error ----> write error audit event with code/message
+  |
+  v
+Return API response
+```
+
+For performance, audit logging should be non-blocking where possible:
+
+```text
+Critical event
+  |
+  |-- write minimal event synchronously
+  |-- enqueue metadata enrichment asynchronously
+```
+
+Recommended implementation:
+
+```text
+- Use direct insert for security-critical logs.
+- Use Action Scheduler for non-critical events.
+- Never let audit logging failure break checkout or consultation booking.
+- If audit insert fails, write to PHP error log as fallback.
+```
+
+---
+
+## 20.7 WordPress Admin Audit UI
+
+Filters:
+
+```text
+- Tab/category
+- Status: success/error
+- Severity
+- Action
+- Source
+- Date range
+- Actor
+- Role
+- Object ID
+- Order ID
+- Appointment ID
+- Prescription ID
+- Email log ID
+- Search text
+```
+
+Table columns:
+
+```text
+Timestamp
+Status
+Severity
+Source
+Action
+Actor
+Role
+Object
+Related IDs
+Message
+Error
+```
+
+Detail drawer/modal:
+
+```text
+- Full metadata JSON
+- Request ID
+- User agent
+- IP address
+- Related links:
+  - View order
+  - View appointment
+  - View prescription
+  - View email log
+```
+
+---
+
+## 20.8 Audit Retention Policy
+
+Recommended defaults:
+
+| Event Type          | Retention |
+| ------------------- | --------: |
+| Security events     |   2 years |
+| Payment events      |   2 years |
+| Order events        |    1 year |
+| Consultation events |    1 year |
+| Email events        |  180 days |
+| Debug/info metadata |   90 days |
+
+Retention job:
+
+```text
+Daily scheduled cleanup
+  |
+  |-- Delete or archive logs older than policy
+  |-- Preserve high-severity security/payment logs longer
+  |-- Optionally export to external storage before deletion
+```
+
+Performance requirements:
+
+```text
+- Index category/status/created_at.
+- Paginate audit UI.
+- Avoid loading metadata JSON in list view.
+- Use async logging for high-volume events.
+- Batch cleanup deletes in chunks of 500-1000 rows.
+```
+
+---
+
+# 21. WordPress REST Registration Example
+
+```php
+register_rest_route('nevari/v1', '/appointments', [
+    [
+        'methods' => WP_REST_Server::READABLE,
+        'callback' => [$appointments_controller, 'index'],
+        'permission_callback' => function (WP_REST_Request $request) {
+            return current_user_can('nevari_create_appointment')
+                || current_user_can('nevari_read_assigned_appointments')
+                || current_user_can('nevari_manage_appointments');
+        },
+        'args' => [
+            'page' => [
+                'type' => 'integer',
+                'minimum' => 1,
+                'default' => 1,
+                'sanitize_callback' => 'absint',
+            ],
+            'status' => [
+                'type' => 'string',
+                'sanitize_callback' => 'sanitize_key',
+            ],
+        ],
+    ],
+    [
+        'methods' => WP_REST_Server::CREATABLE,
+        'callback' => [$appointments_controller, 'create'],
+        'permission_callback' => function () {
+            return current_user_can('nevari_create_appointment')
+                || current_user_can('nevari_manage_appointments');
+        },
+    ],
+]);
+```
+
+---
+
+# 22. Permission Guard Example
+
+```php
+final class PermissionGuard {
+    public static function can_view_prescription(int $prescription_id, int $user_id): bool {
+        $user = get_user_by('id', $user_id);
+
+        if (!$user) {
+            return false;
+        }
+
+        if (user_can($user, 'nevari_manage_prescriptions')) {
+            return true;
+        }
+
+        $prescription = Nevari_Prescriptions::find($prescription_id);
+
+        if (!$prescription) {
+            return false;
+        }
+
+        if (in_array('patient', $user->roles, true)) {
+            return (int) $prescription->patient_user_id === $user_id
+                && in_array($prescription->status, [
+                    'assigned_to_patient',
+                    'partially_fulfilled',
+                    'fulfilled',
+                    'expired',
+                    'cancelled',
+                ], true);
+        }
+
+        if (in_array('doctor', $user->roles, true)) {
+            return (int) $prescription->doctor_user_id === $user_id
+                || Nevari_Doctor_Patient_Links::exists($user_id, (int) $prescription->patient_user_id);
+        }
+
+        return false;
+    }
+}
+```
+
+---
+
+# 23. Validation and Sanitization Standards
+
+Every API request should follow this pattern:
+
+```text
+1. Authenticate request.
+2. Authorize by capability and data scope.
+3. Sanitize scalar fields.
+4. Validate business rules.
+5. Use prepared queries or WooCommerce CRUD methods.
+6. Return normalized response.
+7. Write audit event.
+```
+
+WordPress functions to use:
+
+```text
+sanitize_text_field
+sanitize_email
+sanitize_key
+wp_kses_post
+absint
+esc_url_raw
+current_user_can
+wp_verify_nonce
+$wpdb->prepare
+```
+
+Never trust:
+
+```text
+- user IDs from the request body
+- order IDs from the frontend
+- prescription IDs from the frontend
+- role names from the frontend
+- product RX flags from the frontend
+```
+
+---
+
+# 24. Error Handling Standards
+
+Recommended error codes:
+
+```text
+unauthenticated
+forbidden
+validation_error
+not_found
+conflict
+appointment_slot_unavailable
+doctor_not_accepting_patients
+prescription_expired
+prescription_patient_mismatch
+product_not_authorized
+email_template_not_found
+email_send_failed
+audit_log_failed
+```
+
+Example:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "prescription_patient_mismatch",
+    "message": "This prescription does not belong to the order customer.",
+    "details": {
+      "order_id": 501,
+      "prescription_id": 88
+    }
+  }
+}
+```
+
+HTTP mapping:
+
+|  Code | Use                          |
+| ----: | ---------------------------- |
+| `400` | Malformed request            |
+| `401` | Not authenticated            |
+| `403` | Authenticated but forbidden  |
+| `404` | Resource not found or hidden |
+| `409` | Business conflict            |
+| `422` | Validation failed            |
+| `500` | Unexpected server error      |
+
+For privacy, return `404` instead of `403` when revealing existence would leak patient data.
+
+---
+
+# 25. Scalability Considerations
+
+## 25.1 Database
+
+```text
+- Use custom tables for appointments, prescriptions, emails, and audit logs.
+- Add indexes for dashboard filters.
+- Use UTC datetime fields.
+- Avoid postmeta for high-volume operational data.
+- Use WooCommerce CRUD for products and orders.
+```
+
+## 25.2 Caching
+
+Cache dashboard aggregations:
+
+```text
+store_admin_dashboard_summary: 60-300 seconds
+doctor_availability: 30-120 seconds
+product_badges: 300-3600 seconds
+doctor_directory_filters: 300-3600 seconds
+```
+
+Invalidate cache on:
+
+```text
+- appointment create/update/cancel
+- prescription create/assign/fulfill/cancel
+- product RX flag update
+- order status update
+- email log status update
+```
+
+## 25.3 Background Jobs
+
+Use Action Scheduler for:
+
+```text
+- sending queued emails
+- retrying failed emails
+- expiring prescriptions
+- audit cleanup
+- dashboard aggregation precomputation
+- syncing WooCommerce order prescription status
+```
+
+---
+
+# 26. Minimum Development Milestones
+
+## Phase 1 — Foundation
+
+```text
+- Plugin bootstrap
+- Roles and capabilities
+- Database migrations
+- JWT auth
+- Basic REST envelope
+- Audit log table and writer
+```
+
+## Phase 2 — Commerce Integration
+
+```text
+- Product pharmacy flags
+- Product/category/tag API
+- Order listing API
+- RX cart validation
+- Order prescription metadata
+```
+
+## Phase 3 — Consultation System
+
+```text
+- Doctor profile system
+- Doctor availability
+- Appointment booking
+- Appointment status workflow
+- Doctor dashboard
+```
+
+## Phase 4 — Prescription System
+
+```text
+- Prescription CRUD
+- Prescription items
+- Assignment history
+- Prescription/order linking
+- RX product authorization
+```
+
+## Phase 5 — Email System
+
+```text
+- Email templates
+- Email rendering
+- Email logs
+- Manual send endpoint
+- System-triggered emails
+```
+
+## Phase 6 — Admin Dashboards and Audit UI
+
+```text
+- Store admin dashboard
+- Patient dashboard
+- WordPress Nevari store audit page
+- Audit filters/search
+- Retention cleanup
+```
+
+---
+
+# 27. Final High-Level Architecture Diagram
+
+```text
+┌──────────────────────────────────────────┐
+│              Next.js 14 Dashboard         │
+│                                          │
+│  Patient UI   Doctor UI   Store Admin UI │
+└─────────────────────┬────────────────────┘
+                      │
+                      │ HTTPS / JSON / JWT
+                      ▼
+┌──────────────────────────────────────────┐
+│          WordPress REST API              │
+│          /wp-json/nevari/v1              │
+└─────────────────────┬────────────────────┘
+                      │
+                      ▼
+┌──────────────────────────────────────────┐
+│       Nevari Pharmacy Core Plugin         │
+│                                          │
+│  Auth                                    │
+│  RBAC                                    │
+│  Doctors                                 │
+│  Appointments                            │
+│  Prescriptions                           │
+│  Emails                                  │
+│  Audit Logs                              │
+│  WooCommerce Bridge                      │
+└───────────────┬───────────────┬──────────┘
+                │               │
+                ▼               ▼
+┌──────────────────────┐   ┌─────────────────────────┐
+│ WooCommerce Native   │   │ Nevari Custom Tables     │
+│                      │   │                         │
+│ Products             │   │ Appointments             │
+│ Orders               │   │ Prescriptions            │
+│ Payments             │   │ Prescription Items       │
+│ Customers            │   │ Email Templates          │
+│ Categories           │   │ Email Logs               │
+│ Tags                 │   │ Audit Logs               │
+└──────────────────────┘   └─────────────────────────┘
+```

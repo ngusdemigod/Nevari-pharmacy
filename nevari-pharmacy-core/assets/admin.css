@@ -1,0 +1,7 @@
+.nevari-admin-wrap .nevari-tabs { margin-top: 16px; }
+.nevari-audit-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; align-items: center; }
+.nevari-audit-table code { white-space: nowrap; }
+.nevari-status { display: inline-block; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+.nevari-status-success { background: #d1fae5; color: #065f46; }
+.nevari-status-error { background: #fee2e2; color: #991b1b; }
+.nevari-audit-table pre { max-width: 600px; overflow: auto; background: #f6f7f7; padding: 8px; }

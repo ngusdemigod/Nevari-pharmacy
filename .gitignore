@@ -1,0 +1,39 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and local environment
+*.log
+.env
+.env.*
+!.env.example
+
+# PHP dependencies and tooling
+vendor/
+composer.lock
+.phpunit.result.cache
+.phpcs-cache
+
+# Node/build dependencies
+node_modules/
+dist/
+build/
+
+# WordPress local/runtime files
+wp-config.php
+wp-content/uploads/
+wp-content/cache/
+wp-content/upgrade/
+wp-content/backup*/
+wp-content/debug.log
+
+# Archives and generated packages
+*.zip
+*.tar
+*.tar.gz
+*.tgz
