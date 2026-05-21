@@ -15,6 +15,70 @@ if (!function_exists('str_ends_with')) {
 }
 
 final class Nevari_Helpers {
+    public static function payment_gateway_defaults(): array {
+        return [
+            'active_gateway' => 'woocommerce',
+            'mode' => 'test',
+            'paystack' => [
+                'public_key' => '',
+                'secret_key' => '',
+                'webhook_secret' => '',
+            ],
+            'stripe' => [
+                'publishable_key' => '',
+                'secret_key' => '',
+                'webhook_secret' => '',
+            ],
+            'flutterwave' => [
+                'public_key' => '',
+                'secret_key' => '',
+                'encryption_key' => '',
+                'webhook_secret' => '',
+            ],
+        ];
+    }
+
+    public static function payment_gateway_settings(): array {
+        $stored = get_option('nevari_payment_gateway_settings', []);
+        $stored = is_array($stored) ? $stored : [];
+        return array_replace_recursive(self::payment_gateway_defaults(), $stored);
+    }
+
+    public static function active_payment_gateway_configured(): bool {
+        $settings = self::payment_gateway_settings();
+        $active = isset($settings['active_gateway']) ? (string) $settings['active_gateway'] : 'woocommerce';
+        if ($active === 'woocommerce') {
+            return self::woocommerce_payment_gateway_configured();
+        }
+        if ($active === 'paystack') {
+            return !empty($settings['paystack']['public_key']) && !empty($settings['paystack']['secret_key']);
+        }
+        if ($active === 'stripe') {
+            return !empty($settings['stripe']['publishable_key']) && !empty($settings['stripe']['secret_key']);
+        }
+        if ($active === 'flutterwave') {
+            return !empty($settings['flutterwave']['public_key']) && !empty($settings['flutterwave']['secret_key']);
+        }
+        return false;
+    }
+
+    public static function woocommerce_payment_gateway_configured(): bool {
+        if (!function_exists('WC') || !WC()->payment_gateways()) {
+            return false;
+        }
+        $available = WC()->payment_gateways()->get_available_payment_gateways();
+        if (!empty($available)) {
+            return true;
+        }
+        $gateways = WC()->payment_gateways()->payment_gateways();
+        foreach ($gateways as $gateway) {
+            if (isset($gateway->enabled) && $gateway->enabled === 'yes') {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static function rate_limit_defaults(): array {
         return [
             'auth_login_ip' => ['limit' => 5, 'window' => 15 * MINUTE_IN_SECONDS],

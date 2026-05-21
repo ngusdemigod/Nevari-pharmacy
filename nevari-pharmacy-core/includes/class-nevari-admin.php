@@ -5,6 +5,7 @@ if (!defined('ABSPATH')) {
 
 final class Nevari_Admin {
     private const RATE_LIMIT_OPTION = 'nevari_rate_limit_settings';
+    private const PAYMENT_GATEWAY_OPTION = 'nevari_payment_gateway_settings';
 
     public static function init(): void {
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
@@ -39,10 +40,19 @@ final class Nevari_Admin {
             'nevari-store',
             [__CLASS__, 'render_audit_page']
         );
+
+        add_submenu_page(
+            'nevari-pharmacy',
+            __('Payment Gateways', 'nevari-pharmacy-core'),
+            __('Payment Gateways', 'nevari-pharmacy-core'),
+            'nevari_manage_store',
+            'nevari-payment-gateways',
+            [__CLASS__, 'render_payment_gateways_page']
+        );
     }
 
     public static function enqueue($hook): void {
-        if (in_array($hook, ['toplevel_page_nevari-pharmacy', 'nevari-pharmacy_page_nevari-store'], true)) {
+        if (in_array($hook, ['toplevel_page_nevari-pharmacy', 'nevari-pharmacy_page_nevari-store', 'nevari-pharmacy_page_nevari-payment-gateways'], true)) {
             wp_enqueue_style('nevari-admin', NEVARI_PHARMACY_URL . 'assets/admin.css', [], NEVARI_PHARMACY_VERSION);
         }
     }
@@ -185,6 +195,156 @@ final class Nevari_Admin {
             </table>
         </div>
         <?php
+    }
+
+    public static function render_payment_gateways_page(): void {
+        if (!current_user_can('nevari_manage_store')) {
+            wp_die(esc_html__('You do not have permission to manage payment gateways.', 'nevari-pharmacy-core'));
+        }
+
+        if ('POST' === strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') && isset($_POST['nevari_payment_gateway_action'])) {
+            self::handle_payment_gateway_settings_save();
+        }
+
+        $settings = Nevari_Helpers::payment_gateway_settings();
+        $active = isset($settings['active_gateway']) ? (string) $settings['active_gateway'] : 'woocommerce';
+        $mode = isset($settings['mode']) ? (string) $settings['mode'] : 'test';
+        ?>
+        <div class="wrap nevari-admin-wrap">
+            <h1><?php echo esc_html__('Nevari Payment Gateways', 'nevari-pharmacy-core'); ?></h1>
+            <p><?php echo esc_html__('Configure the payment provider the Nevari frontend should use when it requests payment links from the plugin.', 'nevari-pharmacy-core'); ?></p>
+
+            <?php if (isset($_GET['updated'])) : ?>
+                <div class="notice notice-success is-dismissible"><p><?php esc_html_e('Payment gateway settings updated.', 'nevari-pharmacy-core'); ?></p></div>
+            <?php endif; ?>
+
+            <div class="notice notice-info inline">
+                <p><?php echo esc_html(sprintf(__('WooCommerce gateway status: %s', 'nevari-pharmacy-core'), Nevari_Helpers::woocommerce_payment_gateway_configured() ? __('at least one gateway is enabled', 'nevari-pharmacy-core') : __('no enabled WooCommerce gateway detected', 'nevari-pharmacy-core'))); ?></p>
+                <p><?php esc_html_e('Pay Now links use the plugin document-data endpoint. For WooCommerce mode, the endpoint returns the official WooCommerce order-pay URL so installed gateways such as Paystack, Stripe, or Flutterwave can collect payment.', 'nevari-pharmacy-core'); ?></p>
+            </div>
+
+            <form method="post">
+                <?php wp_nonce_field('nevari_payment_gateway_settings'); ?>
+                <input type="hidden" name="nevari_payment_gateway_action" value="save" />
+                <table class="form-table" role="presentation">
+                    <tbody>
+                        <tr>
+                            <th scope="row"><label for="active_gateway"><?php esc_html_e('Active gateway', 'nevari-pharmacy-core'); ?></label></th>
+                            <td>
+                                <select id="active_gateway" name="active_gateway">
+                                    <option value="woocommerce" <?php selected($active, 'woocommerce'); ?>><?php esc_html_e('WooCommerce checkout', 'nevari-pharmacy-core'); ?></option>
+                                    <option value="paystack" <?php selected($active, 'paystack'); ?>>Paystack</option>
+                                    <option value="stripe" <?php selected($active, 'stripe'); ?>>Stripe</option>
+                                    <option value="flutterwave" <?php selected($active, 'flutterwave'); ?>>Flutterwave</option>
+                                </select>
+                                <p class="description"><?php esc_html_e('WooCommerce checkout is recommended because it keeps order payment, receipts, and webhooks in WooCommerce.', 'nevari-pharmacy-core'); ?></p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="payment_mode"><?php esc_html_e('Mode', 'nevari-pharmacy-core'); ?></label></th>
+                            <td>
+                                <select id="payment_mode" name="mode">
+                                    <option value="test" <?php selected($mode, 'test'); ?>><?php esc_html_e('Test', 'nevari-pharmacy-core'); ?></option>
+                                    <option value="live" <?php selected($mode, 'live'); ?>><?php esc_html_e('Live', 'nevari-pharmacy-core'); ?></option>
+                                </select>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <?php self::render_gateway_fieldset('paystack', 'Paystack', [
+                    'public_key' => __('Public key', 'nevari-pharmacy-core'),
+                    'secret_key' => __('Secret key', 'nevari-pharmacy-core'),
+                    'webhook_secret' => __('Webhook secret', 'nevari-pharmacy-core'),
+                ], $settings); ?>
+
+                <?php self::render_gateway_fieldset('stripe', 'Stripe', [
+                    'publishable_key' => __('Publishable key', 'nevari-pharmacy-core'),
+                    'secret_key' => __('Secret key', 'nevari-pharmacy-core'),
+                    'webhook_secret' => __('Webhook signing secret', 'nevari-pharmacy-core'),
+                ], $settings); ?>
+
+                <?php self::render_gateway_fieldset('flutterwave', 'Flutterwave', [
+                    'public_key' => __('Public key', 'nevari-pharmacy-core'),
+                    'secret_key' => __('Secret key', 'nevari-pharmacy-core'),
+                    'encryption_key' => __('Encryption key', 'nevari-pharmacy-core'),
+                    'webhook_secret' => __('Webhook secret', 'nevari-pharmacy-core'),
+                ], $settings); ?>
+
+                <?php submit_button(__('Save payment gateways', 'nevari-pharmacy-core')); ?>
+            </form>
+        </div>
+        <?php
+    }
+
+    private static function render_gateway_fieldset(string $key, string $label, array $fields, array $settings): void {
+        $values = isset($settings[$key]) && is_array($settings[$key]) ? $settings[$key] : [];
+        ?>
+        <h2><?php echo esc_html($label); ?></h2>
+        <table class="form-table" role="presentation">
+            <tbody>
+                <?php foreach ($fields as $field_key => $field_label) : ?>
+                    <?php $has_value = !empty($values[$field_key]); ?>
+                    <tr>
+                        <th scope="row"><label for="<?php echo esc_attr($key . '_' . $field_key); ?>"><?php echo esc_html($field_label); ?></label></th>
+                        <td>
+                            <input
+                                id="<?php echo esc_attr($key . '_' . $field_key); ?>"
+                                class="regular-text"
+                                type="<?php echo strpos($field_key, 'secret') !== false || strpos($field_key, 'key') !== false ? 'password' : 'text'; ?>"
+                                name="<?php echo esc_attr($key); ?>[<?php echo esc_attr($field_key); ?>]"
+                                value=""
+                                placeholder="<?php echo esc_attr($has_value ? __('Saved - leave blank to keep current value', 'nevari-pharmacy-core') : __('Not set', 'nevari-pharmacy-core')); ?>"
+                                autocomplete="off"
+                            />
+                            <p class="description"><?php echo esc_html($has_value ? __('A value is saved for this field.', 'nevari-pharmacy-core') : __('No value saved yet.', 'nevari-pharmacy-core')); ?></p>
+                            <?php if ($field_key === 'secret_key') : ?>
+                                <p class="description">
+                                    <?php esc_html_e('Invoice Pay Now will show this gateway after this secret key is saved. Public/publishable keys are kept for compatibility, but the custom invoice payment page initializes payments server-side with the secret key.', 'nevari-pharmacy-core'); ?>
+                                </p>
+                            <?php endif; ?>
+                            <?php if ($field_key === 'webhook_secret') : ?>
+                                <p class="description">
+                                    <?php esc_html_e('If your payment provider does not show a separate webhook secret, you can use the gateway secret key here. For providers that let you set a webhook secret/hash manually, enter the same value in the provider dashboard and in this field.', 'nevari-pharmacy-core'); ?>
+                                </p>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php
+    }
+
+    private static function handle_payment_gateway_settings_save(): void {
+        if (!check_admin_referer('nevari_payment_gateway_settings')) {
+            return;
+        }
+
+        $settings = Nevari_Helpers::payment_gateway_settings();
+        $active = isset($_POST['active_gateway']) ? sanitize_key(wp_unslash($_POST['active_gateway'])) : 'woocommerce';
+        if (!in_array($active, ['woocommerce', 'paystack', 'stripe', 'flutterwave'], true)) {
+            $active = 'woocommerce';
+        }
+        $mode = isset($_POST['mode']) ? sanitize_key(wp_unslash($_POST['mode'])) : 'test';
+        if (!in_array($mode, ['test', 'live'], true)) {
+            $mode = 'test';
+        }
+
+        $settings['active_gateway'] = $active;
+        $settings['mode'] = $mode;
+        foreach (['paystack', 'stripe', 'flutterwave'] as $gateway) {
+            $raw = isset($_POST[$gateway]) && is_array($_POST[$gateway]) ? wp_unslash($_POST[$gateway]) : [];
+            foreach (array_keys($settings[$gateway]) as $field) {
+                if (isset($raw[$field]) && trim((string) $raw[$field]) !== '') {
+                    $settings[$gateway][$field] = sanitize_text_field((string) $raw[$field]);
+                }
+            }
+        }
+
+        update_option(self::PAYMENT_GATEWAY_OPTION, $settings, false);
+        wp_safe_redirect(add_query_arg(['page' => 'nevari-payment-gateways', 'updated' => '1'], admin_url('admin.php')));
+        exit;
     }
 
     public static function render_audit_page(): void {

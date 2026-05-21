@@ -34,7 +34,52 @@ final class Nevari_Plugin {
         Nevari_Admin::init();
         Nevari_Emails::init();
 
+        $this->ensure_required_email_templates();
         $this->register_woocommerce_hooks();
+    }
+
+    private function ensure_required_email_templates(): void {
+        global $wpdb;
+
+        if (!class_exists('Nevari_Helpers')) {
+            return;
+        }
+
+        $table = Nevari_Helpers::table('email_templates');
+        $now = Nevari_Helpers::now();
+        $created_by = get_current_user_id() ?: 0;
+        $templates = [
+            [
+                'template_key' => 'doctor_order_assigned',
+                'name' => 'Doctor Order Assigned',
+                'subject' => 'A pharmacy order needs your review',
+                'body_html' => '<p>Hello {{doctor_name}},</p><p>Order {{order_number}} has been assigned to you for {{patient_name}}.</p><p>Product/service: {{product_service_assigned}}</p><p>You can open your dashboard to create a prescription or schedule an appointment.</p>',
+                'body_text' => 'Hello {{doctor_name}}, order {{order_number}} has been assigned to you for {{patient_name}}. Product/service: {{product_service_assigned}}. Open your dashboard to create a prescription or schedule an appointment.',
+                'variables' => ['doctor_name', 'patient_name', 'order_number', 'product_service_assigned', 'customer_email', 'customer_phone'],
+            ],
+        ];
+
+        foreach ($templates as $template) {
+            $exists = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE template_key = %s", $template['template_key']));
+            if ($exists) {
+                continue;
+            }
+
+            $wpdb->insert($table, [
+                'template_key' => $template['template_key'],
+                'name' => $template['name'],
+                'subject' => $template['subject'],
+                'body_html' => $template['body_html'],
+                'body_text' => $template['body_text'],
+                'variables' => wp_json_encode($template['variables']),
+                'status' => 'active',
+                'version' => 1,
+                'created_by' => $created_by,
+                'updated_by' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
     }
 
     public function register_post_types(): void {
@@ -147,6 +192,15 @@ final class Nevari_Plugin {
             'show_in_admin_status_list' => true,
             'label_count' => _n_noop('Awaiting Prescription <span class="count">(%s)</span>', 'Awaiting Prescription <span class="count">(%s)</span>', 'nevari-pharmacy-core'),
         ]);
+
+        register_post_status('wc-in-delivery', [
+            'label' => __('In Delivery', 'nevari-pharmacy-core'),
+            'public' => true,
+            'exclude_from_search' => false,
+            'show_in_admin_all_list' => true,
+            'show_in_admin_status_list' => true,
+            'label_count' => _n_noop('In Delivery <span class="count">(%s)</span>', 'In Delivery <span class="count">(%s)</span>', 'nevari-pharmacy-core'),
+        ]);
     }
 
     public function filter_woocommerce_order_statuses(array $statuses): array {
@@ -158,6 +212,9 @@ final class Nevari_Plugin {
                 $ordered['wc-awaiting-doctor'] = __('Awaiting Doctor', 'nevari-pharmacy-core');
                 $ordered['wc-awaiting-prescription'] = __('Awaiting Prescription', 'nevari-pharmacy-core');
             }
+            if ('wc-processing' === $key) {
+                $ordered['wc-in-delivery'] = __('In Delivery', 'nevari-pharmacy-core');
+            }
         }
 
         if (!isset($ordered['wc-awaiting-doctor'])) {
@@ -165,6 +222,9 @@ final class Nevari_Plugin {
         }
         if (!isset($ordered['wc-awaiting-prescription'])) {
             $ordered['wc-awaiting-prescription'] = __('Awaiting Prescription', 'nevari-pharmacy-core');
+        }
+        if (!isset($ordered['wc-in-delivery'])) {
+            $ordered['wc-in-delivery'] = __('In Delivery', 'nevari-pharmacy-core');
         }
 
         return $ordered;
@@ -180,6 +240,8 @@ final class Nevari_Plugin {
             ]);
         }, 10, 1);
         add_action('woocommerce_checkout_order_processed', [$this, 'apply_initial_rx_order_status'], 20, 1);
+        add_action('woocommerce_checkout_order_processed', [$this, 'assign_doctor_and_send_order_emails'], 30, 1);
+        add_action('woocommerce_new_order', [$this, 'assign_doctor_and_send_order_emails'], 30, 1);
 
         add_action('woocommerce_order_status_changed', static function ($order_id, $old_status, $new_status) {
             Nevari_Audit::log('orders', 'woocommerce', 'order.status_changed', 'success', [
@@ -279,6 +341,220 @@ final class Nevari_Plugin {
             $order->set_status('awaiting-doctor', __('Awaiting doctor assignment for prescription review.', 'nevari-pharmacy-core'));
         }
         $order->save();
+    }
+
+    public function assign_doctor_and_send_order_emails(int $order_id): void {
+        if (!function_exists('wc_get_order')) {
+            return;
+        }
+
+        $order = wc_get_order($order_id);
+        if (!$order || $order->get_meta('_nevari_order_assignment_processed')) {
+            return;
+        }
+
+        // Step 1: choose a single primary product for the order. If WooCommerce fires early without items,
+        // wait for the later checkout hook instead of marking the order as processed.
+        $primary = $this->primary_order_product_context($order);
+        if (!$primary) {
+            return;
+        }
+
+        // Step 2: assign one doctor from the primary product categories by workload, seniority, then ID.
+        $doctor = $primary ? $this->choose_doctor_for_category_ids($primary['category_ids']) : null;
+        if ($doctor) {
+            $this->assign_doctor_to_order($order, $doctor, $primary);
+        } else {
+            $order->update_meta_data('_nevari_order_assignment_processed', '1');
+            $order->add_order_note(__('No eligible doctor was found for the primary order product category.', 'nevari-pharmacy-core'));
+            $order->save();
+        }
+
+        // Step 3: send each notification once through the Nevari template email system.
+        $this->send_order_customer_email_once($order, $doctor, $primary);
+        if ($doctor) {
+            $this->send_order_doctor_email_once($order, $doctor, $primary);
+        }
+    }
+
+    private function primary_order_product_context($order): ?array {
+        $best = null;
+        foreach ($order->get_items() as $item) {
+            if (!is_a($item, 'WC_Order_Item_Product')) {
+                continue;
+            }
+            $product_id = (int) ($item->get_product_id() ?: $item->get_variation_id());
+            if (!$product_id) {
+                continue;
+            }
+            $category_ids = function_exists('wc_get_product_cat_ids') ? array_map('intval', wc_get_product_cat_ids($product_id)) : [];
+            $total = (float) $item->get_total() + (float) $item->get_total_tax();
+            $candidate = [
+                'product_id' => $product_id,
+                'name' => (string) $item->get_name(),
+                'category_ids' => $category_ids,
+                'total' => $total,
+            ];
+            if (!$best || $candidate['total'] > $best['total']) {
+                $best = $candidate;
+            }
+        }
+        return $best;
+    }
+
+    private function choose_doctor_for_category_ids(array $category_ids): ?WP_User {
+        $category_ids = array_values(array_filter(array_map('intval', $category_ids)));
+        if (!$category_ids) {
+            return null;
+        }
+
+        $query = new WP_User_Query([
+            'role' => 'doctor',
+            'fields' => 'all',
+            'number' => 200,
+        ]);
+        $doctors = array_values(array_filter($query->get_results(), function ($doctor) use ($category_ids) {
+            if (!$doctor instanceof WP_User || get_user_meta((int) $doctor->ID, '_nevari_doctor_disabled', true)) {
+                return false;
+            }
+            $linked = array_map('intval', (array) get_user_meta((int) $doctor->ID, '_nevari_product_category_ids', true));
+            return (bool) array_intersect($category_ids, $linked);
+        }));
+        if (!$doctors) {
+            return null;
+        }
+
+        usort($doctors, function (WP_User $a, WP_User $b) {
+            // Lowest upcoming workload wins first; highest seniority breaks availability ties; ID gives deterministic rotation fallback.
+            $workload = $this->doctor_upcoming_consultations((int) $a->ID) <=> $this->doctor_upcoming_consultations((int) $b->ID);
+            if ($workload !== 0) {
+                return $workload;
+            }
+            $seniority = $this->doctor_seniority_level((int) $b->ID) <=> $this->doctor_seniority_level((int) $a->ID);
+            if ($seniority !== 0) {
+                return $seniority;
+            }
+            return (int) $a->ID <=> (int) $b->ID;
+        });
+
+        return $doctors[0] ?? null;
+    }
+
+    private function doctor_upcoming_consultations(int $doctor_id): int {
+        $stored = get_user_meta($doctor_id, '_nevari_upcoming_consultations', true);
+        if ($stored !== '' && $stored !== null) {
+            return max(0, (int) $stored);
+        }
+
+        global $wpdb;
+        $table = Nevari_Helpers::table('appointments');
+        $start = current_time('mysql', true);
+        $end = gmdate('Y-m-d H:i:s', strtotime('+7 days'));
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table} WHERE doctor_user_id = %d AND status IN ('awaiting_payment','requested','confirmed','checked_in') AND start_at BETWEEN %s AND %s",
+            $doctor_id,
+            $start,
+            $end
+        ));
+    }
+
+    private function doctor_seniority_level(int $doctor_id): int {
+        $value = get_user_meta($doctor_id, '_nevari_seniority_level', true);
+        if ($value === '' || $value === null) {
+            $value = get_user_meta($doctor_id, 'seniority_level', true);
+        }
+        if (($value === '' || $value === null) && function_exists('get_posts')) {
+            $profile = get_posts(['post_type' => self::DOCTOR_PROFILE_POST_TYPE, 'meta_key' => '_nevari_doctor_user_id', 'meta_value' => $doctor_id, 'fields' => 'ids', 'numberposts' => 1]);
+            if ($profile) {
+                $value = get_post_meta((int) $profile[0], '_nevari_seniority_level', true);
+            }
+        }
+        return max(0, (int) $value);
+    }
+
+    private function assign_doctor_to_order($order, WP_User $doctor, array $primary): void {
+        $next_count = $this->doctor_upcoming_consultations((int) $doctor->ID) + 1;
+        update_user_meta((int) $doctor->ID, '_nevari_upcoming_consultations', $next_count);
+        $order->update_meta_data('_nevari_assigned_doctor_user_id', (int) $doctor->ID);
+        $order->update_meta_data('_assigned_doctor_id', (int) $doctor->ID);
+        $order->update_meta_data('_assigned_doctor_email', sanitize_email($doctor->user_email));
+        $order->update_meta_data('_nevari_primary_product_id', (int) $primary['product_id']);
+        $order->update_meta_data('_nevari_primary_product_name', sanitize_text_field((string) $primary['name']));
+        $order->update_meta_data('_nevari_order_assignment_processed', '1');
+        $order->add_order_note(sprintf('Nevari assigned Dr. %s to this order based on product category availability and seniority.', $doctor->display_name));
+        if ((int) $order->get_user_id()) {
+            Nevari_Helpers::ensure_doctor_patient_link((int) $doctor->ID, (int) $order->get_user_id(), 'order');
+        }
+        $order->save();
+    }
+
+    private function send_order_customer_email_once($order, ?WP_User $doctor, ?array $primary): void {
+        if ($order->get_meta('_customer_email_sent')) {
+            return;
+        }
+        $email = sanitize_email((string) $order->get_billing_email());
+        if (!$email || !is_email($email)) {
+            return;
+        }
+        $result = $this->send_template_email($email, 'order-invoice-email', $this->order_email_variables($order, $doctor, $primary));
+        if (!is_wp_error($result)) {
+            $order->update_meta_data('_customer_email_sent', '1');
+            $order->save();
+        }
+    }
+
+    private function send_order_doctor_email_once($order, WP_User $doctor, ?array $primary): void {
+        if ($order->get_meta('_doctor_email_sent')) {
+            return;
+        }
+        $result = $this->send_template_email($doctor->user_email, 'doctor_order_assigned', $this->order_email_variables($order, $doctor, $primary), (int) $doctor->ID);
+        if (!is_wp_error($result)) {
+            $order->update_meta_data('_doctor_email_sent', '1');
+            $order->save();
+        }
+    }
+
+    private function send_template_email(string $recipient_email, string $template_key, array $variables, ?int $recipient_user_id = null) {
+        return Nevari_Emails::queue_or_send([
+            'template_key' => $template_key,
+            'recipient_email' => $recipient_email,
+            'recipient_user_id' => $recipient_user_id,
+            'related_object_type' => 'order',
+            'related_object_id' => isset($variables['order_id']) ? (int) $variables['order_id'] : null,
+            'variables' => $variables,
+        ], true);
+    }
+
+    private function order_email_variables($order, ?WP_User $doctor, ?array $primary): array {
+        $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) ?: $order->get_formatted_billing_full_name() ?: __('Customer', 'nevari-pharmacy-core');
+        $parts = preg_split('/\s+/', trim($customer_name));
+        $items = [];
+        foreach ($order->get_items() as $item) {
+            $items[] = sprintf('%s x%s', $item->get_name(), wc_format_decimal((float) $item->get_quantity(), 0));
+        }
+        $currency = $order->get_currency() ?: (function_exists('get_woocommerce_currency') ? get_woocommerce_currency() : 'USD');
+        $total = function_exists('wc_price') ? wp_strip_all_tags(wc_price((float) $order->get_total(), ['currency' => $currency])) : (string) $order->get_total();
+        return [
+            'customer_name' => $customer_name,
+            'customer_firstname' => $parts[0] ?? $customer_name,
+            'customer_lastname' => count($parts) > 1 ? implode(' ', array_slice($parts, 1)) : '',
+            'customer_email' => (string) $order->get_billing_email(),
+            'customer_phone' => (string) $order->get_billing_phone(),
+            'patient_name' => $customer_name,
+            'doctor_name' => $doctor ? $doctor->display_name : '',
+            'doctor_email' => $doctor ? $doctor->user_email : '',
+            'order_id' => (string) $order->get_id(),
+            'order_number' => (string) $order->get_order_number(),
+            'order_total' => $total,
+            'invoice_total' => $total,
+            'items_purchased' => implode(', ', $items),
+            'primary_product_name' => $primary['name'] ?? '',
+            'product_service_assigned' => $primary['name'] ?? '',
+            'document_type' => 'invoice',
+            'document_title' => 'Invoice',
+            'site_name' => wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES),
+            'support_email' => get_option('admin_email'),
+        ];
     }
 
     public function handle_appointment_payment_complete(int $order_id): void {

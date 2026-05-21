@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Invoice #001</title>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+      color: #111;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .invoice {
+      width: 850px;
+      min-height: 1100px;
+      margin: 30px auto;
+      background: #fff;
+      padding: 55px 55px 45px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 45px;
+    }
+
+    .logo {
+      font-size: 110px;
+      font-weight: 800;
+      color: #0b82ff;
+      line-height: 0.8;
+      letter-spacing: -12px;
+    }
+
+    .invoice-title {
+      text-align: right;
+    }
+
+    .invoice-title h1 {
+      font-size: 34px;
+      margin-bottom: 35px;
+      letter-spacing: 1px;
+    }
+
+    .invoice-meta {
+      display: grid;
+      grid-template-columns: 120px 120px;
+      gap: 6px 20px;
+      font-size: 13px;
+    }
+
+    .invoice-meta span {
+      color: #8d96a6;
+    }
+
+    .customer-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 40px;
+      margin-bottom: 55px;
+    }
+
+    .customer-details,
+    .customer-address {
+      width: 48%;
+    }
+
+    .customer-address {
+      text-align: right;
+    }
+
+    .section-label {
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 2px;
+    }
+
+    .company-name {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 35px;
+    }
+
+    thead {
+      background: #0b82ff;
+      color: #fff;
+    }
+
+    th {
+      padding: 10px 12px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+    }
+
+    td {
+      padding: 14px 12px;
+      vertical-align: top;
+      font-size: 13px;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #eef4fb;
+    }
+
+    .text-right {
+      text-align: right;
+    }
+
+    .bottom-section {
+      display: flex;
+      justify-content: space-between;
+      gap: 40px;
+    }
+
+    .payment-notes {
+      width: 48%;
+    }
+
+    .payment-block {
+      margin-bottom: 35px;
+    }
+
+    .payment-block h3,
+    .prescription h3 {
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+
+    .pay-now-btn {
+      display: inline-block;
+      margin-top: 8px;
+      background: #0b82ff;
+      color: #fff;
+      text-decoration: none;
+      padding: 12px 30px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .pay-now-btn:hover {
+      background: #006ee0;
+    }
+
+    .summary {
+      width: 38%;
+    }
+
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      font-size: 13px;
+    }
+
+    .summary-row strong {
+      font-weight: 700;
+    }
+
+    .balance {
+      background: #eef4fb;
+      padding: 12px 14px;
+      margin-top: 10px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .signature {
+      margin-top: 70px;
+      text-align: right;
+      font-size: 56px;
+      color: #0b82ff;
+      font-family: cursive;
+      transform: rotate(-8deg);
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .invoice {
+        margin: 0;
+        width: 100%;
+        min-height: 100vh;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .invoice {
+        width: 100%;
+        padding: 35px 25px;
+      }
+
+      .header,
+      .customer-row,
+      .bottom-section {
+        flex-direction: column;
+      }
+
+      .invoice-title,
+      .customer-address {
+        text-align: left;
+      }
+
+      .customer-details,
+      .customer-address,
+      .payment-notes,
+      .summary {
+        width: 100%;
+      }
+
+      .invoice-meta {
+        grid-template-columns: 120px 1fr;
+      }
+
+      table {
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="invoice">
+    <header class="header">
+      <div class="logo">SA</div>
+
+      <div class="invoice-title">
+        <h1>Invoice #001</h1>
+
+        <div class="invoice-meta">
+          <span>Invoice date:</span>
+          <strong>Jul 13th, 2021</strong>
+
+          <span>Due:</span>
+          <strong>Feb 13th, 2021</strong>
+        </div>
+      </div>
+    </header>
+
+    <section class="customer-row">
+      <div class="customer-details">
+        <p class="section-label">Customer Details</p>
+        <h2 class="company-name">Shepard Corp.</h2>
+
+        <p><strong>Name:</strong> John Shepard</p>
+        <p><strong>Email:</strong> shepard@mail.com</p>
+        <p><strong>Phone:</strong> 8026979597</p>
+        <p><strong>Customer ID:</strong> CUST-001</p>
+      </div>
+
+      <div class="customer-address">
+        <p class="section-label">Customer Address</p>
+
+        <p>North str, 32</p>
+        <p>Chicago, USA</p>
+        <p><strong>Track #:</strong> R080296979597</p>
+      </div>
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th class="text-right">Rate, CAD</th>
+          <th class="text-right">Qty</th>
+          <th class="text-right">Tax</th>
+          <th class="text-right">Disc</th>
+          <th class="text-right">Amount, CAD</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        <tr>
+          <td>
+            <strong>Prototype</strong><br />
+            Prototype-based programming is a style<br />
+            of object-oriented programming
+          </td>
+          <td class="text-right">20,230,450.00</td>
+          <td class="text-right">2000</td>
+          <td class="text-right">20.50%</td>
+          <td class="text-right">20.50%</td>
+          <td class="text-right">20,230,450.00</td>
+        </tr>
+
+        <tr>
+          <td><strong>Design</strong></td>
+          <td class="text-right">20,230,450.00</td>
+          <td class="text-right">2000</td>
+          <td class="text-right">20.50%</td>
+          <td class="text-right">20.50%</td>
+          <td class="text-right">20,230,450.00</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <section class="bottom-section">
+      <div class="payment-notes">
+        <div class="payment-block">
+          <h3>Payment</h3>
+
+          <a href="https://example.com/pay/invoice-001" class="pay-now-btn">
+            Pay Now
+          </a>
+        </div>
+
+        <div class="prescription">
+          <h3>Prescription</h3>
+          <p>
+            Prescription details will appear here.
+          </p>
+        </div>
+      </div>
+
+      <div class="summary">
+        <div class="summary-row">
+          <strong>Subtotal:</strong>
+          <strong>USD 800.00</strong>
+        </div>
+
+        <div class="summary-row">
+          <span>Discount (20%):</span>
+          <span>USD 0.00</span>
+        </div>
+
+        <div class="summary-row">
+          <span>Shipping Cost:</span>
+          <span>USD 0.00</span>
+        </div>
+
+        <div class="summary-row">
+          <span>Sales Tax:</span>
+          <span>USD 450.00</span>
+        </div>
+
+        <div class="summary-row">
+          <strong>Total:</strong>
+          <strong>USD 8,480.00</strong>
+        </div>
+
+        <div class="summary-row">
+          <span>Amount paid:</span>
+          <span>USD 0.00</span>
+        </div>
+
+        <div class="summary-row balance">
+          <span>Balance Due:</span>
+          <span>USD 8,480.00</span>
+        </div>
+
+        <div class="signature">John</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

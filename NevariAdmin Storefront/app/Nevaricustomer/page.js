@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function LegacyCustomerPage() {
-  redirect("/dashboard");
+export default function NevariCustomerAliasPage() {
+  redirect("/login");
 }

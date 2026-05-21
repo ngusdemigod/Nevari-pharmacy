@@ -24,18 +24,33 @@ const EMAIL_HOOKS = [
   { key: "{customer_firstname}", label: "Customer first name." },
   { key: "{customer_lastname}", label: "Customer last name." },
   { key: "{order_id}", label: "WooCommerce order number or ID." },
+  { key: "{order_number}", label: "Formatted order number." },
   { key: "{appointment_date}", label: "Formatted consultation date and time." },
+  { key: "{google_meet_link}", label: "Google Meet or video consultation URL." },
+  { key: "{google_meet_link_html}", label: "Clickable Google Meet consultation link." },
   { key: "{site_name}", label: "Configured pharmacy site name." },
   { key: "{support_email}", label: "Primary support inbox." },
   { key: "{doctor_name}", label: "Assigned doctor display name." },
-  { key: "{invoice_total}", label: "Formatted invoice or order total." }
+  { key: "{patient_name}", label: "Patient or customer display name." },
+  { key: "{customer_email}", label: "Customer email address." },
+  { key: "{customer_phone}", label: "Customer phone number." },
+  { key: "{primary_product_name}", label: "Primary product selected for doctor assignment." },
+  { key: "{product_service_assigned}", label: "Product or service assigned to the doctor." },
+  { key: "{invoice_total}", label: "Formatted invoice or order total." },
+  { key: "{document_type}", label: "Invoice or receipt label." },
+  { key: "{document_title}", label: "Human-readable document title." },
+  { key: "{payment_link}", label: "Customer payment URL." },
+  { key: "{payment_link_html}", label: "Clickable payment link markup." }
 ];
 
 const DEFAULT_EMAIL_TEMPLATES = [
   { id: "welcome", name: "Welcome Email", category: "Account", status: "active", subject: "Welcome to {site_name}", html: "<h1>Welcome, {customer_firstname}</h1><p>{content}</p><p>Contact us at {support_email}.</p>" },
   { id: "password-reset", name: "Password Reset", category: "Account", status: "active", subject: "Reset your {site_name} password", html: "<h1>Password reset</h1><p>{content}</p>" },
   { id: "order-confirmation", name: "Order Confirmation", category: "Orders", status: "active", subject: "Order #{order_id} confirmed", html: "<h1>Order #{order_id}</h1><p>Hello {customer_firstname},</p><p>{content}</p><p>Total: {invoice_total}</p>" },
-  { id: "appointment-approved", name: "Appointment Approved", category: "Consultations", status: "active", subject: "Appointment approved for {appointment_date}", html: "<h1>Appointment approved</h1><p>Your consultation with {doctor_name} is set for {appointment_date}.</p><p>{content}</p>" },
+  { id: "order-invoice-email", name: "Order Invoice Email", category: "Orders", status: "active", subject: "Invoice for order #{order_number}", html: "<h1>{document_title}</h1><p>Hello {customer_firstname},</p><p>Your invoice for order #{order_number} is attached.</p><p>{payment_link_html}</p><p>Total due: {invoice_total}</p>" },
+  { id: "order-receipt-email", name: "Order Receipt Email", category: "Orders", status: "active", subject: "Receipt for order #{order_number}", html: "<h1>{document_title}</h1><p>Hello {customer_firstname},</p><p>Your receipt for order #{order_number} is attached.</p><p>Thank you for shopping with {site_name}.</p>" },
+  { id: "doctor_order_assigned", name: "Doctor Order Assigned", category: "Orders", status: "active", subject: "A pharmacy order needs your review", html: "<p>Hello {doctor_name},</p><p>Order {order_number} has been assigned to you for {patient_name}.</p><p>Product/service: {product_service_assigned}</p><p>You can open your dashboard to create a prescription or schedule an appointment.</p>" },
+  { id: "appointment-approved", name: "Appointment Approved", category: "Consultations", status: "active", subject: "Appointment approved for {appointment_date}", html: "<h1>Appointment approved</h1><p>Your consultation with {doctor_name} is set for {appointment_date}.</p><p>{google_meet_link_html}</p><p>{content}</p>" },
   { id: "appointment-cancelled", name: "Appointment Cancelled", category: "Consultations", status: "draft", subject: "Appointment cancelled", html: "<h1>Appointment cancelled</h1><p>{content}</p>" },
   { id: "invoice-email", name: "Invoice Email", category: "Orders", status: "active", subject: "Invoice for order #{order_id}", html: "<h1>Invoice #{order_id}</h1><p>{content}</p><p>Total due: {invoice_total}</p>" },
   { id: "subscription-renewal", name: "Subscription Renewal", category: "Subscriptions", status: "draft", subject: "Subscription renewal reminder", html: "<h1>Renewal reminder</h1><p>{content}</p>" },
@@ -462,6 +477,10 @@ function isDoctorFollowUpOrder(order) {
     || Boolean(order?.assigned_doctor_user_id || order?.assigned_doctor);
 }
 
+function normalizedPaymentStatus(order) {
+  return normalizeOrderQueueValue(order?.payment_status || order?.status || "pending");
+}
+
 function matchesOrderQueueFilter(order, filter) {
   if (filter === "needs_rx") {
     return isNeedsRxOrder(order);
@@ -481,6 +500,13 @@ function joinNonEmpty(values, separator = " ") {
 
 function firstNonEmpty(...values) {
   return values.map((value) => String(value || "").trim()).find(Boolean) || "";
+}
+
+function metaValue(record, keys = []) {
+  const rows = Array.isArray(record?.meta_data) ? record.meta_data : Array.isArray(record?.meta) ? record.meta : [];
+  const normalizedKeys = keys.map((key) => String(key).toLowerCase());
+  const match = rows.find((item) => normalizedKeys.includes(String(item?.key || "").toLowerCase()));
+  return match?.value || "";
 }
 
 function isPlaceholderCustomerName(value) {
@@ -513,24 +539,58 @@ function customerNameFromRecord(record) {
   const billingAddressName = joinNonEmpty([record?.billing_address?.first_name, record?.billing_address?.last_name]);
   const customerBillingName = joinNonEmpty([record?.customer?.billing?.first_name, record?.customer?.billing?.last_name]);
   const explicitName = joinNonEmpty([record?.first_name, record?.last_name]);
+  const metaName = joinNonEmpty([
+    metaValue(record, ["billing_first_name", "_billing_first_name", "first_name"]),
+    metaValue(record, ["billing_last_name", "_billing_last_name", "last_name"])
+  ]);
   const directName = firstNonEmpty(record?.display_name, record?.name, record?.full_name, record?.customer_name, record?.username);
-  return billingName || billingAddressName || customerBillingName || explicitName || (isPlaceholderCustomerName(directName) ? "" : directName);
+  return billingName || billingAddressName || customerBillingName || explicitName || metaName || (isPlaceholderCustomerName(directName) ? "" : directName);
 }
 
 function customerFullName(order) {
+  const explicitName = firstNonEmpty(order?.customer_name, order?.customer_display_name, order?.billing_name, order?.display_name, order?.name);
   const billingName = joinNonEmpty([order?.billing?.first_name, order?.billing?.last_name]);
   const customerName = customerNameFromRecord(order?.customer);
-  const rootName = customerNameFromRecord(order);
   const shippingName = joinNonEmpty([order?.shipping?.first_name, order?.shipping?.last_name]);
   const email = customerEmail(order);
-  return billingName || customerName || rootName || shippingName || (email ? email.split("@")[0] : "") || patientLabel(order?.customer_id);
+  const billingAddressName = joinNonEmpty([order?.billing_address?.first_name, order?.billing_address?.last_name]);
+  const metaName = joinNonEmpty([
+    metaValue(order, ["billing_first_name", "_billing_first_name", "first_name"]),
+    metaValue(order, ["billing_last_name", "_billing_last_name", "last_name"])
+  ]);
+  const fallback = email ? email.split("@")[0] : (order?.customer_id || order?.id ? `Customer #${order?.customer_id || order?.id}` : "");
+  return explicitName || billingName || customerName || billingAddressName || metaName || shippingName || fallback;
+}
+
+function customerNameForOrder(order) {
+  return customerFullName(order);
 }
 
 function customerSummary(order) {
   const email = customerEmail(order);
+  const name = customerFullName(order);
   return {
-    name: customerFullName(order),
-    email: email || "No email on file",
+    name: name || (order?.customer_id || order?.id ? `Customer #${order?.customer_id || order?.id}` : "Customer"),
+    email: email || "",
+  };
+}
+
+function orderCustomerSummary(order, customerRowsById = new Map(), customerRowsByEmail = new Map()) {
+  const customerRecord = customerRowsById.get(String(order?.customer_id || "")) || customerRowsByEmail.get(normalizeText(customerEmail(order))) || null;
+  const name = firstNonEmpty(
+    customerRecord?.name,
+    customerRecord?.label,
+    order?.customer_name,
+    order?.customer_display_name,
+    order?.billing_name,
+    order?.display_name,
+    customerFullName(order),
+    customerNameFromRecord(order?.customer)
+  );
+  const email = firstNonEmpty(customerRecord?.email, customerEmail(order));
+  return {
+    name: isPlaceholderCustomerName(name) ? (email ? email.split("@")[0] : `Customer #${order?.customer_id || order?.id || ""}`.trim()) : name || "",
+    email: !email || email === "No email on file" ? "" : email,
   };
 }
 
@@ -559,69 +619,15 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
-function buildInvoiceHtml(order, { siteName = DEFAULT_SITE_NAME, storeCurrency = "USD" } = {}) {
-  const customer = customerSummary(order);
-  const currency = order?.currency || storeCurrency;
-  const lineItems = (order?.items || []).map((item) => {
-    const quantity = Number(item.quantity || 0);
-    const total = item.total ?? ((Number(item.unit_price || item.price || 0)) * quantity);
-    return `
-      <tr>
-        <td><strong>${escapeHtml(item.name || "Item")}</strong><small>${escapeHtml(item.sku || "")}</small></td>
-        <td>${escapeHtml(quantity || 1)}</td>
-        <td>${escapeHtml(formatMoney(total, currency))}</td>
-      </tr>
-    `;
-  }).join("");
+function getOrderDocumentType(order) {
+  return normalizeOrderQueueValue(order?.status) === "completed" ? "receipt" : "invoice";
+}
 
-  return `<!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>Invoice #${escapeHtml(order?.number || order?.id || "")}</title>
-        <style>
-          body { margin: 0; padding: 40px; color: #0e2955; font-family: Inter, Manrope, Arial, sans-serif; background: #f8f5ef; }
-          .invoice { max-width: 860px; margin: 0 auto; background: #fff; border: 1px solid rgba(14,41,85,.12); border-radius: 18px; padding: 34px; }
-          header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 1px solid rgba(14,41,85,.12); padding-bottom: 24px; }
-          h1, h2, p { margin: 0; }
-          h1 { font-size: 34px; }
-          .muted, small { color: #5f6470; }
-          .meta { display: grid; gap: 7px; text-align: right; }
-          .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin: 26px 0; }
-          .box { border: 1px solid rgba(14,41,85,.10); border-radius: 14px; padding: 16px; background: #fbfaf7; display: grid; gap: 6px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-          th { text-align: left; color: #5f6470; font-size: 12px; text-transform: uppercase; border-bottom: 1px solid rgba(14,41,85,.12); padding: 12px 10px; }
-          td { border-bottom: 1px solid rgba(14,41,85,.08); padding: 14px 10px; vertical-align: top; }
-          td small { display: block; margin-top: 4px; }
-          th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align: right; }
-          .total { display: flex; justify-content: flex-end; margin-top: 22px; }
-          .total div { min-width: 260px; border-radius: 14px; background: #e7eef8; padding: 18px; display: flex; justify-content: space-between; align-items: center; }
-          .total strong { font-size: 24px; }
-          @media print { body { background: #fff; padding: 0; } .invoice { border: 0; border-radius: 0; } }
-        </style>
-      </head>
-      <body>
-        <main class="invoice">
-          <header>
-            <div><p class="muted">${escapeHtml(siteName)}</p><h1>Invoice</h1></div>
-            <div class="meta">
-              <strong>#${escapeHtml(order?.number || order?.id || "")}</strong>
-              <span>${escapeHtml(formatDate(order?.created_at, true))}</span>
-              <span>${escapeHtml(formatStatusLabel(order?.status))}</span>
-            </div>
-          </header>
-          <section class="grid">
-            <div class="box"><span class="muted">Bill to</span><strong>${escapeHtml(customer.name)}</strong><span>${escapeHtml(customer.email)}</span><span>${escapeHtml(order?.billing?.phone || "No phone number on file")}</span></div>
-            <div class="box"><span class="muted">Billing address</span><span>${escapeHtml(formatAddress(order?.billing))}</span></div>
-          </section>
-          <table>
-            <thead><tr><th>Item</th><th>Qty</th><th>Total</th></tr></thead>
-            <tbody>${lineItems || `<tr><td colspan="3">No line items available.</td></tr>`}</tbody>
-          </table>
-          <section class="total"><div><span>Total</span><strong>${escapeHtml(formatMoney(order?.total || 0, currency))}</strong></div></section>
-        </main>
-      </body>
-    </html>`;
+function mergeRequiredEmailTemplates(templates) {
+  const list = Array.isArray(templates) ? templates.filter(Boolean) : [];
+  const seen = new Set(list.map((template) => template.id));
+  const missingDefaults = DEFAULT_EMAIL_TEMPLATES.filter((template) => !seen.has(template.id));
+  return missingDefaults.length ? [...list, ...missingDefaults] : list;
 }
 
 function loadEmailTemplates() {
@@ -630,7 +636,7 @@ function loadEmailTemplates() {
   }
   try {
     const saved = JSON.parse(localStorage.getItem(EMAIL_TEMPLATE_STORAGE_KEY) || "[]");
-    return Array.isArray(saved) && saved.length ? saved : DEFAULT_EMAIL_TEMPLATES;
+    return mergeRequiredEmailTemplates(Array.isArray(saved) && saved.length ? saved : DEFAULT_EMAIL_TEMPLATES);
   } catch {
     return DEFAULT_EMAIL_TEMPLATES;
   }
@@ -642,11 +648,18 @@ function renderEmailTemplate(html, values = {}) {
     customer_firstname: "Ada",
     customer_lastname: "Okafor",
     order_id: "1048",
+    order_number: "1048",
     appointment_date: "May 22, 2026 at 10:00 AM",
     site_name: DEFAULT_SITE_NAME,
     support_email: "support@nevarihealth.com",
     doctor_name: "Dr. Morgan Lee",
+    google_meet_link: "https://meet.google.com/example-room",
+    google_meet_link_html: '<a href="https://meet.google.com/example-room">Join Google Meet</a>',
+    document_type: "invoice",
+    document_title: "Invoice",
     invoice_total: "$128.00",
+    payment_link: "https://example.com/pay",
+    payment_link_html: '<a href="https://example.com/pay">Pay now</a>',
     ...values
   };
   return String(html || "").replace(/\{([a-z0-9_]+)\}/gi, (match, key) => hookValues[key] ?? match);
@@ -754,6 +767,17 @@ function buildDateTimeLocalValue(dateValue, timeValue) {
   const [hours = "09", minutes = "00"] = String(timeValue || "09:00").split(":");
   date.setHours(Number(hours), Number(minutes), 0, 0);
   return `${localDateKey(date)}T${localTimeKey(date)}`;
+}
+
+function nowDateTimeLocalValue() {
+  const date = new Date();
+  date.setSeconds(0, 0);
+  return `${localDateKey(date)}T${localTimeKey(date)}`;
+}
+
+function isFutureLocalDateTimeValue(value) {
+  const date = value ? new Date(value) : null;
+  return Boolean(date && !Number.isNaN(date.getTime()) && date.getTime() > Date.now());
 }
 
 function addMinutesToLocalValue(value, minutes) {
@@ -1116,6 +1140,9 @@ function describeRequestError(error) {
   if (/stored session expired/i.test(message)) {
     return "Stored session expired. Sign in again.";
   }
+  if (isExpiredRefreshSessionError(error)) {
+    return "Stored session expired. Sign in again.";
+  }
   if (/appointment slot is no longer available/i.test(message)) {
     return "That appointment slot is no longer available.";
   }
@@ -1129,6 +1156,10 @@ function describeRequestError(error) {
     return message || "Please review the submitted details and try again.";
   }
   return message || "Something went wrong. Try again.";
+}
+
+function isExpiredRefreshSessionError(error) {
+  return /refresh token is invalid or expired|invalid refresh token|expired refresh token/i.test(String(error?.message || error || ""));
 }
 
 function htmlToTextMessage(value) {
@@ -1235,6 +1266,7 @@ function StatusPill({ value, children, className = "status-pill" }) {
 function BookingCalendarWidget({
   title = "Book an Appointment",
   subtitle = "Select a date and your preferred time slot",
+  datePanelSubtitle = "Tap any available day to continue",
   appointments = [],
   selectedDate,
   selectedStartAt,
@@ -1247,12 +1279,17 @@ function BookingCalendarWidget({
   onDateSelect,
   onSlotSelect,
   onDurationChange,
+  showStepsHeader = true,
   showTimeSlots = true
 }) {
   const currentView = viewDate instanceof Date && !Number.isNaN(viewDate.getTime()) ? viewDate : new Date();
   const selectedDateKey = selectedStartAt ? localDateKey(selectedStartAt) : (selectedDate || "");
   const selectedTimeKey = selectedStartAt ? localTimeKey(selectedStartAt) : "";
   const todayKey = localDateKey();
+  const now = new Date();
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const viewMonthStart = new Date(currentView.getFullYear(), currentView.getMonth(), 1);
+  const canGoPrevious = !showTimeSlots || viewMonthStart > currentMonthStart;
   const monthLabel = currentView.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const first = new Date(currentView.getFullYear(), currentView.getMonth(), 1);
   const cursor = new Date(first);
@@ -1274,7 +1311,7 @@ function BookingCalendarWidget({
   }
 
   function statusForDay(date) {
-    if (localDateKey(date) < todayKey) {
+    if (showTimeSlots && localDateKey(date) < todayKey) {
       return "past";
     }
     const count = appointmentsForDay(date).length;
@@ -1288,6 +1325,9 @@ function BookingCalendarWidget({
   }
 
   function changeMonth(offset) {
+    if (offset < 0 && !canGoPrevious) {
+      return;
+    }
     const next = new Date(currentView);
     next.setMonth(next.getMonth() + offset, 1);
     onViewDateChange?.(next);
@@ -1313,28 +1353,30 @@ function BookingCalendarWidget({
             <div className="booking-legend-item"><span className="booking-legend-dot full" />Full</div>
           </div>
         </div>
-        <div className="booking-steps-track">
-          <div className="booking-step-item active">
-            <div className="booking-step-circle">1</div>
-            <div className="booking-step-label">Select Date</div>
-          </div>
-          {showTimeSlots ? (
-            <div className={`booking-step-item ${selectedDateKey ? "active" : ""}`}>
-              <div className="booking-step-circle">2</div>
-              <div className="booking-step-label">Choose Time</div>
+        {showStepsHeader ? (
+          <div className="booking-steps-track">
+            <div className="booking-step-item active">
+              <div className="booking-step-circle">1</div>
+              <div className="booking-step-label">Select Date</div>
             </div>
-          ) : null}
-        </div>
+            {showTimeSlots ? (
+              <div className={`booking-step-item ${selectedDateKey ? "active" : ""}`}>
+                <div className="booking-step-circle">2</div>
+                <div className="booking-step-label">Choose Time</div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {showDatePanel ? <div className="booking-panel">
         <div className="booking-panel-head">
           <div>
             <div className="booking-panel-heading">Pick a Date</div>
-            <div className="booking-panel-sub">Tap any available day to continue</div>
+            <div className="booking-panel-sub">{datePanelSubtitle}</div>
           </div>
           <div className="booking-month-controls">
-            <button className="booking-calendar-nav" type="button" aria-label="Previous month" onClick={() => changeMonth(-1)}>‹</button>
+            <button className="booking-calendar-nav" type="button" aria-label="Previous month" onClick={() => changeMonth(-1)} disabled={!canGoPrevious}>‹</button>
             <button className="booking-pill-btn" type="button" onClick={selectToday}>Today</button>
             <button className="booking-calendar-nav" type="button" aria-label="Next month" onClick={() => changeMonth(1)}>›</button>
           </div>
@@ -1353,7 +1395,8 @@ function BookingCalendarWidget({
             const otherMonth = date.getMonth() !== currentView.getMonth();
             const status = statusForDay(date);
             const dayAppointments = appointmentsForDay(date);
-            const disabled = otherMonth || status === "past" || status === "full";
+            const disabled = showTimeSlots ? (otherMonth || status === "past" || status === "full") : otherMonth;
+            const bookingCount = dayAppointments.length;
             return (
               <button
                 className={`booking-cal-day ${status} ${otherMonth ? "other-month" : ""} ${key === todayKey ? "today" : ""} ${key === selectedDateKey ? "selected" : ""}`.trim()}
@@ -1363,10 +1406,16 @@ function BookingCalendarWidget({
                 onClick={() => onDateSelect?.(key, date)}
               >
                 <span className="booking-d-num">{date.getDate()}</span>
-                <span className="booking-d-dots">
-                  {Array.from({ length: Math.min(Math.max(dayAppointments.length, 1), 3) }, (_, index) => <span key={index} />)}
+                {showTimeSlots ? (
+                  <span className="booking-d-dots">
+                    {Array.from({ length: Math.min(Math.max(dayAppointments.length, 1), 3) }, (_, index) => <span key={index} />)}
+                  </span>
+                ) : null}
+                <span className="booking-d-slots">
+                  {showTimeSlots
+                    ? `${Math.max(0, BOOKING_SLOT_TIMES.length - bookingCount)} slots`
+                    : bookingCount}
                 </span>
-                <span className="booking-d-slots">{Math.max(0, BOOKING_SLOT_TIMES.length - dayAppointments.length)} slots</span>
               </button>
             );
           })}
@@ -1396,16 +1445,17 @@ function BookingCalendarWidget({
               <SkeletonBox className="booking-t-slot-skeleton" key={index} />
             )) : BOOKING_SLOT_TIMES.map((time) => {
               const taken = selectedBookedSlots.has(time);
+              const pastSlot = showTimeSlots && !isFutureLocalDateTimeValue(buildDateTimeLocalValue(selectedDateKey, time));
               return (
                 <button
-                  className={`booking-t-slot ${taken ? "taken" : ""} ${selectedTimeKey === time ? "chosen" : ""}`.trim()}
+                  className={`booking-t-slot ${taken || pastSlot ? "taken" : ""} ${selectedTimeKey === time ? "chosen" : ""}`.trim()}
                   type="button"
                   key={time}
-                  disabled={taken}
+                  disabled={taken || pastSlot}
                   onClick={() => onSlotSelect?.(selectedDateKey, time)}
                 >
                   <span className="booking-t-time">{time}</span>
-                  <span className="booking-t-label">{taken ? "Booked" : "Open"}</span>
+                  <span className="booking-t-label">{taken ? "Booked" : pastSlot ? "Past" : "Open"}</span>
                 </button>
               );
             })}
@@ -1451,6 +1501,10 @@ function IconSprite() {
       <symbol id="i-mail" viewBox="0 0 24 24">
         <rect x="3" y="5" width="18" height="14" rx="3" />
         <path d="m4 7 8 6 8-6" />
+      </symbol>
+      <symbol id="i-paper-plane" viewBox="0 0 24 24">
+        <path d="M21 3 3 11.5l7 2.5 2.5 7L21 3Z" />
+        <path d="m10 14 11-11" />
       </symbol>
       <symbol id="i-users" viewBox="0 0 24 24">
         <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
@@ -1556,6 +1610,10 @@ function IconSprite() {
         <path d="m6 6 12 12" />
         <path d="m18 6-12 12" />
       </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M12 5v14" />
+        <path d="M5 12h14" />
+      </symbol>
       <symbol id="i-pencil" viewBox="0 0 24 24">
         <path d="m4 20 4.5-1 9.8-9.8a2.2 2.2 0 0 0-3.1-3.1L5.4 15.9 4 20Z" />
         <path d="m13.5 6.5 4 4" />
@@ -1592,6 +1650,7 @@ export default function Page() {
   const [authFeedback, setAuthFeedback] = useState("Not connected.");
   const [setupSubmitting, setSetupSubmitting] = useState(false);
   const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authResendLoading, setAuthResendLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [setupPairingCode, setSetupPairingCode] = useState("");
   const [username, setUsername] = useState("");
@@ -1611,6 +1670,7 @@ export default function Page() {
   const [orderQueueFilter, setOrderQueueFilter] = useState("all");
   const [orderDetailLoading, setOrderDetailLoading] = useState(false);
   const [orderMutationLoading, setOrderMutationLoading] = useState(false);
+  const [orderEmailActionLoading, setOrderEmailActionLoading] = useState("");
   const [orderActionFeedback, setOrderActionFeedback] = useState("");
   const [deletingOrderIds, setDeletingOrderIds] = useState([]);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
@@ -1658,6 +1718,7 @@ export default function Page() {
   const [categoryAssignmentLoading, setCategoryAssignmentLoading] = useState("");
   const [categoryAssignmentFeedback, setCategoryAssignmentFeedback] = useState("");
   const [categoryDoctorSearch, setCategoryDoctorSearch] = useState("");
+  const [debouncedCategoryDoctorSearch, setDebouncedCategoryDoctorSearch] = useState("");
   const [categoryMutationLoading, setCategoryMutationLoading] = useState("");
   const [categoryMutationFeedback, setCategoryMutationFeedback] = useState("");
   const [categoryCreateOpen, setCategoryCreateOpen] = useState(false);
@@ -1679,8 +1740,8 @@ export default function Page() {
   const [customerHistoryOrders, setCustomerHistoryOrders] = useState([]);
   const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
   const [customerHistoryFeedback, setCustomerHistoryFeedback] = useState("");
-  const [consultationFilter, setConsultationFilter] = useState("upcoming");
-  const [selectedConsultationDate, setSelectedConsultationDate] = useState(isoDateKey());
+  const [consultationFilter, setConsultationFilter] = useState("all");
+  const [selectedConsultationDate, setSelectedConsultationDate] = useState("");
   const [selectedConsultation, setSelectedConsultation] = useState(null);
   const [consultationDetailForm, setConsultationDetailForm] = useState({ startAt: "", endAt: "", doctorNotes: "", cancellationReason: "" });
   const [consultationActionLoading, setConsultationActionLoading] = useState("");
@@ -1789,14 +1850,14 @@ export default function Page() {
   }, [session, currentPage, hydrated]);
 
   useEffect(() => {
-    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(selectedCustomerId);
+    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(selectedCustomerId);
     document.body.classList.toggle("auth-locked", authGate.visible);
     document.body.classList.toggle("modal-open", hasPopupOpen);
     return () => {
       document.body.classList.remove("auth-locked");
       document.body.classList.remove("modal-open");
     };
-  }, [authGate.visible, createModalType, doctorAssignmentModalOpen, orderControlsModalOpen, orderCreateModalOpen, orderModalOpen, paymentReceiptModalOpen, selectedConsultation, selectedCustomerId, selectedDoctorId, selectedProductEdit]);
+  }, [authGate.visible, categoryCreateOpen, createModalType, doctorAssignmentModalOpen, orderControlsModalOpen, orderCreateModalOpen, orderModalOpen, paymentReceiptModalOpen, selectedConsultation, selectedCustomerId, selectedDoctorId, selectedProductEdit]);
 
   useEffect(() => {
     function handleStackedModalCtaClick(event) {
@@ -1935,16 +1996,27 @@ export default function Page() {
     setDoctorAssignmentModalOpen(false);
   }
 
+  function resetSelectedOrderState() {
+    setSelectedOrderId(null);
+    setSelectedOrderDetail(null);
+    setSelectedOrderDoctorId("");
+    setSelectedOrderStatus("");
+    setSelectedOrderNote("");
+    setOrderActionFeedback("");
+  }
+
   function closeAllOrderPopups() {
     setOrderCreateModalOpen(false);
     setOrderControlsModalOpen(false);
     setDoctorAssignmentModalOpen(false);
     setOrderModalOpen(false);
+    resetSelectedOrderState();
   }
 
   function closeOrderModal() {
     closeNestedOrderPopups();
     setOrderModalOpen(false);
+    resetSelectedOrderState();
   }
 
   function closePaymentReceiptModal() {
@@ -2058,59 +2130,196 @@ export default function Page() {
     }));
   }
 
-  async function fetchReceiptDocument(order) {
-    const payload = await apiRequest(`/orders/${order.id}/receipt`);
+  async function fetchOrderDocument(order, documentType = getOrderDocumentType(order)) {
+    const attachment = await fetchOrderDocumentAttachment(order, documentType);
     return {
-      filename: payload?.data?.filename || `receipt-order-${order.number}.pdf`,
-      blob: base64PdfToBlob(payload?.data?.base64 || ""),
+      filename: attachment.filename || `${documentType}-order-${order.number}.pdf`,
+      blob: base64PdfToBlob(attachment.base64 || attachment.content || ""),
     };
   }
 
-  async function printReceiptForOrder(order, { feedback } = {}) {
-    const { blob, filename } = await fetchReceiptDocument(order);
+  async function fetchReceiptDocument(order) {
+    return fetchOrderDocument(order, "receipt");
+  }
+
+  async function fetchOrderDocumentAttachment(order, documentType) {
+    const routes = documentType === "receipt"
+      ? ["receipt", "details-pdf"]
+      : documentType === "prescription"
+        ? ["prescription-pdf"]
+        : ["details-pdf"];
+    let lastError = null;
+    for (const route of routes) {
+      try {
+        const payload = await apiRequest(`/orders/${order.id}/${route}`);
+        const base64 = payload?.data?.base64 || "";
+        const filename = payload?.data?.filename || `${documentType}-order-${order.number}.pdf`;
+        return {
+          filename,
+          content_type: payload?.data?.content_type || "application/pdf",
+          mime_type: payload?.data?.content_type || "application/pdf",
+          base64,
+          content: base64
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error("Unable to build the order document attachment.");
+  }
+
+  function buildOrderEmailVariables(order, documentType, paymentLink) {
+    const customerName = customerNameForOrder(order) || "Customer";
+    const [customerFirstName = "", ...customerLastParts] = String(customerName).trim().split(/\s+/);
+    const customerLastName = customerLastParts.join(" ");
+    const documentTitle = documentType === "receipt" ? "Receipt" : "Invoice";
+    const paymentLinkHtml = paymentLink
+      ? `<a href="${escapeHtml(paymentLink)}" target="_blank" rel="noopener noreferrer">Pay now</a>`
+      : "";
+    return {
+      customer_name: customerName,
+      customer_firstname: customerFirstName || customerName,
+      customer_lastname: customerLastName,
+      order_id: String(order?.id || ""),
+      order_number: String(order?.number || order?.id || ""),
+      order_total: formatMoney(order?.total || 0, storeCurrency),
+      invoice_total: formatMoney(order?.total || 0, storeCurrency),
+      payment_link: paymentLink,
+      payment_link_html: paymentLinkHtml,
+      document_type: documentType,
+      document_title: documentTitle,
+      site_name: siteName,
+      support_email: appointmentSettings.smtpSender || "support@nevarihealth.com"
+    };
+  }
+
+  function buildOrderEmailFallbackHtml(order, documentType, paymentLink) {
+    const documentLabel = documentType === "receipt" ? "receipt" : "invoice";
+    const paymentLinkBlock = paymentLink ? `<p><a href="${escapeHtml(paymentLink)}" target="_blank" rel="noopener noreferrer">Pay now</a></p>` : "";
+    return `
+      <p>Hello ${escapeHtml(customerNameForOrder(order) || "Customer")},</p>
+      <p>Your ${escapeHtml(documentLabel)} for order <strong>#${escapeHtml(order?.number || order?.id || "")}</strong> is attached.</p>
+      ${paymentLinkBlock}
+      <p>Thank you for choosing ${escapeHtml(siteName)}.</p>
+    `;
+  }
+
+  function buildOrderEmailFallbackText(order, documentType, paymentLink) {
+    const documentLabel = documentType === "receipt" ? "receipt" : "invoice";
+    const paymentText = paymentLink ? ` Pay now: ${paymentLink}` : "";
+    return `Hello ${customerNameForOrder(order) || "Customer"}, your ${documentLabel} for order #${order?.number || order?.id || ""} is attached.${paymentText} Thank you for choosing ${siteName}.`;
+  }
+
+  async function sendOrderDocumentEmail(order, { documentType: requestedDocumentType, feedback } = {}) {
+    if (typeof window === "undefined" || !order) {
+      return null;
+    }
+    const email = customerEmail(order);
+    if (!email) {
+      throw new Error("No customer email is available for contact.");
+    }
+    const documentType = requestedDocumentType || getOrderDocumentType(order);
+    const invoiceNumber = `NVH-INV-${String(order?.number || order?.id || "").padStart(5, "0")}`;
+    const paymentLink = normalizeOrderQueueValue(order?.payment_status || order?.status) === "pending"
+      ? `${window.location.origin}/pay/${encodeURIComponent(invoiceNumber)}?role=patient`
+      : "";
+    const response = await fetch(`/api/admin/orders/${encodeURIComponent(order.id)}/documents/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        document_type: documentType,
+        baseUrl: session.baseUrl,
+        accessToken: session.accessToken,
+        frontendType: session.frontendType || FRONTEND_TYPE,
+        frontendOrigin: session.frontendOrigin || window.location.origin,
+        appOrigin: window.location.origin,
+        fallback_payment_link: paymentLink,
+        fallback_body_html: buildOrderEmailFallbackHtml(order, documentType, paymentLink),
+        fallback_body_text: buildOrderEmailFallbackText(order, documentType, paymentLink),
+        fallback_variables: buildOrderEmailVariables(order, documentType, paymentLink)
+      })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.success) {
+      throw new Error(payload?.error?.message || payload?.message || "Document email could not be sent.");
+    }
+    return payload;
+  }
+
+  async function printReceiptForOrder(order, { documentType = getOrderDocumentType(order), feedback, statusMode = "order" } = {}) {
+    const tab = documentType === "receipt" ? "receipt" : documentType === "prescription" ? "prescription" : "invoice";
+    if (typeof window !== "undefined" && order?.id) {
+      try {
+        window.localStorage.setItem(`nevari-document-order-${String(order.id)}`, JSON.stringify(order));
+      } catch {}
+    }
+    const documentUrl = `/admin/orders/${encodeURIComponent(order.id || order.number || "")}/documents?role=admin&tab=${encodeURIComponent(tab)}&print=1&statusMode=${encodeURIComponent(statusMode)}`;
+    const frame = document.createElement("iframe");
+    frame.title = `${documentType} print frame`;
+    frame.src = documentUrl;
+    frame.style.position = "fixed";
+    frame.style.right = "0";
+    frame.style.bottom = "0";
+    frame.style.width = "0";
+    frame.style.height = "0";
+    frame.style.border = "0";
+    frame.style.opacity = "0";
+    frame.setAttribute("aria-hidden", "true");
+    await new Promise((resolve) => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        window.setTimeout(resolve, 1_200);
+      };
+      frame.addEventListener("load", settle, { once: true });
+      document.body.appendChild(frame);
+      window.setTimeout(settle, 8_000);
+    });
+    window.setTimeout(() => {
+      try {
+        frame.remove();
+      } catch {}
+    }, 30_000);
+    if (feedback) {
+      feedback(`Print dialog opened for ${documentType === "receipt" ? "receipt" : "invoice"}.`);
+    }
+  }
+
+  async function downloadReceiptForOrder(order, { documentType = getOrderDocumentType(order), feedback } = {}) {
+    const { blob, filename } = await fetchOrderDocument(order, documentType);
     const objectUrl = URL.createObjectURL(blob);
-    const receiptWindow = window.open(objectUrl, "_blank", "noopener,noreferrer");
-    if (!receiptWindow) {
+    const viewer = window.open(objectUrl, "_blank", "noopener,noreferrer");
+    if (!viewer) {
       const link = document.createElement("a");
       link.href = objectUrl;
-      link.download = filename;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
       link.click();
-    } else {
-      receiptWindow.addEventListener("load", () => {
-        receiptWindow.focus();
-        receiptWindow.print();
-      }, { once: true });
     }
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     if (feedback) {
-      feedback("Printable PDF receipt generated.");
+      feedback(`${documentType === "receipt" ? "Receipt" : "Invoice"} PDF viewer opened.`);
     }
   }
 
-  async function downloadReceiptForOrder(order, { feedback } = {}) {
-    const { blob, filename } = await fetchReceiptDocument(order);
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = filename;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  async function sendReceiptForOrder(order, { documentType, feedback } = {}) {
+    const payload = await sendOrderDocumentEmail(order, { documentType, feedback });
     if (feedback) {
-      feedback("Receipt download started.");
-    }
-  }
-
-  async function sendReceiptForOrder(order, { feedback } = {}) {
-    const payload = await apiRequest(`/orders/${order.id}/send-receipt`, { method: "POST" });
-    if (feedback) {
-      feedback(`Receipt sent to ${payload?.data?.recipient_email || order.billing?.email || "the customer"}.`);
+      const documentLabel = (documentType || getOrderDocumentType(order)) === "receipt" ? "Receipt" : "Invoice";
+      feedback(`${documentLabel} sent to ${payload?.data?.recipient_email || order.billing?.email || "the customer"}.`);
     }
   }
 
   async function performTableOrderAction(actionKey, order, action) {
     setTableActionLoading(`${actionKey}-${order.id}`);
     try {
-      await action();
+      const message = await action();
+      if (message) {
+        showSnackbar(message, "success");
+      }
+    } catch (error) {
+      showSnackbar(describeRequestError(error), "error");
     } finally {
       setTableActionLoading("");
     }
@@ -2220,7 +2429,7 @@ export default function Page() {
 
   function selectConsultationCalendarSlot(dateValue, timeValue = "09:00", minutes = consultationDuration) {
     const startAt = buildDateTimeLocalValue(dateValue, timeValue);
-    if (!startAt) {
+    if (!startAt || !isFutureLocalDateTimeValue(startAt)) {
       return;
     }
     const endAt = addMinutesToLocalValue(startAt, minutes);
@@ -2240,7 +2449,7 @@ export default function Page() {
         .map((appointment) => localTimeKey(appointment.start_at))
         .filter(Boolean)
     );
-    const nextTime = BOOKING_SLOT_TIMES.find((time) => !bookedSlots.has(time)) || "";
+    const nextTime = BOOKING_SLOT_TIMES.find((time) => !bookedSlots.has(time) && isFutureLocalDateTimeValue(buildDateTimeLocalValue(dateKey, time))) || "";
     setConsultationBookingDate(dateKey);
     setConsultationCreateCalendarViewDate(date || new Date(`${dateKey}T00:00:00`));
     if (nextTime) {
@@ -2434,6 +2643,15 @@ export default function Page() {
       return;
     }
 
+    const selectedDoctorId = orderCreateForm.doctorId ? String(orderCreateForm.doctorId) : "";
+    const doctorIsValid = !selectedDoctorId || popupOrderDoctors.some((doctor) => String(doctor.user_id || doctor.id) === selectedDoctorId);
+    if (!doctorIsValid) {
+      const message = "Please choose a valid doctor from the dropdown or leave the field blank.";
+      setOrderCreateFeedback(message);
+      showSnackbar(message, "warning");
+      return;
+    }
+
     setOrderCreateLoading(true);
     setOrderCreateFeedback("");
     try {
@@ -2448,7 +2666,7 @@ export default function Page() {
           notify_doctor: true,
           notify_admin: true,
           notify_customer: shouldNotifyCustomerForOrderStatus(orderCreateForm.status),
-          doctor_user_id: orderCreateForm.doctorId ? Number(orderCreateForm.doctorId) : 0,
+          doctor_user_id: selectedDoctorId ? Number(selectedDoctorId) : 0,
           customer_note: orderCreateForm.note,
           billing: {
             first_name: orderCreateForm.firstName,
@@ -2509,6 +2727,13 @@ export default function Page() {
       } else if (createModalType === "consultation") {
         if (!consultationCreateForm.doctorUserId || !consultationCreateForm.patientUserId || !consultationCreateForm.startAt || !consultationCreateForm.endAt || !consultationCreateForm.type) {
           const message = "Select a doctor, patient, date, time, and consultation type before creating the consultation.";
+          setCreateFeedback(message);
+          showSnackbar(message, "warning");
+          setCreateLoading(false);
+          return;
+        }
+        if (!isFutureLocalDateTimeValue(consultationCreateForm.startAt) || !isFutureLocalDateTimeValue(consultationCreateForm.endAt)) {
+          const message = "Choose a future date and time for the consultation.";
           setCreateFeedback(message);
           showSnackbar(message, "warning");
           setCreateLoading(false);
@@ -2804,30 +3029,21 @@ export default function Page() {
     }
   }
 
-  function printSelectedOrder() {
+  async function printSelectedOrder() {
     if (typeof window === "undefined" || !selectedOrderDetail) {
       return;
     }
-    const invoiceWindow = window.open("", "_blank", "noopener,noreferrer");
-    const invoiceHtml = buildInvoiceHtml(selectedOrderDetail, { siteName, storeCurrency });
-    if (!invoiceWindow) {
-      const blob = new Blob([invoiceHtml], { type: "text/html" });
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = `invoice-order-${selectedOrderDetail.number || selectedOrderDetail.id}.html`;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-      setOrderActionFeedback("Invoice generated as an HTML document.");
-      return;
+    setOrderMutationLoading(true);
+    setOrderActionFeedback("");
+    try {
+      const documentType = getOrderDocumentType(selectedOrderDetail);
+      await printReceiptForOrder(selectedOrderDetail, { documentType });
+      setOrderActionFeedback(`${documentType === "receipt" ? "Receipt" : "Invoice"} PDF generated.`);
+    } catch (error) {
+      setOrderActionFeedback(describeRequestError(error));
+    } finally {
+      setOrderMutationLoading(false);
     }
-    invoiceWindow.document.open();
-    invoiceWindow.document.write(invoiceHtml);
-    invoiceWindow.document.close();
-    invoiceWindow.addEventListener("load", () => {
-      invoiceWindow.focus();
-      invoiceWindow.print();
-    }, { once: true });
   }
 
   async function refundSelectedOrder() {
@@ -2858,34 +3074,19 @@ export default function Page() {
     if (typeof window === "undefined" || !selectedOrderDetail) {
       return;
     }
-    const email = customerEmail(selectedOrderDetail);
-    if (!email) {
-      setOrderActionFeedback("No customer email is available for contact.");
-      return;
-    }
-    setOrderMutationLoading(true);
+    setOrderEmailActionLoading(String(selectedOrderDetail.id || selectedOrderDetail.number || "order"));
     setOrderActionFeedback("");
     try {
-      let payload;
-      try {
-        payload = await apiRequest(`/orders/${selectedOrderDetail.id}/contact-customer`, {
-          method: "POST",
-          body: { template: "order_update", order_id: selectedOrderDetail.id }
-        });
-      } catch (error) {
-        if (!/required service is unavailable|not found|no route/i.test(String(error?.message || ""))) {
-          throw error;
-        }
-        payload = await apiRequest(`/orders/${selectedOrderDetail.id}/send-receipt`, { method: "POST" });
-      }
-      setOrderActionFeedback(`Order email sent to ${payload?.data?.recipient_email || email}.`);
-      showSnackbar(`Order email sent to ${payload?.data?.recipient_email || email}.`, "success");
+      const payload = await sendOrderDocumentEmail(selectedOrderDetail);
+      const email = payload?.data?.recipient_email || customerEmail(selectedOrderDetail) || "the customer";
+      setOrderActionFeedback(`Order email sent to ${email}.`);
+      showSnackbar(`Order email sent to ${email}.`, "success");
     } catch (error) {
       const message = describeRequestError(error);
       setOrderActionFeedback(message);
       showSnackbar(message, "error");
     } finally {
-      setOrderMutationLoading(false);
+      setOrderEmailActionLoading("");
     }
   }
 
@@ -2906,14 +3107,25 @@ export default function Page() {
     setDoctorAssignmentModalOpen(true);
   }
 
-  function openPaymentReceipt(order) {
+  async function openPaymentReceipt(order) {
     if (!order) {
       return;
     }
     setSelectedPaymentReceipt(order);
-    setPaymentReceiptFeedback("");
+    setPaymentReceiptFeedback("Loading payment details...");
     setReceiptActionLoading("");
     setPaymentReceiptModalOpen(true);
+    try {
+      const payload = await apiRequest(`/orders/${order.id}`);
+      const nextOrder = payload?.data || order;
+      setSelectedPaymentReceipt(nextOrder);
+      setPaymentReceiptFeedback("");
+      syncOrderState(nextOrder);
+    } catch (error) {
+      const message = describeRequestError(error);
+      setPaymentReceiptFeedback(message);
+      showSnackbar(message, "error");
+    }
   }
 
   async function openCustomerDetails(customer) {
@@ -2956,21 +3168,42 @@ export default function Page() {
     if (typeof window === "undefined" || !order) {
       return;
     }
-    await performTableOrderAction("print", order, () => printReceiptForOrder(order));
+    await performTableOrderAction("print", order, async () => {
+      await printReceiptForOrder(order, { documentType: "receipt", statusMode: "payment" });
+      return `Receipt for order #${order.number || order.id} is ready.`;
+    });
+  }
+
+  async function printOrderDocumentFromRow(order) {
+    if (typeof window === "undefined" || !order) {
+      return;
+    }
+    await performTableOrderAction("print", order, async () => {
+      const documentType = getOrderDocumentType(order);
+      await printReceiptForOrder(order, { documentType });
+      return `${documentType === "receipt" ? "Receipt" : "Invoice"} for order #${order.number || order.id} is ready.`;
+    });
   }
 
   async function downloadOrderReceiptFromRow(order) {
     if (typeof window === "undefined" || !order) {
       return;
     }
-    await performTableOrderAction("download", order, () => downloadReceiptForOrder(order));
+    await performTableOrderAction("download", order, async () => {
+      await downloadReceiptForOrder(order, { documentType: "receipt" });
+      return `Receipt PDF viewer opened for order #${order.number || order.id}.`;
+    });
   }
 
   async function sendOrderReceiptFromRow(order) {
     if (!order) {
       return;
     }
-    await performTableOrderAction("send", order, () => sendReceiptForOrder(order));
+    await performTableOrderAction("send", order, async () => {
+      let message = "";
+      await sendReceiptForOrder(order, { feedback: (nextMessage) => { message = nextMessage; } });
+      return message || `Receipt sent for order #${order.number || order.id}.`;
+    });
   }
 
   async function openOrderStatusFromRow(order) {
@@ -2982,6 +3215,7 @@ export default function Page() {
       setOrderCreateModalOpen(false);
       setDoctorAssignmentModalOpen(false);
       setOrderControlsModalOpen(true);
+      return `Order #${order.number || order.id} controls opened.`;
     });
   }
 
@@ -2998,6 +3232,7 @@ export default function Page() {
       await waitForDeleteExit();
       removeOrderState(order.id);
       clearOrderDeleting(order.id);
+      return `Order #${order.number || order.id} deleted.`;
     });
   }
 
@@ -3025,25 +3260,13 @@ export default function Page() {
     setReceiptActionLoading("print");
     setPaymentReceiptFeedback("");
     try {
-      const payload = await apiRequest(`/orders/${selectedPaymentReceipt.id}/receipt`);
-      const blob = base64PdfToBlob(payload?.data?.base64 || "");
-      const objectUrl = URL.createObjectURL(blob);
-      const receiptWindow = window.open(objectUrl, "_blank", "noopener,noreferrer");
-      if (!receiptWindow) {
-        const link = document.createElement("a");
-        link.href = objectUrl;
-        link.download = payload?.data?.filename || `receipt-order-${selectedPaymentReceipt.number}.pdf`;
-        link.click();
-      } else {
-        receiptWindow.addEventListener("load", () => {
-          receiptWindow.focus();
-          receiptWindow.print();
-        }, { once: true });
-      }
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      await printReceiptForOrder(selectedPaymentReceipt, { documentType: "receipt" });
       setPaymentReceiptFeedback("Printable PDF receipt generated.");
+      showSnackbar(`Receipt for order #${selectedPaymentReceipt.number || selectedPaymentReceipt.id} is ready.`, "success");
     } catch (error) {
-      setPaymentReceiptFeedback(describeRequestError(error));
+      const message = describeRequestError(error);
+      setPaymentReceiptFeedback(message);
+      showSnackbar(message, "error");
     } finally {
       setReceiptActionLoading("");
     }
@@ -3057,10 +3280,15 @@ export default function Page() {
     setReceiptActionLoading("send");
     setPaymentReceiptFeedback("");
     try {
-      const payload = await apiRequest(`/orders/${selectedPaymentReceipt.id}/send-receipt`, { method: "POST" });
-      setPaymentReceiptFeedback(`Receipt sent to ${payload?.data?.recipient_email || customerEmail(selectedPaymentReceipt) || "the customer"}.`);
+      let message = "";
+      await sendReceiptForOrder(selectedPaymentReceipt, { documentType: "receipt", feedback: (nextMessage) => { message = nextMessage; } });
+      const finalMessage = message || `Receipt sent to ${customerEmail(selectedPaymentReceipt) || "the customer"}.`;
+      setPaymentReceiptFeedback(finalMessage);
+      showSnackbar(finalMessage, "success");
     } catch (error) {
-      setPaymentReceiptFeedback(describeRequestError(error));
+      const message = describeRequestError(error);
+      setPaymentReceiptFeedback(message);
+      showSnackbar(message, "error");
     } finally {
       setReceiptActionLoading("");
     }
@@ -3403,26 +3631,38 @@ export default function Page() {
     const loadingKey = `${product.id}:${category.name}`;
     setCategoryAssignmentLoading(loadingKey);
     setCategoryAssignmentFeedback("");
+    const previousProduct = product;
     try {
       const existingCategories = getProductCategories(product).split(",").map((item) => item.trim()).filter(Boolean);
       const nextCategories = Array.from(new Set([...existingCategories, category.name]));
+      const optimisticProduct = { ...product, categories: nextCategories };
+      setData((prev) => ({
+        ...prev,
+        products: (prev.products || []).map((item) => (item.id === product.id ? { ...item, ...optimisticProduct } : item))
+      }));
+      patchCacheList(isProductListKey, (list) => replaceById(list, optimisticProduct));
+      setCategoryProductSearch("");
       const payload = await apiRequest(`/products/${product.id}`, {
         method: "POST",
         body: {
           categories: nextCategories
         }
       });
-      const nextProduct = payload?.data || { ...product, categories: nextCategories };
+      const nextProduct = payload?.data || optimisticProduct;
       setData((prev) => ({
         ...prev,
         products: (prev.products || []).map((item) => (item.id === product.id ? { ...item, ...nextProduct } : item))
       }));
       patchCacheList(isProductListKey, (list) => replaceById(list, nextProduct));
       revalidateCacheGroups(isProductListKey, isProductCategoryListKey, isProductTagListKey);
-      setCategoryAssignmentFeedback(`${product.name || "Product"} added to ${category.name}.`);
-      setCategoryProductSearch("");
+      showSnackbar(`${product.name || "Product"} added to ${category.name}.`, "success");
     } catch (error) {
-      setCategoryAssignmentFeedback(describeRequestError(error));
+      setData((prev) => ({
+        ...prev,
+        products: (prev.products || []).map((item) => (item.id === product.id ? previousProduct : item))
+      }));
+      patchCacheList(isProductListKey, (list) => replaceById(list, previousProduct));
+      showSnackbar(describeRequestError(error), "error");
     } finally {
       setCategoryAssignmentLoading("");
     }
@@ -3435,39 +3675,51 @@ export default function Page() {
     const loadingKey = `${product.id}:${category.name}:remove`;
     setCategoryAssignmentLoading(loadingKey);
     setCategoryAssignmentFeedback("");
+    const previousProduct = product;
     try {
       const existingCategories = getProductCategories(product).split(",").map((item) => item.trim()).filter(Boolean);
       const nextCategories = existingCategories.filter((item) => item !== category.name);
       if (!nextCategories.length) {
         const message = "Product must belong to atleast 1 category";
-        setCategoryAssignmentFeedback(message);
         showSnackbar(message, "warning");
         return;
       }
+      const optimisticProduct = { ...product, categories: nextCategories };
+      setData((prev) => ({
+        ...prev,
+        products: (prev.products || []).map((item) => (item.id === product.id ? { ...item, ...optimisticProduct } : item))
+      }));
+      patchCacheList(isProductListKey, (list) => replaceById(list, optimisticProduct));
       const payload = await apiRequest(`/products/${product.id}`, {
         method: "POST",
         body: {
           categories: nextCategories
         }
       });
-      const nextProduct = payload?.data || { ...product, categories: nextCategories };
+      const nextProduct = payload?.data || optimisticProduct;
       setData((prev) => ({
         ...prev,
         products: (prev.products || []).map((item) => (item.id === product.id ? { ...item, ...nextProduct } : item))
       }));
       patchCacheList(isProductListKey, (list) => replaceById(list, nextProduct));
       revalidateCacheGroups(isProductListKey, isProductCategoryListKey, isProductTagListKey);
-      setCategoryAssignmentFeedback(`${product.name || "Product"} removed from ${category.name}.`);
+      showSnackbar(`${product.name || "Product"} removed from ${category.name}.`, "success");
     } catch (error) {
-      setCategoryAssignmentFeedback(describeRequestError(error));
+      setData((prev) => ({
+        ...prev,
+        products: (prev.products || []).map((item) => (item.id === product.id ? previousProduct : item))
+      }));
+      patchCacheList(isProductListKey, (list) => replaceById(list, previousProduct));
+      showSnackbar(describeRequestError(error), "error");
     } finally {
       setCategoryAssignmentLoading("");
     }
   }
 
   function openCategoryCreateForm() {
+    const defaultPrice = String(appointmentSettings.categoryPricing?.general || selectedCategory?.price || "6000");
     setCategoryCreateOpen(true);
-    setCategoryCreateForm({ name: "", pricePerMinute: String(selectedCategory?.price || appointmentSettings.categoryPricing?.general || "") });
+    setCategoryCreateForm({ name: "", pricePerMinute: defaultPrice });
     setCategoryMutationFeedback("");
   }
 
@@ -3483,7 +3735,7 @@ export default function Page() {
       setCategoryMutationFeedback("Enter a category name.");
       return;
     }
-    const nextPrice = String(categoryCreateForm.pricePerMinute || "").trim();
+    const nextPrice = String(categoryCreateForm.pricePerMinute || appointmentSettings.categoryPricing?.general || "6000").trim();
     setCategoryMutationLoading("create-category");
     setCategoryMutationFeedback("");
     try {
@@ -3635,6 +3887,22 @@ export default function Page() {
     const loadingKey = `${doctorId}:${assign ? "assign" : "remove"}`;
     setCategoryMutationLoading(loadingKey);
     setCategoryMutationFeedback("");
+    const doctorIdKey = String(doctorId || "");
+    const updateAssignedDoctorCache = (nextDoctor, shouldAssign) => (current) => {
+      const currentRows = Array.isArray(current?.data) ? current.data : [];
+      if (shouldAssign) {
+        const existing = currentRows.some((item) => String(item.user_id || item.id || "") === doctorIdKey);
+        return {
+          data: existing
+            ? currentRows.map((item) => (String(item.user_id || item.id || "") === doctorIdKey ? { ...item, ...nextDoctor } : item))
+            : [...currentRows, nextDoctor]
+        };
+      }
+      return {
+        data: currentRows.filter((item) => String(item.user_id || item.id || "") !== doctorIdKey)
+      };
+    };
+
     try {
       const currentIds = new Set(getDoctorCategoryIds(doctor));
       const resolvedCategoryId = Number(categoryId);
@@ -3646,13 +3914,23 @@ export default function Page() {
         }
       }
 
+      const optimisticDoctor = {
+        ...doctor,
+        product_category_ids: [...currentIds]
+      };
+      await categoryAssignedDoctorsQuery.mutate(updateAssignedDoctorCache(optimisticDoctor, assign), false);
+      await categoryDoctorSearchQuery.mutate((current) => ({
+        data: (Array.isArray(current?.data) ? current.data : []).filter((item) => (
+          assign || String(item.user_id || item.id || "") !== doctorIdKey
+        ))
+      }), false);
+
       const payload = await apiRequest(`/doctors/${doctorId}`, {
         method: "POST",
         body: {
           product_category_ids: [...currentIds]
         }
       });
-
       const nextDoctor = payload?.data || {
         ...doctor,
         product_category_ids: [...currentIds]
@@ -3665,14 +3943,18 @@ export default function Page() {
             : item
         ))
       }));
+      await categoryAssignedDoctorsQuery.mutate(updateAssignedDoctorCache(nextDoctor, assign), false);
       patchDoctorCache(nextDoctor);
       revalidateCacheGroups(isDoctorListKey);
+
       setCategoryDoctorSearch("");
-      setCategoryMutationFeedback(assign
+      showSnackbar(assign
         ? `${doctor.display_name || "Doctor"} assigned to ${selectedCategory.name}.`
-        : `${doctor.display_name || "Doctor"} removed from ${selectedCategory.name}.`);
+        : `${doctor.display_name || "Doctor"} removed from ${selectedCategory.name}.`, "success");
     } catch (error) {
-      setCategoryMutationFeedback(describeRequestError(error));
+      await categoryAssignedDoctorsQuery.mutate();
+      await categoryDoctorSearchQuery.mutate();
+      showSnackbar(describeRequestError(error), "error");
     } finally {
       setCategoryMutationLoading("");
     }
@@ -3768,6 +4050,10 @@ export default function Page() {
     setConsultationActionLoading(action);
     setConsultationActionFeedback("");
     try {
+      if (action === "reschedule" && (!isFutureLocalDateTimeValue(body.start_at) || !isFutureLocalDateTimeValue(body.end_at))) {
+        setConsultationActionFeedback("Choose a future date and time before rescheduling.");
+        return;
+      }
       const payload = await apiRequest(`/appointments/${selectedConsultation.id}/${action}`, {
         method: "POST",
         body
@@ -3917,20 +4203,34 @@ export default function Page() {
     }
 
     const refreshPromise = (async () => {
-      const payload = await apiRequest("/auth/refresh", {
-        method: "POST",
-        auth: false,
-        body: {
-          refresh_token: workingSession.refreshToken,
-          ...frontendContext(workingSession)
-        }
-      }, workingSession);
+      try {
+        const payload = await apiRequest("/auth/refresh", {
+          method: "POST",
+          auth: false,
+          body: {
+            refresh_token: workingSession.refreshToken,
+            ...frontendContext(workingSession)
+          }
+        }, workingSession);
 
-      const nextSession = hydrateAuthSession(workingSession, payload.data);
-      latestSessionRef.current = nextSession;
-      setSession(nextSession);
-      persistSessionSnapshot(nextSession, currentPage);
-      return nextSession;
+        const nextSession = hydrateAuthSession(workingSession, payload.data);
+        latestSessionRef.current = nextSession;
+        setSession(nextSession);
+        persistSessionSnapshot(nextSession, currentPage);
+        return nextSession;
+      } catch (error) {
+        if (isExpiredRefreshSessionError(error)) {
+          const nextSession = { ...workingSession, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
+          latestSessionRef.current = nextSession;
+          setSession(nextSession);
+          persistSessionSnapshot(nextSession, currentPage);
+          setSyncStatus({ text: nextSession.paired ? "Paired" : "Disconnected", mode: "" });
+          setAuthFeedback("Stored session expired. Sign in again.");
+          showAuthGate("auth");
+          throw new Error("Stored session expired. Sign in again.");
+        }
+        throw error;
+      }
     })();
 
     refreshPromiseRef.current = refreshPromise;
@@ -3976,8 +4276,8 @@ export default function Page() {
       setData((prev) => ({
         ...prev,
         dashboard: summary.dashboard || summary,
-        orders: recentOrders,
-        orderDetails: recentOrders
+        orders: ["orders", "payments"].includes(currentPage) ? prev.orders : recentOrders,
+        orderDetails: ["orders", "payments"].includes(currentPage) ? prev.orderDetails : recentOrders
       }));
       setLiveSnapshots((prev) => ([
         ...prev,
@@ -4268,6 +4568,39 @@ export default function Page() {
     }
   }
 
+  async function handleResendVerificationCode() {
+    if (!verification.challengeId) {
+      setAuthFeedback("No verification challenge is active. Sign in again.");
+      return;
+    }
+
+    setAuthResendLoading(true);
+    setAuthFeedback("Sending a new verification code...");
+
+    try {
+      const payload = await apiRequest("/auth/resend-code", {
+        method: "POST",
+        auth: false,
+        body: {
+          challenge_id: verification.challengeId,
+          ...frontendContext(session)
+        }
+      }, session);
+
+      setVerification((prev) => ({
+        ...prev,
+        challengeId: payload.data.challenge_id || prev.challengeId,
+        maskedEmail: payload.data.masked_email || prev.maskedEmail,
+        code: ""
+      }));
+      setAuthFeedback(`A new code was sent to ${payload.data.masked_email || verification.maskedEmail || "your email"}.`);
+    } catch (error) {
+      setAuthFeedback(describeRequestError(error));
+    } finally {
+      setAuthResendLoading(false);
+    }
+  }
+
   async function handleResetSubmit(event) {
     event.preventDefault();
     setResetSubmitting(true);
@@ -4373,7 +4706,9 @@ export default function Page() {
       try {
         refreshed = await refreshSession(session);
       } catch (error) {
-        console.error(error);
+        if (!isExpiredRefreshSessionError(error) && !/stored session expired/i.test(String(error?.message || ""))) {
+          console.error(error);
+        }
         if (cancelled) {
           return;
         }
@@ -4459,7 +4794,7 @@ export default function Page() {
     }, 15000);
 
     return () => window.clearInterval(intervalId);
-  }, [trendMode, session.accessToken, refreshing]);
+  }, [trendMode, session.accessToken, refreshing, currentPage]);
 
   const canLoadSections = hydrated && Boolean(session.accessToken) && !authGate.visible;
   const lazyQueryOptions = {
@@ -4476,11 +4811,20 @@ export default function Page() {
   const productCategoriesListKey = canLoadSections && currentPage === "products"
     ? swrKeys.admin.categories(withBaseUrl(session, { per_page: 100, page: 1 }))
     : null;
+  const categoryPaneProductsListKey = canLoadSections && currentPage === "products" && productCatalogView === "categories"
+    ? swrKeys.admin.products(withBaseUrl(session, { per_page: 100, page: 1 }))
+    : null;
+  const categoryPaneCategoriesListKey = canLoadSections && currentPage === "products" && productCatalogView === "categories"
+    ? swrKeys.admin.categories(withBaseUrl(session, { per_page: 100, page: 1 }))
+    : null;
+  const categoryPaneDoctorsListKey = canLoadSections && currentPage === "products" && productCatalogView === "categories"
+    ? swrKeys.admin.doctors(withBaseUrl(session, { per_page: 100, page: 1 }))
+    : null;
   const customersListKey = canLoadSections && currentPage === "customers"
     ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 24, page: 1, search: deferredSearch }))
     : null;
   const consultationsListKey = canLoadSections && currentPage === "consultations"
-    ? swrKeys.admin.appointments(withBaseUrl(session, { per_page: 30, page: 1, status: consultationFilter === "all" ? "" : consultationFilter, date: selectedConsultationDate, search: deferredSearch }))
+    ? swrKeys.admin.appointments(withBaseUrl(session, { per_page: 50, page: 1, search: deferredSearch }))
     : null;
   const prescriptionsListKey = canLoadSections && currentPage === "prescriptions"
     ? swrKeys.admin.prescriptions(withBaseUrl(session, { per_page: 30, page: 1, search: deferredSearch }))
@@ -4494,7 +4838,7 @@ export default function Page() {
   const ordersQuery = useSWR(
     ordersListKey,
     () => adminApiRequest("orders", { params: { per_page: 24, page: 1, status: orderQueueFilter === "all" ? "" : orderQueueFilter, search: deferredSearch } }, session),
-    { ...lazyQueryOptions, keepPreviousData: true, refreshInterval: 0, dedupingInterval: 30_000 }
+    { ...lazyQueryOptions, refreshInterval: 0, dedupingInterval: 30_000 }
   );
   const productsQuery = useSWR(
     productsListKey,
@@ -4506,6 +4850,21 @@ export default function Page() {
     () => adminApiRequest("categories", { params: { per_page: 100, page: 1 } }, session),
     { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 120_000 }
   );
+  const categoryPaneProductsQuery = useSWR(
+    categoryPaneProductsListKey,
+    () => adminApiRequest("products", { params: { per_page: 100, page: 1 } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 120_000 }
+  );
+  const categoryPaneCategoriesQuery = useSWR(
+    categoryPaneCategoriesListKey,
+    () => adminApiRequest("categories", { params: { per_page: 100, page: 1 } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 120_000 }
+  );
+  const categoryPaneDoctorsQuery = useSWR(
+    categoryPaneDoctorsListKey,
+    () => adminApiRequest("doctors", { params: { per_page: 100, page: 1 } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 120_000 }
+  );
   const customersQuery = useSWR(
     customersListKey,
     () => adminApiRequest("customers", { params: { per_page: 24, page: 1, search: deferredSearch } }, session),
@@ -4513,7 +4872,7 @@ export default function Page() {
   );
   const consultationsQuery = useSWR(
     consultationsListKey,
-    () => adminApiRequest("appointments", { params: { per_page: 30, page: 1, status: consultationFilter === "all" ? "" : consultationFilter, date: selectedConsultationDate, search: deferredSearch } }, session),
+    () => adminApiRequest("appointments", { params: { per_page: 50, page: 1, search: deferredSearch } }, session),
     { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 60_000 }
   );
   const prescriptionsQuery = useSWR(
@@ -4609,7 +4968,28 @@ export default function Page() {
 
   useEffect(() => {
     if (!ordersQuery.data?.data) return;
-    setData((prev) => ({ ...prev, orders: ordersQuery.data.data, orderDetails: ordersQuery.data.data }));
+    let cancelled = false;
+    const orders = ordersQuery.data.data || [];
+
+    async function hydrateOrderRows() {
+      const detailResults = await Promise.allSettled(
+        orders.map((order) =>
+          apiRequest(`/orders/${order.id}`, {}, latestSessionRef.current)
+            .then((payload) => ({ ...order, ...(payload?.data || {}) }))
+            .catch(() => order)
+        )
+      );
+      if (cancelled) {
+        return;
+      }
+      const orderDetails = detailResults.map((result, index) => getSettledValue(result, orders[index]));
+      setData((prev) => ({ ...prev, orders: orderDetails, orderDetails }));
+    }
+
+    hydrateOrderRows();
+    return () => {
+      cancelled = true;
+    };
   }, [ordersQuery.data]);
 
   useEffect(() => {
@@ -4620,6 +5000,16 @@ export default function Page() {
       productCategories: productCategoriesQuery.data?.data || prev.productCategories || []
     }));
   }, [productsQuery.data, productCategoriesQuery.data]);
+
+  useEffect(() => {
+    if (!categoryPaneProductsQuery.data?.data && !categoryPaneCategoriesQuery.data?.data && !categoryPaneDoctorsQuery.data?.data) return;
+    setData((prev) => ({
+      ...prev,
+      products: categoryPaneProductsQuery.data?.data || prev.products || [],
+      productCategories: categoryPaneCategoriesQuery.data?.data || prev.productCategories || [],
+      doctors: categoryPaneDoctorsQuery.data?.data || prev.doctors || []
+    }));
+  }, [categoryPaneProductsQuery.data, categoryPaneCategoriesQuery.data, categoryPaneDoctorsQuery.data]);
 
   useEffect(() => {
     if (!customersQuery.data?.data) return;
@@ -4784,7 +5174,101 @@ export default function Page() {
     support_email: appointmentSettings.smtpSender || "support@nevarihealth.com"
   });
 
+  const orderCustomerSummaryRows = (() => {
+    const customerMap = new Map();
+
+    (data.customers || []).forEach((customer) => {
+      const id = customer.id || customer.user_id || customer.customer_id;
+      if (!id) {
+        return;
+      }
+      const name = customerNameFromRecord(customer) || customerEmail(customer) || `Customer #${id}`;
+      customerMap.set(id, {
+        id,
+        label: name,
+        name,
+        email: customerEmail(customer) || "No email on file",
+        orders: Number(customer.orders || customer.order_count || 0),
+        spend: safeNumber(customer.spend || customer.total_spend || 0),
+        lastActivity: customer.updated_at || customer.created_at || null,
+        prescriptions: Number(customer.prescriptions || 0),
+        appointments: Number(customer.appointments || 0)
+      });
+    });
+
+    (data.orderDetails || []).forEach((order) => {
+      const customerId = order.customer_id || order.customer?.id || order.user_id;
+      const email = customerEmail(order);
+      const id = customerId || email;
+      if (!id) {
+        return;
+      }
+
+      const current = customerMap.get(id) || {
+        id,
+        label: customerFullName(order) || email || `Customer #${id}`,
+        name: customerFullName(order) || email || `Customer #${id}`,
+        email: email || "No email on file",
+        orders: 0,
+        spend: 0,
+        lastActivity: null,
+        prescriptions: 0,
+        appointments: 0
+      };
+      current.orders += 1;
+      current.spend += safeNumber(order.total || 0);
+      if (!current.lastActivity || new Date(order.created_at || 0) > new Date(current.lastActivity || 0)) {
+        current.lastActivity = order.created_at;
+      }
+      customerMap.set(id, current);
+    });
+
+    (data.appointments || []).forEach((appointment) => {
+      const id = appointment.patient_user_id || appointment.customer_id || appointment.user_id;
+      if (!id) {
+        return;
+      }
+      const current = customerMap.get(id) || {
+        id,
+        label: `Customer #${id}`,
+        name: `Customer #${id}`,
+        email: "No email on file",
+        orders: 0,
+        spend: 0,
+        lastActivity: null,
+        prescriptions: 0,
+        appointments: 0
+      };
+      current.appointments += 1;
+      if (!current.lastActivity || new Date(appointment.start_at || 0) > new Date(current.lastActivity || 0)) {
+        current.lastActivity = appointment.start_at;
+      }
+      customerMap.set(id, current);
+    });
+
+    return [...customerMap.values()];
+  })();
+  const orderCustomerRowsById = new Map(
+    orderCustomerSummaryRows
+      .filter((row) => row.id !== undefined && row.id !== null && row.id !== "")
+      .map((row) => [String(row.id), row])
+  );
+  const orderCustomerRowsByEmail = new Map(
+    orderCustomerSummaryRows
+      .filter((row) => row.email && row.email !== "No email on file")
+      .map((row) => [normalizeText(row.email), row])
+  );
+  function resolveOrderCustomerSummary(order) {
+    return orderCustomerSummary(order, orderCustomerRowsById, orderCustomerRowsByEmail);
+  }
+
   const orderQueueRows = data.orderDetails || [];
+  const ordersLoading = Boolean(ordersListKey) && !ordersQuery.data?.data;
+  const paymentsLoading = Boolean(ordersListKey) && currentPage === "payments" && !ordersQuery.data?.data;
+  const productsLoading = Boolean(productsListKey) && !productsQuery.data?.data;
+  const doctorsLoading = Boolean(doctorsListKey) && !doctorsQuery.data?.data;
+  const consultationsLoading = Boolean(consultationsListKey) && !consultationsQuery.data?.data;
+  const prescriptionsLoading = Boolean(prescriptionsListKey) && !prescriptionsQuery.data?.data;
   const orderQueueCounts = {
     all: orderQueueRows.length,
     needs_rx: orderQueueRows.filter((order) => isNeedsRxOrder(order)).length,
@@ -4793,8 +5277,8 @@ export default function Page() {
   };
 
   const filteredOrders = orderQueueRows.filter((order) => {
-    const names = (order.items || []).map((item) => item.name).join(" ");
-    const customer = customerSummary(order);
+    const names = (order.items_summary || order.items || []).map ? ((order.items_summary || order.items || []).map((item) => item.name || item)).join(" ") : "";
+    const customer = resolveOrderCustomerSummary(order);
     const searchText = `${order.number} ${order.status} ${order.rx_status || ""} ${names} ${order.customer_id || ""} ${customer.name} ${customer.email}`;
     return matchesSearch(searchText, currentPage === "orders") && matchesOrderQueueFilter(order, orderQueueFilter);
   });
@@ -4908,7 +5392,6 @@ export default function Page() {
     ? (data.products || []).filter((product) => getProductCategories(product).split(",").map((item) => item.trim()).includes(selectedCategory.name))
     : [];
   const categorySearchQuery = deferredCategoryProductSearch.trim().toLowerCase();
-  const categoryDoctorSearchQuery = categoryDoctorSearch.trim().toLowerCase();
   const selectedCategoryId = selectedCategoryRecord?.id || selectedCategory?.id || null;
   const selectedCategoryName = selectedCategory?.name || "";
   const minimumConsultationMinutes = Number(appointmentSettings.minimumConsultationMinutes || 0) || 0;
@@ -4923,32 +5406,49 @@ export default function Page() {
       </>
     ) : "Not set"
   );
-  const categoryDoctorRows = selectedCategory
-    ? (data.doctors || [])
-      .map((doctor) => {
-        const assigned = getDoctorCategoryEntries(doctor).some((item) => (
+  const categoryDoctorsKey = canLoadSections && currentPage === "products" && productCatalogView === "categories" && selectedCategoryId
+    ? ["category-doctors-local", String(selectedCategoryId), selectedCategoryName, (data.doctors || []).length]
+    : null;
+  const categoryDoctorSearchKey = canLoadSections && currentPage === "products" && productCatalogView === "categories" && debouncedCategoryDoctorSearch.trim()
+    ? ["doctor-search-local", debouncedCategoryDoctorSearch.trim(), (data.doctors || []).length]
+    : null;
+  const categoryAssignedDoctorsQuery = useSWR(
+    categoryDoctorsKey,
+    async () => {
+      const fallbackRows = (data.doctors || []).filter((doctor) => (
+        getDoctorCategoryEntries(doctor).some((item) => (
           String(item.id || "") === String(selectedCategoryId || "")
           || item.name === selectedCategoryName
           || item.slug === normalizeCategoryKey(selectedCategoryName)
-        ));
-        return {
-          doctor,
-          assigned
-        };
-      })
-      .filter(({ doctor }) => (
-        !categoryDoctorSearchQuery ||
-        normalizeText(`${doctor.display_name} ${doctor.email} ${doctor.specialty || ""} ${doctor.specialties?.join(" ") || ""} ${doctor.location || ""} ${doctor.user_id || doctor.id || ""}`).includes(categoryDoctorSearchQuery)
-      ))
-      .sort((left, right) => {
-        if (left.assigned !== right.assigned) {
-          return left.assigned ? -1 : 1;
-        }
-        return String(left.doctor.display_name || "").localeCompare(String(right.doctor.display_name || ""));
-      })
+        ))
+      ));
+      return { data: fallbackRows };
+    },
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 30_000 }
+  );
+  const categoryDoctorSearchQuery = useSWR(
+    categoryDoctorSearchKey,
+    async () => {
+      const searchTerm = debouncedCategoryDoctorSearch.trim().toLowerCase();
+      const fallbackRows = (data.doctors || []).filter((doctor) => (
+        !searchTerm
+        || normalizeText(`${doctor.display_name} ${doctor.email} ${doctor.specialty || ""} ${doctor.specialties?.join(" ") || ""} ${doctor.location || ""} ${doctor.user_id || doctor.id || ""}`).includes(searchTerm)
+      ));
+      return { data: fallbackRows };
+    },
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 15_000 }
+  );
+  const assignedCategoryDoctorRows = selectedCategory
+    ? ((categoryAssignedDoctorsQuery.data?.data || []).map((doctor) => ({ doctor })))
     : [];
-  const assignedCategoryDoctorRows = categoryDoctorRows.filter(({ assigned }) => assigned);
-  const availableCategoryDoctorRows = categoryDoctorRows.filter(({ assigned }) => !assigned);
+  const assignedDoctorIds = new Set(
+    assignedCategoryDoctorRows.map(({ doctor }) => String(doctor.user_id || doctor.id || ""))
+  );
+  const availableCategoryDoctorRows = selectedCategory
+    ? (categoryDoctorSearchQuery.data?.data || [])
+      .filter((doctor) => !assignedDoctorIds.has(String(doctor.user_id || doctor.id || "")))
+      .map((doctor) => ({ doctor }))
+    : [];
   const categoryProductCandidates = selectedCategory
     ? (data.products || []).filter((product) => {
       const categoryNames = getProductCategories(product).split(",").map((item) => item.trim()).filter(Boolean);
@@ -4961,7 +5461,7 @@ export default function Page() {
       return `${product.name} ${product.sku} ${getProductCategories(product)}`.toLowerCase().includes(categorySearchQuery);
     }).slice(0, 8)
     : [];
-  const categoryProductsPerPage = 6;
+  const categoryProductsPerPage = 4;
   const categoryProductPageCount = Math.max(1, Math.ceil(selectedCategoryProducts.length / categoryProductsPerPage));
   const activeCategoryProductPage = Math.min(categoryProductPage, categoryProductPageCount);
   const paginatedSelectedCategoryProducts = selectedCategoryProducts.slice(
@@ -4971,6 +5471,7 @@ export default function Page() {
 
   useEffect(() => {
     setCategoryDoctorSearch("");
+    setDebouncedCategoryDoctorSearch("");
     setCategoryAssignmentFeedback("");
     setCategoryMutationFeedback("");
     setCategoryInlineField("");
@@ -4981,6 +5482,13 @@ export default function Page() {
       pricePerMinute: String(selectedCategory?.price || "")
     });
   }, [selectedCategory?.id, selectedCategory?.name]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedCategoryDoctorSearch(categoryDoctorSearch.trim());
+    }, 280);
+    return () => window.clearTimeout(timeoutId);
+  }, [categoryDoctorSearch]);
 
   useEffect(() => {
     setCategoryProductPage((prev) => Math.min(prev, categoryProductPageCount));
@@ -5083,12 +5591,15 @@ export default function Page() {
 
   const allPaymentRows = (data.orderDetails || [])
     .filter((order) => {
-      const paymentStatus = order.payment_status || order.status || "pending";
+      const paymentStatus = normalizedPaymentStatus(order);
+      if (!["pending", "failed", "completed", "refunded"].includes(paymentStatus)) {
+        return false;
+      }
       const customer = customerSummary(order);
       return matchesSearch(`${order.number} ${paymentStatus} ${order.rx_status || ""} ${order.customer_id || ""} ${customer.name} ${customer.email} ${order.total || 0}`, currentPage === "payments");
     })
     .map((order) => {
-      const paymentStatus = order.payment_status || order.status || "pending";
+      const paymentStatus = normalizedPaymentStatus(order);
       const held = ["on_hold", "on-hold"].includes(order.rx_status || "");
       const customer = customerSummary(order);
       return {
@@ -5109,9 +5620,9 @@ export default function Page() {
   const paymentFilterCounts = {
     all: allPaymentRows.length,
     completed: allPaymentRows.filter((row) => row.paymentStatus === "completed").length,
-    pending: allPaymentRows.filter((row) => ["pending", "processing", "on-hold", "on_hold"].includes(row.paymentStatus)).length,
-    rx: allPaymentRows.filter((row) => ["on_hold", "on-hold"].includes(row.rxStatus)).length,
-    failed: allPaymentRows.filter((row) => ["failed", "cancelled", "refunded"].includes(row.paymentStatus)).length
+    pending: allPaymentRows.filter((row) => row.paymentStatus === "pending").length,
+    failed: allPaymentRows.filter((row) => row.paymentStatus === "failed").length,
+    refunded: allPaymentRows.filter((row) => row.paymentStatus === "refunded").length
   };
 
   const paymentRows = allPaymentRows.filter((row) => {
@@ -5119,13 +5630,13 @@ export default function Page() {
       return row.paymentStatus === "completed";
     }
     if (paymentFilter === "pending") {
-      return ["pending", "processing", "on-hold", "on_hold"].includes(row.paymentStatus);
-    }
-    if (paymentFilter === "rx") {
-      return ["on_hold", "on-hold"].includes(row.rxStatus);
+      return row.paymentStatus === "pending";
     }
     if (paymentFilter === "failed") {
-      return ["failed", "cancelled", "refunded"].includes(row.paymentStatus);
+      return row.paymentStatus === "failed";
+    }
+    if (paymentFilter === "refunded") {
+      return row.paymentStatus === "refunded";
     }
     return true;
   });
@@ -5233,7 +5744,6 @@ export default function Page() {
       .sort((a, b) => safeNumber(b.spend) - safeNumber(a.spend))
       .slice(0, 18);
   })();
-
   const consultationDoctorProfile = popupConsultationDoctors.find((doctor) => String(doctor.user_id || doctor.id) === String(consultationCreateForm.doctorUserId)) || null;
   const consultationDoctorAppointments = popupConsultationAppointments
     .filter((appointment) => String(appointment.doctor_user_id) === String(consultationDoctorProfile?.user_id || consultationDoctorProfile?.id || ""))
@@ -5332,6 +5842,7 @@ export default function Page() {
   );
 
   const consultationCounts = {
+    all: filteredAppointments.length,
     upcoming: filteredAppointments.filter((item) => appointmentStatusGroup(item) === "upcoming").length,
     past: filteredAppointments.filter((item) => appointmentStatusGroup(item) === "past").length,
     ongoing: filteredAppointments.filter((item) => appointmentStatusGroup(item) === "ongoing").length
@@ -5362,7 +5873,7 @@ export default function Page() {
 
   const consultationList = filteredAppointments
     .map((item) => ({ ...item, group: appointmentStatusGroup(item) }))
-    .filter((item) => item.group === consultationFilter)
+    .filter((item) => consultationFilter === "all" || item.group === consultationFilter)
     .filter((item) => !selectedConsultationDate || isoDateKey(item.start_at) === selectedConsultationDate)
     .sort((a, b) => new Date(a.start_at || 0) - new Date(b.start_at || 0));
 
@@ -5516,6 +6027,21 @@ export default function Page() {
           </td>
         ))}
       </tr>
+    ));
+  }
+
+  function renderCardListSkeletons(count = 4) {
+    return Array.from({ length: count }, (_, index) => (
+      <div className="list-card-skeleton skeleton-panel" key={`list-card-skeleton-${index}`}>
+        <div>
+          <SkeletonBox className="skeleton-line skeleton-line-md" />
+          <SkeletonBox className="skeleton-line skeleton-line-sm" />
+        </div>
+        <div>
+          <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+          <SkeletonBox className="skeleton-line skeleton-line-xs" />
+        </div>
+      </div>
     ));
   }
 
@@ -5801,21 +6327,7 @@ export default function Page() {
             </nav>
           </div>
 
-          <div className="sidebar-card">
-            <div className="sidebar-card-header">
-              <div className="sidebar-orb" />
-              <div>
-                <strong>Operations Health</strong>
-                <span>{formatNumber(rxHolds)} RX holds, {formatNumber(emailsSummary.failed_today || 0)} email failures today</span>
-              </div>
-            </div>
-            <div className="sidebar-meter" aria-hidden="true">
-              <span className="meter-fill" style={{ width: `${Math.min(100, Math.max(18, 100 - emailFailureRate))}%` }} />
-            </div>
-            <button className="button-primary button-block" type="button" onClick={() => switchPage("audit")}>
-              Open Audit Center
-            </button>
-          </div>
+          
         </aside>
 
         <main className="main-shell">
@@ -5859,20 +6371,10 @@ export default function Page() {
                   </div>
                 ) : null}
               </div>
-              <button className="pill-button" type="button" onClick={() => (session.paired ? showAuthGate("auth") : router.push("/admin/storefront/setup"))}>
-                <InlineIcon id="i-shield" />
-                <span>{session.paired ? "Connection" : "Pair Storefront"}</span>
-              </button>
-              <span className={`sync-status ${syncStatus.mode}`.trim()}>{syncStatus.text}</span>
-              <button className="pill-button" type="button" onClick={handleRefresh} disabled={!session.accessToken || refreshing}>
-                <InlineIcon id="i-refresh-cw" />
-                <span>{refreshing ? "Refreshing" : "Refresh"}</span>
-              </button>
               <button className="pill-button" type="button" onClick={() => switchPage("consultations")}>
                 <InlineIcon id="i-calendar" />
                 <span>{formatTopbarDate()}</span>
               </button>
-              <button className="icon-button" type="button" onClick={() => switchPage("audit")}><InlineIcon id="i-bell" /></button>
               <button className="icon-button" type="button" onClick={() => switchPage("settings")}><InlineIcon id="i-settings" /></button>
               <button className="user-chip user-chip-button" type="button" onClick={() => switchPage("profile")}>
                 <div className="user-avatar">
@@ -6099,7 +6601,7 @@ export default function Page() {
                     <p className="hero-text">Review WooCommerce orders that intersect with RX validation, payment state, or fulfillment risk.</p>
                   </div>
                   <div className="banner-stats">
-                    <div className="mini-stat"><span>Orders loaded</span><strong>{formatNumber(filteredOrders.length)}</strong><small>scoped by current search</small></div>
+                    <div className="mini-stat"><span>Orders loaded</span><strong>{ordersLoading ? "—" : formatNumber(filteredOrders.length)}</strong><small>scoped by current search</small></div>
                     <div className="mini-stat"><span>RX holds</span><strong>{formatNumber(rxHolds)}</strong><small>need release or linkage</small></div>
                   </div>
                 </section>
@@ -6147,8 +6649,15 @@ export default function Page() {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredOrders.length ? filteredOrders.map((order) => {
+                        {ordersLoading ? renderTableRowSkeletons(6, 7) : filteredOrders.length ? filteredOrders.map((order) => {
                           const prescription = (data.prescriptionDetails || []).find((item) => item.id === order.prescription_id);
+                          const itemNames = Array.isArray(order.items_summary) ? order.items_summary.filter(Boolean) : [];
+                          const itemCount = Number(order.totals?.items_count || order.items_count || itemNames.length || 0);
+                          const productMixText = itemNames.length
+                            ? `${itemNames.slice(0, 2).join(", ")}${itemNames.length > 2 ? ` +${itemNames.length - 2}` : ""}`
+                            : itemCount > 0
+                              ? `${itemCount} item${itemCount === 1 ? "" : "s"}`
+                              : "Order details unavailable";
                           return (
                             <tr
                               key={order.id}
@@ -6158,20 +6667,19 @@ export default function Page() {
                               <td><div className="table-title"><strong>#{order.number}</strong><span className="muted">{formatDate(order.created_at, true)}</span></div></td>
                               <td>
                                 <div className="table-customer-cell order-customer-cell">
-                                  <strong>{customerSummary(order).name}</strong>
-                                  <span>{customerSummary(order).email}</span>
+                                  <strong>{resolveOrderCustomerSummary(order).name}</strong>
+                                  <span>{resolveOrderCustomerSummary(order).email}</span>
                                 </div>
                               </td>
-                              <td>{(order.items || []).length ? `${order.items.length} items: ${(order.items || []).slice(0, 2).map((item) => item.name).join(", ")}` : "order details unavailable"}</td>
+                              <td>{productMixText}</td>
                               <td>{prescription ? `${prescription.prescription_number} • ${prescription.status}` : (order.prescription_id ? `Prescription #${order.prescription_id}` : "No linked prescription")}</td>
                               <td>{formatMoney(order.total || 0, order.currency || storeCurrency)}</td>
                               <td><StatusPill value={order.rx_status || order.status}>{order.rx_status || order.status}</StatusPill></td>
                               <td>
                                 <div className="table-action-strip">
-                                  <button className="icon-button table-action-button" type="button" title="Print receipt" aria-label={`Print receipt for order #${order.number}`} disabled={tableActionLoading === `print-${order.id}`} onClick={(event) => { event.stopPropagation(); printOrderReceiptFromRow(order); }}><InlineIcon id="i-printer" /></button>
-                                  <button className="icon-button table-action-button" type="button" title="Send receipt" aria-label={`Send receipt for order #${order.number}`} disabled={tableActionLoading === `send-${order.id}`} onClick={(event) => { event.stopPropagation(); sendOrderReceiptFromRow(order); }}><InlineIcon id="i-mail" /></button>
-                                  <button className="icon-button table-action-button" type="button" title="Change status" aria-label={`Change status for order #${order.number}`} disabled={tableActionLoading === `status-${order.id}`} onClick={(event) => { event.stopPropagation(); openOrderStatusFromRow(order); }}><InlineIcon id="i-refresh-cw" /></button>
-                                  <button className="icon-button table-action-button danger" type="button" title="Delete order" aria-label={`Delete order #${order.number}`} disabled={tableActionLoading === `delete-${order.id}`} onClick={(event) => { event.stopPropagation(); deleteOrderFromRow(order); }}><InlineIcon id="i-trash" /></button>
+                                  <button className="icon-button table-action-button" type="button" title={getOrderDocumentType(order) === "receipt" ? "Print receipt" : "Print invoice"} aria-label={`${getOrderDocumentType(order) === "receipt" ? "Print receipt" : "Print invoice"} for order #${order.number}`} disabled={tableActionLoading === `print-${order.id}`} onClick={(event) => { event.stopPropagation(); printOrderDocumentFromRow(order); }}>{tableActionLoading === `print-${order.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-printer" />}</button>
+                                  <button className="icon-button table-action-button" type="button" title="Send receipt" aria-label={`Send receipt for order #${order.number}`} disabled={tableActionLoading === `send-${order.id}`} onClick={(event) => { event.stopPropagation(); sendOrderReceiptFromRow(order); }}>{tableActionLoading === `send-${order.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-mail" />}</button>
+                                  <button className="icon-button table-action-button danger" type="button" title="Delete order" aria-label={`Delete order #${order.number}`} disabled={tableActionLoading === `delete-${order.id}`} onClick={(event) => { event.stopPropagation(); deleteOrderFromRow(order); }}>{tableActionLoading === `delete-${order.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-trash" />}</button>
                                 </div>
                               </td>
                             </tr>
@@ -6199,8 +6707,8 @@ export default function Page() {
                     <div className="mini-stat-grid">
                       <div className="mini-stat"><span>Month revenue</span><strong>{formatMoney(sales.month || 0, storeCurrency)}</strong><small>WooCommerce totals from dashboard</small></div>
                       <div className="mini-stat"><span>Today revenue</span><strong>{formatMoney(sales.today || 0, storeCurrency)}</strong><small>Processed today</small></div>
-                      <div className="mini-stat"><span>Completed payments</span><strong>{formatNumber(paymentRows.filter((row) => row.paymentStatus === "completed").length)}</strong><small>Processed Payments</small></div>
-                      <div className="mini-stat"><span>Orders on hold</span><strong>{formatNumber(paymentRows.filter((row) => ["on_hold", "on-hold"].includes(row.rxStatus)).length)}</strong><small>Orders placed on hold</small></div>
+                      <div className="mini-stat"><span>Completed payments</span><strong>{formatNumber(paymentRows.filter((row) => row.paymentStatus === "completed").length)}</strong><small>Processed payments</small></div>
+                      <div className="mini-stat"><span>Failed or refunded</span><strong>{formatNumber(paymentRows.filter((row) => ["failed", "refunded"].includes(row.paymentStatus)).length)}</strong><small>Payment exceptions</small></div>
                     </div>
                   </article>
                 </section>
@@ -6214,10 +6722,10 @@ export default function Page() {
                       <div className="filter-bar" aria-label="Payment filters">
                         {[
                           ["all", "All"],
-                          ["completed", "Captured"],
+                          ["completed", "Completed"],
                           ["pending", "Pending"],
-                          ["rx", "RX blocked"],
-                          ["failed", "Failed/Refunded"]
+                          ["failed", "Failed"],
+                          ["refunded", "Refunded"]
                         ].map(([key, label]) => (
                           <button className={`filter-btn ${paymentFilter === key ? "active" : ""}`} type="button" key={key} onClick={() => setPaymentFilter(key)}>
                             {label} <span className="filter-count">{formatNumber(paymentFilterCounts[key] || 0)}</span>
@@ -6240,7 +6748,7 @@ export default function Page() {
                         </tr>
                       </thead>
                       <tbody>
-                        {paginatedPaymentRows.length ? paginatedPaymentRows.map((row) => (
+                        {paymentsLoading ? renderTableRowSkeletons(6, 7) : paginatedPaymentRows.length ? paginatedPaymentRows.map((row) => (
                           <tr
                             key={row.id}
                             className="table-row-button"
@@ -6267,8 +6775,9 @@ export default function Page() {
                             <td className="rx-col"><StatusPill value={row.rxStatus}>{row.rxStatus}</StatusPill></td>
                             <td className="action-col">
                               <div className="table-action-strip">
-                                <button className="icon-button table-action-button" type="button" title="Print receipt" aria-label={`Print receipt for order #${row.number}`} disabled={tableActionLoading === `print-${row.id}`} onClick={(event) => { event.stopPropagation(); printOrderReceiptFromRow(row.sourceOrder); }}><InlineIcon id="i-printer" /></button>
-                                <button className="icon-button table-action-button" type="button" title="Download receipt" aria-label={`Download receipt for order #${row.number}`} disabled={tableActionLoading === `download-${row.id}`} onClick={(event) => { event.stopPropagation(); downloadOrderReceiptFromRow(row.sourceOrder); }}><InlineIcon id="i-download" /></button>
+                                <button className="icon-button table-action-button" type="button" title="Print receipt" aria-label={`Print receipt for order #${row.number}`} disabled={tableActionLoading === `print-${row.id}`} onClick={(event) => { event.stopPropagation(); printOrderReceiptFromRow(row.sourceOrder); }}>{tableActionLoading === `print-${row.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-printer" />}</button>
+                                <button className="icon-button table-action-button" type="button" title="Download receipt" aria-label={`Download receipt for order #${row.number}`} disabled={tableActionLoading === `download-${row.id}`} onClick={(event) => { event.stopPropagation(); downloadOrderReceiptFromRow(row.sourceOrder); }}>{tableActionLoading === `download-${row.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-download" />}</button>
+                                <button className="icon-button table-action-button" type="button" title="Send receipt" aria-label={`Send receipt for order #${row.number}`} disabled={tableActionLoading === `send-${row.id}`} onClick={(event) => { event.stopPropagation(); sendOrderReceiptFromRow(row.sourceOrder); }}>{tableActionLoading === `send-${row.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-mail" />}</button>
                               </div>
                             </td>
                           </tr>
@@ -6341,7 +6850,12 @@ export default function Page() {
                               }
                             }}
                           >
-                            <td>{row.label}</td>
+                            <td>
+                              <div className="customer-list-profile">
+                                <span className="customer-list-avatar">{getNameInitials(row.name || row.label || row.email || "Customer", "CU")}</span>
+                                <span>{row.label}</span>
+                              </div>
+                            </td>
                             <td>{row.name}</td>
                             <td className="email-cell">{row.email}</td>
                             <td>{formatNumber(row.orders)}</td>
@@ -6370,6 +6884,7 @@ export default function Page() {
                     </div>
                     <div className="mini-stat-grid">
                       {[
+                        ["all", "All"],
                         ["upcoming", "Upcoming"],
                         ["past", "Past"],
                         ["ongoing", "Ongoing"]
@@ -6377,7 +6892,7 @@ export default function Page() {
                         <button className={`mini-stat clickable-stat ${consultationFilter === key ? "active" : ""}`} type="button" key={key} onClick={() => setConsultationFilter(key)}>
                           <span>{label}</span>
                           <strong>{formatNumber(consultationCounts[key] || 0)}</strong>
-                          <small>{key === "past" ? "clickable when ended" : "locked until the consultation ends"}</small>
+                          <small>{key === "all" ? "all visible consultations" : key === "past" ? "clickable when ended" : "locked until the consultation ends"}</small>
                         </button>
                       ))}
                     </div>
@@ -6390,32 +6905,61 @@ export default function Page() {
                         <p className="section-kicker">Consultation flow</p>
                         <h2>{formatStatusLabel(consultationFilter)} consultations</h2>
                       </div>
-                      <button className="pill-button" type="button" onClick={() => setSelectedConsultationDate(isoDateKey())}>Today only</button>
+                      <div className="toolbar consultation-list-actions">
+                        <button className="pill-button" type="button" onClick={() => setSelectedConsultationDate(isoDateKey())}>Today only</button>
+                        {selectedConsultationDate ? <button className="pill-button" type="button" onClick={() => setSelectedConsultationDate("")}>All dates</button> : null}
+                      </div>
                     </div>
-                    <div className="consultation-list">
-                      {consultationList.length ? consultationList.map((item) => {
-                        const ended = item.group === "past";
-                        return (
-                          <button className="consultation-card" key={item.id} type="button" onClick={() => openConsultationDetails(item)}>
-                            <div>
-                              <strong>{patientLabel(item.patient_user_id)}</strong>
-                              <span>{item.reason || item.type || "Consultation"}</span>
-                            </div>
-                            <div className="signal-meta">
-                              <StatusPill value={item.group}>{formatStatusLabel(item.group)}</StatusPill>
-                              <small>{formatDate(item.start_at, true)}</small>
-                              <small>{doctorMap.get(item.doctor_user_id) || `Doctor #${item.doctor_user_id}`}</small>
-                            </div>
-                          </button>
-                        );
-                      }) : <div className="muted">No consultations match the selected status and date.</div>}
+                    <div className="table-scroll consultation-table-scroll">
+                      <table className="consultations-table">
+                        <thead>
+                          <tr>
+                            <th>Patient</th>
+                            <th>Doctor</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th>Starts</th>
+                            <th>Ends</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {consultationsLoading ? renderTableRowSkeletons(6, 6) : consultationList.length ? consultationList.map((item) => (
+                            <tr
+                              key={item.id}
+                              className="table-row-button"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => openConsultationDetails(item)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  openConsultationDetails(item);
+                                }
+                              }}
+                            >
+                              <td>
+                                <div className="customer-list-profile">
+                                  <span className="customer-list-avatar">{getNameInitials(patientLabel(item.patient_user_id), "PT")}</span>
+                                  <span>{patientLabel(item.patient_user_id)}</span>
+                                </div>
+                              </td>
+                              <td>{doctorMap.get(item.doctor_user_id) || `Doctor #${item.doctor_user_id}`}</td>
+                              <td>{formatStatusLabel(item.type || "consultation")}</td>
+                              <td><StatusPill value={item.group}>{formatStatusLabel(item.group)}</StatusPill></td>
+                              <td>{formatDate(item.start_at, true)}</td>
+                              <td>{formatDate(item.end_at, true)}</td>
+                            </tr>
+                          )) : <tr><td colSpan="6" className="muted">No consultations match the selected status{selectedConsultationDate ? " and date" : ""}.</td></tr>}
+                        </tbody>
+                      </table>
                     </div>
                   </article>
 
                   <article className="panel table-panel">
                     <BookingCalendarWidget
                       title="Consultation Calendar"
-                      subtitle="Review availability and filter the consultation list"
+                      subtitle="Review bookings and filter the consultation list"
+                      datePanelSubtitle="Tap any day to review bookings"
                       appointments={data.appointments || []}
                       selectedDate={selectedConsultationDate}
                       viewDate={consultationCalendarViewDate}
@@ -6427,6 +6971,8 @@ export default function Page() {
                       }}
                       onSlotSelect={(dateKey) => setSelectedConsultationDate(dateKey)}
                       onDurationChange={setConsultationDuration}
+                      showStepsHeader={false}
+                      showTimeSlots={false}
                     />
                     <div className="history-list removed-history" hidden>
                       {sortedHistory.length ? sortedHistory.map((item, index) => {
@@ -6487,7 +7033,7 @@ export default function Page() {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredPrescriptions.length ? filteredPrescriptions.map((item) => (
+                        {prescriptionsLoading ? renderTableRowSkeletons(6, 7) : filteredPrescriptions.length ? filteredPrescriptions.map((item) => (
                           <tr key={item.id}>
                             <td>{item.prescription_number || `Prescription #${item.id}`}</td>
                             <td>{patientLabel(item.patient_user_id)}</td>
@@ -6601,7 +7147,7 @@ export default function Page() {
                             <td><SkeletonBox className="skeleton-line skeleton-line-md" /></td>
                           </tr>
                         ) : null}
-                        {paginatedProducts.length ? paginatedProducts.map((product) => {
+                        {productsLoading ? renderTableRowSkeletons(8, 11) : paginatedProducts.length ? paginatedProducts.map((product) => {
                           const actionLinks = buildProductActionLinks(product, session);
                           const stockQuantity = getProductStockQuantity(product);
                           const stockStatus = product.stock_status || "instock";
@@ -6665,10 +7211,19 @@ export default function Page() {
                     <aside className="product-categories-sidebar">
                       <div className="product-categories-pane-head">
                         <div>
-                          <p className="section-kicker">Category consultation pricing</p>
                           <h3>Product categories</h3>
+                          <span className="pagination-summary">{formatNumber(productCategoryRows.length)} categories</span>
                         </div>
-                        <span className="pagination-summary">{formatNumber(productCategoryRows.length)} categories</span>
+                        <div className="product-category-head-actions">
+                          <button
+                            className="pill-button product-category-new-button"
+                            type="button"
+                            onClick={openCategoryCreateForm}
+                            disabled={categoryCreateOpen || categoryMutationLoading === "create-category"}
+                          >
+                            + New category
+                          </button>
+                        </div>
                       </div>
                       <div className="product-category-list" role="tablist" aria-label="Product categories">
                         {productCategoryRows.length ? productCategoryRows.map((category) => (
@@ -6763,18 +7318,47 @@ export default function Page() {
                         </div>
                       </div>
                       {selectedCategory ? <>
-                        <div className="product-category-doctor-strip-card">
+                        <section className="product-category-doctor-strip-card" data-component="DoctorAssignmentSection">
                           <div className="panel-header product-category-products-header">
-                            <div>
-                              <h3 className="section-kicker">Assign doctors to {selectedCategory.name} </h3>
                             
-                            </div>
                             <span className="pagination-summary">{formatNumber(assignedCategoryDoctorRows.length)} assigned</span>
                           </div>
-                          <label className="product-category-searchfield category-doctor-searchfield">
-                            
-                            <input value={categoryDoctorSearch} onChange={(event) => setCategoryDoctorSearch(event.target.value)} placeholder="Search by doctor name, specialty, or email" />
-                          </label>
+                          <div className="doctor-search-wrapper" data-component="DoctorSearchInput">
+                            <label className="product-category-searchfield category-doctor-searchfield">
+                              <input value={categoryDoctorSearch} onChange={(event) => setCategoryDoctorSearch(event.target.value)} placeholder="Search by doctor name, specialty, or email" />
+                            </label>
+                            {categoryDoctorSearch ? (
+                              <div className="doctor-search-results" data-component="DoctorSearchDropdown">
+                                {availableCategoryDoctorRows.length ? availableCategoryDoctorRows.map(({ doctor }) => {
+                                  const doctorId = doctor.user_id || doctor.id;
+                                  const loadingKey = `${doctorId}:assign`;
+                                  return (
+                                    <div className="doctor-result-item" key={`doctor-search-${doctorId}`}>
+                                      <div className="doctor-result-left">
+                                        <div className={`doctor-avatar ${doctorId ? `doctor-${String(doctorId).toString().slice(-1)}` : ""}`}>{getInitials(doctor.display_name || doctor.email || "Dr")}</div>
+                                        <div className="doctor-result-info">
+                                          <strong className="doctor-result-name">{doctor.display_name || `Doctor #${doctorId}`}</strong>
+                                          <span className="doctor-result-meta">{doctor.specialty || doctor.specialties?.join(", ") || "General practice"}</span>
+                                        </div>
+                                      </div>
+                                      <button
+                                        className="pill-button doctor-assign-btn"
+                                        type="button"
+                                        disabled={categoryMutationLoading === loadingKey}
+                                        onClick={() => updateCategoryDoctorAssignment(doctor, true)}
+                                      >
+                                        {categoryMutationLoading === loadingKey ? "Saving..." : "Assign"}
+                                      </button>
+                                    </div>
+                                  );
+                                }) : (
+                                  <div className="empty-card compact-empty">
+                                    <div className="card-title">No doctors match the current search.</div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
                           {categoryMutationFeedback ? <p className="receipt-feedback">{categoryMutationFeedback}</p> : null}
                           {assignedCategoryDoctorRows.length ? (
                             <div className="doctor-strip" aria-label={`Assigned doctors for ${selectedCategory.name}`}>
@@ -6782,7 +7366,7 @@ export default function Page() {
                                 const doctorId = doctor.user_id || doctor.id;
                                 const loadingKey = `${doctorId}:remove`;
                                 return (
-                                  <article className="doctor-mini" key={`doctor-strip-${doctorId}`}>
+                                  <article className="doctor-mini" data-component="AssignedDoctorCard" key={`doctor-strip-${doctorId}`}>
                                     <button
                                       className="doctor-mini-close"
                                       type="button"
@@ -6804,52 +7388,21 @@ export default function Page() {
                               <div className="card-title">No doctors assigned yet. Search to add one.</div>
                             </div>
                           )}
-                          {categoryDoctorSearch ? (
-                            <div className="doctor-assignment-results">
-                              <div className="doctor-assignment-results-label">Search results</div>
-                              {availableCategoryDoctorRows.length ? availableCategoryDoctorRows.map(({ doctor }) => {
-                                const doctorId = doctor.user_id || doctor.id;
-                                const loadingKey = `${doctorId}:assign`;
-                                return (
-                                  <div className="doctor-assignment-row" key={`doctor-search-${doctorId}`}>
-                                    <div className="doctor-assignment-row-profile">
-                                      <div className={`avatar ${doctorId ? `doctor-${String(doctorId).toString().slice(-1)}` : ""}`}>{getInitials(doctor.display_name || doctor.email || "Dr")}</div>
-                                      <div>
-                                        <strong>{doctor.display_name || `Doctor #${doctorId}`}</strong>
-                                        <span>{doctor.specialty || doctor.specialties?.join(", ") || "General practice"}</span>
-                                      </div>
-                                    </div>
-                                    <button
-                                      className="pill-button"
-                                      type="button"
-                                      disabled={categoryMutationLoading === loadingKey}
-                                      onClick={() => updateCategoryDoctorAssignment(doctor, true)}
-                                    >
-                                      {categoryMutationLoading === loadingKey ? "Saving..." : "Assign"}
-                                    </button>
-                                  </div>
-                                );
-                              }) : (
-                                <div className="empty-card compact-empty">
-                                  <div className="card-title">No doctors match the current search.</div>
-                                </div>
-                              )}
-                            </div>
-                          ) : null}
-                        </div>
+                        </section>
                         
                         <div className="product-category-products">
                           <div className="panel-header product-category-products-header">
                             <div>
                           
-                              <p className="section-kicker">Products in category</p>
+                              
+                              <p className="product-category-section-copy">Manage products attached to this consultation category.</p>
                               <div className="product-category-searchbar">
                             
-                          <label className="product-category-searchfield">
+                          <label className="product-category-searchfield product-category-searchfield-inline">
                             
-                            <input value={categoryProductSearch} onChange={(event) => setCategoryProductSearch(event.target.value)} placeholder={`Search product name to add to ${selectedCategory.name}`} />
+                            <InlineIcon id="i-search" />
+                            <input value={categoryProductSearch} onChange={(event) => setCategoryProductSearch(event.target.value)} placeholder="Search product name to add" />
                           </label>
-                          {categoryAssignmentFeedback ? <p className="receipt-feedback">{categoryAssignmentFeedback}</p> : null}
                         {categorySearchQuery ? <div className="product-category-add-results">
                           {categoryProductCandidates.length ? categoryProductCandidates.map((product) => {
                             const loadingKey = `${product.id}:${selectedCategory.name}`;
@@ -6940,7 +7493,7 @@ export default function Page() {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredDoctors.length ? filteredDoctors.map((doctor) => {
+                        {doctorsLoading ? renderTableRowSkeletons(6, 6) : filteredDoctors.length ? filteredDoctors.map((doctor) => {
                           const doctorId = doctor.user_id || doctor.id;
                           const linkedPatients = new Set([
                             ...(data.appointments || []).filter((item) => Number(item.doctor_user_id) === Number(doctorId)).map((item) => item.patient_user_id),
@@ -7327,8 +7880,10 @@ export default function Page() {
                     <div className="profile-avatar">
                       <span>{getNameInitials([orderCreateForm.firstName, orderCreateForm.lastName].filter(Boolean).join(" "))}</span>
                     </div>
-                    <strong>{[orderCreateForm.firstName, orderCreateForm.lastName].filter(Boolean).join(" ") || "Customer name"}</strong>
-                    <span>{orderCreateForm.email || "customer@email.com"}</span>
+                    <div className="order-create-profile-details">
+                      <strong>{[orderCreateForm.firstName, orderCreateForm.lastName].filter(Boolean).join(" ") || "Customer name"}</strong>
+                      <span>{orderCreateForm.email || "customer@email.com"}</span>
+                    </div>
                   </div>
 
                   <div className="detail-form-grid order-create-grid">
@@ -7407,7 +7962,7 @@ export default function Page() {
                           value={orderCreateForm.status}
                           onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, status: event.target.value }))}
                         >
-                            {["awaiting-doctor", "pending", "processing", "on-hold", "completed", "failed", "refunded"].map((status) => (
+                            {["awaiting-doctor", "pending", "processing", "in-delivery", "on-hold", "completed", "failed", "refunded"].map((status) => (
                             <option key={status} value={status}>{formatStatusLabel(status)}</option>
                           ))}
                         </select>
@@ -7552,7 +8107,7 @@ export default function Page() {
               {orderCreateFeedback ? <p className="muted popup-support-copy">{orderCreateFeedback}</p> : null}
               <div className="stacked-order-popup-actions">
                 <button className="pill-button" type="button" onClick={closeOrderCreateModal}>Cancel</button>
-                <button className="button-primary" type="submit" disabled={orderCreateLoading || !(data.products || []).length || !orderCreateItems.length}>
+                <button className="button-primary" type="submit" disabled={orderCreateLoading}>
                   {orderCreateLoading ? "Creating..." : "Create Order"}
                 </button>
               </div>
@@ -7583,17 +8138,28 @@ export default function Page() {
                     <button className="icon-button" type="button" aria-label="Close order details" onClick={closeOrderModal}>
                       <InlineIcon id="i-x" />
                     </button>
-                    <button className="icon-button order-header-action-button" type="button" title="Print Invoice" aria-label="Print Invoice" onClick={printSelectedOrder}>
-                      <InlineIcon id="i-printer" />
+                    <button className="icon-button order-header-action-button" type="button" title={getOrderDocumentType(selectedOrderDetail) === "receipt" ? "Print Receipt" : "Print Invoice"} aria-label={getOrderDocumentType(selectedOrderDetail) === "receipt" ? "Print Receipt" : "Print Invoice"} onClick={printSelectedOrder} disabled={orderMutationLoading}>
+                      {orderMutationLoading ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-printer" />}
+                    </button>
+                    <button
+                      className="icon-button order-header-action-button"
+                      type="button"
+                      title={orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") ? "Sending..." : "Email Customer"}
+                      aria-label={orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") ? "Sending customer email" : "Email Customer"}
+                      onClick={contactSelectedCustomer}
+                      disabled={orderMutationLoading || orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") || !customerEmail(selectedOrderDetail)}
+                    >
+                      {orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") ? (
+                        <span className="category-saving-spinner" aria-hidden="true" />
+                      ) : (
+                        <InlineIcon id="i-paper-plane" />
+                      )}
                     </button>
                     <button className="icon-button order-header-action-button" type="button" title="Update Status" aria-label="Update Status" onClick={openOrderControlsPopup} disabled={orderMutationLoading}>
                       <InlineIcon id="i-package" />
                     </button>
                     <button className="icon-button order-header-action-button" type="button" title="Refund" aria-label="Refund" onClick={refundSelectedOrder} disabled={orderMutationLoading}>
                       <InlineIcon id="i-refresh-cw" />
-                    </button>
-                    <button className="icon-button order-header-action-button" type="button" title="Contact Customer" aria-label="Contact Customer" onClick={contactSelectedCustomer} disabled={orderMutationLoading || !customerEmail(selectedOrderDetail)}>
-                      <InlineIcon id="i-mail" />
                     </button>
                     <button className="icon-button order-header-action-button" type="button" title="Assign Doctor" aria-label="Assign Doctor" onClick={openDoctorAssignmentPopup} disabled={orderMutationLoading}>
                       <InlineIcon id="i-user" />
@@ -7801,7 +8367,7 @@ export default function Page() {
                 <span>Order Status</span>
                 <div className="select-wrap">
                   <select value={selectedOrderStatus} onChange={(event) => setSelectedOrderStatus(event.target.value)}>
-                    {["pending", "awaiting-doctor", "awaiting-prescription", "processing", "on-hold", "completed", "cancelled", "failed", "refunded"].map((status) => (
+                    {["pending", "awaiting-doctor", "awaiting-prescription", "processing", "in-delivery", "on-hold", "completed", "cancelled", "failed", "refunded"].map((status) => (
                       <option key={status} value={status}>{formatStatusLabel(status)}</option>
                     ))}
                   </select>
@@ -7875,9 +8441,10 @@ export default function Page() {
       ) : null}
 
       {paymentReceiptModalOpen && selectedPaymentReceipt && typeof document !== "undefined" ? createPortal(
-        <div className="app-modal-layer app-modal-layer-top is-open">
-          <button className="app-modal-backdrop" type="button" aria-label="Close payment receipt" onClick={closePaymentReceiptModal} />
-          <section className="detail-section stacked-order-popup receipt-popup receipt-popup-redesign" role="dialog" aria-modal="true" aria-label={`Receipt for order #${selectedPaymentReceipt.number}`}>
+        <div className="app-modal-stack">
+          <div className="app-modal-layer app-modal-layer-top is-open">
+            <button className="app-modal-backdrop" type="button" aria-label="Close payment receipt" onClick={closePaymentReceiptModal} />
+            <section className="detail-section stacked-order-popup receipt-popup receipt-popup-redesign" role="dialog" aria-modal="true" aria-label={`Receipt for order #${selectedPaymentReceipt.number}`}>
             <div className="receipt-hero">
               <div>
                 <p className="section-kicker">Payment receipt</p>
@@ -7897,6 +8464,7 @@ export default function Page() {
               </div>
             </div>
 
+            <div className="app-modal-scroll">
             <div className="receipt-command-bar">
               <div>
                 <span>Total paid</span>
@@ -7904,11 +8472,11 @@ export default function Page() {
               </div>
               <div className="receipt-command-actions">
                 <button className="pill-button" type="button" onClick={printPaymentReceipt} disabled={Boolean(receiptActionLoading)}>
-                  <InlineIcon id="i-printer" />
+                  {receiptActionLoading === "print" ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-printer" />}
                   {receiptActionLoading === "print" ? "Preparing..." : "Print"}
                 </button>
                 <button className="button-primary receipt-send-button" type="button" onClick={sendPaymentReceipt} disabled={Boolean(receiptActionLoading) || !customerEmail(selectedPaymentReceipt)}>
-                  <InlineIcon id="i-mail" />
+                  {receiptActionLoading === "send" ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-mail" />}
                   {receiptActionLoading === "send" ? "Sending..." : "Send Receipt"}
                 </button>
               </div>
@@ -7996,11 +8564,13 @@ export default function Page() {
             </div>
 
             {paymentReceiptFeedback ? <p className="receipt-feedback">{paymentReceiptFeedback}</p> : null}
+            </div>
 
             <div className="stacked-order-popup-actions receipt-footer-actions">
               <button className="pill-button" type="button" onClick={closePaymentReceiptModal}>Close</button>
             </div>
-          </section>
+            </section>
+          </div>
         </div>,
         document.body
       ) : null}
@@ -8299,7 +8869,7 @@ export default function Page() {
                               aria-label="Search doctors for consultation"
                             />
                             <div className="consultation-search-results">
-                              {consultationCreateDoctorsQuery.isLoading ? <div className="consultation-search-empty">Loading doctors...</div> : null}
+                              {consultationCreateDoctorsQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading doctors"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
                               {consultationDoctorOptions.length ? consultationDoctorOptions.map((doctor) => {
                                 const doctorId = doctor.user_id || doctor.id;
                                 return (
@@ -8333,7 +8903,7 @@ export default function Page() {
                               placeholder="Search by email, username, or name"
                             />
                             <div className="consultation-search-results">
-                              {consultationCreatePatientsQuery.isLoading ? <div className="consultation-search-empty">Loading patients...</div> : null}
+                              {consultationCreatePatientsQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading patients"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
                               {consultationVisiblePatientOptions.length ? consultationVisiblePatientOptions.map((option) => (
                                 <button
                                   key={option.id}
@@ -8366,11 +8936,11 @@ export default function Page() {
                         </label>
                         <label className="detail-field consultation-hidden-time-field">
                           <span>Start time</span>
-                          <input type="datetime-local" value={consultationCreateForm.startAt} readOnly required />
+                          <input type="datetime-local" value={consultationCreateForm.startAt} min={nowDateTimeLocalValue()} readOnly required />
                         </label>
                         <label className="detail-field consultation-hidden-time-field">
                           <span>End time</span>
-                          <input type="datetime-local" value={consultationCreateForm.endAt} readOnly required />
+                          <input type="datetime-local" value={consultationCreateForm.endAt} min={nowDateTimeLocalValue()} readOnly required />
                         </label>
                         <label className="detail-field">
                           <span>Type</span>
@@ -8532,6 +9102,7 @@ export default function Page() {
                 <div><p className="section-kicker">Consultation</p><h3>{patientLabel(selectedConsultation.patient_user_id)}</h3></div>
                 <button className="icon-button" type="button" onClick={() => setSelectedConsultation(null)}><InlineIcon id="i-x" /></button>
               </div>
+              <div className="app-modal-scroll">
               <div className="detail-grid">
                 <div className="detail-block"><span>Doctor</span><strong>{doctorMap.get(selectedConsultation.doctor_user_id) || `Doctor #${selectedConsultation.doctor_user_id}`}</strong></div>
                 <div className="detail-block"><span>Starts</span><strong>{formatDate(selectedConsultation.start_at, true)}</strong></div>
@@ -8542,11 +9113,11 @@ export default function Page() {
               <div className="detail-form-grid consultation-action-grid">
                 <label className="detail-field">
                   <span>Reschedule start</span>
-                  <input type="datetime-local" value={consultationDetailForm.startAt} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, startAt: event.target.value }))} />
+                  <input type="datetime-local" value={consultationDetailForm.startAt} min={nowDateTimeLocalValue()} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, startAt: event.target.value }))} />
                 </label>
                 <label className="detail-field">
                   <span>Reschedule end</span>
-                  <input type="datetime-local" value={consultationDetailForm.endAt} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, endAt: event.target.value }))} />
+                  <input type="datetime-local" value={consultationDetailForm.endAt} min={nowDateTimeLocalValue()} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, endAt: event.target.value }))} />
                 </label>
                 <label className="detail-field detail-field-wide">
                   <span>Doctor notes</span>
@@ -8558,6 +9129,15 @@ export default function Page() {
                 </label>
               </div>
               {consultationActionFeedback ? <p className="muted popup-support-copy">{consultationActionFeedback}</p> : null}
+              <div className="detail-section receipt-panel">
+                <div className="panel-header"><div><p className="section-kicker">Prescriptions given</p><h3>Linked patient prescriptions</h3></div></div>
+                <div className="history-list">
+                  {(data.prescriptionDetails || []).filter((item) => Number(item.patient_user_id) === Number(selectedConsultation.patient_user_id)).map((item) => (
+                    <article className="history-card" key={item.id}><strong>{item.prescription_number || `Prescription #${item.id}`}</strong><p>{item.diagnosis || "No diagnosis recorded"}</p><span>{formatStatusLabel(item.status)}</span></article>
+                  ))}
+                </div>
+              </div>
+              </div>
               <div className="stacked-order-popup-actions consultation-action-buttons">
                 <button className="pill-button" type="button" onClick={() => runAppointmentAction("reschedule", { start_at: consultationDetailForm.startAt, end_at: consultationDetailForm.endAt })} disabled={Boolean(consultationActionLoading) || !consultationDetailForm.startAt || !consultationDetailForm.endAt}>
                   {consultationActionLoading === "reschedule" ? "Rescheduling..." : "Reschedule"}
@@ -8581,14 +9161,6 @@ export default function Page() {
                   </button>
                 ) : null}
               </div>
-              <div className="detail-section receipt-panel">
-                <div className="panel-header"><div><p className="section-kicker">Prescriptions given</p><h3>Linked patient prescriptions</h3></div></div>
-                <div className="history-list">
-                  {(data.prescriptionDetails || []).filter((item) => Number(item.patient_user_id) === Number(selectedConsultation.patient_user_id)).map((item) => (
-                    <article className="history-card" key={item.id}><strong>{item.prescription_number || `Prescription #${item.id}`}</strong><p>{item.diagnosis || "No diagnosis recorded"}</p><span>{formatStatusLabel(item.status)}</span></article>
-                  ))}
-                </div>
-              </div>
             </section>
           </div>
         </div>
@@ -8607,6 +9179,7 @@ export default function Page() {
                 <button className={`filter-btn ${doctorDetailTab === "account" ? "active" : ""}`} type="button" onClick={() => setDoctorDetailTab("account")}>Account</button>
                 <button className={`filter-btn ${doctorDetailTab === "prescriptions" ? "active" : ""}`} type="button" onClick={() => setDoctorDetailTab("prescriptions")}>Prescriptions</button>
               </div>
+              <div className="app-modal-scroll">
               {doctorDetailTab === "account" ? (
                 <div className="detail-list">
                   <div className="detail-grid">
@@ -8631,11 +9204,6 @@ export default function Page() {
                     <div className="detail-block customer-detail-wide"><span>Product categories</span><strong>{(selectedDoctorProfile.product_categories || []).map((item) => item.name).join(", ") || "No categories assigned"}</strong></div>
                   </div>
                   <div className="detail-section receipt-panel"><div className="panel-header"><div><p className="section-kicker">Linked patients</p><h3>Contacts</h3></div></div>{selectedDoctorPatients.length ? selectedDoctorPatients.map((patient) => <div className="signal-row" key={patient.id}><div><strong>{patient.name}</strong><span>{patient.email}</span></div><button className="pill-button" type="button">Unlink</button></div>) : <div className="muted">No linked patients found.</div>}</div>
-                  <div className="toolbar doctor-detail-actions">
-                    <button className="pill-button" type="button" onClick={resetSelectedDoctorPassword} disabled={doctorDetailTierLoading}>Reset password</button>
-                    <button className="pill-button danger" type="button" onClick={suspendSelectedDoctor} disabled={doctorDetailTierLoading}>Suspend doctor</button>
-                    <button className="pill-button danger" type="button" onClick={deleteSelectedDoctor} disabled={doctorDetailTierLoading}>Delete doctor</button>
-                  </div>
                 </div>
               ) : (
                 <div className="history-list">
@@ -8663,6 +9231,14 @@ export default function Page() {
                   }) : <div className="muted">No prescriptions created by this doctor in the current sync.</div>}
                 </div>
               )}
+              </div>
+              {doctorDetailTab === "account" ? (
+                <div className="stacked-order-popup-actions doctor-detail-actions">
+                  <button className="pill-button" type="button" onClick={resetSelectedDoctorPassword} disabled={doctorDetailTierLoading}>Reset password</button>
+                  <button className="pill-button danger" type="button" onClick={suspendSelectedDoctor} disabled={doctorDetailTierLoading}>Suspend doctor</button>
+                  <button className="pill-button danger" type="button" onClick={deleteSelectedDoctor} disabled={doctorDetailTierLoading}>Delete doctor</button>
+                </div>
+              ) : null}
             </section>
           </div>
         </div>
@@ -8797,6 +9373,43 @@ export default function Page() {
         </div>
       ) : null}
 
+      {categoryCreateOpen ? (
+        <div className="app-modal-stack">
+          <div className="app-modal-layer app-modal-layer-top is-open">
+            <button className="app-modal-backdrop" type="button" aria-label="Close create category" onClick={closeCategoryCreateForm} />
+            <form className="category-create-popup" role="dialog" aria-modal="true" aria-label="Create new category" onSubmit={saveNewCategory}>
+              <div className="category-create-copy">
+                <h3>Create new category</h3>
+                <p>Add a new consultation product category.</p>
+              </div>
+              <label className="category-create-field">
+                <span>Category name</span>
+                <input
+                  autoFocus
+                  value={categoryCreateForm.name}
+                  onChange={(event) => setCategoryCreateForm((prev) => ({ ...prev, name: event.target.value }))}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      closeCategoryCreateForm();
+                    }
+                  }}
+                  placeholder="Enter category name"
+                />
+              </label>
+              <input type="hidden" value={categoryCreateForm.pricePerMinute} readOnly />
+              {categoryMutationFeedback ? <p className="category-create-feedback">{categoryMutationFeedback}</p> : null}
+              <div className="category-create-actions">
+                <button className="pill-button category-create-cancel" type="button" onClick={closeCategoryCreateForm}>Cancel</button>
+                <button className="button-primary category-create-save" type="submit" disabled={categoryMutationLoading === "create-category"}>
+                  {categoryMutationLoading === "create-category" ? "Saving..." : "Save changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {snackbar ? (
         <div className={`snackbar ${snackbar.tone || "info"}`} role="status" aria-live="polite">
           <strong className="snackbar-title">{snackbar.tone === "success" ? "Success" : snackbar.tone === "error" ? "Error" : snackbar.tone === "warning" ? "Warning" : "Notice"}</strong>
@@ -8850,7 +9463,7 @@ export default function Page() {
                     </label>
                     <div className="auth-actions">
                       <button className="auth-primary-button" type="submit" disabled={authSubmitting}>
-                        {authSubmitting ? "Signing in..." : "Sign In"}
+                        {authSubmitting ? <><span className="auth-button-spinner" aria-hidden="true" />Signing in...</> : "Sign In"}
                       </button>
                     </div>
                     <div className="auth-inline-links">
@@ -8878,13 +9491,16 @@ export default function Page() {
                       </div>
                     </label>
                     <div className="auth-actions">
-                      <button className="auth-primary-button" type="submit" disabled={authSubmitting}>
-                        {authSubmitting ? "Verifying..." : "Verify Code"}
+                      <button className="auth-primary-button" type="submit" disabled={authSubmitting || authResendLoading}>
+                        {authSubmitting ? <><span className="auth-button-spinner" aria-hidden="true" />Verifying...</> : "Verify Code"}
                       </button>
                     </div>
                     <div className="auth-inline-links">
                       <button className="auth-text-link" type="button" onClick={() => setAuthView("login")}>
                         Back to login
+                      </button>
+                      <button className="auth-text-link" type="button" onClick={handleResendVerificationCode} disabled={authResendLoading || authSubmitting}>
+                        {authResendLoading ? <><span className="auth-button-spinner" aria-hidden="true" />Sending...</> : "Resend code"}
                       </button>
                     </div>
                   </form>
@@ -8906,7 +9522,7 @@ export default function Page() {
                     </label>
                     <div className="auth-actions">
                       <button className="auth-primary-button" type="submit" disabled={resetSubmitting}>
-                        {resetSubmitting ? "Submitting..." : "Send Reset Link"}
+                        {resetSubmitting ? <><span className="auth-button-spinner" aria-hidden="true" />Submitting...</> : "Send Reset Link"}
                       </button>
                     </div>
                     <div className="auth-inline-links">

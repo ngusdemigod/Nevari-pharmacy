@@ -353,7 +353,13 @@ export default function DoctorDashboard() {
       estimatedRevenue={estimatedRevenue}
       storeCurrency={storeCurrency}
     /> : null}
-    {!showSkeleton && page === "orders" ? <TablePanel title="Assigned Orders" rows={state.orders} columns={["Order", "Customer", "Total", "Status"]} render={(item) => [`#${item.number}`, item.customer_id || "Guest", money(item.total, item.currency || storeCurrency), titleCase(item.status)]} /> : null}
+    {!showSkeleton && page === "orders" ? <TablePanel title="Assigned Orders" rows={state.orders} columns={["Order", "Customer", "Total", "Status", "Documents"]} render={(item) => [
+      `#${item.number}`,
+      item.customer_id || "Guest",
+      money(item.total, item.currency || storeCurrency),
+      titleCase(item.status),
+      <a href={`/admin/orders/${item.id}/documents?role=doctor`} target="_blank" rel="noreferrer">Open</a>
+    ]} /> : null}
     {!showSkeleton && page === "products" ? <TablePanel title="Assigned Products" rows={state.products} columns={["Product", "Categories", "Price", "Stock"]} render={(item) => [item.name, (item.categories || []).join(", "), money(item.price, item.currency || storeCurrency), item.stock_quantity ?? "n/a"]} /> : null}
     {!showSkeleton && page === "patients" ? <TablePanel title="Customers" rows={state.patients} columns={["Customer", "Email", "First linked", "Last interaction"]} render={(item) => [item.display_name, item.email, shortDate(item.first_linked_at), shortDate(item.last_interaction_at)]} /> : null}
     {!showSkeleton && page === "profile" ? <ProfilePage doctor={state.doctor} estimatedRevenue={estimatedRevenue} storeCurrency={storeCurrency} onLogout={handleLogout} /> : null}

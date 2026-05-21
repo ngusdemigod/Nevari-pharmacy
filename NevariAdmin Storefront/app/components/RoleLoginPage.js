@@ -6,6 +6,19 @@ import { FRONTENDS } from "./frontend-config";
 import { setDocumentMetadata } from "./page-metadata";
 import { buildUrl, defaultSession, frontendContext, isPairingRequiredPayload, loadSession, resetToPairingState, saveSession } from "./role-session";
 
+function AuthButtonContent({ loading, loadingText, idleText }) {
+  if (!loading) {
+    return idleText;
+  }
+
+  return (
+    <>
+      <span className="auth-button-spinner" aria-hidden="true" />
+      {loadingText}
+    </>
+  );
+}
+
 export default function RoleLoginPage({ config }) {
   const router = useRouter();
   const [session, setSession] = useState(() => defaultSession(config));
@@ -18,6 +31,8 @@ export default function RoleLoginPage({ config }) {
   const [feedback, setFeedback] = useState(config.loginPrompt || `Sign in to ${config.label}.`);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [registrationPasswordVisible, setRegistrationPasswordVisible] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState("");
 
   useEffect(() => {
     const next = loadSession(config);
@@ -41,85 +56,137 @@ export default function RoleLoginPage({ config }) {
       setFeedback("Admin storefront setup is required before this login can be used.");
       return;
     }
+    setLoadingAction("signin");
     setFeedback("Signing in...");
-    const response = await fetch(buildUrl(session, "/auth/login"), {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "X-Nevari-Frontend-Type": session.frontendType,
-        "X-Nevari-Frontend-Origin": session.frontendOrigin
-      },
-      body: JSON.stringify({ username, password, ...frontendContext(session) })
-    });
-    const payload = await response.json();
-    if (!response.ok || !payload?.success) {
-      if (isPairingRequiredPayload(payload)) {
-        resetToPairingState();
+    try {
+      const response = await fetch(buildUrl(session, "/auth/login"), {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Nevari-Frontend-Type": session.frontendType,
+          "X-Nevari-Frontend-Origin": session.frontendOrigin
+        },
+        body: JSON.stringify({ username, password, ...frontendContext(session) })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.success) {
+        if (isPairingRequiredPayload(payload)) {
+          resetToPairingState();
+          return;
+        }
+        setFeedback(payload?.error?.message || "Sign in failed.");
         return;
       }
-      setFeedback(payload?.error?.message || "Sign in failed.");
-      return;
+      if (payload.data.verification_required) {
+        setVerification({
+          challengeId: payload.data.challenge_id,
+          maskedEmail: payload.data.masked_email || "",
+          code: ""
+        });
+        setPassword("");
+        setView("verify");
+        setFeedback(`Enter the code sent to ${payload.data.masked_email || "your email"}.`);
+        return;
+      }
+      const next = {
+        ...session,
+        accessToken: payload.data.access_token,
+        refreshToken: payload.data.refresh_token,
+        expiresAt: Date.now() + (Number(payload.data.expires_in || 0) * 1000),
+        user: payload.data.user
+      };
+      saveSession(config, next);
+      router.prefetch(config.dashboardPath);
+      router.replace(config.dashboardPath);
+    } finally {
+      setLoadingAction("");
     }
-    if (payload.data.verification_required) {
-      setVerification({
-        challengeId: payload.data.challenge_id,
-        maskedEmail: payload.data.masked_email || "",
-        code: ""
-      });
-      setPassword("");
-      setView("verify");
-      setFeedback(`Enter the code sent to ${payload.data.masked_email || "your email"}.`);
-      return;
-    }
-    const next = {
-      ...session,
-      accessToken: payload.data.access_token,
-      refreshToken: payload.data.refresh_token,
-      expiresAt: Date.now() + (Number(payload.data.expires_in || 0) * 1000),
-      user: payload.data.user
-    };
-    saveSession(config, next);
-    router.prefetch(config.dashboardPath);
-    router.replace(config.dashboardPath);
   }
 
   async function verifyCode(event) {
     event.preventDefault();
+    setLoadingAction("verify");
     setFeedback("Verifying code...");
-    const response = await fetch(buildUrl(session, "/auth/verify-code"), {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "X-Nevari-Frontend-Type": session.frontendType,
-        "X-Nevari-Frontend-Origin": session.frontendOrigin
-      },
-      body: JSON.stringify({
-        challenge_id: verification.challengeId,
-        code: verification.code,
-        ...frontendContext(session)
-      })
-    });
-    const payload = await response.json();
-    if (!response.ok || !payload?.success) {
-      if (isPairingRequiredPayload(payload)) {
-        resetToPairingState();
+    try {
+      const response = await fetch(buildUrl(session, "/auth/verify-code"), {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Nevari-Frontend-Type": session.frontendType,
+          "X-Nevari-Frontend-Origin": session.frontendOrigin
+        },
+        body: JSON.stringify({
+          challenge_id: verification.challengeId,
+          code: verification.code,
+          ...frontendContext(session)
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.success) {
+        if (isPairingRequiredPayload(payload)) {
+          resetToPairingState();
+          return;
+        }
+        setFeedback(payload?.error?.message || "Verification failed.");
         return;
       }
-      setFeedback(payload?.error?.message || "Verification failed.");
+      const next = {
+        ...session,
+        accessToken: payload.data.access_token,
+        refreshToken: payload.data.refresh_token,
+        expiresAt: Date.now() + (Number(payload.data.expires_in || 0) * 1000),
+        user: payload.data.user
+      };
+      saveSession(config, next);
+      router.prefetch(config.dashboardPath);
+      router.replace(config.dashboardPath);
+    } finally {
+      setLoadingAction("");
+    }
+  }
+
+  async function resendCode() {
+    if (!verification.challengeId) {
+      setFeedback("No verification challenge is available. Sign in again.");
       return;
     }
-    const next = {
-      ...session,
-      accessToken: payload.data.access_token,
-      refreshToken: payload.data.refresh_token,
-      expiresAt: Date.now() + (Number(payload.data.expires_in || 0) * 1000),
-      user: payload.data.user
-    };
-    saveSession(config, next);
-    router.prefetch(config.dashboardPath);
-    router.replace(config.dashboardPath);
+    setResendLoading(true);
+    setFeedback("Sending a new verification code...");
+    try {
+      const response = await fetch(buildUrl(session, "/auth/resend-code"), {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Nevari-Frontend-Type": session.frontendType,
+          "X-Nevari-Frontend-Origin": session.frontendOrigin
+        },
+        body: JSON.stringify({
+          challenge_id: verification.challengeId,
+          ...frontendContext(session)
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.success) {
+        if (isPairingRequiredPayload(payload)) {
+          resetToPairingState();
+          return;
+        }
+        setFeedback(payload?.error?.message || "Failed to resend the verification code.");
+        return;
+      }
+      setVerification((prev) => ({
+        ...prev,
+        challengeId: payload.data.challenge_id || prev.challengeId,
+        maskedEmail: payload.data.masked_email || prev.maskedEmail,
+        code: ""
+      }));
+      setFeedback(`A new code was sent to ${payload.data.masked_email || verification.maskedEmail || "your email"}.`);
+    } finally {
+      setResendLoading(false);
+    }
   }
 
   async function requestReset(event) {
@@ -128,26 +195,31 @@ export default function RoleLoginPage({ config }) {
       setFeedback("Admin storefront setup is required before this login can be used.");
       return;
     }
-    const response = await fetch(buildUrl(session, "/auth/password-reset"), {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "X-Nevari-Frontend-Type": session.frontendType,
-        "X-Nevari-Frontend-Origin": session.frontendOrigin
-      },
-      body: JSON.stringify({ username: resetUsername, ...frontendContext(session) })
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => null);
-      if (isPairingRequiredPayload(payload)) {
-        resetToPairingState();
+    setLoadingAction("reset");
+    try {
+      const response = await fetch(buildUrl(session, "/auth/password-reset"), {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Nevari-Frontend-Type": session.frontendType,
+          "X-Nevari-Frontend-Origin": session.frontendOrigin
+        },
+        body: JSON.stringify({ username: resetUsername, ...frontendContext(session) })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        if (isPairingRequiredPayload(payload)) {
+          resetToPairingState();
+          return;
+        }
+        setFeedback(payload?.error?.message || "Reset request failed.");
         return;
       }
-      setFeedback(payload?.error?.message || "Reset request failed.");
-      return;
+      setFeedback("If that account exists, password reset instructions have been sent.");
+    } finally {
+      setLoadingAction("");
     }
-    setFeedback("If that account exists, password reset instructions have been sent.");
     setView("login");
   }
 
@@ -157,35 +229,40 @@ export default function RoleLoginPage({ config }) {
       setFeedback("Admin storefront setup is required before this login can be used.");
       return;
     }
-    const response = await fetch(buildUrl(session, "/auth/register-customer"), {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "X-Nevari-Frontend-Type": session.frontendType,
-        "X-Nevari-Frontend-Origin": session.frontendOrigin
-      },
-      body: JSON.stringify({
-        first_name: registration.firstName,
-        last_name: registration.lastName,
-        email: registration.email,
-        password: registration.password,
-        ...frontendContext(session)
-      })
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload?.success) {
-      if (isPairingRequiredPayload(payload)) {
-        resetToPairingState();
+    setLoadingAction("register");
+    try {
+      const response = await fetch(buildUrl(session, "/auth/register-customer"), {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Nevari-Frontend-Type": session.frontendType,
+          "X-Nevari-Frontend-Origin": session.frontendOrigin
+        },
+        body: JSON.stringify({
+          first_name: registration.firstName,
+          last_name: registration.lastName,
+          email: registration.email,
+          password: registration.password,
+          ...frontendContext(session)
+        })
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) {
+        if (isPairingRequiredPayload(payload)) {
+          resetToPairingState();
+          return;
+        }
+        setFeedback(payload?.error?.message || "Account creation failed.");
         return;
       }
-      setFeedback(payload?.error?.message || "Account creation failed.");
-      return;
+      setFeedback(config.loginPrompt || "Sign in to continue.");
+      setUsername(registration.email);
+      setPassword("");
+      setView("login");
+    } finally {
+      setLoadingAction("");
     }
-    setFeedback(config.loginPrompt || "Sign in to continue.");
-    setUsername(registration.email);
-    setPassword("");
-    setView("login");
   }
 
   return (
@@ -201,7 +278,7 @@ export default function RoleLoginPage({ config }) {
               <form className="auth-form auth-reference-form" onSubmit={signIn}>
                 <label className="form-group"><span>Username or email</span><div className="input-wrap"><input value={username} onChange={(event) => setUsername(event.target.value)} required /></div></label>
                 <label className="form-group"><span>Password</span><div className="input-wrap"><input type={passwordVisible ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} required /><button className="input-suffix auth-toggle-button" type="button" onClick={() => setPasswordVisible((value) => !value)}>{passwordVisible ? "Hide" : "Show"}</button></div></label>
-                <div className="auth-actions"><button className="auth-primary-button" type="submit">Sign In</button></div>
+                <div className="auth-actions"><button className="auth-primary-button" type="submit" disabled={loadingAction === "signin"}><AuthButtonContent loading={loadingAction === "signin"} loadingText="Signing in..." idleText="Sign In" /></button></div>
                 <div className="auth-inline-links">
                   <button className="auth-text-link" type="button" onClick={() => setView("reset")}>Reset password</button>
                   {config.allowRegistration ? <button className="auth-text-link" type="button" onClick={() => setView("register")}>Create account</button> : null}
@@ -211,15 +288,20 @@ export default function RoleLoginPage({ config }) {
             {view === "reset" ? (
               <form className="auth-form auth-reference-form" onSubmit={requestReset}>
                 <label className="form-group"><span>Username or email</span><div className="input-wrap"><input value={resetUsername} onChange={(event) => setResetUsername(event.target.value)} required /></div></label>
-                <div className="auth-actions"><button className="auth-primary-button" type="submit">Send Reset Link</button></div>
+                <div className="auth-actions"><button className="auth-primary-button" type="submit" disabled={loadingAction === "reset"}><AuthButtonContent loading={loadingAction === "reset"} loadingText="Submitting..." idleText="Send Reset Link" /></button></div>
                 <div className="auth-inline-links"><button className="auth-text-link" type="button" onClick={() => setView("login")}>Back to login</button></div>
               </form>
             ) : null}
             {view === "verify" ? (
               <form className="auth-form auth-reference-form" onSubmit={verifyCode}>
                 <label className="form-group"><span>Verification code</span><div className="input-wrap"><input inputMode="numeric" pattern="[0-9]*" maxLength={6} value={verification.code} onChange={(event) => setVerification((prev) => ({ ...prev, code: event.target.value.replace(/\D+/g, "").slice(0, 6) }))} required /></div></label>
-                <div className="auth-actions"><button className="auth-primary-button" type="submit">Verify Code</button></div>
-                <div className="auth-inline-links"><button className="auth-text-link" type="button" onClick={() => setView("login")}>Back to login</button></div>
+                <div className="auth-actions"><button className="auth-primary-button" type="submit" disabled={loadingAction === "verify"}><AuthButtonContent loading={loadingAction === "verify"} loadingText="Verifying..." idleText="Verify Code" /></button></div>
+                <div className="auth-inline-links">
+                  <button className="auth-text-link" type="button" onClick={() => setView("login")}>Back to login</button>
+                  <button className="auth-text-link" type="button" onClick={resendCode} disabled={resendLoading}>
+                    {resendLoading ? "Sending..." : "Resend code"}
+                  </button>
+                </div>
               </form>
             ) : null}
             {view === "register" && config.allowRegistration ? (
@@ -228,7 +310,7 @@ export default function RoleLoginPage({ config }) {
                 <label className="form-group"><span>Last name</span><div className="input-wrap"><input value={registration.lastName} onChange={(event) => setRegistration((prev) => ({ ...prev, lastName: event.target.value }))} required /></div></label>
                 <label className="form-group"><span>Email</span><div className="input-wrap"><input type="email" value={registration.email} onChange={(event) => setRegistration((prev) => ({ ...prev, email: event.target.value }))} required /></div></label>
                 <label className="form-group"><span>Password</span><div className="input-wrap"><input type={registrationPasswordVisible ? "text" : "password"} minLength={8} value={registration.password} onChange={(event) => setRegistration((prev) => ({ ...prev, password: event.target.value }))} required /><button className="input-suffix auth-toggle-button" type="button" onClick={() => setRegistrationPasswordVisible((value) => !value)}>{registrationPasswordVisible ? "Hide" : "Show"}</button></div></label>
-                <div className="auth-actions"><button className="auth-primary-button" type="submit">Create Account</button></div>
+                <div className="auth-actions"><button className="auth-primary-button" type="submit" disabled={loadingAction === "register"}><AuthButtonContent loading={loadingAction === "register"} loadingText="Creating..." idleText="Create Account" /></button></div>
                 <div className="auth-inline-links"><button className="auth-text-link" type="button" onClick={() => setView("login")}>Back to login</button></div>
               </form>
             ) : null}

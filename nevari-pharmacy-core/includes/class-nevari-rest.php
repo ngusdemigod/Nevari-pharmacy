@@ -16,6 +16,7 @@ final class Nevari_Rest {
         self::appointments_routes();
         self::prescriptions_routes();
         self::emails_routes();
+        self::payment_routes();
         self::dashboard_routes();
         self::audit_routes();
     }
@@ -96,6 +97,18 @@ final class Nevari_Rest {
             'permission_callback' => [__CLASS__, 'auth_required'],
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/prescription-pdf', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'orders_prescription_pdf'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/document-data', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'orders_document_data'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/cancel', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'orders_cancel'],
@@ -107,6 +120,34 @@ final class Nevari_Rest {
             'callback' => [__CLASS__, 'orders_send_receipt'],
             'permission_callback' => [__CLASS__, 'store_admin_required'],
         ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/payment/initialize', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'orders_payment_initialize'],
+            'permission_callback' => '__return_true',
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/payment/verify', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'orders_payment_verify'],
+            'permission_callback' => '__return_true',
+        ]);
+    }
+
+    private static function payment_routes(): void {
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/invoices/(?P<invoice_number>[^/]+)/payment-data', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'invoices_payment_data'],
+            'permission_callback' => '__return_true',
+        ]);
+
+        foreach (['paystack', 'flutterwave', 'stripe'] as $gateway) {
+            register_rest_route(NEVARI_PHARMACY_REST_NS, '/payments/' . $gateway . '/webhook', [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'payments_gateway_webhook'],
+                'permission_callback' => '__return_true',
+            ]);
+        }
     }
 
     private static function products_routes(): void {
@@ -602,6 +643,215 @@ final class Nevari_Rest {
         }
     }
 
+    public static function orders_document_data(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_read', 180, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'document-data'])) {
+            return $response;
+        }
+        $order = self::get_order_scoped((int) $request['id']);
+        if (is_wp_error($order)) {
+            return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) $order->get_error_data('status') ?: 404);
+        }
+
+        $items = $order->get_items();
+        $subtotal = self::order_subtotal($order, $items);
+        $discount = (float) $order->get_discount_total();
+        $tax = (float) $order->get_total_tax();
+        $shipping = (float) $order->get_shipping_total() + (float) $order->get_shipping_tax();
+        $fees = self::order_fees_total($order);
+        $total = (float) $order->get_total();
+        $amount_paid = $order->get_date_paid() ? $total : 0.0;
+        $balance_due = max(0.0, $total - $amount_paid);
+        $payment_url = ($balance_due > 0 && $order->needs_payment()) ? self::branded_invoice_payment_url($order) : '';
+        $settings = Nevari_Helpers::payment_gateway_settings();
+        $active_gateway = isset($settings['active_gateway']) ? (string) $settings['active_gateway'] : 'woocommerce';
+        $invoice_number = self::invoice_number_for_order($order);
+
+        $rows = [];
+        foreach ($items as $item) {
+            $quantity = (float) $item->get_quantity();
+            $line_subtotal = (float) $item->get_subtotal();
+            $line_total = (float) $item->get_total();
+            $rows[] = [
+                'name' => wp_strip_all_tags($item->get_name()),
+                'qty' => $quantity,
+                'rate' => $quantity > 0 ? $line_subtotal / $quantity : $line_subtotal,
+                'tax' => (float) $item->get_total_tax(),
+                'discount' => max(0.0, $line_subtotal - $line_total),
+                'total' => $line_total,
+            ];
+        }
+
+        $order_number = $order->get_order_number();
+        $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
+        $customer_name = $customer_name ?: trim($order->get_shipping_first_name() . ' ' . $order->get_shipping_last_name());
+        $customer_name = $customer_name ?: $order->get_formatted_billing_full_name();
+        $customer_name = $customer_name ?: $order->get_billing_email();
+
+        return Nevari_Helpers::success([
+            'order_id' => $order->get_id(),
+            'order_number' => $order_number,
+            'invoice_number' => $invoice_number,
+            'receipt_number' => 'NVH-RCP-' . str_pad((string) $order_number, 5, '0', STR_PAD_LEFT),
+            'prescription_number' => $order->get_meta('_nevari_prescription_id') ? 'NVH-RX-' . str_pad((string) $order->get_meta('_nevari_prescription_id'), 5, '0', STR_PAD_LEFT) : '',
+            'order_status' => $order->get_status(),
+            'payment_status' => $order->get_date_paid() ? 'completed' : $order->get_status(),
+            'payment_url' => $payment_url,
+            'branded_payment_url' => $payment_url,
+            'woocommerce_payment_url' => ($balance_due > 0 && $order->needs_payment()) ? $order->get_checkout_payment_url(false) : '',
+            'payment_gateway_configured' => Nevari_Helpers::active_payment_gateway_configured(),
+            'active_payment_gateway' => $active_gateway,
+            'available_gateways' => self::available_invoice_gateways(),
+            'invoice_date' => $order->get_date_created() ? $order->get_date_created()->date('c') : null,
+            'due_date' => $order->get_date_created() ? $order->get_date_created()->date('c') : null,
+            'customer' => [
+                'name' => $customer_name ?: 'Customer',
+                'email' => $order->get_billing_email(),
+                'phone' => $order->get_billing_phone(),
+                'address' => trim(implode(', ', array_filter([
+                    $order->get_billing_address_1(),
+                    $order->get_billing_address_2(),
+                    $order->get_billing_city(),
+                    $order->get_billing_state(),
+                    $order->get_billing_postcode(),
+                    $order->get_billing_country(),
+                ]))),
+            ],
+            'items' => $rows,
+            'totals' => [
+                'subtotal' => $subtotal,
+                'discount' => $discount,
+                'tax' => $tax,
+                'shipping' => $shipping,
+                'fees' => $fees,
+                'total' => $total,
+                'amount_paid' => $amount_paid,
+                'balance_due' => $balance_due,
+            ],
+            'payment_method' => $order->get_payment_method_title() ?: $order->get_payment_method(),
+            'payment_reference' => $order->get_transaction_id(),
+            'diagnosis' => '',
+            'doctor_name' => '',
+            'doctor_email' => '',
+            'doctor_notes' => '',
+            'medications' => [],
+        ]);
+    }
+
+    public static function invoices_payment_data(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_read', 180, MINUTE_IN_SECONDS, ['invoice:' . sanitize_text_field((string) $request['invoice_number'])])) {
+            return $response;
+        }
+
+        $order = self::get_order_for_invoice_number((string) $request['invoice_number']);
+        if (!$order) {
+            return Nevari_Helpers::error('invoice_not_found', 'Invoice not found.', 404);
+        }
+
+        return Nevari_Helpers::success(self::invoice_payment_data($order));
+    }
+
+    public static function orders_payment_initialize(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_write', 20, MINUTE_IN_SECONDS, ['payment-init:' . (int) $request['id']])) {
+            return $response;
+        }
+
+        $order = wc_get_order((int) $request['id']);
+        if (!$order) {
+            return Nevari_Helpers::error('order_not_found', 'Order not found.', 404);
+        }
+        if (!$order->needs_payment()) {
+            return Nevari_Helpers::error('payment_not_required', 'This order does not require payment.', 409);
+        }
+
+        $params = Nevari_Helpers::get_json_params($request);
+        $gateway = sanitize_key((string) ($params['gateway'] ?? ''));
+        if (!in_array($gateway, self::available_invoice_gateways(), true)) {
+            return Nevari_Helpers::error('invalid_gateway', 'Unsupported or unconfigured payment gateway.', 422);
+        }
+
+        $settings = Nevari_Helpers::payment_gateway_settings();
+        $callback_url = esc_url_raw((string) ($params['callback_url'] ?? self::branded_invoice_payment_url($order)));
+        $reference = self::invoice_payment_reference($order, $gateway);
+        $metadata = [
+            'order_id' => (int) $order->get_id(),
+            'invoice_number' => self::invoice_number_for_order($order),
+            'customer_email' => (string) $order->get_billing_email(),
+            'source' => 'invoice_pdf_pay_now',
+        ];
+
+        $initialized = self::initialize_gateway_payment($gateway, $order, $reference, $callback_url, $metadata, $settings);
+        if (is_wp_error($initialized)) {
+            return Nevari_Helpers::error($initialized->get_error_code(), $initialized->get_error_message(), 502);
+        }
+
+        $order->update_meta_data('_nevari_invoice_payment_gateway', $gateway);
+        $order->update_meta_data('_nevari_invoice_payment_reference', $reference);
+        $order->save();
+
+        return Nevari_Helpers::success($initialized);
+    }
+
+    public static function orders_payment_verify(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_write', 30, MINUTE_IN_SECONDS, ['payment-verify:' . (int) $request['id']])) {
+            return $response;
+        }
+
+        $order = wc_get_order((int) $request['id']);
+        if (!$order) {
+            return Nevari_Helpers::error('order_not_found', 'Order not found.', 404);
+        }
+
+        $params = Nevari_Helpers::get_json_params($request);
+        $gateway = sanitize_key((string) ($params['gateway'] ?? $order->get_meta('_nevari_invoice_payment_gateway') ?: 'woocommerce'));
+        $reference = sanitize_text_field((string) ($params['reference'] ?? $order->get_meta('_nevari_invoice_payment_reference')));
+        if (!$reference) {
+            return Nevari_Helpers::error('missing_reference', 'Payment reference is required.', 422);
+        }
+
+        $result = self::verify_gateway_payment($gateway, $reference, $order);
+        if (is_wp_error($result)) {
+            return Nevari_Helpers::error($result->get_error_code(), $result->get_error_message(), 502);
+        }
+
+        return Nevari_Helpers::success([
+            'paid' => (bool) $result['paid'],
+            'order_id' => (int) $order->get_id(),
+            'gateway' => $gateway,
+            'reference' => $reference,
+            'receipt_url' => add_query_arg(['role' => 'patient', 'tab' => 'receipt'], self::documents_url_for_order($order)),
+        ]);
+    }
+
+    public static function payments_gateway_webhook(WP_REST_Request $request): WP_REST_Response {
+        $route = (string) $request->get_route();
+        preg_match('#/payments/([^/]+)/webhook$#', $route, $matches);
+        $gateway = sanitize_key($matches[1] ?? '');
+        if (!in_array($gateway, ['paystack', 'flutterwave', 'stripe'], true)) {
+            return Nevari_Helpers::error('invalid_gateway', 'Invalid gateway webhook.', 404);
+        }
+
+        $raw_body = $request->get_body();
+        if (!self::gateway_webhook_signature_valid($gateway, $request, $raw_body)) {
+            return Nevari_Helpers::error('invalid_signature', 'Webhook signature could not be verified.', 401);
+        }
+
+        $payload = json_decode($raw_body, true);
+        $payload = is_array($payload) ? $payload : [];
+        $reference = self::webhook_reference($gateway, $payload);
+        $order_id = self::webhook_order_id($gateway, $payload);
+        $order = $order_id ? wc_get_order($order_id) : self::get_order_for_payment_reference($reference);
+        if (!$order) {
+            return Nevari_Helpers::error('order_not_found', 'Webhook order not found.', 404);
+        }
+
+        $result = self::verify_gateway_payment($gateway, $reference, $order);
+        if (is_wp_error($result)) {
+            return Nevari_Helpers::error($result->get_error_code(), $result->get_error_message(), 422);
+        }
+
+        return Nevari_Helpers::success(['processed' => (bool) $result['paid']]);
+    }
+
     public static function orders_create(WP_REST_Request $request): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('rest_orders_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'create'])) {
             return $response;
@@ -889,6 +1139,10 @@ final class Nevari_Rest {
         ]);
     }
 
+    private static function get_viewable_order(int $order_id) {
+        return self::get_order_scoped($order_id);
+    }
+
     public static function orders_details_pdf(WP_REST_Request $request): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('rest_orders_read', 60, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'details_pdf'])) {
             return $response;
@@ -900,6 +1154,25 @@ final class Nevari_Rest {
         $pdf = self::build_order_details_pdf($order);
         return Nevari_Helpers::success([
             'filename' => sprintf('nevari-order-details-%s.pdf', sanitize_file_name((string) $order->get_order_number())),
+            'content_type' => 'application/pdf',
+            'base64' => base64_encode($pdf),
+        ]);
+    }
+
+    public static function orders_prescription_pdf(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_read', 60, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'prescription_pdf'])) {
+            return $response;
+        }
+        $order = self::get_viewable_order((int) $request['id']);
+        if (is_wp_error($order)) {
+            return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) ($order->get_error_data()['status'] ?? 404));
+        }
+        $pdf = self::build_order_prescription_pdf($order);
+        if ($pdf === '') {
+            return Nevari_Helpers::error('prescription_not_found', 'No viewable prescription is linked to this order.', 404);
+        }
+        return Nevari_Helpers::success([
+            'filename' => sprintf('nevari-prescription-%s.pdf', sanitize_file_name((string) $order->get_order_number())),
             'content_type' => 'application/pdf',
             'base64' => base64_encode($pdf),
         ]);
@@ -928,6 +1201,7 @@ final class Nevari_Rest {
             return $response;
         }
 
+        $params = Nevari_Helpers::get_json_params($request);
         $order = self::get_viewable_order((int) $request['id']);
         if (is_wp_error($order)) {
             return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) ($order->get_error_data()['status'] ?? 404));
@@ -938,28 +1212,76 @@ final class Nevari_Rest {
             return Nevari_Helpers::error('receipt_email_missing', 'This order does not have a valid customer email address.', 422);
         }
 
-        $filename = sprintf('receipt-order-%s.pdf', sanitize_file_name((string) $order->get_order_number()));
-        $tmp_file = wp_tempnam($filename);
-        if (!$tmp_file || file_put_contents($tmp_file, self::build_order_receipt_pdf($order)) === false) {
+        $document_type = isset($params['document_type']) ? sanitize_key((string) $params['document_type']) : 'receipt';
+        if (!in_array($document_type, ['receipt', 'invoice'], true)) {
+            $document_type = 'receipt';
+        }
+        $payment_link = isset($params['payment_link']) ? esc_url_raw((string) $params['payment_link']) : '';
+        $filename = sprintf('%s-order-%s.pdf', $document_type, sanitize_file_name((string) $order->get_order_number()));
+        $pdf = $document_type === 'invoice' ? self::build_order_details_pdf($order) : self::build_order_receipt_pdf($order);
+        if (!$pdf) {
             return Nevari_Helpers::error('receipt_pdf_failed', 'The receipt PDF could not be generated.', 500);
         }
 
-        $subject = sprintf('Receipt for order #%s', $order->get_order_number());
-        $body = sprintf(
-            '<p>Hello %s,</p><p>Your receipt for order <strong>#%s</strong> is attached.</p><p>Thank you for shopping with %s.</p>',
-            esc_html(trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) ?: 'Customer'),
-            esc_html((string) $order->get_order_number()),
-            esc_html(wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES))
-        );
-        $sent = wp_mail($recipient, $subject, $body, ['Content-Type: text/html; charset=UTF-8'], [$tmp_file]);
-        @unlink($tmp_file);
+        $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) ?: 'Customer';
+        $template_key = $document_type === 'invoice' ? 'order-invoice-email' : 'order-receipt-email';
+        $payment_link_html = $payment_link ? sprintf('<a href="%1$s" target="_blank" rel="noopener noreferrer">Pay now</a>', esc_url($payment_link)) : '';
+        $variables = [
+            'customer_name' => $customer_name,
+            'customer_firstname' => trim($order->get_billing_first_name()) ?: $customer_name,
+            'customer_lastname' => trim($order->get_billing_last_name()),
+            'order_id' => (string) $order->get_id(),
+            'order_number' => (string) $order->get_order_number(),
+            'order_total' => wc_price((float) $order->get_total(), ['currency' => $order->get_currency() ?: get_woocommerce_currency()]),
+            'invoice_total' => wc_price((float) $order->get_total(), ['currency' => $order->get_currency() ?: get_woocommerce_currency()]),
+            'payment_link' => $payment_link,
+            'payment_link_html' => $payment_link_html,
+            'document_type' => $document_type,
+            'document_title' => $document_type === 'invoice' ? 'Invoice' : 'Receipt',
+            'site_name' => wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES),
+            'support_email' => get_option('admin_email'),
+        ];
 
-        if (!$sent) {
+        $result = Nevari_Emails::queue_or_send([
+            'template_key' => $template_key,
+            'recipient_email' => $recipient,
+            'related_object_type' => 'order',
+            'related_object_id' => $order->get_id(),
+            'subject' => $document_type === 'invoice'
+                ? sprintf('Invoice for order #%s', $order->get_order_number())
+                : sprintf('Receipt for order #%s', $order->get_order_number()),
+            'body_html' => sprintf(
+                '<p>Hello %s,</p><p>Your %s for order <strong>#%s</strong> is attached.</p>%s<p>Thank you for shopping with %s.</p>',
+                esc_html($customer_name),
+                esc_html($document_type === 'invoice' ? 'invoice' : 'receipt'),
+                esc_html((string) $order->get_order_number()),
+                $payment_link_html ? '<p>' . $payment_link_html . '</p>' : '',
+                esc_html(wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES))
+            ),
+            'body_text' => sprintf(
+                'Hello %s, your %s for order #%s is attached.%s Thank you for shopping with %s.',
+                $customer_name,
+                $document_type === 'invoice' ? 'invoice' : 'receipt',
+                (string) $order->get_order_number(),
+                $payment_link ? ' Pay now: ' . $payment_link : '',
+                wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES)
+            ),
+            'attachments' => [[
+                'filename' => $filename,
+                'content_type' => 'application/pdf',
+                'mime_type' => 'application/pdf',
+                'base64' => base64_encode($pdf),
+                'content' => base64_encode($pdf),
+            ]],
+            'variables' => $variables,
+        ], true);
+
+        if (is_wp_error($result)) {
             Nevari_Audit::log('emails', 'nevari', 'receipt.send_failed', 'error', [
                 'order_id' => $order->get_id(),
-                'message' => 'Receipt email failed to send.',
+                'message' => $result->get_error_message(),
             ]);
-            return Nevari_Helpers::error('receipt_send_failed', 'The receipt email could not be sent.', 500);
+            return Nevari_Helpers::error('receipt_send_failed', $result->get_error_message(), 500);
         }
 
         Nevari_Audit::log('emails', 'nevari', 'receipt.sent', 'success', [
@@ -1003,7 +1325,26 @@ final class Nevari_Rest {
     private static function format_order($order, bool $include_items = false): array {
         $assigned_doctor_id = (int) $order->get_meta('_nevari_assigned_doctor_user_id');
         $assigned_doctor = $assigned_doctor_id ? get_user_by('id', $assigned_doctor_id) : null;
+        $customer_user_id = (int) $order->get_user_id();
+        $customer_user = $customer_user_id ? get_userdata($customer_user_id) : null;
+        $account_first = $customer_user_id ? trim((string) get_user_meta($customer_user_id, 'first_name', true)) : '';
+        $account_last = $customer_user_id ? trim((string) get_user_meta($customer_user_id, 'last_name', true)) : '';
+        $account_name = trim($account_first . ' ' . $account_last);
+        if (!$account_name && $customer_user) {
+            $account_name = trim((string) $customer_user->display_name);
+        }
         $items = $order->get_items();
+        $billing_first = trim((string) $order->get_billing_first_name());
+        $billing_last = trim((string) $order->get_billing_last_name());
+        $shipping_first = trim((string) $order->get_shipping_first_name());
+        $shipping_last = trim((string) $order->get_shipping_last_name());
+        $billing_name = trim($billing_first . ' ' . $billing_last);
+        $shipping_name = trim($shipping_first . ' ' . $shipping_last);
+        $customer_name = $billing_name ?: $shipping_name ?: $account_name ?: trim((string) $order->get_billing_email());
+        $items_summary = [];
+        foreach ($items as $item) {
+            $items_summary[] = wp_strip_all_tags($item->get_name());
+        }
         $data = [
             'id' => $order->get_id(),
             'number' => $order->get_order_number(),
@@ -1011,7 +1352,26 @@ final class Nevari_Rest {
             'currency' => $order->get_currency(),
             'total' => $order->get_total(),
             'payment_status' => $order->get_date_paid() ? 'completed' : $order->get_status(),
+            'payment_url' => $order->needs_payment() ? $order->get_checkout_payment_url(false) : null,
             'customer_id' => $order->get_user_id(),
+            'customer_name' => $customer_name ?: null,
+            'customer_display_name' => $account_name ?: null,
+            'customer_first_name' => $billing_first ?: $account_first ?: null,
+            'customer_last_name' => $billing_last ?: $account_last ?: null,
+            'customer_email' => $order->get_billing_email() ?: null,
+            'billing' => [
+                'first_name' => $billing_first,
+                'last_name' => $billing_last,
+                'email' => $order->get_billing_email(),
+                'phone' => $order->get_billing_phone(),
+                'company' => $order->get_billing_company(),
+                'address_1' => $order->get_billing_address_1(),
+                'address_2' => $order->get_billing_address_2(),
+                'city' => $order->get_billing_city(),
+                'state' => $order->get_billing_state(),
+                'postcode' => $order->get_billing_postcode(),
+                'country' => $order->get_billing_country(),
+            ],
             'rx_status' => $order->get_meta('_nevari_rx_validation_status') ?: null,
             'prescription_id' => $order->get_meta('_nevari_prescription_id') ? (int) $order->get_meta('_nevari_prescription_id') : null,
             'assigned_doctor_user_id' => $assigned_doctor_id ?: null,
@@ -1033,6 +1393,11 @@ final class Nevari_Rest {
                     return $carry + (float) $item->get_quantity();
                 }, 0),
             ],
+            'items_count' => (int) $order->get_item_count(),
+            'items_quantity' => array_reduce($items, static function ($carry, $item) {
+                return $carry + (float) $item->get_quantity();
+            }, 0),
+            'items_summary' => $items_summary,
             'created_at' => $order->get_date_created() ? $order->get_date_created()->date('c') : null,
             'updated_at' => $order->get_date_modified() ? $order->get_date_modified()->date('c') : null,
         ];
@@ -1046,19 +1411,6 @@ final class Nevari_Rest {
                 ];
             }
             $data['customer_note'] = $order->get_customer_note();
-            $data['billing'] = [
-                'first_name' => $order->get_billing_first_name(),
-                'last_name' => $order->get_billing_last_name(),
-                'email' => $order->get_billing_email(),
-                'phone' => $order->get_billing_phone(),
-                'company' => $order->get_billing_company(),
-                'address_1' => $order->get_billing_address_1(),
-                'address_2' => $order->get_billing_address_2(),
-                'city' => $order->get_billing_city(),
-                'state' => $order->get_billing_state(),
-                'postcode' => $order->get_billing_postcode(),
-                'country' => $order->get_billing_country(),
-            ];
             $data['shipping'] = [
                 'first_name' => $order->get_shipping_first_name(),
                 'last_name' => $order->get_shipping_last_name(),
@@ -1115,75 +1467,680 @@ final class Nevari_Rest {
         return $data;
     }
 
+    private static function invoice_number_for_order($order): string {
+        return 'NVH-INV-' . str_pad((string) $order->get_order_number(), 5, '0', STR_PAD_LEFT);
+    }
+
+    private static function branded_invoice_payment_url($order): string {
+        return home_url('/pay/' . rawurlencode(self::invoice_number_for_order($order)));
+    }
+
+    private static function documents_url_for_order($order): string {
+        return home_url('/admin/orders/' . rawurlencode((string) $order->get_id()) . '/documents');
+    }
+
+    private static function get_order_for_invoice_number(string $invoice_number) {
+        $invoice_number = sanitize_text_field($invoice_number);
+        $order_id = 0;
+        if (preg_match('/(\d+)$/', $invoice_number, $matches)) {
+            $order_id = (int) ltrim($matches[1], '0');
+        }
+        return $order_id > 0 ? wc_get_order($order_id) : null;
+    }
+
+    private static function invoice_payment_data($order): array {
+        $items = $order->get_items();
+        $total = (float) $order->get_total();
+        $amount_paid = $order->get_date_paid() ? $total : 0.0;
+        $balance_due = max(0.0, $total - $amount_paid);
+        $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
+        $customer_name = $customer_name ?: $order->get_formatted_billing_full_name();
+        $line_items = [];
+        foreach ($items as $item) {
+            $quantity = max(1, (int) $item->get_quantity());
+            $line_total = (float) $item->get_total();
+            $line_items[] = [
+                'name' => (string) $item->get_name(),
+                'qty' => $quantity,
+                'rate' => $quantity > 0 ? $line_total / $quantity : $line_total,
+                'tax' => (float) $item->get_total_tax(),
+                'discount' => 0,
+                'total' => $line_total + (float) $item->get_total_tax(),
+            ];
+        }
+        return [
+            'order_id' => (int) $order->get_id(),
+            'order_number' => (string) $order->get_order_number(),
+            'invoice_number' => self::invoice_number_for_order($order),
+            'payment_status' => $order->get_date_paid() ? 'paid' : ($order->needs_payment() ? 'unpaid' : $order->get_status()),
+            'order_status' => (string) $order->get_status(),
+            'customer' => [
+                'name' => $customer_name ?: 'Customer',
+                'email' => (string) $order->get_billing_email(),
+                'phone' => (string) $order->get_billing_phone(),
+            ],
+            'items' => $line_items,
+            'totals' => [
+                'subtotal' => self::order_subtotal($order, $items),
+                'discount' => (float) $order->get_discount_total(),
+                'tax' => (float) $order->get_total_tax(),
+                'shipping' => (float) $order->get_shipping_total() + (float) $order->get_shipping_tax(),
+                'total' => $total,
+                'amount_paid' => $amount_paid,
+                'balance_due' => $balance_due,
+            ],
+            'currency' => $order->get_currency() ?: get_woocommerce_currency(),
+            'available_gateways' => self::available_invoice_gateways(),
+            'branded_payment_url' => self::branded_invoice_payment_url($order),
+            'woocommerce_payment_url' => $order->needs_payment() ? $order->get_checkout_payment_url(false) : '',
+        ];
+    }
+
+    private static function available_invoice_gateways(): array {
+        $settings = Nevari_Helpers::payment_gateway_settings();
+        $gateways = [];
+        if (!empty($settings['paystack']['secret_key'])) {
+            $gateways[] = 'paystack';
+        }
+        if (!empty($settings['flutterwave']['secret_key'])) {
+            $gateways[] = 'flutterwave';
+        }
+        if (!empty($settings['stripe']['secret_key'])) {
+            $gateways[] = 'stripe';
+        }
+        return $gateways;
+    }
+
+    private static function invoice_payment_reference($order, string $gateway): string {
+        return sprintf('NVH-%d-%s-%s', (int) $order->get_id(), strtoupper($gateway), wp_generate_password(8, false, false));
+    }
+
+    private static function initialize_gateway_payment(string $gateway, $order, string $reference, string $callback_url, array $metadata, array $settings) {
+        $amount = (float) $order->get_total();
+        $currency = $order->get_currency() ?: get_woocommerce_currency();
+        $email = $order->get_billing_email() ?: get_option('admin_email');
+
+        if ($gateway === 'paystack') {
+            $response = wp_remote_post('https://api.paystack.co/transaction/initialize', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . (string) $settings['paystack']['secret_key'],
+                    'Content-Type' => 'application/json',
+                ],
+                'body' => wp_json_encode([
+                    'email' => $email,
+                    'amount' => (int) round($amount * 100),
+                    'currency' => $currency,
+                    'reference' => $reference,
+                    'callback_url' => $callback_url,
+                    'metadata' => $metadata,
+                ]),
+                'timeout' => 30,
+            ]);
+            return self::payment_init_response($gateway, $reference, $response, ['data', 'authorization_url']);
+        }
+
+        if ($gateway === 'flutterwave') {
+            $response = wp_remote_post('https://api.flutterwave.com/v3/payments', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . (string) $settings['flutterwave']['secret_key'],
+                    'Content-Type' => 'application/json',
+                ],
+                'body' => wp_json_encode([
+                    'tx_ref' => $reference,
+                    'amount' => $amount,
+                    'currency' => $currency,
+                    'redirect_url' => $callback_url,
+                    'customer' => ['email' => $email, 'name' => trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name())],
+                    'meta' => $metadata,
+                    'customizations' => ['title' => 'Nevari Health Invoice Payment'],
+                ]),
+                'timeout' => 30,
+            ]);
+            return self::payment_init_response($gateway, $reference, $response, ['data', 'link']);
+        }
+
+        if ($gateway === 'stripe') {
+            $body = [
+                'mode' => 'payment',
+                'success_url' => add_query_arg(['gateway' => 'stripe', 'reference' => $reference], $callback_url),
+                'cancel_url' => $callback_url,
+                'client_reference_id' => $reference,
+                'customer_email' => $email,
+                'line_items[0][price_data][currency]' => strtolower($currency),
+                'line_items[0][price_data][product_data][name]' => 'Invoice ' . self::invoice_number_for_order($order),
+                'line_items[0][price_data][unit_amount]' => (int) round($amount * 100),
+                'line_items[0][quantity]' => 1,
+            ];
+            foreach ($metadata as $key => $value) {
+                $body['metadata[' . $key . ']'] = (string) $value;
+            }
+            $response = wp_remote_post('https://api.stripe.com/v1/checkout/sessions', [
+                'headers' => ['Authorization' => 'Bearer ' . (string) $settings['stripe']['secret_key']],
+                'body' => $body,
+                'timeout' => 30,
+            ]);
+            return self::payment_init_response($gateway, $reference, $response, ['url'], ['reference_key' => 'id']);
+        }
+
+        return new WP_Error('invalid_gateway', 'Unsupported gateway.');
+    }
+
+    private static function payment_init_response(string $gateway, string $reference, $response, array $url_path, array $options = []) {
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        $body = json_decode((string) wp_remote_retrieve_body($response), true);
+        if (!is_array($body)) {
+            return new WP_Error('gateway_response_invalid', 'Gateway returned an invalid response.');
+        }
+        $cursor = $body;
+        foreach ($url_path as $segment) {
+            $cursor = is_array($cursor) && array_key_exists($segment, $cursor) ? $cursor[$segment] : null;
+        }
+        if (!$cursor) {
+            return new WP_Error('gateway_initialize_failed', 'Gateway did not return a payment URL.');
+        }
+        $reference_key = $options['reference_key'] ?? null;
+        return [
+            'gateway' => $gateway,
+            'payment_url' => esc_url_raw((string) $cursor),
+            'reference' => $reference_key && isset($body[$reference_key]) ? sanitize_text_field((string) $body[$reference_key]) : $reference,
+        ];
+    }
+
+    private static function verify_gateway_payment(string $gateway, string $reference, $order) {
+        if ($gateway === 'woocommerce') {
+            return ['paid' => !$order->needs_payment()];
+        }
+
+        $settings = Nevari_Helpers::payment_gateway_settings();
+        if ($gateway === 'paystack') {
+            $response = wp_remote_get('https://api.paystack.co/transaction/verify/' . rawurlencode($reference), [
+                'headers' => ['Authorization' => 'Bearer ' . (string) $settings['paystack']['secret_key']],
+                'timeout' => 30,
+            ]);
+            return self::verify_gateway_response($gateway, $reference, $order, $response, ['data', 'status'], 'success', ['data', 'reference']);
+        }
+        if ($gateway === 'flutterwave') {
+            $response = wp_remote_get('https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=' . rawurlencode($reference), [
+                'headers' => ['Authorization' => 'Bearer ' . (string) $settings['flutterwave']['secret_key']],
+                'timeout' => 30,
+            ]);
+            return self::verify_gateway_response($gateway, $reference, $order, $response, ['data', 'status'], 'successful', ['data', 'tx_ref']);
+        }
+        if ($gateway === 'stripe') {
+            $response = wp_remote_get('https://api.stripe.com/v1/checkout/sessions/' . rawurlencode($reference), [
+                'headers' => ['Authorization' => 'Bearer ' . (string) $settings['stripe']['secret_key']],
+                'timeout' => 30,
+            ]);
+            return self::verify_gateway_response($gateway, $reference, $order, $response, ['payment_status'], 'paid', ['id']);
+        }
+        return new WP_Error('invalid_gateway', 'Unsupported gateway.');
+    }
+
+    private static function verify_gateway_response(string $gateway, string $reference, $order, $response, array $status_path, string $paid_value, array $transaction_path) {
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        $body = json_decode((string) wp_remote_retrieve_body($response), true);
+        if (!is_array($body)) {
+            return new WP_Error('gateway_response_invalid', 'Gateway verification returned an invalid response.');
+        }
+        $status = self::array_path($body, $status_path);
+        if ((string) $status !== $paid_value) {
+            return new WP_Error('payment_not_verified', 'Gateway has not verified this payment as successful.');
+        }
+        $transaction_id = (string) (self::array_path($body, $transaction_path) ?: $reference);
+        self::complete_order_payment($order, $gateway, $transaction_id);
+        return ['paid' => true, 'transaction_id' => $transaction_id];
+    }
+
+    private static function complete_order_payment($order, string $gateway, string $transaction_id): void {
+        if ($order->needs_payment()) {
+            $order->payment_complete($transaction_id);
+        }
+        $order->set_transaction_id($transaction_id);
+        $order->update_meta_data('_nevari_invoice_payment_gateway', $gateway);
+        $order->update_meta_data('_nevari_invoice_payment_reference', $transaction_id);
+        $order->add_order_note(sprintf('Payment completed via invoice Pay Now link. Gateway: %s. Reference: %s', ucfirst($gateway), $transaction_id));
+        $order->save();
+    }
+
+    private static function array_path(array $data, array $path) {
+        $cursor = $data;
+        foreach ($path as $segment) {
+            if (!is_array($cursor) || !array_key_exists($segment, $cursor)) {
+                return null;
+            }
+            $cursor = $cursor[$segment];
+        }
+        return $cursor;
+    }
+
+    private static function gateway_webhook_signature_valid(string $gateway, WP_REST_Request $request, string $raw_body): bool {
+        $settings = Nevari_Helpers::payment_gateway_settings();
+        if ($gateway === 'paystack') {
+            $secret = (string) $settings['paystack']['secret_key'];
+            $signature = (string) $request->get_header('x-paystack-signature');
+            return $secret && $signature && hash_equals(hash_hmac('sha512', $raw_body, $secret), $signature);
+        }
+        if ($gateway === 'flutterwave') {
+            $secret = (string) $settings['flutterwave']['webhook_secret'];
+            $signature = (string) $request->get_header('secret-hash');
+            return !$secret || ($signature && hash_equals($secret, $signature));
+        }
+        if ($gateway === 'stripe') {
+            $secret = (string) $settings['stripe']['webhook_secret'];
+            if (!$secret) {
+                return true;
+            }
+            $header = (string) $request->get_header('stripe-signature');
+            preg_match('/t=(\d+)/', $header, $timestamp);
+            preg_match('/v1=([a-f0-9]+)/', $header, $signature);
+            if (empty($timestamp[1]) || empty($signature[1])) {
+                return false;
+            }
+            $expected = hash_hmac('sha256', $timestamp[1] . '.' . $raw_body, $secret);
+            return hash_equals($expected, $signature[1]);
+        }
+        return false;
+    }
+
+    private static function webhook_reference(string $gateway, array $payload): string {
+        if ($gateway === 'paystack') {
+            return sanitize_text_field((string) ($payload['data']['reference'] ?? ''));
+        }
+        if ($gateway === 'flutterwave') {
+            return sanitize_text_field((string) ($payload['data']['tx_ref'] ?? ''));
+        }
+        if ($gateway === 'stripe') {
+            return sanitize_text_field((string) ($payload['data']['object']['id'] ?? ''));
+        }
+        return '';
+    }
+
+    private static function webhook_order_id(string $gateway, array $payload): int {
+        if ($gateway === 'stripe') {
+            return (int) ($payload['data']['object']['metadata']['order_id'] ?? 0);
+        }
+        return (int) ($payload['data']['metadata']['order_id'] ?? $payload['data']['meta']['order_id'] ?? 0);
+    }
+
+    private static function get_order_for_payment_reference(string $reference) {
+        if (!$reference || !function_exists('wc_get_orders')) {
+            return null;
+        }
+        $orders = wc_get_orders([
+            'limit' => 1,
+            'meta_key' => '_nevari_invoice_payment_reference',
+            'meta_value' => sanitize_text_field($reference),
+        ]);
+        return $orders ? $orders[0] : null;
+    }
+
     private static function build_order_receipt_pdf($order): string {
         $items = $order->get_items();
         $currency = $order->get_currency() ?: get_woocommerce_currency();
         $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) ?: 'Customer';
-        $lines = [
-            wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES),
-            'Payment Receipt',
-            sprintf('Order #%s', $order->get_order_number()),
-            sprintf('Date: %s', $order->get_date_created() ? $order->get_date_created()->date_i18n('M j, Y g:i a') : 'n/a'),
-            sprintf('Customer: %s', $customer_name),
-            sprintf('Email: %s', $order->get_billing_email() ?: 'n/a'),
-            sprintf('Payment status: %s', ucfirst((string) ($order->get_date_paid() ? 'completed' : $order->get_status()))),
-            '',
-            'Items',
+        $status_label = strtoupper((string) ($order->get_date_paid() ? 'paid' : $order->get_status()));
+        $order_date = $order->get_date_created() ? $order->get_date_created()->date_i18n('M j, Y, g:i A') : 'n/a';
+        $billing_address = trim(implode("\n", array_filter([
+            trim((string) $order->get_billing_address_1()),
+            trim((string) $order->get_billing_address_2()),
+            trim((string) $order->get_billing_city() . ', ' . $order->get_billing_state() . ' ' . $order->get_billing_postcode()),
+            trim((string) $order->get_billing_country()),
+        ]))) ?: 'n/a';
+        $summary_rows = [
+            ['Subtotal', wc_price(self::order_subtotal($order, $items), ['currency' => $currency])],
+            ['Discount', wc_price((float) $order->get_discount_total(), ['currency' => $currency])],
+            ['Tax', wc_price((float) $order->get_total_tax(), ['currency' => $currency])],
+            ['Shipping', wc_price((float) $order->get_shipping_total() + (float) $order->get_shipping_tax(), ['currency' => $currency])],
+            ['Amount Paid', wc_price((float) $order->get_total(), ['currency' => $currency])],
+            ['Balance Due', wc_price(0, ['currency' => $currency])],
         ];
 
+        $items_rows = [];
         foreach ($items as $item) {
             $quantity = (float) $item->get_quantity();
-            $lines[] = sprintf(
-                '%s x%s  %s',
+            $line_total = (float) $item->get_total();
+            $unit_price = $quantity > 0 ? ((float) $item->get_subtotal() / $quantity) : (float) $item->get_subtotal();
+            $items_rows[] = [
                 wp_strip_all_tags($item->get_name()),
-                wc_format_decimal($quantity, 0),
-                wp_strip_all_tags(wc_price((float) $item->get_total(), ['currency' => $currency]))
-            );
+                (string) wc_format_decimal($quantity, 0),
+                wp_strip_all_tags(wc_price($unit_price, ['currency' => $currency])),
+                wp_strip_all_tags(wc_price(0, ['currency' => $currency])),
+                wp_strip_all_tags(wc_price(0, ['currency' => $currency])),
+                wp_strip_all_tags(wc_price($line_total, ['currency' => $currency])),
+            ];
         }
 
-        $lines = array_merge($lines, [
-            '',
-            sprintf('Subtotal: %s', wp_strip_all_tags(wc_price(self::order_subtotal($order, $items), ['currency' => $currency]))),
-            sprintf('Discount: %s', wp_strip_all_tags(wc_price((float) $order->get_discount_total(), ['currency' => $currency]))),
-            sprintf('Shipping: %s', wp_strip_all_tags(wc_price((float) $order->get_shipping_total() + (float) $order->get_shipping_tax(), ['currency' => $currency]))),
-            sprintf('Tax: %s', wp_strip_all_tags(wc_price((float) $order->get_total_tax(), ['currency' => $currency]))),
-            sprintf('Total paid: %s', wp_strip_all_tags(wc_price((float) $order->get_total(), ['currency' => $currency]))),
-        ]);
+        $content = self::pdf_begin_page();
+        $content .= self::pdf_set_rgb(0.10, 0.19, 0.42);
+        $content .= self::pdf_draw_rect(20, 740, 572, 38, true);
+        $content .= self::pdf_text(44, 771, 24, 'Helvetica-Bold', 1, 1, 1, wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES));
+        $content .= self::pdf_draw_circle(46, 770, 14, true);
+        $content .= self::pdf_text(40, 765, 12, 'Helvetica-Bold', 1, 1, 1, 'ne');
+        $content .= self::pdf_set_rgb(0.10, 0.19, 0.42);
+        $content .= self::pdf_text(300, 770, 24, 'Helvetica-Bold', 0.10, 0.19, 0.42, sprintf('Receipt #%s', $order->get_order_number()));
+        $content .= self::pdf_text(555, 752, 10, 'Helvetica-Bold', 0.10, 0.19, 0.42, $status_label);
+        $content .= self::pdf_text(555, 738, 9, 'Helvetica', 0.34, 0.38, 0.47, $order_date);
+        $content .= self::pdf_line(20, 726, 592, 726);
+        $content .= self::pdf_text(20, 706, 12, 'Helvetica-Bold', 0.10, 0.19, 0.42, 'CUSTOMER DETAILS');
+        $content .= self::pdf_text_block(20, 690, 11, 'Helvetica', 0.10, 0.19, 0.42, [
+            strtolower($customer_name),
+            strtolower((string) $order->get_billing_email()),
+            (string) $order->get_billing_phone(),
+            strtolower($billing_address),
+        ], 14);
 
-        return self::build_simple_pdf($lines);
+        $content .= self::pdf_fill_rect(20, 560, 572, 28, 0.10, 0.19, 0.42);
+        $header_y = 544;
+        $headers = ['DESCRIPTION', 'QTY', 'RATE', 'TAX', 'DISCOUNT', 'AMOUNT'];
+        $x_positions = [20, 200, 270, 360, 450, 520];
+        foreach ($headers as $index => $header) {
+            $content .= self::pdf_text($x_positions[$index], $header_y, 10, 'Helvetica-Bold', 1, 1, 1, $header);
+        }
+
+        $row_y = 520;
+        foreach ($items_rows as $row) {
+            $content .= self::pdf_line(20, $row_y + 5, 592, $row_y + 5, 0.88, 0.90, 0.93);
+            $content .= self::pdf_text(20, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[0]);
+            $content .= self::pdf_text(200, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[1]);
+            $content .= self::pdf_text(270, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[2]);
+            $content .= self::pdf_text(360, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[3]);
+            $content .= self::pdf_text(450, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[4]);
+            $content .= self::pdf_text(520, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[5]);
+            $row_y -= 34;
+        }
+
+        $content .= self::pdf_fill_rect(20, 198, 330, 22, 0.10, 0.19, 0.42);
+        $content .= self::pdf_text(20, 174, 12, 'Helvetica-Bold', 0.10, 0.19, 0.42, 'Notes / Instructions');
+        $content .= self::pdf_text_block(20, 156, 10, 'Helvetica', 0.10, 0.19, 0.42, [
+            trim((string) $order->get_customer_note()) ?: 'Payment confirmed. Keep this receipt for your records.',
+        ], 14);
+
+        $summary_x = 350;
+        $summary_y = 196;
+        $content .= self::pdf_draw_rect($summary_x, 66, 242, 130, false);
+        foreach ($summary_rows as $index => [$label, $value]) {
+            $rowY = $summary_y - ($index * 18);
+            $content .= self::pdf_text($summary_x + 10, $rowY, 10, 'Helvetica', 0.10, 0.19, 0.42, $label);
+            $content .= self::pdf_text($summary_x + 202, $rowY, 10, 'Helvetica-Bold', 0.10, 0.19, 0.42, $value);
+        }
+        $content .= self::pdf_line(20, 60, 592, 60);
+        $content .= self::pdf_end_page($content);
+        return self::pdf_wrap_document($content);
+    }
+
+    private static function build_order_prescription_pdf($order): string {
+        global $wpdb;
+        $prescription_id = (int) $order->get_meta('_nevari_prescription_id');
+        if (!$prescription_id) {
+            return '';
+        }
+
+        $prescription = self::get_prescription_row($prescription_id);
+        if (!$prescription || !Nevari_Helpers::can_view_prescription($prescription)) {
+            return '';
+        }
+
+        $currency = $order->get_currency() ?: get_woocommerce_currency();
+        $patient = get_user_by('id', (int) $prescription->patient_user_id);
+        $doctor = get_user_by('id', (int) $prescription->doctor_user_id);
+        $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) ?: ($patient ? $patient->display_name : 'Patient');
+        $order_date = !empty($prescription->created_at) ? Nevari_Helpers::iso_datetime($prescription->created_at) : 'n/a';
+        $status_label = strtoupper(str_replace('_', ' ', (string) $prescription->status));
+        $billing_address = trim(implode("\n", array_filter([
+            trim((string) $order->get_billing_address_1()),
+            trim((string) $order->get_billing_address_2()),
+            trim((string) $order->get_billing_city() . ', ' . $order->get_billing_state() . ' ' . $order->get_billing_postcode()),
+            trim((string) $order->get_billing_country()),
+        ]))) ?: 'n/a';
+        $items_rows = [];
+
+        $items_table = Nevari_Helpers::table('prescription_items');
+        $prescription_items = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$items_table} WHERE prescription_id = %d ORDER BY id ASC", $prescription_id));
+        if ($prescription_items) {
+            foreach ($prescription_items as $prescription_item) {
+                $product_name = 'Medication';
+                if (!empty($prescription_item->product_id)) {
+                    if (function_exists('wc_get_product')) {
+                        $product = wc_get_product((int) $prescription_item->product_id);
+                        if ($product) {
+                            $product_name = $product->get_name();
+                        }
+                    }
+                    if ($product_name === 'Medication') {
+                        $title = get_the_title((int) $prescription_item->product_id);
+                        if (!empty($title)) {
+                            $product_name = $title;
+                        }
+                    }
+                }
+                $items_rows[] = [
+                    wp_strip_all_tags($product_name ?: 'Medication'),
+                    wp_strip_all_tags((string) ($prescription_item->quantity ?: '1')),
+                    wp_strip_all_tags((string) ($prescription_item->dosage ?: 'n/a')),
+                    wp_strip_all_tags((string) ($prescription_item->frequency ?: 'n/a')),
+                    wp_strip_all_tags((string) ($prescription_item->notes ?: '')),
+                ];
+            }
+        }
+
+        if (empty($items_rows)) {
+            $items_rows[] = ['No medications added.', '-', '-', '-', '-'];
+        }
+
+        $summary_rows = [
+            ['Prescription', (string) ($prescription->prescription_number ?: ('#' . $prescription_id))],
+            ['Doctor', wp_strip_all_tags($doctor ? $doctor->display_name : ('Doctor #' . (int) $prescription->doctor_user_id))],
+            ['Patient', wp_strip_all_tags($patient ? $patient->display_name : ('Patient #' . (int) $prescription->patient_user_id))],
+            ['Status', ucfirst(strtolower(str_replace('_', ' ', (string) $prescription->status)))],
+            ['Order Total', wp_strip_all_tags(wc_price((float) $order->get_total(), ['currency' => $currency]))],
+        ];
+
+        $content = self::pdf_begin_page();
+        $content .= self::pdf_set_rgb(0.10, 0.19, 0.42);
+        $content .= self::pdf_draw_rect(20, 740, 572, 38, true);
+        $content .= self::pdf_text(44, 771, 24, 'Helvetica-Bold', 1, 1, 1, wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES));
+        $content .= self::pdf_draw_circle(46, 770, 14, true);
+        $content .= self::pdf_text(40, 765, 12, 'Helvetica-Bold', 1, 1, 1, 'ne');
+        $content .= self::pdf_set_rgb(0.10, 0.19, 0.42);
+        $content .= self::pdf_text(260, 770, 24, 'Helvetica-Bold', 0.10, 0.19, 0.42, sprintf('Prescription #%s', (string) ($prescription->prescription_number ?: ('#' . $prescription_id))));
+        $content .= self::pdf_text(555, 752, 10, 'Helvetica-Bold', 0.10, 0.19, 0.42, $status_label);
+        $content .= self::pdf_text(555, 738, 9, 'Helvetica', 0.34, 0.38, 0.47, $order_date);
+        $content .= self::pdf_line(20, 726, 592, 726);
+        $content .= self::pdf_text(20, 706, 12, 'Helvetica-Bold', 0.10, 0.19, 0.42, 'CUSTOMER DETAILS');
+        $content .= self::pdf_text_block(20, 690, 11, 'Helvetica', 0.10, 0.19, 0.42, [
+            strtolower($customer_name),
+            strtolower((string) $order->get_billing_email()),
+            (string) $order->get_billing_phone(),
+            strtolower($billing_address),
+        ], 14);
+
+        $content .= self::pdf_fill_rect(20, 560, 572, 28, 0.10, 0.19, 0.42);
+        $header_y = 544;
+        $headers = ['MEDICATION', 'QTY', 'DOSAGE', 'FREQUENCY', 'NOTES'];
+        $x_positions = [20, 255, 320, 410, 500];
+        foreach ($headers as $index => $header) {
+            $content .= self::pdf_text($x_positions[$index], $header_y, 10, 'Helvetica-Bold', 1, 1, 1, $header);
+        }
+
+        $row_y = 520;
+        foreach ($items_rows as $row) {
+            $content .= self::pdf_line(20, $row_y + 5, 592, $row_y + 5, 0.88, 0.90, 0.93);
+            $content .= self::pdf_text(20, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[0]);
+            $content .= self::pdf_text(255, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[1]);
+            $content .= self::pdf_text(320, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[2]);
+            $content .= self::pdf_text(410, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[3]);
+            $content .= self::pdf_text(500, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[4]);
+            $row_y -= 34;
+        }
+
+        $content .= self::pdf_fill_rect(20, 198, 330, 22, 0.10, 0.19, 0.42);
+        $content .= self::pdf_text(20, 174, 12, 'Helvetica-Bold', 0.10, 0.19, 0.42, 'Notes / Instructions');
+        $content .= self::pdf_text_block(20, 156, 10, 'Helvetica', 0.10, 0.19, 0.42, [
+            wp_strip_all_tags((string) (!empty($prescription->diagnosis) ? $prescription->diagnosis : 'No diagnosis recorded.')),
+            wp_strip_all_tags((string) (!empty($prescription->instructions) ? $prescription->instructions : 'Follow your doctor instructions exactly as prescribed.')),
+        ], 14);
+
+        $summary_x = 350;
+        $summary_y = 196;
+        $content .= self::pdf_draw_rect($summary_x, 84, 242, 112, false);
+        foreach ($summary_rows as $index => [$label, $value]) {
+            $rowY = $summary_y - ($index * 18);
+            $content .= self::pdf_text($summary_x + 10, $rowY, 10, 'Helvetica', 0.10, 0.19, 0.42, $label);
+            $content .= self::pdf_text($summary_x + 202, $rowY, 10, 'Helvetica-Bold', 0.10, 0.19, 0.42, $value);
+        }
+        $content .= self::pdf_line(20, 78, 592, 78);
+        $content .= self::pdf_end_page($content);
+        return self::pdf_wrap_document($content);
     }
 
     private static function build_order_details_pdf($order): string {
+        global $wpdb;
         $items = $order->get_items();
         $currency = $order->get_currency() ?: get_woocommerce_currency();
         $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) ?: 'Customer';
-        $lines = [
-            'Nevari Pharmacy',
-            'Order Details',
-            sprintf('Order #%s', $order->get_order_number()),
-            sprintf('Placed: %s', $order->get_date_created() ? $order->get_date_created()->date_i18n('M j, Y g:i a') : 'n/a'),
-            sprintf('Customer: %s', $customer_name),
-            sprintf('Email: %s', $order->get_billing_email() ?: 'n/a'),
-            sprintf('Status: %s', ucfirst((string) $order->get_status())),
-            '',
-            'Items',
+        $currency_symbol = function_exists('get_woocommerce_currency_symbol') ? get_woocommerce_currency_symbol($currency) : $currency;
+        $status_label = strtoupper((string) $order->get_status());
+        $order_date = $order->get_date_created() ? $order->get_date_created()->date_i18n('M j, Y, g:i A') : 'n/a';
+        $billing_address = trim(implode("\n", array_filter([
+            trim((string) $order->get_billing_address_1()),
+            trim((string) $order->get_billing_address_2()),
+            trim((string) $order->get_billing_city() . ', ' . $order->get_billing_state() . ' ' . $order->get_billing_postcode()),
+            trim((string) $order->get_billing_country()),
+        ]))) ?: 'n/a';
+        $summary_rows = [
+            ['Subtotal', wc_price(self::order_subtotal($order, $items), ['currency' => $currency])],
+            ['Discount', wc_price((float) $order->get_discount_total(), ['currency' => $currency])],
+            ['Tax', wc_price((float) $order->get_total_tax(), ['currency' => $currency])],
+            ['Shipping', wc_price((float) $order->get_shipping_total() + (float) $order->get_shipping_tax(), ['currency' => $currency])],
+            ['Amount Paid', wc_price((float) $order->get_total(), ['currency' => $currency])],
         ];
-        foreach ($items as $item) {
-            $lines[] = sprintf(
-                '%s x%s  %s',
-                wp_strip_all_tags($item->get_name()),
-                wc_format_decimal((float) $item->get_quantity(), 0),
-                wp_strip_all_tags(wc_price((float) $item->get_total(), ['currency' => $currency]))
-            );
+        $prescription_lines = [];
+        $prescription_id = (int) $order->get_meta('_nevari_prescription_id');
+        if ($prescription_id) {
+            $prescription = self::get_prescription_row($prescription_id);
+            if ($prescription && Nevari_Helpers::can_view_prescription($prescription)) {
+                if (!empty($prescription->diagnosis)) {
+                    $prescription_lines[] = wp_strip_all_tags((string) $prescription->diagnosis);
+                } else {
+                    $prescription_lines[] = 'No diagnosis recorded.';
+                }
+                $items_table = Nevari_Helpers::table('prescription_items');
+                $prescription_items = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$items_table} WHERE prescription_id = %d ORDER BY id ASC", $prescription_id));
+                if ($prescription_items) {
+                    foreach ($prescription_items as $prescription_item) {
+                        $product_name = 'Medication';
+                        if (!empty($prescription_item->product_id)) {
+                            if (function_exists('wc_get_product')) {
+                                $product = wc_get_product((int) $prescription_item->product_id);
+                                if ($product) {
+                                    $product_name = $product->get_name();
+                                }
+                            }
+                            if ($product_name === 'Medication') {
+                                $title = get_the_title((int) $prescription_item->product_id);
+                                if (!empty($title)) {
+                                    $product_name = $title;
+                                }
+                            }
+                        }
+                        $prescription_lines[] = sprintf(
+                            '%s | %s | %s | %s | %s',
+                            wp_strip_all_tags($product_name ?: 'Medication'),
+                            wp_strip_all_tags((string) ($prescription_item->quantity ?: '1')),
+                            wp_strip_all_tags((string) ($prescription_item->dosage ?: 'n/a')),
+                            wp_strip_all_tags((string) ($prescription_item->frequency ?: 'n/a')),
+                            wp_strip_all_tags((string) ($prescription_item->notes ?: ''))
+                        );
+                    }
+                } else {
+                    $prescription_lines[] = 'No medications added.';
+                }
+                if (!empty($prescription->instructions)) {
+                    $prescription_lines[] = wp_strip_all_tags((string) $prescription->instructions);
+                }
+            }
         }
-        $lines = array_merge($lines, [
-            '',
-            sprintf('Subtotal: %s', wp_strip_all_tags(wc_price(self::order_subtotal($order, $items), ['currency' => $currency]))),
-            sprintf('Shipping: %s', wp_strip_all_tags(wc_price((float) $order->get_shipping_total() + (float) $order->get_shipping_tax(), ['currency' => $currency]))),
-            sprintf('Tax: %s', wp_strip_all_tags(wc_price((float) $order->get_total_tax(), ['currency' => $currency]))),
-            sprintf('Total: %s', wp_strip_all_tags(wc_price((float) $order->get_total(), ['currency' => $currency]))),
-        ]);
-        return self::build_simple_pdf($lines);
+
+        $items_rows = [];
+        foreach ($items as $item) {
+            $quantity = (float) $item->get_quantity();
+            $line_total = (float) $item->get_total();
+            $unit_price = $quantity > 0 ? ((float) $item->get_subtotal() / $quantity) : (float) $item->get_subtotal();
+            $items_rows[] = [
+                wp_strip_all_tags($item->get_name()),
+                (string) wc_format_decimal($quantity, 0),
+                wp_strip_all_tags(wc_price($unit_price, ['currency' => $currency])),
+                wp_strip_all_tags(wc_price(0, ['currency' => $currency])),
+                wp_strip_all_tags(wc_price(0, ['currency' => $currency])),
+                wp_strip_all_tags(wc_price($line_total, ['currency' => $currency])),
+            ];
+        }
+
+        $content = self::pdf_begin_page();
+        $content .= self::pdf_set_rgb(0.10, 0.19, 0.42);
+        $content .= self::pdf_draw_rect(20, 740, 572, 38, true);
+        $content .= self::pdf_text(44, 771, 24, 'Helvetica-Bold', 1, 1, 1, wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES));
+        $content .= self::pdf_draw_circle(46, 770, 14, true);
+        $content .= self::pdf_text(40, 765, 12, 'Helvetica-Bold', 1, 1, 1, 'ne');
+        $content .= self::pdf_set_rgb(0.10, 0.19, 0.42);
+        $content .= self::pdf_text(300, 770, 24, 'Helvetica-Bold', 0.10, 0.19, 0.42, sprintf('Invoice #%s', $order->get_order_number()));
+        $content .= self::pdf_text(555, 752, 10, 'Helvetica-Bold', 0.10, 0.19, 0.42, $status_label);
+        $content .= self::pdf_text(555, 738, 9, 'Helvetica', 0.34, 0.38, 0.47, $order_date);
+        $content .= self::pdf_line(20, 726, 592, 726);
+        $content .= self::pdf_text(20, 706, 12, 'Helvetica-Bold', 0.10, 0.19, 0.42, 'CUSTOMER DETAILS');
+        $content .= self::pdf_text_block(20, 690, 11, 'Helvetica', 0.10, 0.19, 0.42, [
+            strtolower($customer_name),
+            strtolower((string) $order->get_billing_email()),
+            (string) $order->get_billing_phone(),
+            strtolower($billing_address),
+        ], 14);
+
+        $content .= self::pdf_fill_rect(20, 560, 572, 28, 0.10, 0.19, 0.42);
+        $header_y = 544;
+        $headers = ['ITEM', 'QTY', 'UNIT PRICE', 'DISCOUNT', 'TAX', 'TOTAL'];
+        $x_positions = [20, 200, 270, 360, 450, 520];
+        foreach ($headers as $index => $header) {
+            $content .= self::pdf_text($x_positions[$index], $header_y, 10, 'Helvetica-Bold', 1, 1, 1, $header);
+        }
+
+        $row_y = 520;
+        foreach ($items_rows as $row) {
+            $content .= self::pdf_line(20, $row_y + 5, 592, $row_y + 5, 0.88, 0.90, 0.93);
+            $content .= self::pdf_text(20, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[0]);
+            $content .= self::pdf_text(200, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[1]);
+            $content .= self::pdf_text(270, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[2]);
+            $content .= self::pdf_text(360, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[3]);
+            $content .= self::pdf_text(450, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[4]);
+            $content .= self::pdf_text(520, $row_y, 10, 'Helvetica', 0.10, 0.19, 0.42, $row[5]);
+            $row_y -= 34;
+        }
+
+        $prescription_box_y = max(250, $row_y - 10);
+        $content .= self::pdf_text(20, $prescription_box_y, 12, 'Helvetica-Bold', 0.10, 0.19, 0.42, 'Prescription');
+        if (!empty($prescription_lines)) {
+            $content .= self::pdf_text_block(20, $prescription_box_y - 18, 10, 'Helvetica', 0.10, 0.19, 0.42, $prescription_lines, 14);
+        }
+        $content .= self::pdf_fill_rect(20, 198, 330, 22, 0.10, 0.19, 0.42);
+        $content .= self::pdf_text(20, 174, 12, 'Helvetica-Bold', 0.10, 0.19, 0.42, 'Notes / Instructions');
+        $content .= self::pdf_text_block(20, 156, 10, 'Helvetica', 0.10, 0.19, 0.42, [
+            trim((string) $order->get_customer_note()) ?: 'Please pay the hospital account listed on your patient profile.',
+        ], 14);
+
+        $summary_x = 350;
+        $summary_y = 196;
+        $content .= self::pdf_draw_rect($summary_x, 84, 242, 112, false);
+        foreach ($summary_rows as $index => [$label, $value]) {
+            $rowY = $summary_y - ($index * 18);
+            $content .= self::pdf_text($summary_x + 10, $rowY, 10, 'Helvetica', 0.10, 0.19, 0.42, $label);
+            $content .= self::pdf_text($summary_x + 202, $rowY, 10, 'Helvetica-Bold', 0.10, 0.19, 0.42, $value);
+        }
+        $content .= self::pdf_line(20, 78, 592, 78);
+        $content .= self::pdf_end_page($content);
+        return self::pdf_wrap_document($content);
     }
 
     private static function build_simple_pdf(array $lines): string {
@@ -1224,6 +2181,95 @@ final class Nevari_Rest {
         );
 
         return $pdf;
+    }
+
+    private static function pdf_wrap_document(string $content): string {
+        $objects = [
+            '<< /Type /Catalog /Pages 2 0 R >>',
+            '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+            '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>',
+            sprintf("<< /Length %d >>\nstream\n%s\nendstream", strlen($content), $content),
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+        ];
+
+        $pdf = "%PDF-1.4\n";
+        $offsets = [0];
+        foreach ($objects as $index => $object) {
+            $offsets[] = strlen($pdf);
+            $pdf .= sprintf("%d 0 obj\n%s\nendobj\n", $index + 1, $object);
+        }
+
+        $xref_offset = strlen($pdf);
+        $pdf .= sprintf("xref\n0 %d\n0000000000 65535 f \n", count($objects) + 1);
+        foreach (array_slice($offsets, 1) as $offset) {
+            $pdf .= sprintf("%010d 00000 n \n", $offset);
+        }
+        $pdf .= sprintf(
+            "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF",
+            count($objects) + 1,
+            $xref_offset
+        );
+
+        return $pdf;
+    }
+
+    private static function pdf_begin_page(): string {
+        return "q\n";
+    }
+
+    private static function pdf_end_page(string $content): string {
+        return $content . "Q\n";
+    }
+
+    private static function pdf_set_rgb(float $r, float $g, float $b): string {
+        return sprintf("%.3F %.3F %.3F rg\n%.3F %.3F %.3F RG\n", $r, $g, $b, $r, $g, $b);
+    }
+
+    private static function pdf_line(float $x1, float $y1, float $x2, float $y2, float $r = 0.88, float $g = 0.90, float $b = 0.93): string {
+        return self::pdf_set_rgb($r, $g, $b) . sprintf("%.2F %.2F m\n%.2F %.2F l\nS\n", $x1, $y1, $x2, $y2);
+    }
+
+    private static function pdf_draw_rect(float $x, float $y, float $w, float $h, bool $fill = false): string {
+        return sprintf("0 0 0 rg\n0 0 0 RG\n%.2F %.2F %.2F %.2F re\n%s\n", $x, $y, $w, $h, $fill ? 'f' : 'S');
+    }
+
+    private static function pdf_fill_rect(float $x, float $y, float $w, float $h, float $r, float $g, float $b): string {
+        return self::pdf_set_rgb($r, $g, $b) . sprintf("%.2F %.2F %.2F %.2F re\nf\n", $x, $y, $w, $h);
+    }
+
+    private static function pdf_draw_circle(float $cx, float $cy, float $radius, bool $fill = false): string {
+        $k = 0.552284749831;
+        $ox = $radius * $k;
+        $oy = $radius * $k;
+        $x0 = $cx - $radius;
+        $y0 = $cy;
+        $x1 = $cx;
+        $y1 = $cy + $radius;
+        $x2 = $cx + $radius;
+        $y2 = $cy;
+        $x3 = $cx;
+        $y3 = $cy - $radius;
+        return self::pdf_set_rgb(0.10, 0.19, 0.42)
+            . sprintf("%.2F %.2F m\n", $x0, $y0)
+            . sprintf("%.2F %.2F %.2F %.2F %.2F %.2F c\n", $x0, $y0 + $oy, $x1 - $ox, $y1, $x1, $y1)
+            . sprintf("%.2F %.2F %.2F %.2F %.2F %.2F c\n", $x1 + $ox, $y1, $x2, $y0 + $oy, $x2, $y0)
+            . sprintf("%.2F %.2F %.2F %.2F %.2F %.2F c\n", $x2, $y0 - $oy, $x1 + $ox, $y3, $x1, $y3)
+            . sprintf("%.2F %.2F %.2F %.2F %.2F %.2F c\n", $x1 - $ox, $y3, $x0, $y0 - $oy, $x0, $y0)
+            . ($fill ? "f\n" : "S\n");
+    }
+
+    private static function pdf_text(float $x, float $y, int $size, string $font, float $r, float $g, float $b, string $text): string {
+        return self::pdf_set_rgb($r, $g, $b)
+            . sprintf("BT /%s %d Tf %.2F %.2F Td (%s) Tj ET\n", $font, $size, $x, $y, self::pdf_escape($text));
+    }
+
+    private static function pdf_text_block(float $x, float $y, int $size, string $font, float $r, float $g, float $b, array $lines, int $lineHeight = 14): string {
+        $content = '';
+        foreach ($lines as $index => $line) {
+            $content .= self::pdf_text($x, $y - ($index * $lineHeight), $size, $font, $r, $g, $b, (string) $line);
+        }
+        return $content;
     }
 
     private static function pdf_escape(string $value): string {
@@ -2321,6 +3367,19 @@ final class Nevari_Rest {
         $patient = get_user_by('id', $patient_id);
         $appointment = self::get_appointment_row($appointment_id);
         $calendar = Nevari_Helpers::appointment_calendar_links($appointment);
+        $email_variables = isset($params['email_variables']) && is_array($params['email_variables']) ? $params['email_variables'] : [];
+        $requested_meeting_link = '';
+        foreach (['google_meet_link', 'meet_link', 'meeting_url'] as $meeting_key) {
+            if (!empty($params[$meeting_key])) {
+                $requested_meeting_link = esc_url_raw((string) $params[$meeting_key]);
+                break;
+            }
+            if (!empty($email_variables[$meeting_key]) && strpos((string) $email_variables[$meeting_key], '{') === false) {
+                $requested_meeting_link = esc_url_raw((string) $email_variables[$meeting_key]);
+                break;
+            }
+        }
+        $google_meet_link = $requested_meeting_link ?: ($type === 'video' ? $calendar['google_url'] : '');
         $ics = [
             'filename' => Nevari_Helpers::appointment_ics_filename($appointment),
             'content' => Nevari_Helpers::appointment_ics_content($appointment, $doctor->display_name, $patient ? $patient->display_name : ''),
@@ -2337,6 +3396,8 @@ final class Nevari_Rest {
                 'appointment_start' => gmdate('c', strtotime($start)),
                 'payment_link' => $checkout_order->get_checkout_payment_url(false),
                 'payment_link_html' => ['html' => '<a href="' . esc_url($checkout_order->get_checkout_payment_url(false)) . '">Complete payment</a>', 'text' => $checkout_order->get_checkout_payment_url(false)],
+                'google_meet_link' => $google_meet_link,
+                'google_meet_link_html' => $google_meet_link ? ['html' => '<a href="' . esc_url($google_meet_link) . '">Join Google Meet</a>', 'text' => $google_meet_link] : '',
             ],
         ], false);
         self::queue_appointment_staff_notifications($appointment, $doctor, $patient, $calendar, $ics);

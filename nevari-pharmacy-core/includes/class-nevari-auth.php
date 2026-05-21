@@ -22,6 +22,12 @@ final class Nevari_Auth {
             'permission_callback' => '__return_true',
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/resend-code', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'resend_code'],
+            'permission_callback' => '__return_true',
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/refresh', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'refresh'],
@@ -526,6 +532,67 @@ final class Nevari_Auth {
             'refresh_token' => $refresh_token,
             'expires_in' => $expires_in,
         ];
+    }
+
+    public static function resend_code(WP_REST_Request $request): WP_REST_Response {
+        global $wpdb;
+        $params = Nevari_Helpers::get_json_params($request);
+        $challenge_id = isset($params['challenge_id']) ? sanitize_text_field((string) $params['challenge_id']) : '';
+        $ip = Nevari_Helpers::client_ip();
+
+        if ($response = Nevari_Helpers::rate_limit('auth_resend_ip', 5, 15 * MINUTE_IN_SECONDS, [$ip])) {
+            return $response;
+        }
+        if ($response = Nevari_Helpers::rate_limit('auth_resend_challenge', 3, 15 * MINUTE_IN_SECONDS, [$challenge_id ?: 'unknown'])) {
+            return $response;
+        }
+        if (!$challenge_id) {
+            return Nevari_Helpers::error('validation_error', 'challenge_id is required.', 422);
+        }
+
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend) {
+            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+        }
+
+        $table = Nevari_Helpers::table('login_challenges');
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE challenge_uuid = %s AND consumed_at IS NULL AND expires_at > %s LIMIT 1",
+            $challenge_id,
+            Nevari_Helpers::now()
+        ));
+        if (!$row || $row->frontend_type !== $frontend['frontend_type'] || $row->frontend_origin !== $frontend['frontend_origin']) {
+            return Nevari_Helpers::error('invalid_verification_code', 'Verification code is invalid or expired.', 401);
+        }
+
+        $user = get_user_by('id', (int) $row->user_id);
+        if (!$user || !self::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
+            return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
+        }
+
+        $challenge = self::issue_login_challenge($user, $frontend);
+        if (is_wp_error($challenge)) {
+            return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
+        }
+
+        $wpdb->update($table, ['consumed_at' => Nevari_Helpers::now()], ['id' => (int) $row->id], ['%s'], ['%d']);
+
+        Nevari_Audit::log('security', 'nevari', 'auth.verification_code_resent', 'success', [
+            'actor_user_id' => (int) $user->ID,
+            'related_user_id' => (int) $user->ID,
+            'message' => 'Login verification code resent.',
+            'metadata' => [
+                'frontend_type' => $frontend['frontend_type'],
+                'frontend_origin' => $frontend['frontend_origin'],
+            ],
+        ]);
+
+        return Nevari_Helpers::success([
+            'verification_required' => true,
+            'challenge_id' => $challenge['challenge_id'],
+            'masked_email' => self::mask_email((string) $user->user_email),
+            'expires_in' => $challenge['expires_in'],
+        ]);
     }
 
     private static function frontend_requires_email_verification(string $frontend_type): bool {

@@ -296,13 +296,9 @@ export default function CustomerDashboard() {
   );
   const showSkeleton = (isLoading && !hasCustomerDashboardData(state)) || pageQueryLoading;
 
-  async function downloadOrderPdf(order) {
-    const session = hydrateStoredSession("patient");
-    const pdf = await apiRequest(session, `/orders/${order.id}/details-pdf`);
-    const link = document.createElement("a");
-    link.href = `data:${pdf.content_type};base64,${pdf.base64}`;
-    link.download = pdf.filename;
-    link.click();
+  function openOrderDocuments(order) {
+    if (!order?.id) return;
+    router.push(`/admin/orders/${order.id}/documents?role=patient`);
   }
 
   async function cancelPendingOrder(order) {
@@ -609,7 +605,7 @@ export default function CustomerDashboard() {
       counts={orderCounts}
       expandedOrderId={expandedOrderId}
       onToggleOrder={(id) => setExpandedOrderId((current) => current === id ? null : id)}
-      onDownloadOrderPdf={downloadOrderPdf}
+      onOpenOrderDocuments={openOrderDocuments}
       onCancelPendingOrder={cancelPendingOrder}
       storeCurrency={storeCurrency}
     /> : null}
@@ -965,7 +961,7 @@ function DoctorCards({ doctors, doctorsUnavailable, onOpenAvailability, onOpenRe
   </div>;
 }
 
-function OrdersPage({ orders, counts, expandedOrderId, onToggleOrder, onDownloadOrderPdf, onCancelPendingOrder, storeCurrency }) {
+function OrdersPage({ orders, counts, expandedOrderId, onToggleOrder, onOpenOrderDocuments, onCancelPendingOrder, storeCurrency }) {
   const orderedRows = [...orders].sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0));
   const pendingInProgress = orders.filter((order) => ["pending", "processing", "on-hold"].includes(String(order.status || "").toLowerCase())).length;
   const totalSpent = orders
@@ -1024,7 +1020,7 @@ function OrdersPage({ orders, counts, expandedOrderId, onToggleOrder, onDownload
               </div>
               <div className="toolbar customer-order-actions">
                 <button className="pill-button" type="button" onClick={() => onToggleOrder(order.id)}>View</button>
-                {order.status === "completed" ? <button className="customer-order-pdf-button" type="button" aria-label="Download PDF" title="Download PDF" onClick={() => onDownloadOrderPdf(order)}>
+                {order.status === "completed" ? <button className="customer-order-pdf-button" type="button" aria-label="Open documents" title="Open documents" onClick={() => onOpenOrderDocuments(order)}>
                   <DashboardIcon name="orders" />
                 </button> : null}
                 {order.status === "pending" ? <button className="pill-button danger" type="button" onClick={() => onCancelPendingOrder(order)}>Cancel order</button> : null}

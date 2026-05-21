@@ -69,9 +69,47 @@ final class Nevari_Emails {
             $rendered = self::render_template($template, isset($args['variables']) && is_array($args['variables']) ? $args['variables'] : []);
             $subject = $rendered['subject'];
             $body_html = $rendered['body_html'];
+            $body_text = $rendered['body_text'];
+            $variables = isset($args['variables']) && is_array($args['variables']) ? $args['variables'] : [];
+            $payment_link = isset($variables['payment_link']) ? esc_url_raw((string) $variables['payment_link']) : '';
+            if ($template->template_key === 'order-invoice-email' && $payment_link && strpos($body_html, $payment_link) === false) {
+                $payment_link_html = isset($variables['payment_link_html']) ? wp_kses_post((string) $variables['payment_link_html']) : '';
+                if (!$payment_link_html) {
+                    $payment_link_html = sprintf('<p><a href="%1$s" target="_blank" rel="noopener noreferrer">Pay now</a></p>', esc_url($payment_link));
+                } else {
+                    $payment_link_html = '<div class="payment-link-cta">' . $payment_link_html . '</div>';
+                }
+                $body_html .= '<div class="payment-link-cta" style="margin-top:24px;padding:18px;border:1px solid #d8e0ef;border-radius:16px;background:#f7f9fc;">'
+                    . '<p style="margin:0 0 8px;">Pay your balance using the secure link below.</p>'
+                    . $payment_link_html
+                    . '</div>';
+                if (strpos($body_text, $payment_link) === false) {
+                    $body_text .= "\nPay here: " . $payment_link;
+                }
+            }
+            $google_meet_link = isset($variables['google_meet_link']) ? esc_url_raw((string) $variables['google_meet_link']) : '';
+            if (in_array($template->template_key, ['appointment_requested', 'appointment_payment_receipt', 'appointment_doctor_notification', 'appointment_admin_notification', 'appointment_reminder', 'appointment-approved'], true) && $google_meet_link && strpos($body_html, $google_meet_link) === false) {
+                $google_meet_link_html = '';
+                if (isset($variables['google_meet_link_html'])) {
+                    $google_meet_link_html = is_array($variables['google_meet_link_html'])
+                        ? wp_kses_post((string) ($variables['google_meet_link_html']['html'] ?? ''))
+                        : wp_kses_post((string) $variables['google_meet_link_html']);
+                }
+                if (!$google_meet_link_html) {
+                    $google_meet_link_html = sprintf('<a href="%1$s" target="_blank" rel="noopener noreferrer">Join Google Meet</a>', esc_url($google_meet_link));
+                }
+                $body_html .= '<div class="meeting-link-cta" style="margin-top:24px;padding:18px;border:1px solid #d8e0ef;border-radius:16px;background:#f7f9fc;">'
+                    . '<p style="margin:0 0 8px;">Join the consultation using the link below.</p>'
+                    . $google_meet_link_html
+                    . '</div>';
+                if (strpos($body_text, $google_meet_link) === false) {
+                    $body_text .= "\nGoogle Meet: " . $google_meet_link;
+                }
+            }
         } else {
             $subject = isset($args['subject']) ? sanitize_text_field((string) $args['subject']) : '';
             $body_html = isset($args['body_html']) ? wp_kses_post((string) $args['body_html']) : '';
+            $body_text = isset($args['body_text']) ? sanitize_textarea_field((string) $args['body_text']) : wp_strip_all_tags($body_html);
             if (!$subject || !$body_html) {
                 return new WP_Error('template_not_found', 'Template not found and custom subject/body were not provided.');
             }
@@ -98,6 +136,7 @@ final class Nevari_Emails {
         $log_id = (int) $wpdb->insert_id;
         update_option('_nevari_email_payload_' . $log_id, [
             'body_html' => $body_html,
+            'body_text' => isset($body_text) ? $body_text : '',
             'attachments' => isset($args['attachments']) && is_array($args['attachments']) ? array_values($args['attachments']) : [],
             'attempts' => 0,
             'max_attempts' => isset($args['max_attempts']) ? max(1, (int) $args['max_attempts']) : self::MAX_ATTEMPTS,
@@ -192,14 +231,46 @@ final class Nevari_Emails {
     private static function materialize_attachments(array $attachments): array {
         $paths = [];
         foreach ($attachments as $attachment) {
-            if (!is_array($attachment) || empty($attachment['filename']) || !isset($attachment['content'])) {
+            if (!is_array($attachment) || empty($attachment['filename'])) {
                 continue;
             }
-            $tmp = wp_tempnam(sanitize_file_name((string) $attachment['filename']));
-            if (!$tmp) {
+            $filename = sanitize_file_name((string) $attachment['filename']);
+            if ($filename === '') {
                 continue;
             }
-            file_put_contents($tmp, (string) $attachment['content']);
+
+            $upload_dir = wp_upload_dir();
+            $base_dir = isset($upload_dir['basedir']) ? (string) $upload_dir['basedir'] : '';
+            if ($base_dir === '') {
+                continue;
+            }
+
+            $tmp_dir = trailingslashit($base_dir) . 'nevari-mail-tmp/' . wp_generate_uuid4();
+            if (!wp_mkdir_p($tmp_dir)) {
+                continue;
+            }
+            $tmp = trailingslashit($tmp_dir) . $filename;
+
+            $content = '';
+            if (!empty($attachment['base64'])) {
+                $decoded = base64_decode((string) $attachment['base64'], true);
+                $content = $decoded === false ? '' : $decoded;
+            } elseif (!empty($attachment['content_base64'])) {
+                $decoded = base64_decode((string) $attachment['content_base64'], true);
+                $content = $decoded === false ? '' : $decoded;
+            } elseif (isset($attachment['content'])) {
+                $raw = (string) $attachment['content'];
+                $decoded = base64_decode($raw, true);
+                $content = $decoded !== false && $decoded !== '' ? $decoded : $raw;
+            }
+            if ($content === '') {
+                continue;
+            }
+            $written = file_put_contents($tmp, $content);
+            if ($written === false) {
+                @rmdir($tmp_dir); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+                continue;
+            }
             $paths[] = $tmp;
         }
         return $paths;
@@ -209,6 +280,10 @@ final class Nevari_Emails {
         foreach ($paths as $path) {
             if (is_string($path) && $path !== '' && file_exists($path)) {
                 wp_delete_file($path);
+                $dir = dirname($path);
+                if (strpos($dir, 'nevari-mail-tmp') !== false && is_dir($dir)) {
+                    @rmdir($dir); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+                }
             }
         }
     }

@@ -36,8 +36,9 @@ function assertAllowedTarget(target) {
   }
 }
 
-export async function GET(request, { params }) {
+export async function GET(request, context) {
   try {
+    const params = await context.params;
     const resource = String(params?.resource || "");
     const upstreamPath = RESOURCE_PATHS[resource];
     if (!upstreamPath) {
