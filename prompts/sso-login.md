@@ -1,213 +1,45 @@
-I am building a production-ready Next.js custom dashboard for a WooCommerce/WordPress website.
+You are a senior full-stack engineer. I need you to implement secure SSO-style authentication between my Next.js dashboard and my WordPress/WooCommerce website.
 
-Architecture:
+Project setup:
 
 Main website:
 https://example.com
 - WordPress
 - WooCommerce
-- Handles customers, orders, products, payments, checkout, My Account
-- Has a custom helper plugin installed called nevari-pharmacy-core
+- User accounts and customer accounts live here
+- WordPress should remain the source of truth for authentication
+- A custom WordPress plugin already exists: nevari-pharmacy-core
 
 Dashboard:
 https://dashboard.example.com
 - Next.js app
-- Custom user dashboard
-- Users should be able to log in here and also be authenticated on the WordPress/WooCommerce website
-- Users who are already logged into WordPress should also be recognized by the Next.js dashboard
+- Custom customer dashboard
+- Users should be able to log in from the Next.js dashboard
+- When logged in on Next.js, they should also be logged in on WordPress/WooCommerce
+- When already logged in on WordPress, they should be recognized on the Next.js dashboard
 
-Goal:
-Build a secure, scalable SSO-style authentication architecture between WordPress/WooCommerce and the Next.js dashboard.
+Important rules:
+- Do not use iframe login.
+- Do not store auth tokens in localStorage.
+- Do not manually generate WordPress cookies from Next.js.
+- WordPress must create its own auth cookies using WordPress functions.
+- Next.js must have its own secure HttpOnly session.
+- Use the WordPress plugin as the auth bridge.
+- Use HTTPS-only secure cookies.
+- Build this for production and scalability.
 
-Important:
-Do not use iframe login.
-Do not manually create WordPress cookies inside Next.js.
-Do not store auth tokens in localStorage.
-Use WordPress as the source of truth for users.
-Use the WordPress plugin as the secure authentication bridge.
-Use secure HttpOnly cookies and short-lived one-time SSO tokens.
+I want you to implement the feature using this architecture:
 
-Required architecture:
+1. WordPress is the auth source of truth
 
-1. WordPress/WooCommerce remains the source of truth
-- WordPress stores users
-- WooCommerce customer accounts are WordPress users
-- WordPress handles password validation
-- WordPress creates its own auth cookies using wp_set_auth_cookie()
-- Next.js should never fake or manually generate WordPress auth cookies
+WordPress handles:
+- User lookup
+- Password validation
+- WooCommerce customer identity
+- WordPress auth cookies
+- WordPress logout
 
-2. Next.js has its own dashboard session
-- After login succeeds through WordPress, Next.js creates its own secure session
-- The dashboard session should use HttpOnly, Secure, SameSite=Lax cookies
-- Do not use localStorage for authentication
-- Dashboard pages should check the Next.js session first
-- Avoid calling WordPress on every single page load
-
-3. WordPress plugin endpoints needed
-
-Create these REST API endpoints inside nevari-pharmacy-core:
-
-POST /wp-json/nevari/v1/login
-Purpose:
-- Accept email/username and password from Next.js
-- Verify the user with wp_authenticate()
-- If valid, call wp_set_current_user()
-- Call wp_set_auth_cookie()
-- Return safe user data to Next.js
-- Do not return password or sensitive info
-
-GET /wp-json/nevari/v1/me
-Purpose:
-- Check if the current request is authenticated in WordPress
-- Return the current WordPress user data
-- Return WooCommerce customer data if needed
-- Return roles and permissions safely
-
-POST /wp-json/nevari/v1/logout
-Purpose:
-- Log the user out of WordPress
-- Clear WordPress session/cookies
-- Return success so Next.js can also clear its own session
-
-POST /wp-json/nevari/v1/sso-token
-Purpose:
-- Accept a valid Next.js-authenticated user request
-- Verify that the user exists in WordPress
-- Generate a short-lived one-time SSO token
-- Token should expire in 30–60 seconds
-- Token should be single-use
-- Store token securely using a hashed value, not plain text
-- Link token to user ID and expiry time
-
-GET /wp-json/nevari/v1/sso-login?token=TOKEN&redirect=/my-account
-Purpose:
-- Validate the one-time token
-- Check expiry
-- Check it has not been used
-- Mark token as used
-- Call wp_set_current_user()
-- Call wp_set_auth_cookie()
-- Redirect user to the requested WordPress/WooCommerce page
-
-4. Login flow from Next.js dashboard
-
-Flow:
-- User enters email and password on dashboard.example.com/login
-- Next.js sends credentials to https://example.com/wp-json/nevari/v1/login
-- WordPress plugin validates the credentials
-- WordPress creates its own login session
-- Next.js receives safe user data
-- Next.js creates its own secure dashboard session
-- User is redirected to /dashboard
-
-5. Login flow from WordPress to Next.js
-
-Flow:
-- User logs in on example.com
-- User visits dashboard.example.com
-- Next.js calls https://example.com/wp-json/nevari/v1/me with credentials included
-- If WordPress session is valid, return user data
-- Next.js creates or refreshes its own dashboard session
-- User enters dashboard without logging in again
-
-6. Login flow from Next.js to WooCommerce
-
-Flow:
-- User is logged into dashboard.example.com
-- User clicks “Go to checkout”, “My Account”, “Pay Invoice”, or any WordPress/WooCommerce link
-- Next.js requests an SSO token from WordPress plugin
-- Next.js redirects user to:
-  https://example.com/wp-json/nevari/v1/sso-login?token=TOKEN&redirect=/checkout
-- WordPress plugin validates token
-- WordPress logs user in with wp_set_auth_cookie()
-- User lands on WooCommerce already logged in
-
-7. Cookie requirements
-
-Use:
-- HttpOnly
-- Secure
-- SameSite=Lax
-- Path=/
-- HTTPS only
-
-Be careful with Domain=.example.com cookies.
-Only use shared parent-domain cookies if all subdomains are trusted.
-If not, keep WordPress cookies scoped to example.com and Next.js cookies scoped to dashboard.example.com.
-
-8. Security requirements
-
-Implement:
-- HTTPS only
-- CSRF protection for cookie-authenticated requests
-- Rate limiting on login and SSO endpoints
-- Brute-force protection
-- One-time SSO tokens
-- Short token expiry, 30–60 seconds
-- Hashed SSO token storage
-- Token replay protection
-- Role/capability checks on every protected endpoint
-- Input validation and sanitization
-- Output escaping
-- CORS restricted to dashboard.example.com only
-- No wildcard CORS
-- No localStorage tokens
-- No iframe login
-- No exposing WordPress auth cookies to JavaScript
-
-9. Scalability requirements for 100k+ users
-
-Design for:
-- 100k+ registered users
-- High traffic dashboard
-- Avoid checking WordPress auth on every dashboard page request
-- Use Next.js session after successful login
-- Only call WordPress when fetching WooCommerce/customer data
-- Use Redis/object cache on WordPress
-- Cache non-sensitive data where possible
-- Add database indexes if custom auth/session tables are used
-- Use background queues for heavy jobs
-- Use CDN/WAF such as Cloudflare
-- Rate-limit REST API endpoints
-- Make WooCommerce queries efficient
-- Avoid expensive user meta queries on every request
-
-10. Next.js implementation requirements
-
-Build:
-- /login page
-- /dashboard protected page
-- Server-side auth utilities
-- Middleware for protected routes
-- API route or server action for login
-- API route or server action for logout
-- Function to request WordPress SSO token
-- Function to redirect user to WordPress/WooCommerce authenticated pages
-
-Use:
-- Secure HttpOnly cookies
-- Server-side session handling
-- fetch with credentials where needed
-- Proper error states
-- Loading states
-- Unauthorized redirects
-
-11. WordPress plugin implementation requirements
-
-Inside nevari-pharmacy-core, create:
-- REST route registration
-- Login controller
-- Current user controller
-- Logout controller
-- SSO token generator
-- SSO login validator
-- Token storage system
-- Token cleanup system
-- CORS restrictions
-- Rate limiting helper
-- Security validation helpers
-
-Use WordPress functions:
+Use these WordPress functions:
 - wp_authenticate()
 - wp_set_current_user()
 - wp_set_auth_cookie()
@@ -216,35 +48,376 @@ Use WordPress functions:
 - wp_logout()
 - wp_safe_redirect()
 - current_user_can()
-- wp_create_nonce() where needed
 - sanitize_text_field()
 - sanitize_email()
 - esc_url_raw()
 
-12. Expected deliverables
+2. Next.js has its own session
 
-Please provide:
+After WordPress login succeeds, Next.js should create its own dashboard session.
 
-A. Full architecture explanation
-B. Recommended folder structure for Next.js
-C. Recommended folder structure for the WordPress plugin
-D. WordPress REST API endpoint code
-E. Next.js login implementation
-F. Next.js session handling implementation
-G. SSO token generation and validation code
-H. Logout flow
-I. CORS setup
-J. CSRF protection approach
-K. Rate limiting approach
-L. Production checklist
-M. Common mistakes to avoid
+Session cookie settings:
+- HttpOnly
+- Secure
+- SameSite=Lax
+- Path=/
+- Scoped to dashboard.example.com
+- Do not expose the session token to JavaScript
 
-13. Important constraints
+Dashboard pages should check the Next.js session first.
 
-Do not suggest iframe login.
-Do not suggest storing JWT in localStorage.
-Do not suggest manually generating WordPress cookies from Next.js.
-Do not make WordPress validate every dashboard page if Next.js already has a valid session.
-Use secure SSO-style flow suitable for production and scalable to 100k+ users.
+Do not call WordPress /me on every single page load unless the Next.js session is missing, expired, or needs refreshing.
 
-Build the solution as if this is for a real WooCommerce production platform.
+3. Create these WordPress plugin REST endpoints inside nevari-pharmacy-core
+
+Endpoint 1:
+
+POST /wp-json/nevari/v1/login
+
+Purpose:
+- Accept email/username and password from Next.js
+- Sanitize input
+- Validate user using wp_authenticate()
+- If invalid, return 401
+- If valid:
+  - call wp_set_current_user($user_id)
+  - call wp_set_auth_cookie($user_id, true, is_ssl())
+  - return safe user data to Next.js
+
+Returned user data should include:
+- id
+- email
+- display_name
+- roles
+- WooCommerce customer id if available
+
+Do not return:
+- password
+- password hash
+- raw auth cookie
+- sensitive user meta
+
+Endpoint 2:
+
+GET /wp-json/nevari/v1/me
+
+Purpose:
+- Check if the user is logged into WordPress
+- If logged in, return safe user data
+- If not logged in, return 401
+
+Endpoint 3:
+
+POST /wp-json/nevari/v1/logout
+
+Purpose:
+- Log user out of WordPress using wp_logout()
+- Return success
+- Next.js will also clear its own dashboard session
+
+Endpoint 4:
+
+POST /wp-json/nevari/v1/sso-token
+
+Purpose:
+- Allow a valid dashboard-authenticated user to request a WordPress login token
+- Accept user_id from a trusted server-side Next.js request
+- Verify the user exists in WordPress
+- Generate a random secure one-time token
+- Hash the token before storing it
+- Store:
+  - hashed token
+  - user_id
+  - expires_at
+  - used_at
+  - created_at
+- Token should expire in 60 seconds
+- Token must be single-use
+
+Endpoint 5:
+
+GET /wp-json/nevari/v1/sso-login?token=TOKEN&redirect=/checkout
+
+Purpose:
+- Validate the SSO token
+- Check token exists
+- Check token is not expired
+- Check token has not been used
+- Mark token as used
+- Log user into WordPress:
+  - wp_set_current_user($user_id)
+  - wp_set_auth_cookie($user_id, true, is_ssl())
+- Redirect user safely using wp_safe_redirect()
+- Only allow internal redirects like:
+  - /my-account
+  - /checkout
+  - /cart
+  - /orders
+  - /pay-for-order
+- Do not allow open redirects to external domains
+
+4. Login flow from Next.js dashboard
+
+Implement this flow:
+
+User visits:
+dashboard.example.com/login
+
+User submits email and password.
+
+Next.js server action or API route sends:
+
+POST https://example.com/wp-json/nevari/v1/login
+
+If WordPress responds successfully:
+- Create a Next.js dashboard session
+- Store user id, email, display name, roles in the session
+- Redirect user to /dashboard
+
+If WordPress returns error:
+- Show a clean login error
+- Do not expose technical errors to the user
+
+5. WordPress to Next.js login recognition
+
+When user visits dashboard.example.com and does not have a Next.js session:
+
+Next.js should call:
+
+GET https://example.com/wp-json/nevari/v1/me
+
+Use credentials/include if needed.
+
+If WordPress session is valid:
+- Create a Next.js session
+- Redirect user to /dashboard
+
+If not valid:
+- Redirect user to /login
+
+6. Next.js to WooCommerce authenticated redirect
+
+When a logged-in dashboard user clicks:
+- Go to checkout
+- My Account
+- Pay invoice
+- View order
+- Make payment
+
+Next.js should:
+- Request SSO token server-side from WordPress
+- Receive token
+- Redirect user to:
+
+https://example.com/wp-json/nevari/v1/sso-login?token=TOKEN&redirect=/checkout
+
+WordPress validates token, logs user in, and redirects them to WooCommerce page already authenticated.
+
+7. Security requirements
+
+Implement:
+- HTTPS only
+- HttpOnly cookies
+- Secure cookies
+- SameSite=Lax
+- No localStorage auth tokens
+- No iframe login
+- No wildcard CORS
+- CORS should only allow https://dashboard.example.com
+- Rate limit login endpoint
+- Rate limit SSO token endpoint
+- One-time SSO tokens
+- 60-second SSO token expiry
+- Hashed SSO token storage
+- Replay protection
+- CSRF protection for cookie-authenticated state-changing requests
+- Input sanitization
+- Output escaping
+- Role and capability checks
+- Safe redirects only
+- Proper error responses
+
+8. CORS requirements
+
+In the WordPress plugin:
+- Allow requests only from localhost and dash.nevarihealth.com/wp-admin
+- Allow credentials
+- Allow needed methods: GET, POST, OPTIONS
+- Allow needed headers: Content-Type, Authorization, X-WP-Nonce if needed
+- Do not use Access-Control-Allow-Origin: *
+
+9. Rate limiting
+
+Add basic rate limiting for:
+- Login attempts
+- SSO token creation
+- SSO login validation
+
+Use transient-based rate limiting or a dedicated table.
+
+Example limits:
+- Login: 5 failed attempts per email/IP per 10 minutes
+- SSO token: 20 requests per user per 10 minutes
+- SSO login: 20 attempts per IP per 10 minutes
+
+10. Token storage
+
+Create a custom database table:
+
+wp_nevari_sso_tokens
+
+Fields:
+- id BIGINT primary key
+- user_id BIGINT not null
+- token_hash VARCHAR(255) not null
+- expires_at DATETIME not null
+- used_at DATETIME nullable
+- created_at DATETIME not null
+- ip_address VARCHAR(100) nullable
+- user_agent TEXT nullable
+
+Add indexes:
+- token_hash
+- user_id
+- expires_at
+
+Token rules:
+- Generate using random_bytes()
+- Convert to URL-safe string
+- Store only hash using hash_hmac() or password_hash()
+- Never store plain token
+- Token expires after 60 seconds
+- Token can only be used once
+
+11. Next.js implementation requirements
+
+Implement the following files or equivalent structure:
+
+/app/login/page.tsx
+- Login form
+- Shows errors
+- Submits to server action
+
+/app/dashboard/page.tsx
+- Protected dashboard page
+
+/app/api/auth/login/route.ts
+- Accepts login form data
+- Calls WordPress login endpoint
+- Creates secure dashboard session
+
+/app/api/auth/logout/route.ts
+- Clears Next.js session
+- Calls WordPress logout endpoint
+
+/app/api/auth/sso/route.ts
+- Requires valid dashboard session
+- Requests one-time SSO token from WordPress
+- Redirects user to WordPress sso-login URL
+
+/lib/auth/session.ts
+- Create session
+- Read session
+- Destroy session
+- Protect routes
+
+/lib/auth/wordpress.ts
+- WordPress API client
+- loginToWordPress()
+- getWordPressMe()
+- logoutWordPress()
+- requestSsoToken()
+
+/middleware.ts
+- Protect /dashboard routes
+- Redirect unauthenticated users to /login
+
+Use either:
+- iron-session
+or
+- jose with signed encrypted cookies
+or
+- NextAuth custom credentials provider
+
+Choose one secure session strategy and implement it cleanly.
+
+12. WordPress plugin structure
+
+Inside nevari-pharmacy-core, use a clean structure like:
+
+nevari-pharmacy-core/
+  nevari-pharmacy-core.php
+  includes/
+    class-rest-auth-controller.php
+    class-sso-token-service.php
+    class-rate-limiter.php
+    class-cors.php
+    class-security.php
+    class-activator.php
+    class-deactivator.php
+
+Implement:
+- Plugin activation table creation
+- REST route registration
+- Auth controller
+- SSO token service
+- Token cleanup
+- Rate limiter
+- CORS handler
+- Safe redirect validator
+
+13. Logout flow
+
+When user logs out from Next.js:
+- Call WordPress logout endpoint
+- Clear Next.js session cookie
+- Redirect to /login
+
+When user logs out from WordPress:
+- WordPress clears its own session
+- Next.js should detect expired/missing WordPress session only when session refresh/check happens
+- Optional: create a shared logout redirect to dashboard logout
+
+14. Production checklist
+
+At the end, provide a checklist covering:
+- HTTPS
+- Cookie settings
+- CORS
+- Rate limiting
+- CSRF
+- Token expiry
+- Token replay prevention
+- Safe redirects
+- Error logging
+- WooCommerce customer data permissions
+- Redis/object cache
+- Database indexing
+- Monitoring
+- Brute-force protection
+
+15. Expected output
+
+Please generate:
+
+A. The full implementation plan
+B. WordPress plugin PHP code
+C. Database table creation code
+D. REST API endpoint code
+E. SSO token generation code
+F. SSO token validation code
+G. CORS code
+H. Rate limiting code
+I. Next.js session code
+J. Next.js login route/server action
+K. Next.js logout route
+L. Next.js SSO redirect route
+M. Middleware for protected dashboard routes
+N. Example login page
+O. Example dashboard page
+P. Environment variables needed
+Q. Final testing steps
+
+Use clean, production-ready code.
+
+Do not give me only theory. Implement the feature.
