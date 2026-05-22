@@ -1,6 +1,8 @@
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
 const UPSTREAM_RETRY_COUNT = 1;
+const SOFT_FAIL_TIMEOUT_MS = 8000;
+const SOFT_FAIL_RETRY_COUNT = 0;
 const inflightGetRequests = new Map();
 
 function normalizeBaseUrl(value) {
@@ -60,7 +62,7 @@ function buildTargetUrl(requestUrl) {
   const target = new URL(`${baseUrl}/wp-json/${API_NAMESPACE}${path}`);
   assertAllowedTarget(target);
   url.searchParams.forEach((value, key) => {
-    if (key === "baseUrl" || key === "path") {
+    if (key === "baseUrl" || key === "path" || key === "softFail") {
       return;
     }
     target.searchParams.set(key, value);
@@ -69,8 +71,22 @@ function buildTargetUrl(requestUrl) {
   return target;
 }
 
+function shouldSoftFail(requestUrl) {
+  const url = new URL(requestUrl);
+  return url.searchParams.get("softFail") === "1";
+}
+
+function softFailStatus(status) {
+  return Number(status) >= 500;
+}
+
+function withSoftFailStatus(status, softFail) {
+  return softFail && softFailStatus(status) ? 200 : status;
+}
+
 async function proxyRequest(request, { params } = {}) {
   const targetUrl = buildTargetUrl(request.url);
+  const softFail = shouldSoftFail(request.url);
   const headers = new Headers();
 
   const forwardedHeaders = [
@@ -99,9 +115,9 @@ async function proxyRequest(request, { params } = {}) {
 
   let response;
   try {
-    response = await fetchWithDedupe(targetUrl, init, request.method, request.headers.get("authorization"));
+    response = await fetchWithDedupe(targetUrl, init, request.method, request.headers.get("authorization"), softFail);
   } catch (error) {
-    return buildTransportErrorResponse(error, targetUrl);
+    return buildTransportErrorResponse(error, targetUrl, softFail);
   }
   const responseHeaders = new Headers(response.headers);
   responseHeaders.delete("content-encoding");
@@ -112,7 +128,7 @@ async function proxyRequest(request, { params } = {}) {
   const contentType = response.headers.get("content-type") || "";
   if (contentType.toLowerCase().includes("text/calendar")) {
     return new Response(response.body, {
-      status: response.status,
+      status: withSoftFailStatus(response.status, softFail),
       statusText: response.statusText,
       headers: responseHeaders
     });
@@ -123,7 +139,7 @@ async function proxyRequest(request, { params } = {}) {
 
     if (recoveredJson) {
       return Response.json(recoveredJson, {
-        status: response.status,
+        status: withSoftFailStatus(response.status, softFail),
         headers: { "Cache-Control": "no-store" }
       });
     }
@@ -143,45 +159,47 @@ async function proxyRequest(request, { params } = {}) {
           }
         }
       },
-      { status: response.status || 502, headers: { "Cache-Control": "no-store" } }
+      { status: withSoftFailStatus(response.status || 502, softFail), headers: { "Cache-Control": "no-store" } }
     );
   }
 
   return new Response(response.body, {
-    status: response.status,
+    status: withSoftFailStatus(response.status, softFail),
     statusText: response.statusText,
     headers: responseHeaders
   });
 }
 
-async function fetchWithDedupe(targetUrl, init, method, authorization = "") {
+async function fetchWithDedupe(targetUrl, init, method, authorization = "", softFail = false) {
   const normalizedMethod = String(method || "GET").toUpperCase();
   if (!["GET", "HEAD"].includes(normalizedMethod)) {
-    return fetchWithRetry(targetUrl, init, method);
+    return fetchWithRetry(targetUrl, init, method, softFail);
   }
 
-  const dedupeKey = `${normalizedMethod}:${targetUrl.toString()}:${authorization || ""}`;
+  const dedupeKey = `${normalizedMethod}:${targetUrl.toString()}:${authorization || ""}:${softFail ? "soft" : "hard"}`;
   if (inflightGetRequests.has(dedupeKey)) {
     return inflightGetRequests.get(dedupeKey);
   }
 
-  const requestPromise = fetchWithRetry(targetUrl, init, method).finally(() => {
+  const requestPromise = fetchWithRetry(targetUrl, init, method, softFail).finally(() => {
     inflightGetRequests.delete(dedupeKey);
   });
   inflightGetRequests.set(dedupeKey, requestPromise);
   return requestPromise;
 }
 
-async function fetchWithRetry(targetUrl, init, method) {
+async function fetchWithRetry(targetUrl, init, method, softFail = false) {
   const normalizedMethod = String(method || "GET").toUpperCase();
-  const maxAttempts = ["GET", "HEAD"].includes(normalizedMethod) ? UPSTREAM_RETRY_COUNT + 1 : 1;
+  const timeoutMs = softFail ? SOFT_FAIL_TIMEOUT_MS : UPSTREAM_TIMEOUT_MS;
+  const retryCount = softFail ? SOFT_FAIL_RETRY_COUNT : UPSTREAM_RETRY_COUNT;
+  const maxAttempts = ["GET", "HEAD"].includes(normalizedMethod) ? retryCount + 1 : 1;
   let lastError;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       return await fetch(targetUrl, {
         ...init,
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
+        signal: AbortSignal.timeout(timeoutMs)
       });
     } catch (error) {
       lastError = error;
@@ -208,6 +226,17 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
+  try {
+    return await proxyRequest(request);
+  } catch (error) {
+    return Response.json(
+      { success: false, error: { message: error?.message || "Proxy request failed." } },
+      { status: 400 }
+    );
+  }
+}
+
+export async function PUT(request) {
   try {
     return await proxyRequest(request);
   } catch (error) {
@@ -266,7 +295,7 @@ function normalizeUpstreamErrorMessage(rawBody, response, targetUrl) {
   return text || `WordPress returned ${response.status} for ${targetUrl.pathname}.`;
 }
 
-function buildTransportErrorResponse(error, targetUrl) {
+function buildTransportErrorResponse(error, targetUrl, softFail = false) {
   const isTimeout = error?.name === "TimeoutError" || error?.name === "AbortError";
   const status = isTimeout ? 504 : 502;
 
@@ -285,6 +314,6 @@ function buildTransportErrorResponse(error, targetUrl) {
         }
       }
     },
-    { status, headers: { "Cache-Control": "no-store" } }
+    { status: withSoftFailStatus(status, softFail), headers: { "Cache-Control": "no-store" } }
   );
 }

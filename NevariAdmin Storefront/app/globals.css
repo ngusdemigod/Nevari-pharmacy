@@ -494,6 +494,12 @@
   margin-top: 14px;
 }
 
+.doctor-availability-note {
+  margin: 14px 0 0;
+  color: #6c7485;
+  font-size: 0.95rem;
+}
+
 .doctor-availability-card {
   border: 1px solid #e6ddcf;
   border-radius: 22px;
@@ -509,23 +515,40 @@
   align-items: center;
 }
 
-.doctor-availability-time-grid {
+.doctor-availability-pill-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   gap: 12px;
 }
 
-.doctor-availability-time-grid label {
-  display: grid;
-  gap: 6px;
+.doctor-availability-pill-grid.is-disabled {
+  opacity: 0.45;
 }
 
-.doctor-availability-time-grid input {
+.doctor-availability-pill {
   border: 1px solid #ded4c6;
-  border-radius: 14px;
-  padding: 10px 12px;
+  border-radius: 999px;
+  padding: 9px 10px;
   font: inherit;
   background: #fff;
+  color: #22314d;
+  min-height: 42px;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.doctor-availability-pill.active {
+  border-color: #16356d;
+  background: #16356d;
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(22, 53, 109, 0.18);
+}
+
+.doctor-availability-pill:disabled {
+  cursor: not-allowed;
+}
+
+.doctor-availability-pill:not(:disabled):hover {
+  transform: translateY(-1px);
 }
 
 .doctor-switch {
@@ -1718,8 +1741,11 @@ body.modal-open .page-shell {
 
 .desktop-dashboard-page {
   min-height: calc(100vh - 52px);
+  min-height: calc(100dvh - 52px);
+  height: calc(100dvh - 52px);
   width: min(1360px, 100%);
   margin: 0 auto;
+  min-width: 0;
 }
 
 body:has(.role-shell-exact) {
@@ -1754,6 +1780,8 @@ body:has(.role-shell-exact) {
   display: grid;
   gap: 12px;
   min-height: calc(100vh - 52px);
+  min-height: calc(100dvh - 52px);
+  height: 100%;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
@@ -1983,9 +2011,13 @@ body:has(.role-shell-exact) {
 }
 
 .role-shell-exact .screen-scroll {
+  min-height: 0;
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 0 2px 92px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   scrollbar-width: none;
 }
 
@@ -2306,21 +2338,63 @@ body:has(.role-shell-exact) {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(340px, 420px);
-  gap: 0;
+  gap: 20px;
   align-items: stretch;
   padding-right: 24px;
 }
 
 .appointment-stack-card {
   position: relative;
+  background:
+    linear-gradient(135deg, rgba(10, 42, 94, 0.9), rgba(10, 42, 94, 0.72)),
+    url("/abstract.jpg") center / cover no-repeat,
+    var(--color-primary);
+  color: #fff;
   min-height: 116px;
   scroll-snap-align: start;
   margin-left: calc(var(--stack, 0) * -36px);
   z-index: calc(20 - var(--stack, 0));
 }
 
+.appointment-stack-button {
+  width: 100%;
+  text-align: left;
+  color: #fff;
+  cursor: pointer;
+}
+
+.appointment-stack-button:focus-visible {
+  outline: 3px solid rgba(10, 42, 94, 0.24);
+  outline-offset: 3px;
+}
+
 .appointment-stack-card:first-child {
   margin-left: 0;
+}
+
+.appointment-stack-card .card-title,
+.appointment-stack-card .card-desc {
+  color: #fff;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.24);
+}
+
+.appointment-stack-card .calendar-tile {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(8px);
+}
+
+.appointment-stack-card .calendar-tile span,
+.appointment-stack-card .calendar-tile strong {
+  color: #fff;
+}
+
+.appointment-stack-card .status-badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(8px);
 }
 
 .mobile-gap-bottom {
@@ -2348,6 +2422,57 @@ body:has(.role-shell-exact) {
 .role-shell-exact .calendar-tile strong {
   font-size: 18px;
   line-height: 1;
+}
+
+.customer-appointment-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: end center;
+  padding: 18px;
+}
+
+.customer-appointment-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 24, 47, 0.32);
+  backdrop-filter: blur(8px);
+}
+
+.customer-appointment-detail-card {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 100%);
+  max-height: min(720px, calc(100dvh - 32px));
+  overflow-y: auto;
+  border-radius: 28px;
+  border: 1px solid var(--color-border);
+  background: linear-gradient(180deg, #fff 0%, var(--color-primary-soft) 100%);
+  box-shadow: var(--shadow-floating);
+  padding: 18px;
+}
+
+.appointment-detail-note {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--color-text);
+}
+
+.appointment-detail-note span {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.appointment-detail-note strong {
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .role-shell-exact .card-title {
@@ -3351,6 +3476,7 @@ body:has(.role-shell-exact) {
 
   .desktop-dashboard-shell {
     min-height: calc(100vh - 52px);
+    min-height: calc(100dvh - 52px);
     grid-template-rows: auto auto minmax(0, 1fr) auto;
   }
 
@@ -3406,10 +3532,48 @@ body:has(.role-shell-exact) {
 }
 
 @media (max-width: 720px) {
+  body:has(.role-shell-exact) {
+    height: 100dvh;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .desktop-dashboard-page {
+    min-height: 100dvh;
+    height: 100dvh;
+    overflow: hidden;
+    width: 100%;
+  }
+
+  .desktop-dashboard-shell {
+    min-height: 100dvh;
+    height: 100dvh;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    overflow: hidden;
+    padding: 10px 10px 0; 
+    
+  }
+
   .desktop-dashboard-screen {
+    min-height: 0;
+    height: 100%;
     padding: 10px 10px 12px;
     border-radius: 0px;
-    border: 0px
+    border: 0px;
+    overflow: hidden;
+  }
+
+  .role-shell-exact .desktop-dashboard-screen {
+    overflow: hidden;
+  }
+
+  .role-shell-exact .screen-scroll {
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 
   .desktop-dashboard-title {
@@ -3424,6 +3588,7 @@ body:has(.role-shell-exact) {
 
   .appointment-stack-track {
     grid-auto-columns: minmax(280px, 88vw);
+    gap: 30px;
   }
 
   .appointment-stack-card {
@@ -3466,7 +3631,7 @@ body:has(.role-shell-exact) {
     left: 50%;
     right: auto;
     transform: translateX(-50%);
-    bottom: 16px;
+    bottom: max(12px, env(safe-area-inset-bottom, 0px));
     min-height: 58px;
     background: rgba(255, 255, 255, 0.9);
     border: 1px solid var(--color-border);
@@ -3480,7 +3645,7 @@ body:has(.role-shell-exact) {
     overflow-x: auto;
     scrollbar-width: none;
     backdrop-filter: blur(16px);
-    z-index: 8;
+    z-index: 80;
   }
 
   .role-shell-exact .bottom-nav::-webkit-scrollbar {

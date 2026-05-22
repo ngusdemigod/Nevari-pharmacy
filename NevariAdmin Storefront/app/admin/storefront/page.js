@@ -477,8 +477,29 @@ function isDoctorFollowUpOrder(order) {
     || Boolean(order?.assigned_doctor_user_id || order?.assigned_doctor);
 }
 
+function upstreamOrderStatusFilter(filter) {
+  const normalized = normalizeOrderQueueValue(filter);
+  if (!normalized || ["all", "needs-rx", "awaiting-payment", "doctor-follow-up"].includes(normalized)) {
+    return "";
+  }
+  return normalized;
+}
+
 function normalizedPaymentStatus(order) {
-  return normalizeOrderQueueValue(order?.payment_status || order?.status || "pending");
+  const normalized = normalizeOrderQueueValue(order?.payment_status || order?.status || "pending");
+  if (["paid", "completed", "processing"].includes(normalized)) {
+    return "completed";
+  }
+  if (["pending", "awaiting-payment", "unpaid", "on-hold"].includes(normalized)) {
+    return "pending";
+  }
+  if (["failed", "cancelled", "canceled"].includes(normalized)) {
+    return "failed";
+  }
+  if (normalized === "refunded") {
+    return "refunded";
+  }
+  return normalized || "pending";
 }
 
 function matchesOrderQueueFilter(order, filter) {
@@ -4657,7 +4678,7 @@ export default function Page() {
     }
 
     try {
-      await fetchDashboardSummary(session);
+      await refreshDashboardData(session);
     } catch (error) {
       console.error(error);
       setSyncStatus({ text: "Sync error", mode: "error" });
@@ -4787,7 +4808,7 @@ export default function Page() {
         return;
       }
 
-      fetchDashboardSummary(activeSession).catch((error) => {
+      refreshDashboardData(activeSession).catch((error) => {
         console.error(error);
         setSyncStatus({ text: "Sync error", mode: "error" });
       });
@@ -4802,8 +4823,9 @@ export default function Page() {
     shouldRetryOnError: false,
     dedupingInterval: 10_000
   };
+  const ordersApiStatusFilter = currentPage === "orders" ? upstreamOrderStatusFilter(orderQueueFilter) : "";
   const ordersListKey = canLoadSections && ["orders", "payments"].includes(currentPage)
-    ? swrKeys.admin.orders(withBaseUrl(session, { per_page: 24, page: 1, status: orderQueueFilter === "all" ? "" : orderQueueFilter, search: deferredSearch }))
+    ? swrKeys.admin.orders(withBaseUrl(session, { per_page: 24, page: 1, status: ordersApiStatusFilter, search: deferredSearch }))
     : null;
   const productsListKey = canLoadSections && currentPage === "products"
     ? swrKeys.admin.products(withBaseUrl(session, { per_page: 24, page: 1, search: deferredSearch }))
@@ -4837,7 +4859,7 @@ export default function Page() {
     : null;
   const ordersQuery = useSWR(
     ordersListKey,
-    () => adminApiRequest("orders", { params: { per_page: 24, page: 1, status: orderQueueFilter === "all" ? "" : orderQueueFilter, search: deferredSearch } }, session),
+    () => adminApiRequest("orders", { params: { per_page: 24, page: 1, status: ordersApiStatusFilter, search: deferredSearch } }, session),
     { ...lazyQueryOptions, refreshInterval: 0, dedupingInterval: 30_000 }
   );
   const productsQuery = useSWR(
@@ -4966,10 +4988,60 @@ export default function Page() {
     { ...popupQueryOptions, fallbackData: data.appointments?.length ? { data: data.appointments } : undefined }
   );
 
+  async function refreshDashboardData(activeSession = session) {
+    const tasks = [fetchDashboardSummary(activeSession)];
+
+    if (["orders", "payments"].includes(currentPage) && ordersListKey) {
+      tasks.push(ordersQuery.mutate());
+    }
+    if (currentPage === "products") {
+      if (productsListKey) {
+        tasks.push(productsQuery.mutate());
+      }
+      if (productCategoriesListKey) {
+        tasks.push(productCategoriesQuery.mutate());
+      }
+      if (categoryPaneProductsListKey) {
+        tasks.push(categoryPaneProductsQuery.mutate());
+      }
+      if (categoryPaneCategoriesListKey) {
+        tasks.push(categoryPaneCategoriesQuery.mutate());
+      }
+      if (categoryPaneDoctorsListKey) {
+        tasks.push(categoryPaneDoctorsQuery.mutate());
+      }
+    }
+    if (currentPage === "customers" && customersListKey) {
+      tasks.push(customersQuery.mutate());
+    }
+    if (currentPage === "consultations" && consultationsListKey) {
+      tasks.push(consultationsQuery.mutate());
+    }
+    if (currentPage === "prescriptions" && prescriptionsListKey) {
+      tasks.push(prescriptionsQuery.mutate());
+    }
+    if (currentPage === "doctors" && doctorsListKey) {
+      tasks.push(doctorsQuery.mutate());
+    }
+    if (currentPage === "emails" && emailsListKey) {
+      tasks.push(emailsQuery.mutate());
+    }
+    if (currentPage === "audit") {
+      tasks.push(fetchAuditEvents(activeSession, audit, deferredSearch));
+    }
+
+    const results = await Promise.allSettled(tasks);
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) {
+      throw failed.reason;
+    }
+  }
+
   useEffect(() => {
     if (!ordersQuery.data?.data) return;
     let cancelled = false;
     const orders = ordersQuery.data.data || [];
+    setData((prev) => ({ ...prev, orders, orderDetails: orders }));
 
     async function hydrateOrderRows() {
       const detailResults = await Promise.allSettled(
@@ -4983,7 +5055,11 @@ export default function Page() {
         return;
       }
       const orderDetails = detailResults.map((result, index) => getSettledValue(result, orders[index]));
-      setData((prev) => ({ ...prev, orders: orderDetails, orderDetails }));
+      setData((prev) => {
+        const previousById = new Map((prev.orderDetails || []).map((order) => [order.id, order]));
+        const merged = orderDetails.map((order) => ({ ...(previousById.get(order.id) || {}), ...order }));
+        return { ...prev, orders: merged, orderDetails: merged };
+      });
     }
 
     hydrateOrderRows();

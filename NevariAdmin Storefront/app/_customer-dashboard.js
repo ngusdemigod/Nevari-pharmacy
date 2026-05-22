@@ -7,7 +7,7 @@ import { removeById, replaceById, updateListPayload, upsertById } from "../lib/f
 import { isProxyAppointmentsKey, isProxyDoctorsKey, isProxyOrdersKey, swrKeys, withBaseUrl } from "../lib/swrKeys";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
-import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, describeDashboardFetchError, hydrateStoredSession, money, readDashboardCache, shortDate, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
+import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, hydrateStoredSession, money, readDashboardCache, shortDate, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
 import { clearSessionAuth } from "./components/role-session";
 import { RoleShell, SkeletonBox } from "./_doctor-dashboard";
 
@@ -33,19 +33,25 @@ const emptyCustomerState = {
   doctorsUnavailable: false
 };
 
-async function fetchCustomerDashboardPayload(session, settings) {
-  const [ordersResult, appointmentsResult, doctorsResult] = await Promise.allSettled([
-    apiRequest(session, "/orders", { params: { per_page: 5, page: 1 } }),
-    apiRequest(session, "/appointments", { params: { per_page: 5, page: 1 } }),
+async function fetchCustomerDashboardPayload(session, settings, fallbackState = emptyCustomerState) {
+  const upcomingParams = { per_page: 5, page: 1, mine: "1", date_from: new Date().toISOString(), order: "ASC" };
+  const [orders, appointments, liveDoctors] = await Promise.all([
+    apiRequest(session, "/orders", { params: { per_page: 5, page: 1 }, suppressHttpError: true }),
+    apiRequest(session, "/appointments", { params: upcomingParams, suppressHttpError: true }),
     apiRequest(session, "/doctors", { params: { per_page: 8, page: 1 }, suppressHttpError: true })
   ]);
-  const blockingErrors = [ordersResult, appointmentsResult]
-    .filter((result) => result.status === "rejected")
-    .map((result) => describeDashboardFetchError(result.reason));
-  const orders = ordersResult.status === "fulfilled" ? ordersResult.value || [] : [];
-  const appointments = appointmentsResult.status === "fulfilled" ? appointmentsResult.value || [] : [];
-  const liveDoctors = doctorsResult.status === "fulfilled" ? doctorsResult.value || [] : [];
-  const doctors = liveDoctors;
+  const hasOrderFailure = orders === null;
+  const hasAppointmentFailure = appointments === null;
+  const hasDoctorFailure = liveDoctors === null;
+  const resolvedOrders = hasOrderFailure ? (fallbackState.orders || []) : (orders || []);
+  const resolvedAppointments = hasAppointmentFailure ? (fallbackState.appointments || []) : (appointments || []);
+  const resolvedDoctors = hasDoctorFailure
+    ? ((fallbackState.doctors && fallbackState.doctors.length) ? fallbackState.doctors : buildFallbackDoctors(resolvedAppointments, resolvedOrders))
+    : (liveDoctors || []);
+  const blockingErrors = [];
+  if (hasOrderFailure || hasAppointmentFailure) {
+    blockingErrors.push("The pharmacy server is temporarily unavailable. Showing the last available customer dashboard data.");
+  }
   const fallbackProfile = {
     id: session.user?.id || null,
     email: session.user?.email || "",
@@ -56,19 +62,19 @@ async function fetchCustomerDashboardPayload(session, settings) {
   return {
     error: blockingErrors[0] || "",
     dashboard: { profile: fallbackProfile },
-    orders,
-    appointments,
-    doctors,
-    doctorsUnavailable: !liveDoctors.length
+    orders: resolvedOrders,
+    appointments: resolvedAppointments,
+    doctors: resolvedDoctors,
+    doctorsUnavailable: !resolvedDoctors.length
   };
 }
 
 async function fetchCustomerOrders(session) {
-  return apiRequest(session, "/orders", { params: { per_page: 24, page: 1 } });
+  return apiRequest(session, "/orders", { params: { per_page: 24, page: 1 }, suppressHttpError: true });
 }
 
 async function fetchCustomerAppointments(session) {
-  return apiRequest(session, "/appointments", { params: { per_page: 40, page: 1 } });
+  return apiRequest(session, "/appointments", { params: { per_page: 40, page: 1, mine: "1" }, suppressHttpError: true });
 }
 
 async function fetchCustomerDoctors(session) {
@@ -156,6 +162,7 @@ export default function CustomerDashboard() {
   const [session, setSession] = useState(null);
   const [cacheKey, setCacheKey] = useState(null);
   const [expandedOrderId, setExpandedOrderId] = useState(null);
+  const [selectedAppointment, setSelectedAppointment] = useState(null);
   const [storeUrl, setStoreUrl] = useState("#");
   const [journey, setJourney] = useState(createJourneyState());
   const [settings, setSettings] = useState(() => loadCustomerSettings());
@@ -186,6 +193,10 @@ export default function CustomerDashboard() {
   }, [router]);
 
   const cachedCustomerState = cacheKey ? readDashboardCache(cacheKey, DASHBOARD_CACHE_TTL_MS)?.state : null;
+  const bootstrapCustomerState = useMemo(
+    () => buildCustomerBootstrapState(session, settings, cachedCustomerState || emptyCustomerState),
+    [cachedCustomerState, session, settings]
+  );
   const customerSummaryKey = session
     ? swrKeys.proxy.path("/customer-dashboard/summary", withBaseUrl(session, { user_id: session.user?.id || "guest", display_name: settings.displayName }))
     : null;
@@ -193,16 +204,16 @@ export default function CustomerDashboard() {
     ? swrKeys.proxy.path("/orders", withBaseUrl(session, { per_page: 24, page: 1 }))
     : null;
   const customerAppointmentsKey = session && ["appointment", "settings", "profile"].includes(page)
-    ? swrKeys.proxy.path("/appointments", withBaseUrl(session, { per_page: 40, page: 1 }))
+    ? swrKeys.proxy.path("/appointments", withBaseUrl(session, { per_page: 40, page: 1, mine: "1" }))
     : null;
   const customerDoctorsKey = session && ["appointment", "settings", "profile"].includes(page)
     ? swrKeys.proxy.path("/doctors", withBaseUrl(session, { per_page: 24, page: 1 }))
     : null;
   const { data: summaryState = emptyCustomerState, mutate: mutateSummary, isLoading } = useSWR(
     customerSummaryKey,
-    () => fetchCustomerDashboardPayload(session, settings),
+    () => fetchCustomerDashboardPayload(session, settings, bootstrapCustomerState),
     {
-      fallbackData: cachedCustomerState || undefined,
+      fallbackData: bootstrapCustomerState,
       refreshInterval: CUSTOMER_DASHBOARD_REFRESH_MS,
       revalidateOnFocus: false,
       onSuccess: (nextState) => {
@@ -333,25 +344,25 @@ export default function CustomerDashboard() {
     });
     try {
       const availability = await apiRequest(session, `/doctors/${doctorId}/availability`, { params: { date: nextDate } });
+      const slots = Array.isArray(availability?.slots) ? availability.slots : [];
       setJourney((current) => ({
         ...current,
         mode: "slots",
         doctorId,
         selectedDate: nextDate,
-        slots: availability?.slots || [],
+        slots,
         loading: false,
-        error: ""
+        error: slots.length ? "" : "Doctor not available"
       }));
     } catch (error) {
-      const fallbackSlots = buildFallbackSlots(nextDate, doctor);
       setJourney((current) => ({
         ...current,
         mode: "slots",
         doctorId,
         selectedDate: nextDate,
-        slots: fallbackSlots,
+        slots: [],
         loading: false,
-        error: fallbackSlots.length ? "The pharmacy server is temporarily unavailable. Preview slots are shown so the booking flow stays testable." : (error?.message || "Doctor availability could not be loaded.")
+        error: error?.message || "Doctor availability could not be loaded."
       }));
     }
   }
@@ -364,22 +375,23 @@ export default function CustomerDashboard() {
     setJourney((current) => ({ ...current, selectedDate: nextDate, selectedSlot: null, loading: true, error: "" }));
     try {
       const availability = await apiRequest(session, `/doctors/${journey.doctorId}/availability`, { params: { date: nextDate } });
+      const slots = Array.isArray(availability?.slots) ? availability.slots : [];
       setJourney((current) => ({
         ...current,
         selectedDate: nextDate,
-        slots: availability?.slots || [],
-        selectedSlot: null,
-        loading: false
-      }));
-    } catch (error) {
-      const fallbackSlots = buildFallbackSlots(nextDate, selectedDoctor);
-      setJourney((current) => ({
-        ...current,
-        selectedDate: nextDate,
-        slots: fallbackSlots,
+        slots,
         selectedSlot: null,
         loading: false,
-        error: fallbackSlots.length ? "Live availability could not be refreshed. Demo slots are shown instead." : (error?.message || "Slots could not be refreshed.")
+        error: slots.length ? "" : "Doctor not available"
+      }));
+    } catch (error) {
+      setJourney((current) => ({
+        ...current,
+        selectedDate: nextDate,
+        slots: [],
+        selectedSlot: null,
+        loading: false,
+        error: error?.message || "Slots could not be refreshed."
       }));
     }
   }
@@ -597,6 +609,7 @@ export default function CustomerDashboard() {
       onOpenPage={setPage}
       onOpenAvailability={openDoctorAvailability}
       onOpenReviews={openDoctorReviews}
+      onOpenAppointment={setSelectedAppointment}
       storeCurrency={storeCurrency}
       storeUrl={storeUrl}
     /> : null}
@@ -638,6 +651,7 @@ export default function CustomerDashboard() {
       onLogout={handleLogout}
     /> : null}
     {!showSkeleton && page === "profile" ? <ProfilePage profile={profile} orders={state.orders} appointments={state.appointments} doctors={visibleDoctors} settings={settings} onSettingsChange={setSettings} onLogout={handleLogout} /> : null}
+    {selectedAppointment ? <AppointmentDetailsModal appointment={selectedAppointment} doctors={visibleDoctors} onClose={() => setSelectedAppointment(null)} /> : null}
   </RoleShell>;
 }
 
@@ -648,6 +662,28 @@ function hasCustomerDashboardData(state) {
     || state.appointments.length
     || state.doctors.length
   );
+}
+
+function buildCustomerBootstrapState(session, settings, fallbackState = emptyCustomerState) {
+  const fallbackProfile = fallbackState?.dashboard?.profile || {};
+  const sessionUser = session?.user || {};
+
+  return {
+    error: fallbackState?.error || "",
+    dashboard: {
+      ...(fallbackState?.dashboard || {}),
+      profile: {
+        id: fallbackProfile.id || sessionUser.id || null,
+        email: fallbackProfile.email || settings.email || sessionUser.email || "",
+        display_name: fallbackProfile.display_name || settings.displayName || sessionUser.display_name || sessionUser.name || "Customer",
+        roles: fallbackProfile.roles || sessionUser.roles || []
+      }
+    },
+    orders: Array.isArray(fallbackState?.orders) ? fallbackState.orders : [],
+    appointments: Array.isArray(fallbackState?.appointments) ? fallbackState.appointments : [],
+    doctors: Array.isArray(fallbackState?.doctors) ? fallbackState.doctors : [],
+    doctorsUnavailable: Boolean(fallbackState?.doctorsUnavailable)
+  };
 }
 
 function CustomerDashboardSkeleton({ page }) {
@@ -824,7 +860,7 @@ function CustomerAppHeader({ profile }) {
   </div>;
 }
 
-function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, orderCounts, spentThisMonth, onOpenPage, onOpenAvailability, onOpenReviews, storeCurrency, storeUrl }) {
+function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, orderCounts, spentThisMonth, onOpenPage, onOpenAvailability, onOpenReviews, onOpenAppointment, storeCurrency, storeUrl }) {
   const [query, setQuery] = useState("");
   const searchResults = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -863,6 +899,7 @@ function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, o
   }, [appointments, doctors, orders, query, storeCurrency]);
 
   const appointmentCards = [...appointments]
+    .filter((appointment) => new Date(appointment.start_at || 0).getTime() >= Date.now())
     .sort((left, right) => new Date(left.start_at || 0) - new Date(right.start_at || 0))
     .slice(0, 5);
 
@@ -913,7 +950,7 @@ function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, o
     <div className="tiny-title">Upcoming appointments</div>
     {appointmentCards.length ? <div className="appointment-stack-viewport mobile-gap-bottom">
       <div className="appointment-stack-track">
-        {appointmentCards.map((appointment, index) => <article className="appointment-stack-card appointment-card" key={appointment.id} style={{ "--stack": index }}>
+        {appointmentCards.map((appointment, index) => <button className="appointment-stack-card appointment-card appointment-stack-button" key={appointment.id} type="button" style={{ "--stack": index }} onClick={() => onOpenAppointment(appointment)}>
           <div className="calendar-tile">
             <span>{new Date(appointment.start_at).toLocaleString("en-US", { month: "short" })}</span>
             <strong>{new Date(appointment.start_at).getDate()}</strong>
@@ -923,13 +960,43 @@ function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, o
             <div className="card-desc">{shortDate(appointment.start_at, true)}</div>
           </div>
           <span className={`status-badge ${appointment.payment_status === "paid" ? "success" : "warning"}`}>{titleCase(appointment.status)}</span>
-        </article>)}
+        </button>)}
       </div>
     </div> : <div className="empty-card compact-empty mobile-gap-bottom"><div className="card-title">No appointment yet</div></div>}
 
     <div className="tiny-title">Nevari doctors</div>
     <DoctorCards doctors={doctors} doctorsUnavailable={doctorsUnavailable} onOpenAvailability={onOpenAvailability} onOpenReviews={onOpenReviews} storeCurrency={storeCurrency} />
   </>;
+}
+
+function AppointmentDetailsModal({ appointment, doctors, onClose }) {
+  const doctor = doctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id)) || appointment.doctor || null;
+  const joinUrl = getAppointmentJoinUrl(appointment);
+  return <div className="customer-appointment-modal" role="dialog" aria-modal="true" aria-label="Appointment details">
+    <button className="customer-appointment-modal-backdrop" type="button" aria-label="Close appointment details" onClick={onClose} />
+    <section className="customer-appointment-detail-card">
+      <div className="customer-panel-head">
+        <div>
+          <span className="customer-section-kicker">Appointment details</span>
+          <h2>{titleCase(appointment.type || "consultation")}</h2>
+        </div>
+        <button className="icon-btn" type="button" aria-label="Close appointment details" onClick={onClose}>x</button>
+      </div>
+      <div className="checkout-summary-grid">
+        <div><span>Date</span><strong>{friendlyDate(appointment.start_at)}</strong></div>
+        <div><span>Time</span><strong>{formatTime(appointment.start_at)}</strong></div>
+        <div><span>Doctor</span><strong>{doctor?.display_name || `Doctor #${appointment.doctor_user_id}`}</strong></div>
+        <div><span>Status</span><strong>{titleCase(appointment.status)}</strong></div>
+        <div><span>Payment</span><strong>{titleCase(appointment.payment_status || "pending")}</strong></div>
+        <div><span>Appointment ID</span><strong>#{appointment.id}</strong></div>
+      </div>
+      {appointment.reason ? <div className="appointment-detail-note"><span>Reason</span><strong>{appointment.reason}</strong></div> : null}
+      <div className="calendar-action-stack">
+        {joinUrl ? <a className="appointment-primary-cta appointment-link-cta" href={joinUrl} target="_blank" rel="noreferrer">Open Google Meet</a> : <div className="appointment-inline-alert">Google Meet link will appear when the appointment is confirmed.</div>}
+        {appointment.calendar?.ics_url ? <a className="appointment-secondary-cta appointment-link-cta" href={appointment.calendar.ics_url} target="_blank" rel="noreferrer">Download calendar invite</a> : null}
+      </div>
+    </section>
+  </div>;
 }
 
 function DoctorCards({ doctors, doctorsUnavailable, onOpenAvailability, onOpenReviews, storeCurrency }) {
@@ -1174,7 +1241,7 @@ function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, 
           return <button className={`appointment-slot-button ${active ? "active" : ""}`} key={slot.start_at} type="button" onClick={() => onSelectSlot(slot)}>
             {formatTime(slot.start_at)}
           </button>;
-        }) : !journey.loading ? <div className="empty-card compact-empty"><div className="card-title">No available slots on this date.</div></div> : null}
+        }) : !journey.loading && !journey.error ? <div className="empty-card compact-empty"><div className="card-title">Doctor not available</div></div> : null}
       </div>
     </div>
     <div className="appointment-summary-card">
@@ -1574,25 +1641,6 @@ function togglePreferredDoctor(settings, doctorId) {
 
 function buildFallbackDoctors(appointments, orders) {
   return [];
-}
-
-function buildFallbackSlots(selectedDate, doctor) {
-  const base = new Date(`${selectedDate}T09:00:00`);
-  if (Number.isNaN(base.getTime())) {
-    return [];
-  }
-  const seed = String(doctor?.user_id || doctor?.id || "doctor").length % 3;
-  const hours = [9 + seed, 11 + seed, 14 + seed, 16 + seed].filter((hour) => hour < 20);
-  return hours.map((hour, index) => {
-    const start = new Date(base);
-    start.setHours(hour, index % 2 === 0 ? 0 : 30, 0, 0);
-    const end = new Date(start.getTime() + (30 * 60 * 1000));
-    return {
-      start_at: start.toISOString(),
-      end_at: end.toISOString(),
-      mock: true
-    };
-  });
 }
 
 function buildMockAppointment(journey, selectedDoctor, settings, storeCurrency) {

@@ -552,10 +552,15 @@ final class Nevari_Rest {
             return $response;
         }
         if (!self::woo_available()) {
+            Nevari_Helpers::dashboard_log('orders.index.unavailable', [
+                'dashboard' => self::dashboard_name_for_current_user(),
+                'reason' => 'woocommerce_missing',
+            ], 'error');
             return Nevari_Helpers::error('woocommerce_missing', 'WooCommerce is required for orders.', 503);
         }
         $page = max(1, (int) $request->get_param('page')) ?: 1;
         $per_page = min(100, max(1, (int) $request->get_param('per_page') ?: 20));
+        $requested_status = $request->get_param('status') ? sanitize_key((string) $request->get_param('status')) : '';
         $args = [
             'limit' => $per_page,
             'page' => $page,
@@ -563,8 +568,8 @@ final class Nevari_Rest {
             'orderby' => 'date',
             'order' => 'DESC',
         ];
-        if ($request->get_param('status')) {
-            $args['status'] = sanitize_key((string) $request->get_param('status'));
+        if ($requested_status) {
+            $args['status'] = $requested_status;
         }
         if (!Nevari_Helpers::is_store_admin()) {
             if (Nevari_Helpers::is_patient()) {
@@ -581,9 +586,27 @@ final class Nevari_Rest {
             $args['billing_email'] = sanitize_email((string) $request->get_param('customer_email'));
         }
 
+        Nevari_Helpers::dashboard_log('orders.index.start', [
+            'dashboard' => self::dashboard_name_for_current_user(),
+            'page' => $page,
+            'per_page' => $per_page,
+            'status' => $requested_status ?: 'all',
+            'customer_id' => isset($args['customer_id']) ? (int) $args['customer_id'] : null,
+            'doctor_scope' => isset($args['meta_value']) ? (int) $args['meta_value'] : null,
+            'customer_email' => isset($args['billing_email']) ? (string) $args['billing_email'] : '',
+            'is_store_admin' => Nevari_Helpers::is_store_admin(),
+        ]);
+
         try {
             $result = wc_get_orders($args);
         } catch (Throwable $exception) {
+            Nevari_Helpers::dashboard_log('orders.index.query_failed', [
+                'dashboard' => self::dashboard_name_for_current_user(),
+                'message' => $exception->getMessage(),
+                'status' => $requested_status ?: 'all',
+                'page' => $page,
+                'per_page' => $per_page,
+            ], 'error');
             error_log(sprintf( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
                 'Nevari orders_index query failed: %s in %s:%d',
                 $exception->getMessage(),
@@ -615,7 +638,20 @@ final class Nevari_Rest {
         $meta = Nevari_Helpers::pagination_meta($page, $per_page, $total);
         if ($format_errors) {
             $meta['order_format_errors'] = $format_errors;
+            Nevari_Helpers::dashboard_log('orders.index.format_warnings', [
+                'dashboard' => self::dashboard_name_for_current_user(),
+                'format_error_order_ids' => $format_errors,
+                'total' => $total,
+            ], 'warning');
         }
+        Nevari_Helpers::dashboard_log('orders.index.success', [
+            'dashboard' => self::dashboard_name_for_current_user(),
+            'returned' => count($items),
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $per_page,
+            'status' => $requested_status ?: 'all',
+        ]);
         return Nevari_Helpers::success($items, $meta);
     }
 
@@ -2925,11 +2961,22 @@ final class Nevari_Rest {
         if (!$user || !in_array('doctor', (array) $user->roles, true)) {
             return Nevari_Helpers::error('doctor_not_found', 'Doctor not found.', 404);
         }
-        $date = $request->get_param('date') ? sanitize_text_field((string) $request->get_param('date')) : gmdate('Y-m-d');
         $availability = get_user_meta($doctor_id, '_nevari_availability', true);
         $availability = is_array($availability) ? $availability : [];
+        if (!$request->get_param('date')) {
+            return Nevari_Helpers::success([
+                'doctor_user_id' => $doctor_id,
+                'availability' => $availability,
+            ]);
+        }
+        $date = sanitize_text_field((string) $request->get_param('date'));
         $slots = self::build_available_slots($doctor_id, $date, $availability);
-        return Nevari_Helpers::success(['doctor_user_id' => $doctor_id, 'date' => $date, 'slots' => $slots]);
+        return Nevari_Helpers::success([
+            'doctor_user_id' => $doctor_id,
+            'date' => $date,
+            'availability' => $availability,
+            'slots' => $slots,
+        ]);
     }
 
     public static function doctors_update_availability(WP_REST_Request $request): WP_REST_Response {
@@ -3175,7 +3222,10 @@ final class Nevari_Rest {
         $settings = $wpdb->get_row($wpdb->prepare("SELECT default_appointment_duration FROM " . Nevari_Helpers::table('doctor_settings') . " WHERE doctor_user_id = %d", $doctor_id));
         if ($settings) { $duration = max(5, (int) $settings->default_appointment_duration); }
         $weekday = strtolower(gmdate('l', strtotime($date)));
-        $ranges = $availability[$weekday] ?? [['start' => '09:00', 'end' => '17:00']];
+        $ranges = isset($availability[$weekday]) && is_array($availability[$weekday]) ? $availability[$weekday] : [];
+        if (!$ranges) {
+            return [];
+        }
         $booked = $wpdb->get_results($wpdb->prepare(
             "SELECT start_at, end_at FROM " . Nevari_Helpers::table('appointments') . " WHERE doctor_user_id = %d AND status IN ('awaiting_payment','requested','confirmed','checked_in') AND DATE(start_at) = %s",
             $doctor_id,
@@ -3211,10 +3261,17 @@ final class Nevari_Rest {
         $page = max(1, (int) $request->get_param('page') ?: 1);
         $per_page = min(100, max(1, (int) $request->get_param('per_page') ?: 20));
         $offset = ($page - 1) * $per_page;
+        $order = strtoupper((string) $request->get_param('order')) === 'ASC' ? 'ASC' : 'DESC';
         $table = Nevari_Helpers::table('appointments');
         $where = ['1=1'];
         $params = [];
-        if (Nevari_Helpers::is_patient() && !Nevari_Helpers::is_store_admin()) {
+        if (Nevari_Helpers::bool_param($request->get_param('mine')) && Nevari_Helpers::is_patient()) {
+            $where[] = 'patient_user_id = %d';
+            $params[] = get_current_user_id();
+        } elseif (Nevari_Helpers::bool_param($request->get_param('mine')) && Nevari_Helpers::is_doctor()) {
+            $where[] = 'doctor_user_id = %d';
+            $params[] = get_current_user_id();
+        } elseif (Nevari_Helpers::is_patient() && !Nevari_Helpers::is_store_admin()) {
             $where[] = 'patient_user_id = %d';
             $params[] = get_current_user_id();
         } elseif (Nevari_Helpers::is_doctor() && !Nevari_Helpers::is_store_admin()) {
@@ -3243,7 +3300,7 @@ final class Nevari_Rest {
         $where_sql = implode(' AND ', $where);
         $total_sql = "SELECT COUNT(*) FROM {$table} WHERE {$where_sql}";
         $total = (int) $wpdb->get_var($params ? $wpdb->prepare($total_sql, $params) : $total_sql);
-        $sql = "SELECT * FROM {$table} WHERE {$where_sql} ORDER BY start_at DESC LIMIT %d OFFSET %d";
+        $sql = "SELECT * FROM {$table} WHERE {$where_sql} ORDER BY start_at {$order} LIMIT %d OFFSET %d";
         $rows = $wpdb->get_results($wpdb->prepare($sql, array_merge($params, [$per_page, $offset])));
         return Nevari_Helpers::success(array_map(['Nevari_Helpers', 'format_appointment'], $rows ?: []), Nevari_Helpers::pagination_meta($page, $per_page, $total));
     }
@@ -4089,8 +4146,28 @@ final class Nevari_Rest {
 
     public static function dashboard_patient(WP_REST_Request $request): WP_REST_Response {
         $user_id = get_current_user_id();
-        $prescriptions = self::prescriptions_index(new WP_REST_Request('GET', '/prescriptions'))->get_data()['data'] ?? [];
-        $appointments = self::appointments_index(new WP_REST_Request('GET', '/appointments'))->get_data()['data'] ?? [];
+        Nevari_Helpers::dashboard_log('dashboard.patient.start', [
+            'dashboard' => 'patient',
+        ]);
+        $prescriptions_response = self::prescriptions_index(new WP_REST_Request('GET', '/prescriptions'));
+        $appointments_response = self::appointments_index(new WP_REST_Request('GET', '/appointments'));
+        $prescriptions_payload = $prescriptions_response->get_data();
+        $appointments_payload = $appointments_response->get_data();
+        $prescriptions = $prescriptions_payload['data'] ?? [];
+        $appointments = $appointments_payload['data'] ?? [];
+        if (empty($prescriptions_payload['success']) || empty($appointments_payload['success'])) {
+            Nevari_Helpers::dashboard_log('dashboard.patient.dependency_warning', [
+                'dashboard' => 'patient',
+                'prescriptions_success' => !empty($prescriptions_payload['success']),
+                'appointments_success' => !empty($appointments_payload['success']),
+            ], 'warning');
+        }
+        Nevari_Helpers::dashboard_log('dashboard.patient.success', [
+            'dashboard' => 'patient',
+            'profile_user_id' => $user_id,
+            'prescriptions_recent' => count(array_slice($prescriptions, 0, 5)),
+            'appointments_recent' => count(array_slice($appointments, 0, 5)),
+        ]);
         return Nevari_Helpers::success([
             'store_currency' => self::store_currency(),
             'profile' => Nevari_Helpers::user_summary($user_id),
@@ -4106,18 +4183,30 @@ final class Nevari_Rest {
         $prescriptions_table = Nevari_Helpers::table('prescriptions');
         $today_start = gmdate('Y-m-d 00:00:00');
         $today_end = gmdate('Y-m-d 23:59:59');
-        return Nevari_Helpers::success([
+        $data = [
             'store_currency' => self::store_currency(),
             'profile' => Nevari_Helpers::user_summary($doctor_id),
             'appointments_today' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$appointments_table} WHERE doctor_user_id = %d AND start_at BETWEEN %s AND %s", $doctor_id, $today_start, $today_end)),
             'appointments_requested' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$appointments_table} WHERE doctor_user_id = %d AND status = 'requested'", $doctor_id)),
             'prescriptions_draft' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$prescriptions_table} WHERE doctor_user_id = %d AND status = 'draft'", $doctor_id)),
             'prescriptions_assigned' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$prescriptions_table} WHERE doctor_user_id = %d AND status = 'assigned_to_patient'", $doctor_id)),
+        ];
+        Nevari_Helpers::dashboard_log('dashboard.doctor.success', [
+            'dashboard' => 'doctor',
+            'doctor_user_id' => $doctor_id,
+            'appointments_today' => (int) $data['appointments_today'],
+            'appointments_requested' => (int) $data['appointments_requested'],
+            'prescriptions_draft' => (int) $data['prescriptions_draft'],
+            'prescriptions_assigned' => (int) $data['prescriptions_assigned'],
         ]);
+        return Nevari_Helpers::success($data);
     }
 
     public static function dashboard_store_admin(WP_REST_Request $request): WP_REST_Response {
         global $wpdb;
+        Nevari_Helpers::dashboard_log('dashboard.store_admin.start', [
+            'dashboard' => 'store-admin',
+        ]);
         $appointments = Nevari_Helpers::table('appointments');
         $prescriptions = Nevari_Helpers::table('prescriptions');
         $emails = Nevari_Helpers::table('email_logs');
@@ -4143,11 +4232,32 @@ final class Nevari_Rest {
             ],
             'audit' => self::audit_summary_data(),
         ];
+        Nevari_Helpers::dashboard_log('dashboard.store_admin.success', [
+            'dashboard' => 'store-admin',
+            'sales_today' => $data['sales']['today'] ?? '0',
+            'sales_month' => $data['sales']['month'] ?? '0',
+            'orders_today' => $data['sales']['orders_today'] ?? 0,
+            'products_total' => $data['products']['total'] ?? 0,
+            'doctors_total' => $data['doctors']['total'] ?? 0,
+            'consultations_requested' => $data['consultations']['requested'] ?? 0,
+            'consultations_confirmed' => $data['consultations']['confirmed'] ?? 0,
+            'consultations_completed' => $data['consultations']['completed'] ?? 0,
+            'emails_sent_today' => $data['emails']['sent_today'] ?? 0,
+            'emails_failed_today' => $data['emails']['failed_today'] ?? 0,
+        ]);
         return Nevari_Helpers::success($data);
     }
 
     public static function dashboard_sales(WP_REST_Request $request): WP_REST_Response {
-        return Nevari_Helpers::success(self::sales_summary());
+        $data = self::sales_summary();
+        Nevari_Helpers::dashboard_log('dashboard.sales.success', [
+            'dashboard' => 'store-admin-sales',
+            'sales_today' => $data['today'] ?? '0',
+            'sales_month' => $data['month'] ?? '0',
+            'orders_today' => $data['orders_today'] ?? 0,
+            'currency' => $data['currency'] ?? self::store_currency(),
+        ]);
+        return Nevari_Helpers::success($data);
     }
 
     private static function sales_summary(): array {
@@ -4173,6 +4283,19 @@ final class Nevari_Rest {
         }
         $currency = get_option('woocommerce_currency', 'USD');
         return is_string($currency) && $currency !== '' ? $currency : 'USD';
+    }
+
+    private static function dashboard_name_for_current_user(): string {
+        if (Nevari_Helpers::is_store_admin()) {
+            return 'store-admin';
+        }
+        if (Nevari_Helpers::is_doctor()) {
+            return 'doctor';
+        }
+        if (Nevari_Helpers::is_patient()) {
+            return 'patient';
+        }
+        return 'unknown';
     }
 
     public static function audit_logs_index(WP_REST_Request $request): WP_REST_Response {

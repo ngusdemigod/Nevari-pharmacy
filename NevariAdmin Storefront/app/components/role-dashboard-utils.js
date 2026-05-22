@@ -77,7 +77,8 @@ function createApiError(payload, response) {
 }
 
 export async function apiRequest(session, path, { method = "GET", params = {}, body, suppressHttpError = false } = {}) {
-  const response = await fetch(buildUrl(session, path, params), {
+  const requestParams = suppressHttpError ? { ...params, softFail: "1" } : params;
+  const response = await fetch(buildUrl(session, path, requestParams), {
     method,
     headers: {
       Accept: "application/json",

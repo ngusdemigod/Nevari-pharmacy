@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import useSWR, { useSWRConfig } from "swr";
+import useSWR, { mutate as mutateSWRKey, useSWRConfig } from "swr";
 import { replaceById, updateListPayload, upsertById } from "../lib/fetcher";
 import { isProxyAppointmentsKey, isProxyDashboardDoctorKey, isProxyDoctorPathKey, isProxyOrdersKey, swrKeys, withBaseUrl } from "../lib/swrKeys";
 import { FRONTENDS } from "./components/frontend-config";
@@ -11,10 +11,14 @@ import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, d
 import { clearSessionAuth } from "./components/role-session";
 
 const DOCTOR_SETTINGS_KEY = "nevari_doctor_frontend_settings";
+const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
 const DOCTOR_DASHBOARD_CACHE_SCOPE = "doctor-dashboard";
 const pages = ["overview", "products", "orders", "patients", "consultations", "availability", "reviews", "profile", "settings"];
 const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const DOCTOR_DASHBOARD_REFRESH_MS = 45_000;
+const DEFAULT_SLOT_INTERVAL_MINUTES = 30;
+const DEFAULT_AVAILABILITY_START = "09:00";
+const DEFAULT_AVAILABILITY_END = "17:00";
 const emptyDoctorState = {
   error: "",
   dashboard: null,
@@ -27,53 +31,78 @@ const emptyDoctorState = {
   availability: {}
 };
 
-async function fetchDoctorDashboardPayload(session, doctorId) {
+async function fetchDoctorDashboardPayload(session, doctorId, fallbackState = emptyDoctorState) {
   const results = await Promise.allSettled([
-    apiRequest(session, "/dashboard/doctor"),
-    apiRequest(session, "/appointments", { params: { per_page: 5, page: 1 } }),
-    apiRequest(session, "/orders", { params: { per_page: 5, page: 1 } }),
-    apiRequest(session, `/doctors/${doctorId}`)
+    apiRequest(session, "/appointments", { params: { per_page: 5, page: 1 }, suppressHttpError: true }),
+    apiRequest(session, "/orders", { params: { per_page: 5, page: 1 }, suppressHttpError: true }),
+    apiRequest(session, `/doctors/${doctorId}`, { suppressHttpError: true })
   ]);
+  const hasAppointmentsFailure = results[0].status !== "fulfilled" || results[0].value === null;
+  const hasOrdersFailure = results[1].status !== "fulfilled" || results[1].value === null;
+  const hasDoctorFailure = results[2].status !== "fulfilled" || results[2].value === null;
   const errors = results
     .filter((result) => result.status === "rejected")
     .map((result) => describeDashboardFetchError(result.reason));
+  const bootstrapState = buildDoctorBootstrapState(session, fallbackState);
 
   return {
-    error: errors[0] || "",
-    dashboard: results[0].status === "fulfilled" ? results[0].value : null,
-    appointments: results[1].status === "fulfilled" ? results[1].value : [],
-    orders: results[2].status === "fulfilled" ? results[2].value : [],
-    products: [],
-    patients: [],
-    doctor: results[3].status === "fulfilled" ? results[3].value : null,
-    reviews: null,
-    availability: {}
+    error: errors[0] || ((hasAppointmentsFailure || hasOrdersFailure || hasDoctorFailure) ? "The pharmacy server could not be reached. Showing locally available dashboard data." : ""),
+    dashboard: bootstrapState.dashboard,
+    appointments: hasAppointmentsFailure ? (bootstrapState.appointments || []) : (results[0].value || []),
+    orders: hasOrdersFailure ? (bootstrapState.orders || []) : (results[1].value || []),
+    products: bootstrapState.products || [],
+    patients: bootstrapState.patients || [],
+    doctor: hasDoctorFailure ? bootstrapState.doctor : results[2].value,
+    reviews: bootstrapState.reviews || null,
+    availability: bootstrapState.availability || {}
   };
 }
 
 async function fetchDoctorAppointments(session) {
-  return apiRequest(session, "/appointments", { params: { per_page: 40, page: 1 } });
+  return (await apiRequest(session, "/appointments", {
+    params: { per_page: 40, page: 1 },
+    suppressHttpError: true
+  })) || [];
 }
 
 async function fetchDoctorOrders(session) {
-  return apiRequest(session, "/orders", { params: { per_page: 40, page: 1 } });
+  return (await apiRequest(session, "/orders", {
+    params: { per_page: 40, page: 1 },
+    suppressHttpError: true
+  })) || [];
 }
 
 async function fetchDoctorProducts(session, doctorId) {
-  return apiRequest(session, `/doctors/${doctorId}/products`, { params: { per_page: 40, page: 1 } });
+  return (await apiRequest(session, `/doctors/${doctorId}/products`, {
+    params: { per_page: 40, page: 1 },
+    suppressHttpError: true
+  })) || [];
 }
 
 async function fetchDoctorPatients(session, doctorId) {
-  return apiRequest(session, `/doctors/${doctorId}/patients`, { params: { per_page: 40, page: 1 } });
+  return (await apiRequest(session, `/doctors/${doctorId}/patients`, {
+    params: { per_page: 40, page: 1 },
+    suppressHttpError: true
+  })) || [];
 }
 
 async function fetchDoctorReviews(session, doctorId) {
-  return apiRequest(session, `/doctors/${doctorId}/reviews`);
+  return (await apiRequest(session, `/doctors/${doctorId}/reviews`, { suppressHttpError: true })) || null;
 }
 
 async function fetchDoctorAvailability(session, doctorId) {
-  const payload = await apiRequest(session, `/doctors/${doctorId}/availability`);
+  const payload = await apiRequest(session, `/doctors/${doctorId}/availability`, { suppressHttpError: true });
   return normalizeAvailability(payload?.availability || {});
+}
+
+function hasDoctorRole(user) {
+  const roles = Array.isArray(user?.roles) ? user.roles : [];
+  const directRole = typeof user?.role === "string" ? [user.role] : [];
+  const normalized = [...roles, ...directRole]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+
+  return normalized.includes("doctor") || normalized.includes("administrator");
 }
 
 export default function DoctorDashboard() {
@@ -89,6 +118,7 @@ export default function DoctorDashboard() {
   const [availabilityFeedback, setAvailabilityFeedback] = useState("");
   const [appointmentFeedback, setAppointmentFeedback] = useState("");
   const [doctorSettings, setDoctorSettings] = useState(() => loadDoctorSettings());
+  const [bookingIntervalMinutes, setBookingIntervalMinutes] = useState(() => loadBookingIntervalMinutes());
 
   useEffect(() => {
     const section = titleCase(page);
@@ -100,14 +130,20 @@ export default function DoctorDashboard() {
   }, [doctorSettings]);
 
   useEffect(() => {
+    const syncBookingInterval = () => setBookingIntervalMinutes(loadBookingIntervalMinutes());
+    syncBookingInterval();
+    window.addEventListener("storage", syncBookingInterval);
+    return () => window.removeEventListener("storage", syncBookingInterval);
+  }, []);
+
+  useEffect(() => {
     const hydratedSession = hydrateStoredSession("doctor");
     if (!hydratedSession.paired) {
       router.replace(FRONTENDS.admin.setupPath);
       return;
     }
     const nextDoctorId = hydratedSession.user?.id;
-    const roles = hydratedSession.user?.roles || [];
-    if (!hydratedSession.accessToken || !nextDoctorId || !roles.includes("doctor")) {
+    if (!hydratedSession.accessToken || !nextDoctorId || !hasDoctorRole(hydratedSession.user)) {
       router.replace("/admin/doctor/login");
       return;
     }
@@ -117,6 +153,10 @@ export default function DoctorDashboard() {
   }, [router]);
 
   const cachedDoctorState = cacheKey ? readDashboardCache(cacheKey, DASHBOARD_CACHE_TTL_MS)?.state : null;
+  const bootstrapDoctorState = useMemo(
+    () => buildDoctorBootstrapState(session, cachedDoctorState || emptyDoctorState),
+    [cachedDoctorState, session]
+  );
   const doctorSummaryKey = session && doctorId
     ? swrKeys.proxy.path("/dashboard/doctor", withBaseUrl(session, { doctor_id: doctorId }))
     : null;
@@ -140,9 +180,9 @@ export default function DoctorDashboard() {
     : null;
   const { data: summaryState = emptyDoctorState, mutate: mutateSummary, isLoading } = useSWR(
     doctorSummaryKey,
-    () => fetchDoctorDashboardPayload(session, doctorId),
+    () => fetchDoctorDashboardPayload(session, doctorId, bootstrapDoctorState),
     {
-      fallbackData: cachedDoctorState || undefined,
+      fallbackData: bootstrapDoctorState,
       refreshInterval: DOCTOR_DASHBOARD_REFRESH_MS,
       revalidateOnFocus: false,
       onSuccess: (nextState) => {
@@ -217,8 +257,19 @@ export default function DoctorDashboard() {
     predicates.forEach((predicate) => globalMutate(predicate, undefined, { revalidate: true }));
   }
 
+  async function autoRefreshDoctorLists(...keys) {
+    const validKeys = keys.filter(Boolean);
+    if (!validKeys.length) {
+      return;
+    }
+    await Promise.all(validKeys.map((key) => mutateSWRKey(key)));
+  }
+
   useEffect(() => {
-    setAvailabilityDraft(normalizeAvailability(state.availability || {}));
+    const normalizedAvailability = normalizeAvailability(state.availability || {});
+    setAvailabilityDraft((current) => (
+      availabilityEquals(current, normalizedAvailability) ? current : normalizedAvailability
+    ));
   }, [state.availability]);
 
   async function handleAppointmentAction(appointmentId, action, body = {}) {
@@ -243,6 +294,7 @@ export default function DoctorDashboard() {
       }
       setAppointmentFeedback(action === "confirm" ? "Appointment confirmed." : "Appointment completed.");
       revalidateDoctorGroups(isProxyAppointmentsKey, isProxyDashboardDoctorKey, isProxyOrdersKey);
+      await autoRefreshDoctorLists(doctorSummaryKey, doctorAppointmentsKey, doctorOrdersKey);
     } catch (error) {
       if (currentAppointment) {
         await mutateSummary((current) => current ? { ...current, appointments: replaceById(current.appointments || [], currentAppointment) } : current, { revalidate: false });
@@ -270,6 +322,7 @@ export default function DoctorDashboard() {
       });
       setAvailabilityFeedback("Availability updated.");
       revalidateDoctorGroups(isProxyDoctorPathKey, isProxyAppointmentsKey);
+      await autoRefreshDoctorLists(doctorSummaryKey, doctorAvailabilityKey, doctorAppointmentsKey);
     } catch (error) {
       await availabilityQuery.mutate();
       await mutateSummary();
@@ -338,6 +391,7 @@ export default function DoctorDashboard() {
     {!showSkeleton && page === "reviews" ? <ReviewsPage doctor={state.doctor} summary={reviewSummary} reviews={reviews} /> : null}
     {!showSkeleton && page === "availability" ? <AvailabilityPage
       availabilityDraft={availabilityDraft}
+      bookingIntervalMinutes={bookingIntervalMinutes}
       onChange={setAvailabilityDraft}
       onSave={saveAvailability}
       saving={savingAvailability}
@@ -455,7 +509,8 @@ function ReviewsPage({ doctor, summary, reviews }) {
   </section>;
 }
 
-function AvailabilityPage({ availabilityDraft, onChange, onSave, saving, feedback }) {
+function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange, onSave, saving, feedback }) {
+  const timeFrames = useMemo(() => buildAvailabilityTimeFrames(bookingIntervalMinutes), [bookingIntervalMinutes]);
   return <section className="doctor-availability-shell">
     <div className="appointment-surface-card">
       <div className="panel-header">
@@ -466,27 +521,33 @@ function AvailabilityPage({ availabilityDraft, onChange, onSave, saving, feedbac
         <button className="pill-button" type="button" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save"}</button>
       </div>
       {feedback ? <p className="receipt-feedback">{feedback}</p> : null}
+      <p className="doctor-availability-note">Select the time pills that should stay bookable. Slots follow the admin minimum booking time of {bookingIntervalMinutes} minutes.</p>
       <div className="doctor-availability-grid">
         {weekdays.map((day) => {
-          const entry = availabilityDraft[day]?.[0] || { start: "09:00", end: "17:00" };
           const enabled = Boolean(availabilityDraft[day]?.length);
+          const selectedFrames = new Set(getSelectedAvailabilityFrames(availabilityDraft[day], bookingIntervalMinutes, timeFrames));
           return <article className="doctor-availability-card" key={day}>
             <div className="doctor-availability-head">
               <strong>{titleCase(day)}</strong>
               <label className="doctor-switch">
-                <input type="checkbox" checked={enabled} onChange={(event) => onChange((current) => toggleAvailabilityDay(current, day, event.target.checked))} />
+                <input type="checkbox" checked={enabled} onChange={(event) => onChange((current) => toggleAvailabilityDay(current, day, event.target.checked, bookingIntervalMinutes))} />
                 <span />
               </label>
             </div>
-            <div className="doctor-availability-time-grid">
-              <label>
-                <span>Start</span>
-                <input type="time" value={entry.start || "09:00"} disabled={!enabled} onChange={(event) => onChange((current) => updateAvailabilityTime(current, day, "start", event.target.value))} />
-              </label>
-              <label>
-                <span>End</span>
-                <input type="time" value={entry.end || "17:00"} disabled={!enabled} onChange={(event) => onChange((current) => updateAvailabilityTime(current, day, "end", event.target.value))} />
-              </label>
+            <div className={`doctor-availability-pill-grid ${enabled ? "" : "is-disabled"}`.trim()}>
+              {timeFrames.map((time) => {
+                const active = selectedFrames.has(time);
+                return <button
+                  className={`doctor-availability-pill ${active ? "active" : ""}`.trim()}
+                  key={`${day}-${time}`}
+                  type="button"
+                  disabled={!enabled}
+                  aria-pressed={active}
+                  onClick={() => onChange((current) => toggleAvailabilityFrame(current, day, time, bookingIntervalMinutes))}
+                >
+                  {formatAvailabilityLabel(time)}
+                </button>;
+              })}
             </div>
           </article>;
         })}
@@ -831,6 +892,8 @@ function DoctorOverview({ doctor, dashboard, appointments, orders, patients, rev
   const upcoming = appointments.filter((item) => ["requested", "confirmed", "awaiting_payment"].includes(item.status)).slice(0, 3);
   const categories = doctor?.product_categories || [];
   const pendingPayments = appointments.filter((item) => item.payment_status !== "paid").length;
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const appointmentsToday = appointments.filter((item) => String(item.start_at || "").slice(0, 10) === todayKey).length;
 
   return <>
     <div className="app-header">
@@ -849,7 +912,7 @@ function DoctorOverview({ doctor, dashboard, appointments, orders, patients, rev
     <div className="tiny-title">Today</div>
     <div className="category-grid doctor-category-grid">
       {[
-        ["Appointments today", dashboard?.appointments_today || 0],
+        ["Appointments today", appointmentsToday],
         ["Awaiting payment", pendingPayments],
         ["Paid sessions", appointments.filter((item) => item.payment_status === "paid").length],
         ["Customers", patients.length]
@@ -941,17 +1004,139 @@ function normalizeAvailability(value) {
   return normalized;
 }
 
-function toggleAvailabilityDay(current, day, enabled) {
+function availabilityEquals(left, right) {
+  return weekdays.every((day) => {
+    const leftRanges = Array.isArray(left?.[day]) ? left[day] : [];
+    const rightRanges = Array.isArray(right?.[day]) ? right[day] : [];
+
+    if (leftRanges.length !== rightRanges.length) {
+      return false;
+    }
+
+    return leftRanges.every((range, index) => (
+      String(range?.start || "") === String(rightRanges[index]?.start || "")
+      && String(range?.end || "") === String(rightRanges[index]?.end || "")
+    ));
+  });
+}
+
+function toggleAvailabilityDay(current, day, enabled, intervalMinutes = DEFAULT_SLOT_INTERVAL_MINUTES) {
   const next = normalizeAvailability(current);
-  next[day] = enabled ? [{ start: "09:00", end: "17:00" }] : [];
+  next[day] = enabled ? defaultAvailabilityRanges(intervalMinutes) : [];
   return next;
 }
 
-function updateAvailabilityTime(current, day, field, value) {
+function toggleAvailabilityFrame(current, day, time, intervalMinutes = DEFAULT_SLOT_INTERVAL_MINUTES) {
   const next = normalizeAvailability(current);
-  const range = next[day]?.[0] || { start: "09:00", end: "17:00" };
-  next[day] = [{ ...range, [field]: value }];
+  const selected = new Set(getSelectedAvailabilityFrames(next[day], intervalMinutes));
+  if (selected.has(time)) {
+    selected.delete(time);
+  } else {
+    selected.add(time);
+  }
+  next[day] = buildAvailabilityRangesFromFrames([...selected], intervalMinutes);
   return next;
+}
+
+function loadBookingIntervalMinutes() {
+  if (typeof window === "undefined") {
+    return DEFAULT_SLOT_INTERVAL_MINUTES;
+  }
+  try {
+    const settings = JSON.parse(window.localStorage.getItem(ADMIN_APPOINTMENT_SETTINGS_KEY) || "{}");
+    return normalizeSlotIntervalMinutes(settings?.minimumConsultationMinutes);
+  } catch {
+    return DEFAULT_SLOT_INTERVAL_MINUTES;
+  }
+}
+
+function normalizeSlotIntervalMinutes(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 5) {
+    return DEFAULT_SLOT_INTERVAL_MINUTES;
+  }
+  return parsed;
+}
+
+function defaultAvailabilityRanges(intervalMinutes = DEFAULT_SLOT_INTERVAL_MINUTES) {
+  return buildAvailabilityRangesFromFrames(
+    buildAvailabilityTimeFrames(intervalMinutes).filter((time) => time >= DEFAULT_AVAILABILITY_START && time < DEFAULT_AVAILABILITY_END),
+    intervalMinutes
+  );
+}
+
+function buildAvailabilityTimeFrames(intervalMinutes = DEFAULT_SLOT_INTERVAL_MINUTES) {
+  const frames = [];
+  const step = normalizeSlotIntervalMinutes(intervalMinutes);
+  for (let minutes = 8 * 60; minutes < 20 * 60; minutes += step) {
+    frames.push(minutesToTimeString(minutes));
+  }
+  return frames;
+}
+
+function getSelectedAvailabilityFrames(ranges, intervalMinutes = DEFAULT_SLOT_INTERVAL_MINUTES, timeFrames = buildAvailabilityTimeFrames(intervalMinutes)) {
+  const normalizedRanges = Array.isArray(ranges) ? ranges : [];
+  return timeFrames.filter((time) => {
+    const slotStart = timeStringToMinutes(time);
+    const slotEnd = slotStart + intervalMinutes;
+    return normalizedRanges.some((range) => {
+      const rangeStart = timeStringToMinutes(range?.start);
+      const rangeEnd = timeStringToMinutes(range?.end);
+      return Number.isFinite(rangeStart) && Number.isFinite(rangeEnd) && slotStart >= rangeStart && slotEnd <= rangeEnd;
+    });
+  });
+}
+
+function buildAvailabilityRangesFromFrames(frames, intervalMinutes = DEFAULT_SLOT_INTERVAL_MINUTES) {
+  const normalizedFrames = [...new Set(frames.map(timeStringToMinutes).filter(Number.isFinite))].sort((left, right) => left - right);
+  if (!normalizedFrames.length) {
+    return [];
+  }
+  const ranges = [];
+  let rangeStart = normalizedFrames[0];
+  let previous = normalizedFrames[0];
+
+  for (let index = 1; index < normalizedFrames.length; index += 1) {
+    const current = normalizedFrames[index];
+    if (current !== previous + intervalMinutes) {
+      ranges.push({
+        start: minutesToTimeString(rangeStart),
+        end: minutesToTimeString(previous + intervalMinutes)
+      });
+      rangeStart = current;
+    }
+    previous = current;
+  }
+
+  ranges.push({
+    start: minutesToTimeString(rangeStart),
+    end: minutesToTimeString(previous + intervalMinutes)
+  });
+
+  return ranges;
+}
+
+function timeStringToMinutes(value) {
+  const [hours, minutes] = String(value || "").split(":").map((part) => Number.parseInt(part, 10));
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return Number.NaN;
+  }
+  return (hours * 60) + minutes;
+}
+
+function minutesToTimeString(totalMinutes) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function formatAvailabilityLabel(time) {
+  const [hoursValue, minutesValue] = String(time || "00:00").split(":");
+  const hours = Number.parseInt(hoursValue, 10);
+  const minutes = Number.parseInt(minutesValue, 10);
+  const period = hours >= 12 ? "PM" : "AM";
+  const normalizedHours = hours % 12 || 12;
+  return `${normalizedHours}:${String(minutes).padStart(2, "0")} ${period}`;
 }
 
 function SettingsToggle({ label, checked, onChange }) {
@@ -1010,6 +1195,34 @@ function defaultDoctorSettings() {
     instantAlerts: true,
     reminderNotifications: true,
     prescriptionBuilderEnabled: true
+  };
+}
+
+function buildDoctorBootstrapState(session, fallbackState = emptyDoctorState) {
+  const fallbackDoctor = fallbackState?.doctor || {};
+  const sessionUser = session?.user || {};
+  const doctorId = sessionUser?.id || fallbackDoctor?.id || fallbackDoctor?.user_id || null;
+
+  return {
+    error: fallbackState?.error || "",
+    dashboard: fallbackState?.dashboard || null,
+    appointments: Array.isArray(fallbackState?.appointments) ? fallbackState.appointments : [],
+    orders: Array.isArray(fallbackState?.orders) ? fallbackState.orders : [],
+    products: Array.isArray(fallbackState?.products) ? fallbackState.products : [],
+    patients: Array.isArray(fallbackState?.patients) ? fallbackState.patients : [],
+    doctor: doctorId ? {
+      id: doctorId,
+      user_id: doctorId,
+      display_name: fallbackDoctor.display_name || sessionUser.display_name || sessionUser.name || "Doctor",
+      email: fallbackDoctor.email || sessionUser.email || "",
+      specialties: Array.isArray(fallbackDoctor.specialties) ? fallbackDoctor.specialties : [],
+      languages: Array.isArray(fallbackDoctor.languages) ? fallbackDoctor.languages : [],
+      consultation_fee: fallbackDoctor.consultation_fee || 0,
+      store_currency: fallbackDoctor.store_currency || "USD",
+      product_categories: Array.isArray(fallbackDoctor.product_categories) ? fallbackDoctor.product_categories : []
+    } : null,
+    reviews: fallbackState?.reviews || null,
+    availability: fallbackState?.availability || {}
   };
 }
 

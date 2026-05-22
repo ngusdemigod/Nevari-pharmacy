@@ -150,6 +150,34 @@ final class Nevari_Helpers {
         return NEVARI_REQUEST_ID;
     }
 
+    public static function dashboard_log(string $event, array $context = [], string $level = 'info'): void {
+        $normalized_level = strtolower(trim($level));
+        $debug_enabled = (defined('NEVARI_DASHBOARD_DEBUG') && NEVARI_DASHBOARD_DEBUG) || (defined('WP_DEBUG') && WP_DEBUG);
+        if ($normalized_level !== 'error' && !$debug_enabled) {
+            return;
+        }
+
+        $payload = array_merge([
+            'request_id' => self::request_id(),
+            'event' => $event,
+            'level' => $normalized_level ?: 'info',
+            'user_id' => get_current_user_id(),
+            'timestamp' => self::now(),
+        ], $context);
+
+        $encoded = wp_json_encode($payload);
+        if (!is_string($encoded) || $encoded === '') {
+            $encoded = wp_json_encode([
+                'request_id' => self::request_id(),
+                'event' => $event,
+                'level' => $normalized_level ?: 'info',
+                'message' => 'Dashboard log encoding failed.',
+            ]);
+        }
+
+        error_log('Nevari dashboard log ' . $encoded); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+    }
+
     public static function success($data = null, array $meta = [], int $status = 200): WP_REST_Response {
         $meta = array_merge(['request_id' => self::request_id()], $meta);
         return new WP_REST_Response([
@@ -597,6 +625,8 @@ final class Nevari_Helpers {
             'completed_at' => self::iso_datetime($row->completed_at),
             'checkout_url' => $order && in_array(self::appointment_payment_status($row, $order), ['pending', 'failed'], true) ? $order->get_checkout_payment_url(false) : null,
             'calendar' => self::appointment_calendar_links($row),
+            'google_meet_link' => self::appointment_meeting_link($row, $order),
+            'meet_link' => self::appointment_meeting_link($row, $order),
             'review' => $review ? self::format_review_row($review) : null,
             'review_eligible' => $row->status === 'completed' && !$review,
             'created_at' => self::iso_datetime($row->created_at),
@@ -641,6 +671,28 @@ final class Nevari_Helpers {
             'google_url' => 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=' . $title . '&dates=' . $start . '/' . $end . '&details=' . $details,
             'outlook_url' => 'https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=' . $title . '&startdt=' . rawurlencode(self::iso_datetime($appointment->start_at)) . '&enddt=' . rawurlencode(self::iso_datetime($appointment->end_at)) . '&body=' . $details,
         ];
+    }
+
+    public static function appointment_meeting_link($appointment, $order = null): string {
+        foreach (['google_meet_link', 'meet_link', 'meeting_url'] as $field) {
+            if (isset($appointment->{$field}) && $appointment->{$field}) {
+                return esc_url_raw((string) $appointment->{$field});
+            }
+        }
+        if ($order && is_object($order) && method_exists($order, 'get_meta')) {
+            foreach (['_nevari_google_meet_link', '_nevari_meet_link', '_nevari_meeting_url'] as $meta_key) {
+                $value = $order->get_meta($meta_key);
+                if ($value) {
+                    return esc_url_raw((string) $value);
+                }
+            }
+        }
+        $paid = self::appointment_payment_status($appointment, $order) === 'paid';
+        if ($paid && (string) $appointment->type === 'video') {
+            $calendar = self::appointment_calendar_links($appointment);
+            return $calendar['google_url'] ?? '';
+        }
+        return '';
     }
 
     public static function appointment_ics_filename($appointment): string {

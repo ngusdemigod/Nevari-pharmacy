@@ -3,7 +3,7 @@
  * Plugin Name: Nevari Pharmacy Core
  * Plugin URI: https://example.com/nevari-pharmacy-core
  * Description: WooCommerce pharmacy consultation, prescription, email, and audit-log API layer for a Next.js admin dashboard.
- * Version: 0.1.0
+ * Version: 0.4.0
  * Author: Nevari
  * Text Domain: nevari-pharmacy-core
  * Requires at least: 6.2
