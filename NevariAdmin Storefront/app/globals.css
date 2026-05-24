@@ -180,6 +180,30 @@
   color: #22314d;
 }
 
+.appointment-duration-field,
+.appointment-reason-field {
+  display: grid;
+  gap: 8px;
+  color: #6c7485;
+  font-size: 13px;
+}
+
+.appointment-duration-field select,
+.appointment-reason-field textarea {
+  width: 100%;
+  border: 1px solid #e2d7c8;
+  border-radius: 16px;
+  background: #fffdfa;
+  color: #22314d;
+  padding: 12px 14px;
+  font: inherit;
+}
+
+.appointment-reason-field textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
 .appointment-primary-cta,
 .appointment-link-cta {
   width: 100%;
@@ -370,7 +394,7 @@
   }
 
   .appointment-slot-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -2556,6 +2580,10 @@ body:has(.role-shell-exact) {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.booking-list-vertical {
+  grid-template-columns: 1fr !important;
+}
+
 .role-shell-exact .booking-list {
   display: grid;
   gap: 12px;
@@ -2935,6 +2963,38 @@ body:has(.role-shell-exact) {
   gap: 16px;
 }
 
+.customer-appointment-history-slider {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+
+.customer-appointment-history-track {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  min-width: max-content;
+}
+
+.customer-appointment-card-slide {
+  flex: 0 0 min(86vw, 420px);
+  min-width: min(86vw, 420px);
+  max-width: min(86vw, 420px);
+  scroll-snap-align: start;
+}
+
+.book-doctor-shell .book-doctor-vertical-list {
+  grid-template-columns: 1fr !important;
+  gap: 12px;
+}
+
+.book-doctor-shell .book-doctor-vertical-list .booking-card {
+  width: 100%;
+}
+
 .customer-persistent-app-header {
   margin-bottom: 16px;
 }
@@ -2950,6 +3010,7 @@ body:has(.role-shell-exact) {
   border: 1px solid var(--color-border);
   background: rgba(255, 255, 255, 0.92);
   box-shadow: var(--shadow-card);
+  min-width: 20%;
 }
 
 .customer-hero-card {
@@ -3070,6 +3131,7 @@ body:has(.role-shell-exact) {
 .customer-list-shell,
 .customer-profile-hero {
   padding: 18px;
+  min-width: -webkit-fill-available;
 }
 
 .customer-panel-head {

@@ -37,10 +37,13 @@ final class Nevari_Emails {
 
             $subject = str_replace('{{' . $key . '}}', $safe_text, $subject);
             $subject = str_replace('{{ ' . $key . ' }}', $safe_text, $subject);
+            $subject = str_replace('{' . $key . '}', $safe_text, $subject);
             $body_html = str_replace('{{' . $key . '}}', $safe_html, $body_html);
             $body_html = str_replace('{{ ' . $key . ' }}', $safe_html, $body_html);
+            $body_html = str_replace('{' . $key . '}', $safe_html, $body_html);
             $body_text = str_replace('{{' . $key . '}}', $safe_text, $body_text);
             $body_text = str_replace('{{ ' . $key . ' }}', $safe_text, $body_text);
+            $body_text = str_replace('{' . $key . '}', $safe_text, $body_text);
         }
 
         return [
@@ -88,7 +91,24 @@ final class Nevari_Emails {
                 }
             }
             $google_meet_link = isset($variables['google_meet_link']) ? esc_url_raw((string) $variables['google_meet_link']) : '';
-            if (in_array($template->template_key, ['appointment_requested', 'appointment_payment_receipt', 'appointment_doctor_notification', 'appointment_admin_notification', 'appointment_reminder', 'appointment-approved'], true) && $google_meet_link && strpos($body_html, $google_meet_link) === false) {
+            if ($google_meet_link && !preg_match('#^https://meet\.google\.com/[a-z0-9-]+#i', $google_meet_link)) {
+                $google_meet_link = '';
+            }
+            $appointment_templates_with_meet_links = [
+                'appointment_requested',
+                'appointment_payment_receipt',
+                'appointment_customer_confirmation',
+                'appointment_doctor_notification',
+                'appointment_admin_notification',
+                'appointment_reminder',
+                'appointment_customer_reminder_24h',
+                'appointment_customer_reminder_1h',
+                'appointment_doctor_reminder_24h',
+                'appointment_doctor_reminder_1h',
+                'appointment_rescheduled',
+                'appointment-approved',
+            ];
+            if (in_array($template->template_key, $appointment_templates_with_meet_links, true) && $google_meet_link && strpos($body_html, $google_meet_link) === false) {
                 $google_meet_link_html = '';
                 if (isset($variables['google_meet_link_html'])) {
                     $google_meet_link_html = is_array($variables['google_meet_link_html'])

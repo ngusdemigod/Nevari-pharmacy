@@ -6,10 +6,15 @@ if (!defined('ABSPATH')) {
 final class Nevari_Admin {
     private const RATE_LIMIT_OPTION = 'nevari_rate_limit_settings';
     private const PAYMENT_GATEWAY_OPTION = 'nevari_payment_gateway_settings';
+    private const GOOGLE_MEET_OAUTH_OPTION = 'nevari_google_meet_oauth_settings';
+    private const GOOGLE_MEET_OAUTH_STATE_TRANSIENT = 'nevari_google_meet_oauth_state_';
 
     public static function init(): void {
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
         add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue']);
+        add_action('admin_post_nevari_google_meet_oauth_connect', [__CLASS__, 'handle_google_meet_oauth_connect']);
+        add_action('admin_post_nevari_google_meet_oauth_callback', [__CLASS__, 'handle_google_meet_oauth_callback']);
+        add_action('admin_post_nevari_google_meet_oauth_disconnect', [__CLASS__, 'handle_google_meet_oauth_disconnect']);
     }
 
     public static function admin_menu(): void {
@@ -77,15 +82,96 @@ final class Nevari_Admin {
                 if ($connection_id && Nevari_Connections::revoke_frontend($connection_id)) {
                     echo '<div class="notice notice-success"><p>' . esc_html__('Frontend access revoked. The paired frontend is now disconnected and must complete initial setup again before it can reconnect.', 'nevari-pharmacy-core') . '</p></div>';
                 }
+            } elseif ($action === 'save_google_meet_oauth') {
+                self::handle_google_meet_oauth_settings_save();
+                echo '<div class="notice notice-success"><p>' . esc_html__('Google Meet OAuth settings saved.', 'nevari-pharmacy-core') . '</p></div>';
             }
         }
 
         $pairings = Nevari_Connections::recent_pairing_sessions(8);
         $connections = Nevari_Connections::trusted_frontends();
+        $oauth = Nevari_Helpers::google_meet_oauth_settings();
+        $can_connect_google = !empty($oauth['client_id']) && !empty($oauth['client_secret']);
+        self::render_google_meet_oauth_notice();
         ?>
         <div class="wrap nevari-admin-wrap">
             <h1><?php echo esc_html__('Nevari Pharmacy Connections', 'nevari-pharmacy-core'); ?></h1>
             <p><?php echo esc_html__('Generate a one-time pairing code for each frontend application. The code includes this site URL, expires after 10 minutes, and is invalidated immediately after successful use.', 'nevari-pharmacy-core'); ?></p>
+
+            <h2 style="margin-top:24px;"><?php echo esc_html__('Google Meet OAuth (Server-side)', 'nevari-pharmacy-core'); ?></h2>
+            <p><?php echo esc_html__('Configure OAuth credentials used by the core plugin to generate Google Meet links on the server during appointment booking.', 'nevari-pharmacy-core'); ?></p>
+            <p><?php echo esc_html(sprintf(__('Google OAuth redirect URI: %s', 'nevari-pharmacy-core'), Nevari_Helpers::google_meet_oauth_redirect_uri())); ?></p>
+            <form method="post">
+                <?php wp_nonce_field('nevari_connections_action'); ?>
+                <input type="hidden" name="nevari_connections_action" value="save_google_meet_oauth" />
+                <table class="form-table" role="presentation">
+                    <tbody>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Enable Google Meet generation', 'nevari-pharmacy-core'); ?></th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="google_meet_oauth[enabled]" value="1" <?php checked(!empty($oauth['enabled'])); ?> />
+                                    <?php esc_html_e('Use OAuth credentials to create a Google Meet space and direct Meet link', 'nevari-pharmacy-core'); ?>
+                                </label>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="nevari_google_client_id"><?php esc_html_e('Google OAuth Client ID', 'nevari-pharmacy-core'); ?></label></th>
+                            <td><input id="nevari_google_client_id" class="regular-text" type="text" name="google_meet_oauth[client_id]" value="<?php echo esc_attr((string) ($oauth['client_id'] ?? '')); ?>" autocomplete="off" /></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="nevari_google_client_secret"><?php esc_html_e('Google OAuth Client Secret', 'nevari-pharmacy-core'); ?></label></th>
+                            <td><input id="nevari_google_client_secret" class="regular-text" type="password" name="google_meet_oauth[client_secret]" value="" placeholder="<?php echo esc_attr(!empty($oauth['client_secret']) ? __('Saved - leave blank to keep current value', 'nevari-pharmacy-core') : __('Not set', 'nevari-pharmacy-core')); ?>" autocomplete="off" /></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Required Google API', 'nevari-pharmacy-core'); ?></th>
+                            <td>
+                                <p class="description"><?php esc_html_e('Enable Google Meet API for the OAuth project. Calendar API is not required for direct Meet space generation.', 'nevari-pharmacy-core'); ?></p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                <?php submit_button(__('Save OAuth settings', 'nevari-pharmacy-core')); ?>
+            </form>
+            <table class="form-table" role="presentation">
+                <tbody>
+                    <tr>
+                        <th scope="row"><?php esc_html_e('Google account connection', 'nevari-pharmacy-core'); ?></th>
+                        <td>
+                            <p>
+                                <?php
+                                if (!empty($oauth['refresh_token'])) {
+                                    $connected_email = !empty($oauth['connected_email']) ? (string) $oauth['connected_email'] : __('Google account connected', 'nevari-pharmacy-core');
+                                    echo esc_html(sprintf(__('Connected: %s', 'nevari-pharmacy-core'), $connected_email));
+                                } else {
+                                    esc_html_e('Not connected yet.', 'nevari-pharmacy-core');
+                                }
+                                ?>
+                            </p>
+                            <?php if (!empty($oauth['token_updated_at'])) : ?>
+                                <p class="description"><?php echo esc_html(sprintf(__('Refresh token saved at %s (site time).', 'nevari-pharmacy-core'), $oauth['token_updated_at'])); ?></p>
+                            <?php endif; ?>
+                            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block; margin-right:8px;">
+                                <?php wp_nonce_field('nevari_google_meet_oauth_connect'); ?>
+                                <input type="hidden" name="action" value="nevari_google_meet_oauth_connect" />
+                                <?php if ($can_connect_google) : ?>
+                                    <?php submit_button(__('Connect Google', 'nevari-pharmacy-core'), 'secondary', '', false); ?>
+                                <?php else : ?>
+                                    <?php submit_button(__('Connect Google', 'nevari-pharmacy-core'), 'secondary', '', false, ['disabled' => 'disabled']); ?>
+                                    <p class="description"><?php esc_html_e('Save both the client ID and client secret first.', 'nevari-pharmacy-core'); ?></p>
+                                <?php endif; ?>
+                            </form>
+                            <?php if (!empty($oauth['refresh_token'])) : ?>
+                                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;">
+                                    <?php wp_nonce_field('nevari_google_meet_oauth_disconnect'); ?>
+                                    <input type="hidden" name="action" value="nevari_google_meet_oauth_disconnect" />
+                                    <?php submit_button(__('Disconnect Google', 'nevari-pharmacy-core'), 'delete', '', false); ?>
+                                </form>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
 
             <?php if ($generated) : ?>
                 <div class="notice notice-success">
@@ -195,6 +281,150 @@ final class Nevari_Admin {
             </table>
         </div>
         <?php
+    }
+
+    private static function handle_google_meet_oauth_settings_save(): void {
+        $current = Nevari_Helpers::google_meet_oauth_settings();
+        $raw = isset($_POST['google_meet_oauth']) && is_array($_POST['google_meet_oauth']) ? wp_unslash($_POST['google_meet_oauth']) : [];
+
+        $next = $current;
+        $next['enabled'] = !empty($raw['enabled']);
+        $next['client_id'] = isset($raw['client_id']) ? sanitize_text_field((string) $raw['client_id']) : $next['client_id'];
+        $next['calendar_id'] = isset($raw['calendar_id']) && trim((string) $raw['calendar_id']) !== '' ? sanitize_text_field((string) $raw['calendar_id']) : 'primary';
+
+        if (isset($raw['client_secret']) && trim((string) $raw['client_secret']) !== '') {
+            $next['client_secret'] = sanitize_text_field((string) $raw['client_secret']);
+        }
+        update_option(self::GOOGLE_MEET_OAUTH_OPTION, $next, false);
+    }
+
+    public static function handle_google_meet_oauth_connect(): void {
+        if (!current_user_can('nevari_manage_store')) {
+            wp_die(esc_html__('You do not have permission to connect Google Meet OAuth.', 'nevari-pharmacy-core'));
+        }
+        check_admin_referer('nevari_google_meet_oauth_connect');
+
+        $settings = Nevari_Helpers::google_meet_oauth_settings();
+        if (empty($settings['client_id']) || empty($settings['client_secret'])) {
+            wp_safe_redirect(self::google_meet_oauth_admin_url('missing_credentials'));
+            exit;
+        }
+
+        $state = wp_generate_password(32, false, false);
+        set_transient(self::GOOGLE_MEET_OAUTH_STATE_TRANSIENT . get_current_user_id(), $state, 15 * MINUTE_IN_SECONDS);
+
+        wp_redirect(Nevari_Helpers::google_meet_oauth_authorize_url($state)); // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect
+        exit;
+    }
+
+    public static function handle_google_meet_oauth_callback(): void {
+        if (!current_user_can('nevari_manage_store')) {
+            wp_die(esc_html__('You do not have permission to complete Google Meet OAuth.', 'nevari-pharmacy-core'));
+        }
+
+        $expected_state = get_transient(self::GOOGLE_MEET_OAUTH_STATE_TRANSIENT . get_current_user_id());
+        delete_transient(self::GOOGLE_MEET_OAUTH_STATE_TRANSIENT . get_current_user_id());
+
+        $state = isset($_GET['state']) ? sanitize_text_field(wp_unslash($_GET['state'])) : '';
+        if (!$expected_state || !hash_equals((string) $expected_state, $state)) {
+            wp_safe_redirect(self::google_meet_oauth_admin_url('invalid_state'));
+            exit;
+        }
+
+        if (!empty($_GET['error'])) {
+            $error = sanitize_text_field(wp_unslash($_GET['error']));
+            wp_safe_redirect(self::google_meet_oauth_admin_url('google_error', $error));
+            exit;
+        }
+
+        $code = isset($_GET['code']) ? sanitize_text_field(wp_unslash($_GET['code'])) : '';
+        $result = Nevari_Helpers::google_meet_oauth_exchange_code($code);
+        if (empty($result['success'])) {
+            wp_safe_redirect(self::google_meet_oauth_admin_url('token_exchange_failed', $result['message'] ?? ''));
+            exit;
+        }
+
+        Nevari_Helpers::save_google_meet_refresh_token(
+            (string) ($result['refresh_token'] ?? ''),
+            (string) ($result['connected_email'] ?? '')
+        );
+
+        wp_safe_redirect(self::google_meet_oauth_admin_url('connected'));
+        exit;
+    }
+
+    public static function handle_google_meet_oauth_disconnect(): void {
+        if (!current_user_can('nevari_manage_store')) {
+            wp_die(esc_html__('You do not have permission to disconnect Google Meet OAuth.', 'nevari-pharmacy-core'));
+        }
+        check_admin_referer('nevari_google_meet_oauth_disconnect');
+
+        $settings = Nevari_Helpers::google_meet_oauth_settings();
+        $settings['refresh_token'] = '';
+        $settings['connected_email'] = '';
+        $settings['token_updated_at'] = '';
+        update_option(self::GOOGLE_MEET_OAUTH_OPTION, $settings, false);
+
+        wp_safe_redirect(self::google_meet_oauth_admin_url('disconnected'));
+        exit;
+    }
+
+    private static function render_google_meet_oauth_notice(): void {
+        if (!isset($_GET['google_meet_oauth_status'])) {
+            return;
+        }
+
+        $status = sanitize_key(wp_unslash($_GET['google_meet_oauth_status']));
+        $message = '';
+        $class = 'notice-info';
+        switch ($status) {
+            case 'connected':
+                $message = __('Google account connected and refresh token saved.', 'nevari-pharmacy-core');
+                $class = 'notice-success';
+                break;
+            case 'disconnected':
+                $message = __('Google account disconnected. Saved refresh token removed.', 'nevari-pharmacy-core');
+                $class = 'notice-success';
+                break;
+            case 'missing_credentials':
+                $message = __('Save the Google OAuth client ID and client secret before connecting.', 'nevari-pharmacy-core');
+                $class = 'notice-error';
+                break;
+            case 'invalid_state':
+                $message = __('Google OAuth state validation failed. Start the connection again.', 'nevari-pharmacy-core');
+                $class = 'notice-error';
+                break;
+            case 'google_error':
+                $message = __('Google OAuth authorization was cancelled or returned an error.', 'nevari-pharmacy-core');
+                $class = 'notice-error';
+                break;
+            case 'token_exchange_failed':
+                $message = __('Google OAuth token exchange failed.', 'nevari-pharmacy-core');
+                $class = 'notice-error';
+                break;
+        }
+
+        $detail = isset($_GET['google_meet_oauth_message']) ? sanitize_text_field(wp_unslash($_GET['google_meet_oauth_message'])) : '';
+        if ($message === '') {
+            return;
+        }
+
+        echo '<div class="notice ' . esc_attr($class) . '"><p>' . esc_html($message) . '</p>';
+        if ($detail !== '') {
+            echo '<p>' . esc_html($detail) . '</p>';
+        }
+        echo '</div>';
+    }
+
+    private static function google_meet_oauth_admin_url(string $status, string $message = ''): string {
+        $args = [
+            'page' => 'nevari-pharmacy',
+            'google_meet_oauth_status' => $status,
+        ];
+        if ($message !== '') {
+            $args['google_meet_oauth_message'] = $message;
+        }
+        return add_query_arg($args, admin_url('admin.php'));
     }
 
     public static function render_payment_gateways_page(): void {

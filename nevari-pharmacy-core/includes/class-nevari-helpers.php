@@ -44,6 +44,214 @@ final class Nevari_Helpers {
         return array_replace_recursive(self::payment_gateway_defaults(), $stored);
     }
 
+    public static function google_meet_oauth_defaults(): array {
+        return [
+            'enabled' => false,
+            'client_id' => '',
+            'client_secret' => '',
+            'refresh_token' => '',
+            'calendar_id' => 'primary',
+            'connected_email' => '',
+            'token_updated_at' => '',
+        ];
+    }
+
+    public static function google_meet_oauth_settings(): array {
+        $stored = get_option('nevari_google_meet_oauth_settings', []);
+        $stored = is_array($stored) ? $stored : [];
+        return array_replace(self::google_meet_oauth_defaults(), $stored);
+    }
+
+    public static function google_meet_oauth_configured(): bool {
+        $settings = self::google_meet_oauth_settings();
+        return !empty($settings['enabled'])
+            && !empty($settings['client_id'])
+            && !empty($settings['client_secret'])
+            && !empty($settings['refresh_token']);
+    }
+
+    public static function google_meet_oauth_redirect_uri(): string {
+        return admin_url('admin-post.php?action=nevari_google_meet_oauth_callback');
+    }
+
+    public static function google_meet_oauth_scope(): string {
+        return 'https://www.googleapis.com/auth/meetings.space.created';
+    }
+
+    public static function google_meet_oauth_authorize_url(string $state): string {
+        return add_query_arg([
+            'client_id' => (string) (self::google_meet_oauth_settings()['client_id'] ?? ''),
+            'redirect_uri' => self::google_meet_oauth_redirect_uri(),
+            'response_type' => 'code',
+            'scope' => self::google_meet_oauth_scope(),
+            'access_type' => 'offline',
+            'prompt' => 'consent',
+            'include_granted_scopes' => 'true',
+            'state' => $state,
+        ], 'https://accounts.google.com/o/oauth2/v2/auth');
+    }
+
+    public static function google_meet_oauth_exchange_code(string $code): array {
+        $settings = self::google_meet_oauth_settings();
+        if (empty($settings['client_id']) || empty($settings['client_secret']) || $code === '') {
+            return ['success' => false, 'message' => 'Missing Google OAuth client credentials.'];
+        }
+
+        $response = wp_remote_post('https://oauth2.googleapis.com/token', [
+            'timeout' => 15,
+            'headers' => ['Content-Type' => 'application/x-www-form-urlencoded'],
+            'body' => [
+                'client_id' => (string) $settings['client_id'],
+                'client_secret' => (string) $settings['client_secret'],
+                'code' => $code,
+                'redirect_uri' => self::google_meet_oauth_redirect_uri(),
+                'grant_type' => 'authorization_code',
+            ],
+        ]);
+        if (is_wp_error($response)) {
+            return ['success' => false, 'message' => $response->get_error_message()];
+        }
+
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $body = json_decode((string) wp_remote_retrieve_body($response), true);
+        if ($status < 200 || $status >= 300 || !is_array($body)) {
+            $message = is_array($body) && !empty($body['error_description'])
+                ? (string) $body['error_description']
+                : 'Google token exchange failed.';
+            return ['success' => false, 'message' => $message];
+        }
+
+        $refresh_token = isset($body['refresh_token']) ? sanitize_text_field((string) $body['refresh_token']) : '';
+        if ($refresh_token === '') {
+            return ['success' => false, 'message' => 'Google did not return a refresh token. Re-consent may be required.'];
+        }
+
+        return [
+            'success' => true,
+            'refresh_token' => $refresh_token,
+            'connected_email' => self::google_meet_oauth_extract_email($body['id_token'] ?? ''),
+        ];
+    }
+
+    public static function google_meet_oauth_extract_email($id_token): string {
+        if (!is_string($id_token) || $id_token === '') {
+            return '';
+        }
+        $parts = explode('.', $id_token);
+        if (count($parts) < 2) {
+            return '';
+        }
+        $payload = json_decode(self::base64url_decode($parts[1]), true);
+        if (!is_array($payload) || empty($payload['email'])) {
+            return '';
+        }
+        return sanitize_email((string) $payload['email']);
+    }
+
+    public static function save_google_meet_refresh_token(string $refresh_token, string $connected_email = ''): void {
+        $settings = self::google_meet_oauth_settings();
+        $settings['refresh_token'] = sanitize_text_field($refresh_token);
+        $settings['connected_email'] = $connected_email ? sanitize_email($connected_email) : '';
+        $settings['token_updated_at'] = self::now();
+        update_option('nevari_google_meet_oauth_settings', $settings, false);
+    }
+
+    public static function google_meet_link_for_appointment($appointment, ?WP_User $doctor = null, ?WP_User $patient = null): string {
+        $result = self::google_meet_event_for_appointment($appointment, $doctor, $patient);
+        return !empty($result['success']) ? (string) $result['meet_link'] : '';
+    }
+
+    public static function google_meet_event_for_appointment($appointment, ?WP_User $doctor = null, ?WP_User $patient = null): array {
+        $existing_link = self::appointment_meeting_link($appointment);
+        $existing_event_id = isset($appointment->google_calendar_event_id) ? sanitize_text_field((string) $appointment->google_calendar_event_id) : '';
+        if ($existing_link !== '' && $existing_event_id !== '') {
+            return [
+                'success' => true,
+                'meet_link' => $existing_link,
+                'event_id' => $existing_event_id,
+                'reused' => true,
+            ];
+        }
+        if (!self::google_meet_oauth_configured()) {
+            return ['success' => false, 'code' => 'google_credentials_missing', 'message' => 'Google Meet OAuth credentials are not configured.'];
+        }
+        $token = self::google_oauth_access_token();
+        if ($token === '') {
+            return ['success' => false, 'code' => 'google_access_token_failed', 'message' => 'Google access token could not be refreshed.'];
+        }
+        $start_ts = strtotime((string) ($appointment->start_at ?? '') . ' UTC');
+        $end_ts = strtotime((string) ($appointment->end_at ?? '') . ' UTC');
+        if (!$start_ts || !$end_ts || $end_ts <= $start_ts) {
+            return ['success' => false, 'code' => 'invalid_appointment_time', 'message' => 'Appointment start/end time is invalid.'];
+        }
+        $response = wp_remote_post(
+            'https://meet.googleapis.com/v2/spaces',
+            [
+                'timeout' => 20,
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $token,
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                ],
+                'body' => '{}',
+            ]
+        );
+        if (is_wp_error($response)) {
+            return ['success' => false, 'code' => $response->get_error_code(), 'message' => $response->get_error_message()];
+        }
+        $code = (int) wp_remote_retrieve_response_code($response);
+        $body = json_decode((string) wp_remote_retrieve_body($response), true);
+        if ($code < 200 || $code >= 300 || !is_array($body)) {
+            $message = 'Google Meet space creation failed.';
+            if (is_array($body)) {
+                $message = (string) ($body['error']['message'] ?? $body['error_description'] ?? $message);
+            }
+            return ['success' => false, 'code' => 'google_meet_api_error', 'status' => $code, 'message' => $message];
+        }
+
+        $candidates = [
+            $body['meetingUri'] ?? '',
+        ];
+        foreach ($candidates as $link) {
+            if (is_string($link) && preg_match('#^https://meet\.google\.com/#i', $link)) {
+                return [
+                    'success' => true,
+                    'meet_link' => esc_url_raw($link),
+                    'event_id' => isset($body['name']) ? sanitize_text_field((string) $body['name']) : '',
+                    'space_name' => isset($body['name']) ? sanitize_text_field((string) $body['name']) : '',
+                    'reused' => false,
+                ];
+            }
+        }
+        return ['success' => false, 'code' => 'google_meet_link_missing', 'message' => 'Google Meet API created a space without a direct Meet link.'];
+    }
+
+    private static function google_oauth_access_token(): string {
+        $settings = self::google_meet_oauth_settings();
+        if (empty($settings['client_id']) || empty($settings['client_secret']) || empty($settings['refresh_token'])) {
+            return '';
+        }
+        $response = wp_remote_post('https://oauth2.googleapis.com/token', [
+            'timeout' => 15,
+            'headers' => ['Content-Type' => 'application/x-www-form-urlencoded'],
+            'body' => [
+                'client_id' => (string) $settings['client_id'],
+                'client_secret' => (string) $settings['client_secret'],
+                'refresh_token' => (string) $settings['refresh_token'],
+                'grant_type' => 'refresh_token',
+            ],
+        ]);
+        if (is_wp_error($response)) {
+            return '';
+        }
+        $code = (int) wp_remote_retrieve_response_code($response);
+        $body = json_decode((string) wp_remote_retrieve_body($response), true);
+        if ($code < 200 || $code >= 300 || !is_array($body)) {
+            return '';
+        }
+        return isset($body['access_token']) ? sanitize_text_field((string) $body['access_token']) : '';
+    }
+
     public static function active_payment_gateway_configured(): bool {
         $settings = self::payment_gateway_settings();
         $active = isset($settings['active_gateway']) ? (string) $settings['active_gateway'] : 'woocommerce';
@@ -627,6 +835,9 @@ final class Nevari_Helpers {
             'calendar' => self::appointment_calendar_links($row),
             'google_meet_link' => self::appointment_meeting_link($row, $order),
             'meet_link' => self::appointment_meeting_link($row, $order),
+            'google_calendar_event_id' => isset($row->google_calendar_event_id) && $row->google_calendar_event_id ? (string) $row->google_calendar_event_id : null,
+            'google_meet_error' => isset($row->google_meet_error) && $row->google_meet_error ? (string) $row->google_meet_error : null,
+            'google_meet_created_at' => isset($row->google_meet_created_at) ? self::iso_datetime($row->google_meet_created_at) : null,
             'review' => $review ? self::format_review_row($review) : null,
             'review_eligible' => $row->status === 'completed' && !$review,
             'created_at' => self::iso_datetime($row->created_at),
@@ -675,24 +886,23 @@ final class Nevari_Helpers {
 
     public static function appointment_meeting_link($appointment, $order = null): string {
         foreach (['google_meet_link', 'meet_link', 'meeting_url'] as $field) {
-            if (isset($appointment->{$field}) && $appointment->{$field}) {
+            if (isset($appointment->{$field}) && self::is_google_meet_url((string) $appointment->{$field})) {
                 return esc_url_raw((string) $appointment->{$field});
             }
         }
         if ($order && is_object($order) && method_exists($order, 'get_meta')) {
             foreach (['_nevari_google_meet_link', '_nevari_meet_link', '_nevari_meeting_url'] as $meta_key) {
                 $value = $order->get_meta($meta_key);
-                if ($value) {
+                if ($value && self::is_google_meet_url((string) $value)) {
                     return esc_url_raw((string) $value);
                 }
             }
         }
-        $paid = self::appointment_payment_status($appointment, $order) === 'paid';
-        if ($paid && (string) $appointment->type === 'video') {
-            $calendar = self::appointment_calendar_links($appointment);
-            return $calendar['google_url'] ?? '';
-        }
         return '';
+    }
+
+    private static function is_google_meet_url(string $value): bool {
+        return (bool) preg_match('#^https://meet\.google\.com/[a-z0-9-]+#i', trim($value));
     }
 
     public static function appointment_ics_filename($appointment): string {

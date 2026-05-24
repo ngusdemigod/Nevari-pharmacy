@@ -51,7 +51,7 @@ async function request(session, path, { method = "GET", body } = {}) {
   return payload.data;
 }
 
-function money(value, currency = "NGN") {
+function money(value, currency = "USD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(value || 0));
 }
 
@@ -100,7 +100,7 @@ export default function PaywallPage() {
         const terminal = ["paid", "completed", "cancelled", "refunded"].includes(status) || Number(payload?.totals?.balance_due || 0) <= 0;
         if (terminal) {
           setData(payload);
-          window.location.href = receiptViewerUrl(payload.order_id);
+          openReceipt(payload.order_id);
           return;
         }
         setData(payload);
@@ -132,7 +132,7 @@ export default function PaywallPage() {
           body: { gateway, reference }
         });
         if (active && verified?.paid) {
-          window.location.href = receiptViewerUrl(data.order_id);
+          openReceipt(data.order_id);
         }
       } catch (nextError) {
         if (active) setError(String(nextError?.message || "Payment verification failed."));
@@ -150,8 +150,21 @@ export default function PaywallPage() {
   const items = useMemo(() => data?.items || [], [data]);
 
   function receiptViewerUrl(orderId) {
+    const role = searchParams.get("role") || "patient";
+    return `/admin/orders/${encodeURIComponent(orderId)}/documents?role=${encodeURIComponent(role)}&tab=receipt&statusMode=payment`;
+  }
+
+  function receiptPdfFallbackUrl(orderId) {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     return `/api/admin/orders/${encodeURIComponent(orderId)}/documents/pdf?document_type=receipt&statusMode=payment&baseUrl=${encodeURIComponent(session.baseUrl || "")}&accessToken=${encodeURIComponent(session.accessToken || "")}&frontendType=${encodeURIComponent(session.frontendType || "")}&frontendOrigin=${encodeURIComponent(session.frontendOrigin || origin)}`;
+  }
+
+  function openReceipt(orderId) {
+    try {
+      window.location.href = receiptViewerUrl(orderId);
+    } catch {
+      window.location.href = receiptPdfFallbackUrl(orderId);
+    }
   }
 
   async function startPayment(gateway = activeGateway) {

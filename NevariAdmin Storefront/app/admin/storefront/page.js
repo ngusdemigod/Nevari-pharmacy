@@ -9,15 +9,19 @@ import { isAdminSummaryKey, isAppointmentListKey, isCustomerListKey, isDoctorLis
 import { useCreateProduct, useDeleteProduct, useUpdateProduct } from "../../../hooks/products";
 import { useUpdateOrderStatus } from "../../../hooks/orders/useUpdateOrderStatus";
 import { setDocumentMetadata } from "../../components/page-metadata";
+import { getOrderTypeMeta } from "../../components/role-dashboard-utils";
 import { clearStoredSessions, createPairingRequiredError, isPairingRequiredError, isPairingRequiredPayload } from "../../components/role-session";
 
 const STORAGE_KEY = "nevari_admin_storefront_session";
+const STORE_CURRENCY_KEY = "nevari_store_currency";
+const STORE_TIMEZONE_KEY = "nevari_store_timezone";
 const API_NAMESPACE = "nevari/v1";
 const FRONTEND_TYPE = "storefront";
 const PAIRING_FRONTEND_TYPE = "custom_frontend";
 const DEFAULT_SITE_NAME = "Nevari Pharmacy";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
 const EMAIL_TEMPLATE_STORAGE_KEY = "nevari_admin_email_templates";
+const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
 
 const EMAIL_HOOKS = [
   { key: "{content}", label: "Body content injected by the sending workflow." },
@@ -26,14 +30,30 @@ const EMAIL_HOOKS = [
   { key: "{order_id}", label: "WooCommerce order number or ID." },
   { key: "{order_number}", label: "Formatted order number." },
   { key: "{appointment_date}", label: "Formatted consultation date and time." },
+  { key: "{appointment_time}", label: "Formatted consultation time." },
+  { key: "{appointment_start}", label: "Full appointment start timestamp." },
+  { key: "{consultation_type}", label: "Consultation type or specialty." },
+  { key: "{amount_paid}", label: "Formatted appointment amount paid." },
+  { key: "{booking_id}", label: "Appointment booking ID." },
   { key: "{google_meet_link}", label: "Google Meet or video consultation URL." },
   { key: "{google_meet_link_html}", label: "Clickable Google Meet consultation link." },
+  { key: "{join_link}", label: "Direct consultation join URL." },
+  { key: "{join_link_html}", label: "Clickable consultation join link." },
+  { key: "{cancel_link}", label: "Appointment cancellation URL." },
+  { key: "{reschedule_link}", label: "Appointment reschedule URL." },
+  { key: "{review_link}", label: "Doctor review page link on the customer dashboard." },
+  { key: "{feedback_link}", label: "Alias for the doctor review page link." },
+  { key: "{dashboard_link}", label: "Relevant dashboard URL for the recipient." },
+  { key: "{doctor_dashboard_link}", label: "Doctor dashboard URL." },
   { key: "{site_name}", label: "Configured pharmacy site name." },
   { key: "{support_email}", label: "Primary support inbox." },
   { key: "{doctor_name}", label: "Assigned doctor display name." },
   { key: "{patient_name}", label: "Patient or customer display name." },
+  { key: "{recipient_name}", label: "Recipient display name." },
   { key: "{customer_email}", label: "Customer email address." },
   { key: "{customer_phone}", label: "Customer phone number." },
+  { key: "{patient_note}", label: "Reason or note supplied by the patient." },
+  { key: "{reason}", label: "Alias for the patient note." },
   { key: "{primary_product_name}", label: "Primary product selected for doctor assignment." },
   { key: "{product_service_assigned}", label: "Product or service assigned to the doctor." },
   { key: "{invoice_total}", label: "Formatted invoice or order total." },
@@ -50,6 +70,15 @@ const DEFAULT_EMAIL_TEMPLATES = [
   { id: "order-invoice-email", name: "Order Invoice Email", category: "Orders", status: "active", subject: "Invoice for order #{order_number}", html: "<h1>{document_title}</h1><p>Hello {customer_firstname},</p><p>Your invoice for order #{order_number} is attached.</p><p>{payment_link_html}</p><p>Total due: {invoice_total}</p>" },
   { id: "order-receipt-email", name: "Order Receipt Email", category: "Orders", status: "active", subject: "Receipt for order #{order_number}", html: "<h1>{document_title}</h1><p>Hello {customer_firstname},</p><p>Your receipt for order #{order_number} is attached.</p><p>Thank you for shopping with {site_name}.</p>" },
   { id: "doctor_order_assigned", name: "Doctor Order Assigned", category: "Orders", status: "active", subject: "A pharmacy order needs your review", html: "<p>Hello {doctor_name},</p><p>Order {order_number} has been assigned to you for {patient_name}.</p><p>Product/service: {product_service_assigned}</p><p>You can open your dashboard to create a prescription or schedule an appointment.</p>" },
+  { id: "appointment_customer_confirmation", name: "Appointment Customer Confirmation", category: "Consultations", status: "active", subject: "Appointment confirmed with {doctor_name}", html: "<h1>Appointment confirmed</h1><p>Hello {patient_name},</p><p>Your {consultation_type} appointment is confirmed for {appointment_date} at {appointment_time}.</p><p><strong>Doctor:</strong> {doctor_name}<br /><strong>Amount paid:</strong> {amount_paid}<br /><strong>Booking ID:</strong> {booking_id}<br /><strong>Order ID:</strong> {order_id}</p><p>{google_meet_link_html}</p><p><a href=\"{cancel_link}\">Cancel appointment</a> | <a href=\"{reschedule_link}\">Reschedule appointment</a></p><p>Please join 5 minutes before the appointment starts.</p>" },
+  { id: "appointment_doctor_notification", name: "Appointment Doctor Notification", category: "Consultations", status: "active", subject: "New appointment with {patient_name}", html: "<h1>New appointment</h1><p>Hello {doctor_name},</p><p>A new {consultation_type} appointment has been confirmed.</p><p><strong>Patient:</strong> {patient_name}<br /><strong>Email:</strong> {customer_email}<br /><strong>Phone:</strong> {customer_phone}<br /><strong>Date:</strong> {appointment_date}<br /><strong>Time:</strong> {appointment_time}</p><p><strong>Patient note:</strong> {patient_note}</p><p>{google_meet_link_html}</p><p><a href=\"{dashboard_link}\">Open dashboard</a></p>" },
+  { id: "appointment_customer_reminder_24h", name: "Customer Reminder 24h", category: "Consultations", status: "active", subject: "Reminder: appointment with {doctor_name} tomorrow", html: "<h1>Appointment reminder</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} is scheduled for {appointment_date} at {appointment_time}.</p><p>{google_meet_link_html}</p><p><a href=\"{cancel_link}\">Cancel</a> | <a href=\"{reschedule_link}\">Reschedule</a></p>" },
+  { id: "appointment_customer_reminder_1h", name: "Customer Reminder 1h", category: "Consultations", status: "active", subject: "Your appointment starts in 1 hour", html: "<h1>Your appointment starts in 1 hour</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} starts at {appointment_time}.</p><p>{google_meet_link_html}</p>" },
+  { id: "appointment_doctor_reminder_24h", name: "Doctor Reminder 24h", category: "Consultations", status: "active", subject: "Reminder: appointment with {patient_name} tomorrow", html: "<h1>Appointment reminder</h1><p>Hello {doctor_name},</p><p>Your appointment with {patient_name} is scheduled for {appointment_date} at {appointment_time}.</p><p><strong>Patient note:</strong> {patient_note}</p><p>{google_meet_link_html}</p>" },
+  { id: "appointment_doctor_reminder_1h", name: "Doctor Reminder 1h", category: "Consultations", status: "active", subject: "Your appointment starts in 1 hour", html: "<h1>Your appointment starts in 1 hour</h1><p>Hello {doctor_name},</p><p>Your appointment with {patient_name} starts at {appointment_time}.</p><p>{google_meet_link_html}</p>" },
+  { id: "appointment_customer_followup", name: "Customer Follow Up", category: "Consultations", status: "active", subject: "How was your appointment with {doctor_name}?", html: "<h1>How was your appointment?</h1><p>Hello {patient_name},</p><p>Thank you for choosing Nevari. Please review your appointment with {doctor_name}.</p><p><a href=\"{review_link}\">Leave a doctor review</a></p><p><a href=\"{dashboard_link}\">Book another appointment</a></p>" },
+  { id: "appointment_cancelled", name: "Appointment Cancelled", category: "Consultations", status: "active", subject: "Appointment cancelled", html: "<h1>Appointment cancelled</h1><p>Hello {recipient_name},</p><p>The appointment between {patient_name} and {doctor_name} for {appointment_start} has been cancelled.</p>" },
+  { id: "appointment_rescheduled", name: "Appointment Rescheduled", category: "Consultations", status: "active", subject: "Appointment rescheduled", html: "<h1>Appointment rescheduled</h1><p>Hello {recipient_name},</p><p>The appointment has been rescheduled to {appointment_start}.</p><p>{google_meet_link_html}</p>" },
   { id: "appointment-approved", name: "Appointment Approved", category: "Consultations", status: "active", subject: "Appointment approved for {appointment_date}", html: "<h1>Appointment approved</h1><p>Your consultation with {doctor_name} is set for {appointment_date}.</p><p>{google_meet_link_html}</p><p>{content}</p>" },
   { id: "appointment-cancelled", name: "Appointment Cancelled", category: "Consultations", status: "draft", subject: "Appointment cancelled", html: "<h1>Appointment cancelled</h1><p>{content}</p>" },
   { id: "invoice-email", name: "Invoice Email", category: "Orders", status: "active", subject: "Invoice for order #{order_id}", html: "<h1>Invoice #{order_id}</h1><p>{content}</p><p>Total due: {invoice_total}</p>" },
@@ -346,10 +375,105 @@ function decodePairingBaseUrl(pairingCode) {
   return baseUrl;
 }
 
-function formatMoney(value, currency = "USD") {
+function rememberStoreContext(context = {}) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const currency = normalizeCurrency(context.store_currency || context.currency);
+  const timezone = normalizeTimeZone(context.store_timezone || context.timezone);
+  if (currency) {
+    window.localStorage.setItem(STORE_CURRENCY_KEY, currency);
+  }
+  if (timezone) {
+    window.localStorage.setItem(STORE_TIMEZONE_KEY, timezone);
+  }
+}
+
+function isSessionUsable(session) {
+  if (!session || typeof session !== "object") {
+    return false;
+  }
+  const hasAccessToken = Boolean(String(session.accessToken || "").trim());
+  const expiresAt = Number(session.expiresAt || 0);
+  return hasAccessToken && Number.isFinite(expiresAt) && Date.now() < (expiresAt - SESSION_EXPIRY_SKEW_MS);
+}
+
+function sanitizedPersistedSession(session = {}) {
+  const roles = Array.isArray(session?.user?.roles)
+    ? session.user.roles.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  return {
+    ...session,
+    refreshToken: "",
+    user: session?.user ? {
+      id: session.user.id || "",
+      display_name: session.user.display_name || session.user.name || "",
+      email: session.user.email || "",
+      role: session.user.role || "",
+      roles
+    } : null
+  };
+}
+
+function clearDashboardCacheStorage() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const keysToRemove = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key && key.startsWith("nevari:")) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+}
+
+function storedStoreCurrency() {
+  if (typeof window === "undefined") {
+    return "USD";
+  }
+  return normalizeCurrency(window.localStorage.getItem(STORE_CURRENCY_KEY)) || "USD";
+}
+
+function storedStoreTimeZone() {
+  if (typeof window === "undefined") {
+    return "UTC";
+  }
+  return normalizeTimeZone(window.localStorage.getItem(STORE_TIMEZONE_KEY)) || "UTC";
+}
+
+function normalizeCurrency(value) {
+  const currency = String(value || "").trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    return "";
+  }
+  try {
+    new Intl.NumberFormat("en-US", { style: "currency", currency }).format(0);
+    return currency;
+  } catch {
+    return "";
+  }
+}
+
+function normalizeTimeZone(value) {
+  const timeZone = String(value || "").trim();
+  if (!timeZone) {
+    return "";
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date());
+    return timeZone;
+  } catch {
+    return "";
+  }
+}
+
+function formatMoney(value, currency = storedStoreCurrency()) {
+  const resolvedCurrency = normalizeCurrency(currency) || storedStoreCurrency();
   return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency,
+    currency: resolvedCurrency,
     maximumFractionDigits: 2
   }).format(Number(value || 0));
 }
@@ -362,7 +486,7 @@ function formatPercent(value) {
   return `${Number(value || 0).toFixed(1)}%`;
 }
 
-function formatDate(value, withTime = false) {
+function formatDate(value, withTime = false, timeZone = storedStoreTimeZone()) {
   if (!value) {
     return "n/a";
   }
@@ -373,6 +497,7 @@ function formatDate(value, withTime = false) {
   }
 
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: normalizeTimeZone(timeZone) || storedStoreTimeZone(),
     month: "short",
     day: "numeric",
     year: withTime ? undefined : "numeric",
@@ -670,12 +795,31 @@ function renderEmailTemplate(html, values = {}) {
     customer_lastname: "Okafor",
     order_id: "1048",
     order_number: "1048",
-    appointment_date: "May 22, 2026 at 10:00 AM",
+    appointment_date: "May 22, 2026",
+    appointment_time: "10:00 AM",
+    appointment_start: "May 22, 2026 at 10:00 AM",
+    consultation_type: "Video consultation",
+    amount_paid: "$75.00",
+    booking_id: "BK-1048",
     site_name: DEFAULT_SITE_NAME,
     support_email: "support@nevarihealth.com",
     doctor_name: "Dr. Morgan Lee",
+    patient_name: "Ada Okafor",
+    recipient_name: "Ada Okafor",
+    customer_email: "ada@example.com",
+    customer_phone: "+1 555 0100",
+    patient_note: "Follow-up on blood pressure medication.",
+    reason: "Follow-up on blood pressure medication.",
     google_meet_link: "https://meet.google.com/example-room",
     google_meet_link_html: '<a href="https://meet.google.com/example-room">Join Google Meet</a>',
+    join_link: "https://meet.google.com/example-room",
+    join_link_html: '<a href="https://meet.google.com/example-room">Join Consultation</a>',
+    cancel_link: "https://example.com/dashboard?cancel=BK-1048",
+    reschedule_link: "https://example.com/dashboard?reschedule=BK-1048",
+    review_link: "https://example.com/dashboard?review=1&doctor_id=8&appointment_id=1048",
+    feedback_link: "https://example.com/dashboard?review=1&doctor_id=8&appointment_id=1048",
+    dashboard_link: "https://example.com/dashboard",
+    doctor_dashboard_link: "https://example.com/admin/doctor",
     document_type: "invoice",
     document_title: "Invoice",
     invoice_total: "$128.00",
@@ -701,6 +845,7 @@ function itemQuantityTotal(order) {
 
 function formatTopbarDate() {
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: storedStoreTimeZone(),
     month: "long",
     day: "numeric",
     year: "numeric"
@@ -709,6 +854,7 @@ function formatTopbarDate() {
 
 function formatLiveLabel(value = new Date()) {
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: storedStoreTimeZone(),
     hour: "numeric",
     minute: "2-digit"
   }).format(value);
@@ -1013,10 +1159,10 @@ function getProductDateLabel(product) {
 
 function getProductPriceLabel(product, fallbackCurrency = "USD") {
   if (hasActiveSalePrice(product)) {
-    return formatMoney(getProductPrice(product, "sale_price"), product.currency || fallbackCurrency);
+    return formatMoney(getProductPrice(product, "sale_price"), fallbackCurrency);
   }
   const basePrice = getProductPrice(product, "regular_price") || getProductPrice(product, "price");
-  return formatMoney(basePrice, product.currency || fallbackCurrency);
+  return formatMoney(basePrice, fallbackCurrency);
 }
 
   function extractProductMediaItems(product) {
@@ -1066,7 +1212,7 @@ function buildProductEditDraft(product) {
 }
 
 function getEditorCurrency(product, fallbackCurrency = "USD") {
-  return product?.currency || fallbackCurrency;
+  return fallbackCurrency;
 }
 
 function base64PdfToBlob(base64) {
@@ -1266,7 +1412,7 @@ function persistSessionSnapshot(session, currentPage) {
   }
 
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...session, currentPage }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...sanitizedPersistedSession(session), currentPage }));
   } catch (error) {
     console.warn("Could not persist storefront session", error);
   }
@@ -1775,6 +1921,7 @@ export default function Page() {
   const [emailEditorMode, setEmailEditorMode] = useState("edit");
   const [emailPreviewMode, setEmailPreviewMode] = useState("desktop");
   const [emailTemplateFeedback, setEmailTemplateFeedback] = useState("");
+  const [bookingEmailTest, setBookingEmailTest] = useState({ recipientEmail: "", loading: false, feedback: "", meetLink: "", emailLogIds: [] });
   const [doctorDetailTab, setDoctorDetailTab] = useState("account");
   const [orderCreateModalOpen, setOrderCreateModalOpen] = useState(false);
   const [orderCreateForm, setOrderCreateForm] = useState(EMPTY_ORDER_FORM);
@@ -1801,6 +1948,7 @@ export default function Page() {
   function forcePairingReset(message = "Frontend access was revoked. Pair this dashboard again to continue.") {
     const nextSession = defaultSession();
     clearStoredSessions();
+    clearDashboardCacheStorage();
     latestSessionRef.current = nextSession;
     setSession(nextSession);
     setCurrentPage("overview");
@@ -1851,7 +1999,12 @@ export default function Page() {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        setSession((prev) => ({ ...prev, ...parsed }));
+        const merged = { ...defaultSession(), ...parsed };
+        setSession((prev) => (
+          isSessionUsable(merged)
+            ? { ...prev, ...merged }
+            : { ...prev, ...merged, accessToken: "", refreshToken: "", expiresAt: 0, user: null }
+        ));
         if (parsed.currentPage) {
           setCurrentPage(normalizePageId(parsed.currentPage));
         }
@@ -2107,6 +2260,34 @@ export default function Page() {
   function insertHookIntoSelectedTemplate(hookKey) {
     const template = emailTemplates.find((item) => item.id === selectedEmailTemplateId);
     updateSelectedEmailTemplate({ html: `${template?.html || ""}${template?.html ? "\n" : ""}${hookKey}` });
+  }
+
+  async function sendBookingEmailTest() {
+    const recipientEmail = bookingEmailTest.recipientEmail.trim();
+    if (!recipientEmail) {
+      setBookingEmailTest((current) => ({ ...current, feedback: "Enter an email address." }));
+      return;
+    }
+    setBookingEmailTest((current) => ({ ...current, loading: true, feedback: "Sending booking email preview...", meetLink: "", emailLogIds: [] }));
+    try {
+      const payload = await apiRequest("/emails/booking-test", {
+        method: "POST",
+        body: { recipient_email: recipientEmail }
+      });
+      const result = payload.data || {};
+      setBookingEmailTest((current) => ({
+        ...current,
+        loading: false,
+        feedback: `Sent ${result.email_log_ids?.length || 0} booking preview emails.`,
+        meetLink: result.google_meet_link || "",
+        emailLogIds: result.email_log_ids || []
+      }));
+      showSnackbar("Booking email preview sent.", "success");
+    } catch (error) {
+      const message = error?.message || "Booking email preview failed.";
+      setBookingEmailTest((current) => ({ ...current, loading: false, feedback: message, meetLink: "", emailLogIds: [] }));
+      showSnackbar(message, "error");
+    }
   }
 
   function parseCreateError(error, entityLabel) {
@@ -4293,6 +4474,7 @@ export default function Page() {
     try {
       const payload = await adminApiRequest("summary", {}, activeSession);
       const summary = payload.data || {};
+      rememberStoreContext(summary.dashboard || summary);
       const recentOrders = summary.recent_orders || summary.orders || [];
       setData((prev) => ({
         ...prev,
@@ -4391,6 +4573,7 @@ export default function Page() {
       const nextDoctors = doctorsPayload.data || [];
       const nextProducts = productsPayload.data || [];
       const nextProductCategories = productCategoriesPayload.data || [];
+      rememberStoreContext(nextDashboard);
 
       setData({
         dashboard: nextDashboard,
@@ -4663,6 +4846,7 @@ export default function Page() {
     }
 
     const nextSession = { ...session, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
+    clearDashboardCacheStorage();
     setSession(nextSession);
     setAppDataLoaded(false);
     persistSessionSnapshot(nextSession, currentPage);
@@ -4710,7 +4894,7 @@ export default function Page() {
 
       setSyncStatus({ text: "Paired", mode: "live" });
 
-      if (!session.refreshToken) {
+      if (!isSessionUsable(session) && !session.refreshToken) {
         router.replace("/admin/storefront/login");
         setAuthFeedback(
           isFileProtocol()
@@ -4723,27 +4907,29 @@ export default function Page() {
       hideAuthGate();
       setSyncStatus({ text: "Restoring session...", mode: "" });
 
-      let refreshed;
-      try {
-        refreshed = await refreshSession(session);
-      } catch (error) {
-        if (!isExpiredRefreshSessionError(error) && !/stored session expired/i.test(String(error?.message || ""))) {
-          console.error(error);
-        }
-        if (cancelled) {
+      let restoredSession = session;
+      if (!isSessionUsable(session) && session.refreshToken) {
+        try {
+          restoredSession = await refreshSession(session);
+        } catch (error) {
+          if (!isExpiredRefreshSessionError(error) && !/stored session expired/i.test(String(error?.message || ""))) {
+            console.error(error);
+          }
+          if (cancelled) {
+            return;
+          }
+          if (isPairingRequiredError(error)) {
+            forcePairingReset("Frontend access was revoked. Pair this dashboard again to continue.");
+            return;
+          }
+          const nextSession = { ...session, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
+          setSession(nextSession);
+          persistSessionSnapshot(nextSession, currentPage);
+          router.replace("/admin/storefront/login");
+          setSyncStatus({ text: "Paired", mode: "live" });
+          setAuthFeedback(error.message === "Unauthorized user" ? "Unauthorized user" : "Stored session expired. Sign in again.");
           return;
         }
-        if (isPairingRequiredError(error)) {
-          forcePairingReset("Frontend access was revoked. Pair this dashboard again to continue.");
-          return;
-        }
-        const nextSession = { ...session, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
-        setSession(nextSession);
-        persistSessionSnapshot(nextSession, currentPage);
-        router.replace("/admin/storefront/login");
-        setSyncStatus({ text: "Paired", mode: "live" });
-        setAuthFeedback(error.message === "Unauthorized user" ? "Unauthorized user" : "Stored session expired. Sign in again.");
-        return;
       }
 
       if (cancelled) {
@@ -4751,7 +4937,7 @@ export default function Page() {
       }
 
       try {
-        await fetchDashboardSummary(refreshed);
+        await fetchDashboardSummary(restoredSession);
         if (cancelled) {
           return;
         }
@@ -5114,7 +5300,7 @@ export default function Page() {
 
   const dashboard = data.dashboard || {};
   const sales = dashboard.sales || {};
-  const storeCurrency = dashboard.store_currency || sales.currency || (data.orderDetails || []).find((order) => order.currency)?.currency || "USD";
+  const storeCurrency = dashboard.store_currency || sales.currency || storedStoreCurrency();
   const consultations = dashboard.consultations || {};
   const prescriptionsSummary = dashboard.prescriptions || {};
   const emailsSummary = dashboard.emails || {};
@@ -5684,7 +5870,7 @@ export default function Page() {
         customerLabel: customer.name,
         customerEmail: customer.email,
         amount: safeNumber(order.total),
-        currency: order.currency || storeCurrency,
+        currency: storeCurrency,
         paymentStatus,
         rxStatus: order.rx_status || "clear",
         createdAt: order.created_at,
@@ -5898,7 +6084,7 @@ export default function Page() {
       sku: item.sku || "No SKU",
       quantity: Number(item.quantity || 0),
       total: item.total || ((item.unit_price || 0) * Number(item.quantity || 0)),
-      currency: order.currency || storeCurrency,
+      currency: storeCurrency,
       createdAt: order.created_at,
       image_url: item.image_url || item.image?.src || item.thumbnail || item.image || ""
     })))
@@ -6716,6 +6902,7 @@ export default function Page() {
                       <thead>
                         <tr>
                           <th>Order</th>
+                          <th>Type</th>
                           <th>Customer</th>
                           <th>Product mix</th>
                           <th>Prescription</th>
@@ -6725,7 +6912,7 @@ export default function Page() {
                         </tr>
                       </thead>
                       <tbody>
-                        {ordersLoading ? renderTableRowSkeletons(6, 7) : filteredOrders.length ? filteredOrders.map((order) => {
+                        {ordersLoading ? renderTableRowSkeletons(6, 8) : filteredOrders.length ? filteredOrders.map((order) => {
                           const prescription = (data.prescriptionDetails || []).find((item) => item.id === order.prescription_id);
                           const itemNames = Array.isArray(order.items_summary) ? order.items_summary.filter(Boolean) : [];
                           const itemCount = Number(order.totals?.items_count || order.items_count || itemNames.length || 0);
@@ -6734,6 +6921,7 @@ export default function Page() {
                             : itemCount > 0
                               ? `${itemCount} item${itemCount === 1 ? "" : "s"}`
                               : "Order details unavailable";
+                          const typeMeta = getOrderTypeMeta(order);
                           return (
                             <tr
                               key={order.id}
@@ -6741,6 +6929,7 @@ export default function Page() {
                               onClick={() => openOrderDetails(order.id)}
                             >
                               <td><div className="table-title"><strong>#{order.number}</strong><span className="muted">{formatDate(order.created_at, true)}</span></div></td>
+                              <td><StatusPill value={typeMeta.tone}>{typeMeta.label}</StatusPill></td>
                               <td>
                                 <div className="table-customer-cell order-customer-cell">
                                   <strong>{resolveOrderCustomerSummary(order).name}</strong>
@@ -6749,7 +6938,7 @@ export default function Page() {
                               </td>
                               <td>{productMixText}</td>
                               <td>{prescription ? `${prescription.prescription_number} • ${prescription.status}` : (order.prescription_id ? `Prescription #${order.prescription_id}` : "No linked prescription")}</td>
-                              <td>{formatMoney(order.total || 0, order.currency || storeCurrency)}</td>
+                              <td>{formatMoney(order.total || 0, storeCurrency)}</td>
                               <td><StatusPill value={order.rx_status || order.status}>{order.rx_status || order.status}</StatusPill></td>
                               <td>
                                 <div className="table-action-strip">
@@ -6846,7 +7035,7 @@ export default function Page() {
                               </div>
                             </td>
                             <td className="created-col">{formatDate(row.createdAt, true)}</td>
-                            <td className="amount-col">{formatMoney(row.amount, row.currency)}</td>
+                            <td className="amount-col">{formatMoney(row.amount, storeCurrency)}</td>
                             <td className="payment-col"><StatusPill value={row.paymentStatus}>{row.paymentStatus}</StatusPill></td>
                             <td className="rx-col"><StatusPill value={row.rxStatus}>{row.rxStatus}</StatusPill></td>
                             <td className="action-col">
@@ -7362,7 +7551,7 @@ export default function Page() {
                           {selectedCategory ? (
                             categoryInlineField === "price" ? (
                               <div className="product-category-price-editor">
-                                <span className="product-category-currency">NGN</span>
+                                <span className="product-category-currency">{storeCurrency}</span>
                                 <input
                                   ref={categoryPriceInputRef}
                                   className="product-category-inline-input product-category-price-input"
@@ -7594,6 +7783,57 @@ export default function Page() {
 
             {currentPage === "emails" && (
               <section className="page-view active">
+                <section className="panel email-booking-test-panel">
+                  <div className="panel-header">
+                    <div>
+                      <p className="section-kicker">Booking email test</p>
+                      <h2>Preview appointment lifecycle emails</h2>
+                    </div>
+                    <StatusPill value={bookingEmailTest.meetLink ? "success" : "info"}>
+                      {bookingEmailTest.meetLink ? "Direct Meet link created" : "Ready"}
+                    </StatusPill>
+                  </div>
+                  <div className="email-editor-grid">
+                    <div className="email-editor-fields">
+                      <label className="detail-field detail-field-wide">
+                        <span>Recipient email</span>
+                        <input
+                          type="email"
+                          value={bookingEmailTest.recipientEmail}
+                          onChange={(event) => setBookingEmailTest((current) => ({ ...current, recipientEmail: event.target.value, feedback: "" }))}
+                          placeholder="test@example.com"
+                        />
+                      </label>
+                      <div className="toolbar">
+                        <button className="button-primary" type="button" onClick={sendBookingEmailTest} disabled={bookingEmailTest.loading}>
+                          {bookingEmailTest.loading ? "Sending..." : "Send 7 booking emails"}
+                        </button>
+                      </div>
+                      {bookingEmailTest.feedback ? <p className="receipt-feedback">{bookingEmailTest.feedback}</p> : null}
+                      {bookingEmailTest.meetLink ? (
+                        <p className="receipt-feedback">
+                          Google Meet: <a href={bookingEmailTest.meetLink} target="_blank" rel="noreferrer">{bookingEmailTest.meetLink}</a>
+                        </p>
+                      ) : null}
+                    </div>
+                    <aside className="email-hook-panel">
+                      <div className="panel-header compact-header">
+                        <div>
+                          <p className="section-kicker">Emails sent</p>
+                          <h3>7-message booking preview</h3>
+                        </div>
+                      </div>
+                      <div className="email-hook-list">
+                        {["Customer confirmation", "Doctor notification", "Customer 24h reminder", "Customer 1h reminder", "Doctor 24h reminder", "Doctor 1h reminder", "Customer follow up"].map((label, index) => (
+                          <div className="email-hook-row" key={label}>
+                            <strong>{label}</strong>
+                            <span>{bookingEmailTest.emailLogIds[index] ? `Email log #${bookingEmailTest.emailLogIds[index]}` : "Preview email"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </aside>
+                  </div>
+                </section>
                 <section className="email-template-manager panel">
                   <aside className="email-template-list">
                     <div className="panel-header">
@@ -8160,8 +8400,8 @@ export default function Page() {
                                   <button type="button" aria-label="Increase quantity" onClick={() => updateOrderCreateItem(index, { quantity: quantity + 1 })}>+</button>
                                 </div>
                               </td>
-                              <td>{product ? formatMoney(unitPrice, product.currency || storeCurrency) : "—"}</td>
-                              <td>{product ? formatMoney(lineTotal, product.currency || storeCurrency) : "—"}</td>
+                              <td>{product ? formatMoney(unitPrice, storeCurrency) : "—"}</td>
+                              <td>{product ? formatMoney(lineTotal, storeCurrency) : "—"}</td>
                               <td>
                                 <button className="icon-button order-line-remove" type="button" aria-label="Remove product" onClick={() => removeOrderCreateItem(index)}>
                                   <InlineIcon id="i-x" />
@@ -8268,12 +8508,12 @@ export default function Page() {
 
                   <div className="order-summary-grid">
                     {[
-                      { label: "Total Amount", value: formatMoney(selectedOrderDetail.totals?.subtotal || 0, selectedOrderDetail.currency || storeCurrency), note: "item subtotal before adjustments" },
+                      { label: "Total Amount", value: formatMoney(selectedOrderDetail.totals?.subtotal || 0, storeCurrency), note: "item subtotal before adjustments" },
                       { label: "Items Count", value: formatNumber(itemQuantityTotal(selectedOrderDetail)), note: `${formatNumber(selectedOrderDetail.totals?.items_count || (selectedOrderDetail.items || []).length)} distinct line items` },
-                      { label: "Shipping Fee", value: formatMoney((selectedOrderDetail.totals?.shipping_total || 0) + (selectedOrderDetail.totals?.shipping_tax || 0), selectedOrderDetail.currency || storeCurrency), note: "shipping and shipping tax" },
-                      { label: "Discount", value: formatMoney(selectedOrderDetail.totals?.discount_total || 0, selectedOrderDetail.currency || storeCurrency), note: "line and order discounts" },
-                      { label: "Tax/VAT", value: formatMoney(selectedOrderDetail.totals?.tax_total || 0, selectedOrderDetail.currency || storeCurrency), note: "tax across all items" },
-                      { label: "Final Payable Amount", value: formatMoney(selectedOrderDetail.totals?.grand_total || selectedOrderDetail.total || 0, selectedOrderDetail.currency || storeCurrency), note: selectedOrderDetail.rx_status ? `RX: ${formatStatusLabel(selectedOrderDetail.rx_status)}` : "order grand total" }
+                      { label: "Shipping Fee", value: formatMoney((selectedOrderDetail.totals?.shipping_total || 0) + (selectedOrderDetail.totals?.shipping_tax || 0), storeCurrency), note: "shipping and shipping tax" },
+                      { label: "Discount", value: formatMoney(selectedOrderDetail.totals?.discount_total || 0, storeCurrency), note: "line and order discounts" },
+                      { label: "Tax/VAT", value: formatMoney(selectedOrderDetail.totals?.tax_total || 0, storeCurrency), note: "tax across all items" },
+                      { label: "Final Payable Amount", value: formatMoney(selectedOrderDetail.totals?.grand_total || selectedOrderDetail.total || 0, storeCurrency), note: selectedOrderDetail.rx_status ? `RX: ${formatStatusLabel(selectedOrderDetail.rx_status)}` : "order grand total" }
                     ].map((metric) => (
                       <div className="mini-stat order-mini-stat" key={metric.label}>
                         <span>{metric.label}</span>
@@ -8338,9 +8578,9 @@ export default function Page() {
                             </td>
                             <td>{item.sku || "n/a"}</td>
                             <td>{formatNumber(item.quantity)}</td>
-                            <td>{formatMoney(item.unit_price || 0, selectedOrderDetail.currency || storeCurrency)}</td>
-                            <td>{formatMoney(item.discount_total || 0, selectedOrderDetail.currency || storeCurrency)}</td>
-                            <td>{formatMoney(item.total || 0, selectedOrderDetail.currency || storeCurrency)}</td>
+                            <td>{formatMoney(item.unit_price || 0, storeCurrency)}</td>
+                            <td>{formatMoney(item.discount_total || 0, storeCurrency)}</td>
+                            <td>{formatMoney(item.total || 0, storeCurrency)}</td>
                             <td><StatusPill value={item.stock_status || "info"}>{formatStatusLabel(item.stock_status || (item.rx_required ? "rx required" : "available"))}</StatusPill></td>
                           </tr>
                         )) : (
@@ -8544,7 +8784,7 @@ export default function Page() {
             <div className="receipt-command-bar">
               <div>
                 <span>Total paid</span>
-                <strong>{formatMoney(selectedPaymentReceipt.total || 0, selectedPaymentReceipt.currency || storeCurrency)}</strong>
+                <strong>{formatMoney(selectedPaymentReceipt.total || 0, storeCurrency)}</strong>
               </div>
               <div className="receipt-command-actions">
                 <button className="pill-button" type="button" onClick={printPaymentReceipt} disabled={Boolean(receiptActionLoading)}>
@@ -8601,8 +8841,8 @@ export default function Page() {
                 </div>
                 <div className="detail-list receipt-info-grid">
                   <div className="detail-item-card"><strong>Payment status</strong><span className="muted">{formatStatusLabel(selectedPaymentReceipt.payment_status || selectedPaymentReceipt.status)}</span></div>
-                  <div className="detail-item-card"><strong>Amount</strong><span className="muted">{formatMoney(selectedPaymentReceipt.total || 0, selectedPaymentReceipt.currency || storeCurrency)}</span></div>
-                  <div className="detail-item-card"><strong>Order type</strong><span className="muted">{selectedPaymentReceipt.rx_status || "clear"}</span></div>
+                  <div className="detail-item-card"><strong>Amount</strong><span className="muted">{formatMoney(selectedPaymentReceipt.total || 0, storeCurrency)}</span></div>
+                  <div className="detail-item-card"><strong>Order type</strong><span className="muted">{getOrderTypeMeta(selectedPaymentReceipt).label}</span></div>
                   <div className="detail-item-card"><strong>Reference</strong><span className="muted">Order #{selectedPaymentReceipt.number}</span></div>
                 </div>
               </div>
@@ -8625,12 +8865,12 @@ export default function Page() {
                       <div className="receipt-line-item-copy">
                         <div className="receipt-line-item-head">
                           <strong>{item.name}</strong>
-                          <span>{formatMoney(item.total || ((item.unit_price || 0) * Number(item.quantity || 0)), selectedPaymentReceipt.currency || storeCurrency)}</span>
+                          <span>{formatMoney(item.total || ((item.unit_price || 0) * Number(item.quantity || 0)), storeCurrency)}</span>
                         </div>
                         <div className="receipt-line-item-meta">
                           <span>Qty {formatNumber(item.quantity || 0)}</span>
                           <span>{item.sku || "No SKU"}</span>
-                          <span>{formatMoney(item.unit_price || 0, selectedPaymentReceipt.currency || storeCurrency)} each</span>
+                          <span>{formatMoney(item.unit_price || 0, storeCurrency)} each</span>
                         </div>
                       </div>
                     </div>
@@ -9291,7 +9531,7 @@ export default function Page() {
                           <strong>{item.prescription_number || `Prescription #${item.id}`}</strong>
                           <StatusPill value={item.status}>{formatStatusLabel(item.status)}</StatusPill>
                         </div>
-                        <p>Order {linkedOrder?.number ? `#${linkedOrder.number}` : "not linked"} - {patientLabel(item.patient_user_id)} - {formatMoney(linkedOrder?.total || 0, linkedOrder?.currency || storeCurrency)}</p>
+                        <p>Order {linkedOrder?.number ? `#${linkedOrder.number}` : "not linked"} - {patientLabel(item.patient_user_id)} - {formatMoney(linkedOrder?.total || 0, storeCurrency)}</p>
                         <div className="product-chip-list">
                           {(linkedOrder?.items || []).length ? (linkedOrder.items || []).map((product) => (
                             <div className="product-chip-item" key={`${item.id}-${product.id || product.sku || product.name}`}>
@@ -9371,7 +9611,7 @@ export default function Page() {
                             {paginatedCustomerOrders.length ? paginatedCustomerOrders.map((order) => (
                               <tr key={order.id}>
                                 <td><button className="table-link" type="button" onClick={() => openCustomerOrderInOrdersPage(order.id)}>#{order.number}</button></td>
-                                <td>{formatMoney(order.total || 0, order.currency || storeCurrency)}</td>
+                                <td>{formatMoney(order.total || 0, storeCurrency)}</td>
                                 <td>{formatDate(order.created_at, true)}</td>
                                 <td>{order.assigned_doctor?.display_name || "Not assigned"}</td>
                               </tr>
@@ -9422,7 +9662,7 @@ export default function Page() {
                                 </td>
                                 <td>{product.orderNumber ? <button className="table-link" type="button" onClick={() => openCustomerOrderInOrdersPage(product.orderId)}>#{product.orderNumber}</button> : "n/a"}</td>
                                 <td>{formatDate(product.createdAt, true)}</td>
-                                <td>{formatMoney(product.total || 0, product.currency)}</td>
+                                <td>{formatMoney(product.total || 0, storeCurrency)}</td>
                                 <td>{formatNumber(product.quantity)}</td>
                               </tr>
                             )) : <tr><td colSpan="5" className="muted">No purchased products found for this customer.</td></tr>}

@@ -6,6 +6,12 @@ import { FRONTENDS } from "./frontend-config";
 import { setDocumentMetadata } from "./page-metadata";
 import { buildUrl, defaultSession, frontendContext, isPairingRequiredPayload, loadSession, resetToPairingState, saveSession } from "./role-session";
 
+function isSessionUsable(session) {
+  const hasAccessToken = Boolean(String(session?.accessToken || "").trim());
+  const expiresAt = Number(session?.expiresAt || 0);
+  return hasAccessToken && Number.isFinite(expiresAt) && Date.now() < (expiresAt - 30_000);
+}
+
 function AuthButtonContent({ loading, loadingText, idleText }) {
   if (!loading) {
     return idleText;
@@ -40,7 +46,7 @@ export default function RoleLoginPage({ config }) {
     router.prefetch(config.dashboardPath);
     if (!next.paired) {
       router.replace(config.setupPath || FRONTENDS.admin.setupPath);
-    } else if (next.refreshToken) {
+    } else if (isSessionUsable(next)) {
       router.replace(config.dashboardPath);
     }
   }, [config, router]);

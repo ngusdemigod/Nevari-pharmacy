@@ -498,6 +498,11 @@ final class Nevari_Rest {
             'callback' => [__CLASS__, 'emails_templates_test'],
             'permission_callback' => [__CLASS__, 'store_admin_required'],
         ]);
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/emails/booking-test', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'emails_booking_test'],
+            'permission_callback' => [__CLASS__, 'store_admin_required'],
+        ]);
     }
 
     private static function dashboard_routes(): void {
@@ -573,7 +578,13 @@ final class Nevari_Rest {
         }
         if (!Nevari_Helpers::is_store_admin()) {
             if (Nevari_Helpers::is_patient()) {
-                $args['customer_id'] = get_current_user_id();
+                $current_user = wp_get_current_user();
+                $email = $current_user && !empty($current_user->user_email) ? sanitize_email((string) $current_user->user_email) : '';
+                if (!$email) {
+                    return Nevari_Helpers::error('forbidden', 'A customer account email is required to load orders.', 403);
+                }
+                // Enforce patient order scope on backend using the authenticated account email.
+                $args['billing_email'] = $email;
             } elseif (Nevari_Helpers::is_doctor()) {
                 $args['meta_key'] = '_nevari_assigned_doctor_user_id';
                 $args['meta_value'] = (string) get_current_user_id();
@@ -683,6 +694,7 @@ final class Nevari_Rest {
         if ($response = Nevari_Helpers::rate_limit('rest_orders_read', 180, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'document-data'])) {
             return $response;
         }
+        global $wpdb;
         $order = self::get_order_scoped((int) $request['id']);
         if (is_wp_error($order)) {
             return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) $order->get_error_data('status') ?: 404);
@@ -702,6 +714,28 @@ final class Nevari_Rest {
         $active_gateway = isset($settings['active_gateway']) ? (string) $settings['active_gateway'] : 'woocommerce';
         $invoice_number = self::invoice_number_for_order($order);
 
+        $appointment_row = null;
+        $appointment_id = (int) $order->get_meta('_nevari_appointment_id');
+        if ($appointment_id > 0) {
+            $appointment_row = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM " . Nevari_Helpers::table('appointments') . " WHERE id = %d LIMIT 1",
+                $appointment_id
+            ));
+        }
+        if (!$appointment_row) {
+            $appointment_row = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM " . Nevari_Helpers::table('appointments') . " WHERE order_id = %d ORDER BY id DESC LIMIT 1",
+                (int) $order->get_id()
+            ));
+        }
+
+        $consultation_type = $appointment_row ? ucwords(str_replace('_', ' ', (string) ($appointment_row->type ?: 'consultation'))) : '';
+        $consultation_brief = $appointment_row ? sanitize_text_field((string) ($appointment_row->reason ?: '')) : '';
+        $consultation_when = $appointment_row && !empty($appointment_row->start_at)
+            ? gmdate('M j, Y g:i A', strtotime((string) $appointment_row->start_at . ' UTC'))
+            : '';
+        $is_consultation_order = (bool) $appointment_row;
+
         $rows = [];
         foreach ($items as $item) {
             $quantity = (float) $item->get_quantity();
@@ -709,6 +743,10 @@ final class Nevari_Rest {
             $line_total = (float) $item->get_total();
             $rows[] = [
                 'name' => wp_strip_all_tags($item->get_name()),
+                'is_consultation' => $is_consultation_order,
+                'consultation_type' => $consultation_type,
+                'consultation_brief' => $consultation_brief,
+                'consultation_when' => $consultation_when,
                 'qty' => $quantity,
                 'rate' => $quantity > 0 ? $line_subtotal / $quantity : $line_subtotal,
                 'tax' => (float) $item->get_total_tax(),
@@ -737,6 +775,8 @@ final class Nevari_Rest {
             'payment_gateway_configured' => Nevari_Helpers::active_payment_gateway_configured(),
             'active_payment_gateway' => $active_gateway,
             'available_gateways' => self::available_invoice_gateways(),
+            'currency' => self::store_currency(),
+            'store_currency' => self::store_currency(),
             'invoice_date' => $order->get_date_created() ? $order->get_date_created()->date('c') : null,
             'due_date' => $order->get_date_created() ? $order->get_date_created()->date('c') : null,
             'customer' => [
@@ -1565,7 +1605,8 @@ final class Nevari_Rest {
                 'amount_paid' => $amount_paid,
                 'balance_due' => $balance_due,
             ],
-            'currency' => $order->get_currency() ?: get_woocommerce_currency(),
+            'currency' => self::store_currency(),
+            'store_currency' => self::store_currency(),
             'available_gateways' => self::available_invoice_gateways(),
             'branded_payment_url' => self::branded_invoice_payment_url($order),
             'woocommerce_payment_url' => $order->needs_payment() ? $order->get_checkout_payment_url(false) : '',
@@ -3148,6 +3189,7 @@ final class Nevari_Rest {
             'display_name' => $user->display_name,
             'email' => $include_private || Nevari_Helpers::is_store_admin() ? $user->user_email : null,
             'store_currency' => self::store_currency(),
+            'store_timezone' => self::store_timezone(),
             'profile_post_id' => $profile_id ?: null,
             'bio' => $profile_id ? wp_strip_all_tags(get_post_field('post_content', $profile_id)) : '',
             'bio_short' => $profile_id ? get_post_meta($profile_id, '_nevari_bio_short', true) : '',
@@ -3218,9 +3260,7 @@ final class Nevari_Rest {
 
     private static function build_available_slots(int $doctor_id, string $date, array $availability): array {
         global $wpdb;
-        $duration = 30;
-        $settings = $wpdb->get_row($wpdb->prepare("SELECT default_appointment_duration FROM " . Nevari_Helpers::table('doctor_settings') . " WHERE doctor_user_id = %d", $doctor_id));
-        if ($settings) { $duration = max(5, (int) $settings->default_appointment_duration); }
+        $duration = self::doctor_minimum_appointment_duration($doctor_id);
         $weekday = strtolower(gmdate('l', strtotime($date)));
         $ranges = isset($availability[$weekday]) && is_array($availability[$weekday]) ? $availability[$weekday] : [];
         if (!$ranges) {
@@ -3251,6 +3291,39 @@ final class Nevari_Rest {
             }
         }
         return $slots;
+    }
+
+    private static function doctor_minimum_appointment_duration(int $doctor_id): int {
+        global $wpdb;
+        $settings = $wpdb->get_row($wpdb->prepare("SELECT default_appointment_duration FROM " . Nevari_Helpers::table('doctor_settings') . " WHERE doctor_user_id = %d", $doctor_id));
+        return $settings ? max(5, (int) $settings->default_appointment_duration) : 30;
+    }
+
+    private static function appointment_duration_is_available(int $doctor_id, string $start, string $end, array $availability, int $minimum_duration): bool {
+        $start_ts = strtotime($start . ' UTC');
+        $end_ts = strtotime($end . ' UTC');
+        if (!$start_ts || !$end_ts || $end_ts <= $start_ts) {
+            return false;
+        }
+        $date_key = gmdate('Y-m-d', $start_ts);
+        if ($date_key !== gmdate('Y-m-d', $end_ts - 1)) {
+            return false;
+        }
+        $available_slots = self::build_available_slots($doctor_id, $date_key, $availability);
+        $available_starts = [];
+        foreach ($available_slots as $slot) {
+            $slot_start = Nevari_Helpers::normalize_datetime($slot['start_at'] ?? null);
+            if ($slot_start) {
+                $available_starts[$slot_start] = true;
+            }
+        }
+        for ($cursor = $start_ts; $cursor < $end_ts; $cursor += ($minimum_duration * 60)) {
+            $segment_start = gmdate('Y-m-d H:i:s', $cursor);
+            if (empty($available_starts[$segment_start])) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static function appointments_index(WP_REST_Request $request): WP_REST_Response {
@@ -3374,6 +3447,17 @@ final class Nevari_Rest {
         if (strtotime($start) <= time()) {
             return Nevari_Helpers::error('invalid_datetime', 'Appointment must be in the future.', 422);
         }
+        $minimum_duration = self::doctor_minimum_appointment_duration($doctor_id);
+        $requested_duration = (int) round((strtotime($end) - strtotime($start)) / 60);
+        if ($requested_duration < $minimum_duration || $requested_duration % $minimum_duration !== 0 || $requested_duration > ($minimum_duration * 4)) {
+            return Nevari_Helpers::error('invalid_duration', sprintf('Appointment duration must be between %1$d and %2$d minutes in %1$d minute intervals.', $minimum_duration, $minimum_duration * 4), 422);
+        }
+        $availability = get_user_meta($doctor_id, '_nevari_availability', true);
+        $availability = is_array($availability) ? $availability : [];
+        if (!self::appointment_duration_is_available($doctor_id, $start, $end, $availability, $minimum_duration)) {
+            Nevari_Audit::log('consultation', 'nevari', 'appointment.doctor_unavailable', 'error', ['related_user_id' => $patient_id, 'message' => 'Doctor unavailable for requested slot.']);
+            return Nevari_Helpers::error('doctor_unavailable', 'Doctor is not available for the selected date and time.', 409);
+        }
         if (!self::woo_available()) {
             return Nevari_Helpers::error('woocommerce_missing', 'WooCommerce is required to create the appointment checkout.', 503);
         }
@@ -3382,17 +3466,25 @@ final class Nevari_Rest {
             return Nevari_Helpers::error('consultation_fee_missing', 'This doctor does not have a consultation fee configured.', 422);
         }
         $table = Nevari_Helpers::table('appointments');
+        $lock_name = 'nevari_appointment_' . $doctor_id . '_' . md5($start . '|' . $end);
+        $lock_acquired = (int) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 10)', $lock_name));
+        if ($lock_acquired !== 1) {
+            return Nevari_Helpers::error('appointment_slot_lock_failed', 'This slot is being booked by another customer. Try again in a moment.', 409);
+        }
         $conflict = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table} WHERE doctor_user_id = %d AND status IN ('awaiting_payment','requested','confirmed','checked_in') AND start_at < %s AND end_at > %s",
+            "SELECT COUNT(*) FROM {$table} WHERE doctor_user_id = %d AND ((status IN ('requested','confirmed','checked_in') OR (status = 'awaiting_payment' AND (reserved_until IS NULL OR reserved_until > %s)))) AND start_at < %s AND end_at > %s",
             $doctor_id,
+            Nevari_Helpers::now(),
             $end,
             $start
         ));
         if ($conflict) {
+            $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock_name));
             Nevari_Audit::log('consultation', 'nevari', 'appointment.slot_unavailable', 'error', ['related_user_id' => $patient_id, 'message' => 'Appointment slot unavailable.']);
             return Nevari_Helpers::error('appointment_slot_unavailable', 'This appointment slot is no longer available.', 409);
         }
         $now = Nevari_Helpers::now();
+        $reserved_until = gmdate('Y-m-d H:i:s', time() + (15 * MINUTE_IN_SECONDS));
         $wpdb->insert($table, [
             'patient_user_id' => $patient_id,
             'doctor_user_id' => $doctor_id,
@@ -3407,57 +3499,27 @@ final class Nevari_Rest {
             'reason' => $reason,
             'symptoms' => isset($params['symptoms']) ? Nevari_Helpers::json_encode_safe($params['symptoms']) : null,
             'intake_form' => isset($params['intake_form']) ? Nevari_Helpers::json_encode_safe($params['intake_form']) : null,
+            'reserved_until' => $reserved_until,
             'created_by' => get_current_user_id(),
             'created_at' => $now,
             'updated_at' => $now,
         ]);
         $appointment_id = (int) $wpdb->insert_id;
+        if ($appointment_id < 1) {
+            $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock_name));
+            return Nevari_Helpers::error('appointment_create_failed', 'Appointment could not be reserved.', 500);
+        }
         Nevari_Helpers::ensure_doctor_patient_link($doctor_id, $patient_id, 'appointment');
         $checkout_order = self::create_appointment_checkout_order($appointment_id, $patient_id, $doctor_id, $fee, $reason);
         if (is_wp_error($checkout_order)) {
             $wpdb->delete($table, ['id' => $appointment_id], ['%d']);
+            $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock_name));
             return Nevari_Helpers::error($checkout_order->get_error_code(), $checkout_order->get_error_message(), (int) $checkout_order->get_error_data('status') ?: 500);
         }
         $wpdb->update($table, ['order_id' => (int) $checkout_order->get_id(), 'updated_at' => Nevari_Helpers::now()], ['id' => $appointment_id], ['%d', '%s'], ['%d']);
+        $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock_name));
+        Nevari_Plugin::instance()->schedule_appointment_reservation_expiry($appointment_id, $reserved_until);
         Nevari_Audit::log('consultation', 'nevari', 'appointment.created', 'success', ['appointment_id' => $appointment_id, 'related_user_id' => $patient_id, 'message' => 'Appointment created.']);
-
-        $patient = get_user_by('id', $patient_id);
-        $appointment = self::get_appointment_row($appointment_id);
-        $calendar = Nevari_Helpers::appointment_calendar_links($appointment);
-        $email_variables = isset($params['email_variables']) && is_array($params['email_variables']) ? $params['email_variables'] : [];
-        $requested_meeting_link = '';
-        foreach (['google_meet_link', 'meet_link', 'meeting_url'] as $meeting_key) {
-            if (!empty($params[$meeting_key])) {
-                $requested_meeting_link = esc_url_raw((string) $params[$meeting_key]);
-                break;
-            }
-            if (!empty($email_variables[$meeting_key]) && strpos((string) $email_variables[$meeting_key], '{') === false) {
-                $requested_meeting_link = esc_url_raw((string) $email_variables[$meeting_key]);
-                break;
-            }
-        }
-        $google_meet_link = $requested_meeting_link ?: ($type === 'video' ? $calendar['google_url'] : '');
-        $ics = [
-            'filename' => Nevari_Helpers::appointment_ics_filename($appointment),
-            'content' => Nevari_Helpers::appointment_ics_content($appointment, $doctor->display_name, $patient ? $patient->display_name : ''),
-        ];
-        Nevari_Emails::queue_or_send([
-            'template_key' => 'appointment_requested',
-            'recipient_user_id' => $patient_id,
-            'related_object_type' => 'appointment',
-            'related_object_id' => $appointment_id,
-            'attachments' => [$ics],
-            'variables' => [
-                'patient_name' => $patient ? $patient->display_name : '',
-                'doctor_name' => $doctor->display_name,
-                'appointment_start' => gmdate('c', strtotime($start)),
-                'payment_link' => $checkout_order->get_checkout_payment_url(false),
-                'payment_link_html' => ['html' => '<a href="' . esc_url($checkout_order->get_checkout_payment_url(false)) . '">Complete payment</a>', 'text' => $checkout_order->get_checkout_payment_url(false)],
-                'google_meet_link' => $google_meet_link,
-                'google_meet_link_html' => $google_meet_link ? ['html' => '<a href="' . esc_url($google_meet_link) . '">Join Google Meet</a>', 'text' => $google_meet_link] : '',
-            ],
-        ], false);
-        self::queue_appointment_staff_notifications($appointment, $doctor, $patient, $calendar, $ics);
 
         return Nevari_Helpers::success(Nevari_Helpers::format_appointment(self::get_appointment_row($appointment_id)), [], 201);
     }
@@ -3503,9 +3565,12 @@ final class Nevari_Rest {
         $params = Nevari_Helpers::get_json_params($request);
         $data = ['updated_at' => Nevari_Helpers::now()];
         $action = 'appointment.updated';
+        $old_start_at = (string) $appointment->start_at;
 
         if (str_ends_with($route, '/cancel')) {
             $data['status'] = 'cancelled';
+            $data['reserved_until'] = null;
+            $data['cancelled_at'] = Nevari_Helpers::now();
             $data['cancellation_reason'] = isset($params['reason']) ? sanitize_textarea_field((string) $params['reason']) : null;
             $data['cancelled_by'] = get_current_user_id();
             $action = 'appointment.cancelled';
@@ -3527,9 +3592,10 @@ final class Nevari_Rest {
                 return Nevari_Helpers::error('invalid_datetime', 'Appointment must be in the future.', 422);
             }
             $conflict = (int) $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM " . Nevari_Helpers::table('appointments') . " WHERE doctor_user_id = %d AND id <> %d AND status IN ('awaiting_payment','requested','confirmed','checked_in') AND start_at < %s AND end_at > %s",
+                "SELECT COUNT(*) FROM " . Nevari_Helpers::table('appointments') . " WHERE doctor_user_id = %d AND id <> %d AND ((status IN ('requested','confirmed','checked_in') OR (status = 'awaiting_payment' AND (reserved_until IS NULL OR reserved_until > %s)))) AND start_at < %s AND end_at > %s",
                 (int) $appointment->doctor_user_id,
                 (int) $appointment->id,
+                Nevari_Helpers::now(),
                 $end,
                 $start
             ));
@@ -3538,7 +3604,13 @@ final class Nevari_Rest {
             }
             $data['start_at'] = $start;
             $data['end_at'] = $end;
-            $data['status'] = Nevari_Helpers::is_patient() ? 'requested' : 'confirmed';
+            $data['status'] = 'confirmed';
+            $data['rescheduled_at'] = Nevari_Helpers::now();
+            $data['customer_reminder_24h_sent_at'] = null;
+            $data['customer_reminder_1h_sent_at'] = null;
+            $data['doctor_reminder_24h_sent_at'] = null;
+            $data['doctor_reminder_1h_sent_at'] = null;
+            $data['customer_followup_sent_at'] = null;
             $action = 'appointment.rescheduled';
         } elseif (str_ends_with($route, '/notes')) {
             if (!Nevari_Helpers::is_doctor() && !Nevari_Helpers::is_store_admin()) { return Nevari_Helpers::error('forbidden', 'Only doctors or admins can update notes.', 403); }
@@ -3550,6 +3622,12 @@ final class Nevari_Rest {
         $updated = self::get_appointment_row((int) $appointment->id);
         if ($updated && $updated->status === 'confirmed' && $updated->payment_status === 'paid') {
             Nevari_Plugin::instance()->schedule_appointment_reminder((int) $updated->id, (string) $updated->start_at);
+        }
+        if ($updated && $action === 'appointment.cancelled') {
+            Nevari_Plugin::instance()->send_appointment_cancellation_emails($updated);
+        }
+        if ($updated && $action === 'appointment.rescheduled') {
+            Nevari_Plugin::instance()->send_appointment_reschedule_emails($updated, $old_start_at);
         }
         Nevari_Audit::log('consultation', 'nevari', $action, 'success', ['appointment_id' => (int) $appointment->id, 'related_user_id' => (int) $appointment->patient_user_id]);
         return Nevari_Helpers::success(Nevari_Helpers::format_appointment($updated));
@@ -3590,6 +3668,8 @@ final class Nevari_Rest {
             'order_number' => $order ? $order->get_order_number() : null,
             'amount' => $order ? (float) $order->get_total() : null,
             'currency' => $order ? $order->get_currency() : null,
+            'google_meet_link' => Nevari_Helpers::appointment_meeting_link($appointment, $order),
+            'meet_link' => Nevari_Helpers::appointment_meeting_link($appointment, $order),
             'calendar' => Nevari_Helpers::appointment_calendar_links($appointment),
         ]);
     }
@@ -3691,6 +3771,17 @@ final class Nevari_Rest {
         $order->update_meta_data('_nevari_appointment_id', $appointment_id);
         $order->update_meta_data('_nevari_appointment_doctor_user_id', $doctor_id);
         $order->update_meta_data('_nevari_appointment_patient_user_id', $patient_id);
+        $order->update_meta_data('_nevari_booking_status', 'pending_payment');
+        $order->update_meta_data('_nevari_consultation_fee', $fee);
+        $order->update_meta_data('_nevari_consultation_type', 'video');
+        $order->update_meta_data('_nevari_reason', $reason);
+        $appointment = self::get_appointment_row($appointment_id);
+        if ($appointment) {
+            $order->update_meta_data('_nevari_appointment_start_at', (string) $appointment->start_at);
+            $order->update_meta_data('_nevari_appointment_end_at', (string) $appointment->end_at);
+            $order->update_meta_data('_nevari_timezone', (string) $appointment->timezone);
+            $order->update_meta_data('_nevari_reserved_until', (string) $appointment->reserved_until);
+        }
         if ($patient) {
             $order->set_billing_email($patient->user_email);
             $order->set_billing_first_name(get_user_meta($patient_id, 'first_name', true) ?: $patient->display_name);
@@ -3710,14 +3801,6 @@ final class Nevari_Rest {
             'calendar_link' => $calendar['ics_url'],
             'calendar_link_html' => ['html' => '<a href="' . esc_url($calendar['ics_url']) . '">Download calendar invite</a>', 'text' => $calendar['ics_url']],
         ];
-        Nevari_Emails::queue_or_send([
-            'template_key' => 'appointment_doctor_notification',
-            'recipient_user_id' => (int) $doctor->ID,
-            'related_object_type' => 'appointment',
-            'related_object_id' => (int) $appointment->id,
-            'attachments' => [$ics],
-            'variables' => $common,
-        ], false);
         $admin_email = get_option('admin_email');
         if ($admin_email && is_email($admin_email)) {
             Nevari_Emails::queue_or_send([
@@ -4106,6 +4189,19 @@ final class Nevari_Rest {
         return Nevari_Helpers::success(['email_log_id' => (int) $result]);
     }
 
+    public static function emails_booking_test(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_emails_write', 3, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'booking_test'])) {
+            return $response;
+        }
+        $params = Nevari_Helpers::get_json_params($request);
+        $email = isset($params['recipient_email']) ? sanitize_email((string) $params['recipient_email']) : '';
+        $result = Nevari_Plugin::instance()->send_booking_email_test($email);
+        if (empty($result['success'])) {
+            return Nevari_Helpers::error((string) ($result['code'] ?? 'booking_test_failed'), (string) ($result['message'] ?? 'Booking email test failed.'), 422);
+        }
+        return Nevari_Helpers::success($result, [], 201);
+    }
+
     private static function format_email_log($row): array {
         return [
             'id' => (int) $row->id,
@@ -4170,6 +4266,7 @@ final class Nevari_Rest {
         ]);
         return Nevari_Helpers::success([
             'store_currency' => self::store_currency(),
+            'store_timezone' => self::store_timezone(),
             'profile' => Nevari_Helpers::user_summary($user_id),
             'prescriptions' => ['recent' => array_slice($prescriptions, 0, 5)],
             'appointments' => ['recent' => array_slice($appointments, 0, 5)],
@@ -4185,6 +4282,7 @@ final class Nevari_Rest {
         $today_end = gmdate('Y-m-d 23:59:59');
         $data = [
             'store_currency' => self::store_currency(),
+            'store_timezone' => self::store_timezone(),
             'profile' => Nevari_Helpers::user_summary($doctor_id),
             'appointments_today' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$appointments_table} WHERE doctor_user_id = %d AND start_at BETWEEN %s AND %s", $doctor_id, $today_start, $today_end)),
             'appointments_requested' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$appointments_table} WHERE doctor_user_id = %d AND status = 'requested'", $doctor_id)),
@@ -4212,6 +4310,7 @@ final class Nevari_Rest {
         $emails = Nevari_Helpers::table('email_logs');
         $data = [
             'store_currency' => self::store_currency(),
+            'store_timezone' => self::store_timezone(),
             'sales' => self::sales_summary(),
             'products' => ['total' => post_type_exists('product') ? (int) wp_count_posts('product')->publish : 0],
             'doctors' => ['total' => (int) (new WP_User_Query(['role' => 'doctor', 'fields' => 'ID']))->get_total()],
@@ -4283,6 +4382,33 @@ final class Nevari_Rest {
         }
         $currency = get_option('woocommerce_currency', 'USD');
         return is_string($currency) && $currency !== '' ? $currency : 'USD';
+    }
+
+    private static function store_timezone(): string {
+        if (function_exists('wp_timezone_string')) {
+            $timezone = wp_timezone_string();
+            if (is_string($timezone) && $timezone !== '') {
+                return $timezone;
+            }
+        }
+
+        $timezone = get_option('timezone_string', '');
+        if (is_string($timezone) && $timezone !== '') {
+            return $timezone;
+        }
+
+        $offset = (float) get_option('gmt_offset', 0);
+        if ($offset === 0.0) {
+            return 'UTC';
+        }
+
+        $hours = (int) $offset;
+        $minutes = (int) round(abs($offset - $hours) * 60);
+        if ($minutes === 0) {
+            return sprintf('Etc/GMT%+d', -$hours);
+        }
+
+        return sprintf('%+03d:%02d', $hours, $minutes);
     }
 
     private static function dashboard_name_for_current_user(): string {

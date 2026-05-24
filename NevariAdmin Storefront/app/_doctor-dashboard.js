@@ -7,7 +7,7 @@ import { replaceById, updateListPayload, upsertById } from "../lib/fetcher";
 import { isProxyAppointmentsKey, isProxyDashboardDoctorKey, isProxyDoctorPathKey, isProxyOrdersKey, swrKeys, withBaseUrl } from "../lib/swrKeys";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
-import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, describeDashboardFetchError, hydrateStoredSession, money, monthGrid, readDashboardCache, shortDate, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
+import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, describeDashboardFetchError, getOrderTypeMeta, hydrateStoredSession, isSessionUsable, money, monthGrid, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
 import { clearSessionAuth } from "./components/role-session";
 
 const DOCTOR_SETTINGS_KEY = "nevari_doctor_frontend_settings";
@@ -33,26 +33,30 @@ const emptyDoctorState = {
 
 async function fetchDoctorDashboardPayload(session, doctorId, fallbackState = emptyDoctorState) {
   const results = await Promise.allSettled([
+    apiRequest(session, "/dashboard/doctor", { params: { doctor_id: doctorId }, suppressHttpError: true }),
     apiRequest(session, "/appointments", { params: { per_page: 5, page: 1 }, suppressHttpError: true }),
     apiRequest(session, "/orders", { params: { per_page: 5, page: 1 }, suppressHttpError: true }),
     apiRequest(session, `/doctors/${doctorId}`, { suppressHttpError: true })
   ]);
-  const hasAppointmentsFailure = results[0].status !== "fulfilled" || results[0].value === null;
-  const hasOrdersFailure = results[1].status !== "fulfilled" || results[1].value === null;
-  const hasDoctorFailure = results[2].status !== "fulfilled" || results[2].value === null;
+  const hasDashboardFailure = results[0].status !== "fulfilled" || results[0].value === null;
+  const hasAppointmentsFailure = results[1].status !== "fulfilled" || results[1].value === null;
+  const hasOrdersFailure = results[2].status !== "fulfilled" || results[2].value === null;
+  const hasDoctorFailure = results[3].status !== "fulfilled" || results[3].value === null;
   const errors = results
     .filter((result) => result.status === "rejected")
     .map((result) => describeDashboardFetchError(result.reason));
   const bootstrapState = buildDoctorBootstrapState(session, fallbackState);
+  const dashboard = hasDashboardFailure ? bootstrapState.dashboard : results[0].value;
+  rememberStoreContext(dashboard || {});
 
   return {
     error: errors[0] || ((hasAppointmentsFailure || hasOrdersFailure || hasDoctorFailure) ? "The pharmacy server could not be reached. Showing locally available dashboard data." : ""),
-    dashboard: bootstrapState.dashboard,
-    appointments: hasAppointmentsFailure ? (bootstrapState.appointments || []) : (results[0].value || []),
-    orders: hasOrdersFailure ? (bootstrapState.orders || []) : (results[1].value || []),
+    dashboard: dashboard || bootstrapState.dashboard,
+    appointments: hasAppointmentsFailure ? (bootstrapState.appointments || []) : (results[1].value || []),
+    orders: hasOrdersFailure ? (bootstrapState.orders || []) : (results[2].value || []),
     products: bootstrapState.products || [],
     patients: bootstrapState.patients || [],
-    doctor: hasDoctorFailure ? bootstrapState.doctor : results[2].value,
+    doctor: hasDoctorFailure ? bootstrapState.doctor : results[3].value,
     reviews: bootstrapState.reviews || null,
     availability: bootstrapState.availability || {}
   };
@@ -143,7 +147,7 @@ export default function DoctorDashboard() {
       return;
     }
     const nextDoctorId = hydratedSession.user?.id;
-    if (!hydratedSession.accessToken || !nextDoctorId || !hasDoctorRole(hydratedSession.user)) {
+    if (!isSessionUsable(hydratedSession) || !nextDoctorId || !hasDoctorRole(hydratedSession.user)) {
       router.replace("/admin/doctor/login");
       return;
     }
@@ -152,7 +156,9 @@ export default function DoctorDashboard() {
     setCacheKey(buildDashboardCacheKey("doctor", DOCTOR_DASHBOARD_CACHE_SCOPE, nextDoctorId));
   }, [router]);
 
-  const cachedDoctorState = cacheKey ? readDashboardCache(cacheKey, DASHBOARD_CACHE_TTL_MS)?.state : null;
+  const cachedDoctorState = (cacheKey && isSessionUsable(session))
+    ? readDashboardCache(cacheKey, DASHBOARD_CACHE_TTL_MS)?.state
+    : null;
   const bootstrapDoctorState = useMemo(
     () => buildDoctorBootstrapState(session, cachedDoctorState || emptyDoctorState),
     [cachedDoctorState, session]
@@ -350,7 +356,10 @@ export default function DoctorDashboard() {
   const reviewSummary = state.reviews?.summary || { average: 0, count: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
   const paidAppointments = state.appointments.filter((item) => item.payment_status === "paid");
   const estimatedRevenue = paidAppointments.reduce((sum, item) => sum + Number(state.doctor?.consultation_fee || 0), 0);
-  const storeCurrency = state.dashboard?.store_currency || state.doctor?.store_currency || state.orders.find((order) => order.currency)?.currency || "USD";
+  const storeCurrency = state.dashboard?.store_currency || storedStoreCurrency();
+  useEffect(() => {
+    rememberStoreContext(state.dashboard || state.doctor || {});
+  }, [state.dashboard, state.doctor]);
   const pageQueryLoading = (
     (page === "consultations" && appointmentsQuery.isLoading && !appointmentsQuery.data) ||
     (page === "orders" && ordersQuery.isLoading && !ordersQuery.data) ||
@@ -407,14 +416,18 @@ export default function DoctorDashboard() {
       estimatedRevenue={estimatedRevenue}
       storeCurrency={storeCurrency}
     /> : null}
-    {!showSkeleton && page === "orders" ? <TablePanel title="Assigned Orders" rows={state.orders} columns={["Order", "Customer", "Total", "Status", "Documents"]} render={(item) => [
+    {!showSkeleton && page === "orders" ? <TablePanel title="Assigned Orders" rows={state.orders} columns={["Order", "Type", "Customer", "Total", "Status", "Documents"]} render={(item) => {
+      const typeMeta = getOrderTypeMeta(item);
+      return [
       `#${item.number}`,
+      <span className={`status-badge ${typeMeta.tone}`}>{typeMeta.label}</span>,
       item.customer_id || "Guest",
-      money(item.total, item.currency || storeCurrency),
+      money(item.total, storeCurrency),
       titleCase(item.status),
       <a href={`/admin/orders/${item.id}/documents?role=doctor`} target="_blank" rel="noreferrer">Open</a>
-    ]} /> : null}
-    {!showSkeleton && page === "products" ? <TablePanel title="Assigned Products" rows={state.products} columns={["Product", "Categories", "Price", "Stock"]} render={(item) => [item.name, (item.categories || []).join(", "), money(item.price, item.currency || storeCurrency), item.stock_quantity ?? "n/a"]} /> : null}
+    ];
+    }} /> : null}
+    {!showSkeleton && page === "products" ? <TablePanel title="Assigned Products" rows={state.products} columns={["Product", "Categories", "Price", "Stock"]} render={(item) => [item.name, (item.categories || []).join(", "), money(item.price, storeCurrency), item.stock_quantity ?? "n/a"]} /> : null}
     {!showSkeleton && page === "patients" ? <TablePanel title="Customers" rows={state.patients} columns={["Customer", "Email", "First linked", "Last interaction"]} render={(item) => [item.display_name, item.email, shortDate(item.first_linked_at), shortDate(item.last_interaction_at)]} /> : null}
     {!showSkeleton && page === "profile" ? <ProfilePage doctor={state.doctor} estimatedRevenue={estimatedRevenue} storeCurrency={storeCurrency} onLogout={handleLogout} /> : null}
   </RoleShell>;
@@ -442,6 +455,8 @@ function AppointmentDetailCard({ appointment, onConfirm, onComplete }) {
   const canConfirm = appointment.status === "awaiting_payment" ? false : appointment.status === "requested";
   const canComplete = appointment.status === "confirmed";
   const calendarUrl = buildUrl(session, `/appointments/${appointment.id}/calendar`);
+  const joinUrl = [appointment?.meet_link, appointment?.google_meet_link, appointment?.meeting_link, appointment?.meeting_url]
+    .find((value) => typeof value === "string" && /https?:\/\/meet\.google\.com\//i.test(value)) || "";
   return <article className="doctor-appointment-detail-card">
     <div className="doctor-appointment-detail-head">
       <div>
@@ -462,8 +477,8 @@ function AppointmentDetailCard({ appointment, onConfirm, onComplete }) {
       <div><span>Order</span><strong>{appointment.order_id ? `#${appointment.order_id}` : "n/a"}</strong></div>
     </div>
     <div className="doctor-appointment-actions">
+      {joinUrl ? <a className="pill-button" href={joinUrl} target="_blank" rel="noreferrer">Join Google Meet</a> : null}
       <a className="pill-button" href={calendarUrl} target="_blank" rel="noreferrer">Calendar file</a>
-      {appointment.calendar?.google_url ? <a className="pill-button" href={appointment.calendar.google_url} target="_blank" rel="noreferrer">Google</a> : null}
       {canConfirm ? <button className="pill-button" type="button" onClick={() => onConfirm(appointment.id)}>Confirm</button> : null}
       {canComplete ? <button className="pill-button" type="button" onClick={() => onComplete(appointment.id)}>Mark complete</button> : null}
     </div>
@@ -576,11 +591,11 @@ function ProfilePage({ doctor, estimatedRevenue, storeCurrency, onLogout }) {
       </article>
       <article>
         <span>Consultation fee</span>
-        <strong>{money(doctor?.consultation_fee || 0, doctor?.store_currency || storeCurrency)}</strong>
+        <strong>{money(doctor?.consultation_fee || 0, storeCurrency)}</strong>
       </article>
       <article>
         <span>Estimated revenue</span>
-        <strong>{money(estimatedRevenue, doctor?.store_currency || storeCurrency)}</strong>
+        <strong>{money(estimatedRevenue, storeCurrency)}</strong>
       </article>
     </div>
   </section>;
@@ -609,7 +624,7 @@ function DoctorSettingsPage({ doctor, appointments, settings, onSettingsChange, 
         <article className="doctor-settings-card">
           <h3>Consultation controls</h3>
           <div className="doctor-settings-summary"><span>Pricing tier</span><strong>{settings.pricingTier}</strong></div>
-          <div className="doctor-settings-summary"><span>Consultation fee</span><strong>{money(doctor?.consultation_fee || 0, doctor?.store_currency || storeCurrency)}</strong></div>
+          <div className="doctor-settings-summary"><span>Consultation fee</span><strong>{money(doctor?.consultation_fee || 0, storeCurrency)}</strong></div>
           <div className="doctor-settings-summary"><span>Working days</span><strong>{activeDays}</strong></div>
           <SettingsToggle label="Auto-accept appointments" checked={settings.autoAcceptAppointments} onChange={(checked) => onSettingsChange((current) => ({ ...current, autoAcceptAppointments: checked, manualApprovalMode: checked ? false : current.manualApprovalMode }))} />
           <SettingsToggle label="Manual approval mode" checked={settings.manualApprovalMode} onChange={(checked) => onSettingsChange((current) => ({ ...current, manualApprovalMode: checked, autoAcceptAppointments: checked ? false : current.autoAcceptAppointments }))} />
@@ -631,7 +646,7 @@ function DoctorSettingsPage({ doctor, appointments, settings, onSettingsChange, 
 
         <article className="doctor-settings-card">
           <h3>Payments</h3>
-          <div className="doctor-settings-summary"><span>Earnings overview</span><strong>{money(estimatedRevenue, doctor?.store_currency || storeCurrency)}</strong></div>
+          <div className="doctor-settings-summary"><span>Earnings overview</span><strong>{money(estimatedRevenue, storeCurrency)}</strong></div>
           <div className="doctor-settings-summary"><span>Paid appointments</span><strong>{appointments.filter((item) => item.payment_status === "paid").length}</strong></div>
           <div className="doctor-settings-summary"><span>Tier lock</span><strong>Admin controlled</strong></div>
           <p className="muted">Consultation pricing is read-only for doctors. Tiers, category rates, and customer billing remain under admin control.</p>
@@ -663,7 +678,7 @@ function hasDoctorDashboardData(state) {
 
 function DoctorDashboardSkeleton({ page }) {
   if (page === "orders") {
-    return <SkeletonTablePanel title="Assigned Orders" columns={4} rows={6} />;
+    return <SkeletonTablePanel title="Assigned Orders" columns={6} rows={6} />;
   }
   if (page === "products") {
     return <SkeletonTablePanel title="Assigned Products" columns={4} rows={6} />;
@@ -945,7 +960,7 @@ function DoctorOverview({ doctor, dashboard, appointments, orders, patients, rev
     <div className="doctor-overview-insights">
       <article className="doctor-insight-card">
         <span>Estimated revenue</span>
-        <strong>{money(estimatedRevenue, doctor?.store_currency || storeCurrency)}</strong>
+        <strong>{money(estimatedRevenue, storeCurrency)}</strong>
         <small>Paid appointments using your current consultation fee.</small>
       </article>
       <article className="doctor-insight-card">
@@ -1205,7 +1220,11 @@ function buildDoctorBootstrapState(session, fallbackState = emptyDoctorState) {
 
   return {
     error: fallbackState?.error || "",
-    dashboard: fallbackState?.dashboard || null,
+    dashboard: {
+      ...(fallbackState?.dashboard || {}),
+      store_currency: fallbackState?.dashboard?.store_currency || storedStoreCurrency(),
+      store_timezone: fallbackState?.dashboard?.store_timezone || fallbackDoctor.store_timezone || storedStoreTimeZone()
+    },
     appointments: Array.isArray(fallbackState?.appointments) ? fallbackState.appointments : [],
     orders: Array.isArray(fallbackState?.orders) ? fallbackState.orders : [],
     products: Array.isArray(fallbackState?.products) ? fallbackState.products : [],
@@ -1218,7 +1237,8 @@ function buildDoctorBootstrapState(session, fallbackState = emptyDoctorState) {
       specialties: Array.isArray(fallbackDoctor.specialties) ? fallbackDoctor.specialties : [],
       languages: Array.isArray(fallbackDoctor.languages) ? fallbackDoctor.languages : [],
       consultation_fee: fallbackDoctor.consultation_fee || 0,
-      store_currency: fallbackDoctor.store_currency || "USD",
+      store_currency: storedStoreCurrency(),
+      store_timezone: fallbackDoctor.store_timezone || storedStoreTimeZone(),
       product_categories: Array.isArray(fallbackDoctor.product_categories) ? fallbackDoctor.product_categories : []
     } : null,
     reviews: fallbackState?.reviews || null,

@@ -109,8 +109,8 @@ export async function POST(request, { params }) {
       : data;
     const html = renderDocumentHtml(renderData, documentType, { appOrigin });
     const pdf = await htmlToPdf(html);
-    const total = new Intl.NumberFormat("en-US", { style: "currency", currency: data.currency || "NGN" }).format(Number(data?.totals?.total || 0));
-    const balanceDue = new Intl.NumberFormat("en-US", { style: "currency", currency: data.currency || "NGN" }).format(Number(data?.totals?.balance_due || 0));
+    const total = new Intl.NumberFormat("en-US", { style: "currency", currency: data.currency || "USD" }).format(Number(data?.totals?.total || 0));
+    const balanceDue = new Intl.NumberFormat("en-US", { style: "currency", currency: data.currency || "USD" }).format(Number(data?.totals?.balance_due || 0));
     const paymentLinkHtml = paymentUrl ? `<a href="${paymentUrl}" target="_blank" rel="noopener noreferrer">Pay now</a>` : "";
 
     await proxyRequest(origin, session, "/emails/send", {

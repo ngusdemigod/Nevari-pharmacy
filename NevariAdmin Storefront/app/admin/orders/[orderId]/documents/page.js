@@ -57,7 +57,7 @@ async function request(session, path) {
   return payload.data;
 }
 
-function money(value, currency = "NGN") {
+function money(value, currency = "USD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(value || 0));
 }
 

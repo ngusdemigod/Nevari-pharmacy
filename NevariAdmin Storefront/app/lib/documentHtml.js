@@ -1,4 +1,4 @@
-function money(value, currency = "NGN") {
+function money(value, currency = "USD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(value || 0));
 }
 
@@ -82,7 +82,7 @@ export function documentFilename(data, documentType) {
 }
 
 export function renderDocumentHtml(data, documentType = "invoice", { appOrigin = "", statusMode = "order" } = {}) {
-  const currency = data?.currency || "NGN";
+  const currency = data?.currency || "USD";
   const isPrescription = documentType === "prescription";
   const title = documentType === "receipt"
     ? `Receipt #${data?.order_number || data?.receipt_number || ""}`
@@ -103,16 +103,28 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
         <td class="text-right">${escapeHtml(item.instructions || "-")}</td>
       </tr>
     `).join("") || '<tr><td colspan="5">No medications added.</td></tr>'
-    : (data?.items || []).map((item) => `
+    : (data?.items || []).map((item) => {
+      const consultationMeta = item?.is_consultation
+        ? [
+          item?.consultation_type ? `Consultation: ${item.consultation_type}` : "",
+          item?.consultation_brief ? `Brief: ${item.consultation_brief}` : "",
+          item?.consultation_when ? `When: ${item.consultation_when}` : ""
+        ].filter(Boolean)
+        : [];
+      const consultationMetaHtml = consultationMeta.length
+        ? `<div class="item-subtext">${consultationMeta.map((line) => escapeHtml(line)).join("<br />")}</div>`
+        : "";
+      return `
       <tr>
-        <td>${escapeHtml(item.name || "Item")}</td>
+        <td>${escapeHtml(item.name || "Item")}${consultationMetaHtml}</td>
         <td class="text-right">${escapeHtml(money(item.rate, currency))}</td>
         <td class="text-right">${escapeHtml(item.qty || 1)}</td>
         <td class="text-right">${escapeHtml(money(item.tax, currency))}</td>
         <td class="text-right">${escapeHtml(money(item.discount, currency))}</td>
         <td class="text-right">${escapeHtml(money(item.total, currency))}</td>
       </tr>
-    `).join("") || '<tr><td colspan="6">No items found.</td></tr>';
+    `;
+    }).join("") || '<tr><td colspan="6">No items found.</td></tr>';
 
   return `<!doctype html>
 <html lang="en">
@@ -144,6 +156,7 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
     thead { background: #0E2955; color: #fff; }
     th { padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 500; text-transform: uppercase; }
     td { padding: 14px 12px; vertical-align: top; font-size: 13px; border-bottom: 1px solid #e4e9f0; }
+    .item-subtext { margin-top: 6px; color: #4b5a73; font-size: 11px; line-height: 1.45; }
     tbody tr:nth-child(even) { background: #eef4fb; }
     tr { page-break-inside: avoid; }
     .text-right { text-align: right; }
@@ -193,7 +206,7 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
     <table>
       <thead>${isPrescription
         ? '<tr><th>Medication</th><th class="text-right">Dosage</th><th class="text-right">Frequency</th><th class="text-right">Duration</th><th class="text-right">Instructions</th></tr>'
-        : '<tr><th>Description</th><th class="text-right">Rate, NGN</th><th class="text-right">Qty</th><th class="text-right">Tax</th><th class="text-right">Disc</th><th class="text-right">Amount, NGN</th></tr>'}</thead>
+        : `<tr><th>Description</th><th class="text-right">Rate, ${escapeHtml(currency)}</th><th class="text-right">Qty</th><th class="text-right">Tax</th><th class="text-right">Disc</th><th class="text-right">Amount, ${escapeHtml(currency)}</th></tr>`}</thead>
       <tbody>${rows}</tbody>
     </table>
     <section class="bottom-section">

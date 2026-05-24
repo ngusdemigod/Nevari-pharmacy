@@ -295,7 +295,15 @@ function hideAuthGate() {
   setAppLocked(false);
 }
 
-function formatMoney(value, currency = "USD") {
+function storeCurrency() {
+  return state.data.dashboard?.store_currency || state.data.dashboard?.sales?.currency || "USD";
+}
+
+function storeTimeZone() {
+  return state.data.dashboard?.store_timezone || "UTC";
+}
+
+function formatMoney(value, currency = storeCurrency()) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
@@ -320,6 +328,7 @@ function formatDate(value, withTime = false) {
     return "n/a";
   }
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: storeTimeZone(),
     month: "short",
     day: "numeric",
     hour: withTime ? "numeric" : undefined,
@@ -662,7 +671,7 @@ function renderQueue(search = "") {
         <td>${(order.items || []).length ? `${order.items.length} items: ${(order.items || []).slice(0, 2).map((item) => escapeHtml(item.name)).join(", ")}` : "order details unavailable"}</td>
         <td>${prescription ? `${escapeHtml(prescription.prescription_number)} • ${escapeHtml(prescription.status)}` : (order.prescription_id ? `Prescription #${order.prescription_id}` : "No linked prescription")}</td>
         <td><span class="status-pill ${toneClass(order.rx_status || order.status)}">${escapeHtml(order.rx_status || order.status)}</span></td>
-        <td>${formatMoney(order.total || 0, order.currency || "USD")}</td>
+        <td>${formatMoney(order.total || 0, storeCurrency())}</td>
         <td>${order.rx_status === "on_hold" ? "Release hold" : (order.prescription_id ? "Review linkage" : "Link prescription")}</td>
       </tr>
     `;
@@ -886,13 +895,13 @@ async function fetchAllData() {
   renderHistory();
   renderEmailLogs(refs.globalSearch.value);
   await fetchAuditEvents();
-  setSyncStatus(`Live • ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`, "live");
+  setSyncStatus(`Live • ${new Date().toLocaleTimeString([], { timeZone: storeTimeZone(), hour: "numeric", minute: "2-digit" })}`, "live");
 }
 
 function renderDisconnectedState() {
   refs.heroOrdersCount.textContent = "0";
   refs.heroRxCount.textContent = "0";
-  refs.salesMetricValue.textContent = "$0.00";
+  refs.salesMetricValue.textContent = formatMoney(0);
   refs.appointmentsMetricValue.textContent = "0";
   refs.rxMetricValue.textContent = "0";
   refs.emailMetricValue.textContent = "0%";

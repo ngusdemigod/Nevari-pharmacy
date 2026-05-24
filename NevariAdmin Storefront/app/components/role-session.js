@@ -3,6 +3,30 @@
 import { FRONTENDS } from "./frontend-config";
 
 export const PAIRING_REQUIRED_ERROR_CODE = "frontend_pairing_required";
+const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
+
+function isSessionUsable(session) {
+  if (!session || typeof session !== "object") {
+    return false;
+  }
+  const hasAccessToken = Boolean(String(session.accessToken || "").trim());
+  const expiresAt = Number(session.expiresAt || 0);
+  return hasAccessToken && Number.isFinite(expiresAt) && Date.now() < (expiresAt - SESSION_EXPIRY_SKEW_MS);
+}
+
+function clearAllDashboardCaches() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const keysToRemove = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key && key.startsWith("nevari:")) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+}
 
 export function defaultSession(config) {
   const hasWindow = typeof window !== "undefined";
@@ -53,6 +77,10 @@ export function loadSession(config) {
       nextSession.frontendUrl = window.location.origin === "null" ? "null" : window.location.href;
     }
 
+    if (!isSessionUsable(nextSession)) {
+      return { ...nextSession, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
+    }
+
     return nextSession;
   } catch {
     return defaultSession(config);
@@ -83,6 +111,7 @@ export function clearStoredSessions() {
   Object.values(FRONTENDS).forEach((frontend) => {
     localStorage.removeItem(frontend.storageKey);
   });
+  clearAllDashboardCaches();
 }
 
 export function resetToPairingState() {
@@ -94,7 +123,21 @@ export function resetToPairingState() {
 }
 
 export function saveSession(config, session) {
-  localStorage.setItem(config.storageKey, JSON.stringify(session));
+  const roles = Array.isArray(session?.user?.roles)
+    ? session.user.roles.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const safeSession = {
+    ...session,
+    refreshToken: "",
+    user: session?.user ? {
+      id: session.user.id || "",
+      display_name: session.user.display_name || session.user.name || "",
+      email: session.user.email || "",
+      role: session.user.role || "",
+      roles
+    } : null
+  };
+  localStorage.setItem(config.storageKey, JSON.stringify(safeSession));
 }
 
 export function clearSessionAuth(config, session) {
@@ -107,6 +150,7 @@ export function clearSessionAuth(config, session) {
     user: null
   };
   saveSession(config, nextSession);
+  clearAllDashboardCaches();
   return nextSession;
 }
 
