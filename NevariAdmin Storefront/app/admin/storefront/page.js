@@ -5606,6 +5606,48 @@ export default function Page() {
     out_of_stock: (data.products || []).filter((product) => (product.stock_status || "instock") === "outofstock").length,
     on_sale: (data.products || []).filter((product) => hasActiveSalePrice(product)).length
   };
+  const getLowStockThreshold = (product) => {
+    const threshold = Number(
+      product?.low_stock_amount ??
+      product?.reorder_level ??
+      product?.pharmacy_rules?.reorder_level ??
+      5
+    );
+    return Number.isFinite(threshold) && threshold > 0 ? threshold : 5;
+  };
+  const outOfStockProducts = (data.products || []).filter((product) => {
+    const stockQuantity = getProductStockQuantity(product);
+    const status = String(product.stock_status || "").toLowerCase();
+    return status === "outofstock" || (stockQuantity !== null && stockQuantity <= 0);
+  }).length;
+  const lowStockProducts = (data.products || []).filter((product) => {
+    const stockQuantity = getProductStockQuantity(product);
+    if (stockQuantity === null || stockQuantity <= 0) {
+      return false;
+    }
+    return stockQuantity < getLowStockThreshold(product);
+  }).length;
+  const totalInventoryValue = (data.products || []).reduce((sum, product) => {
+    const stockQuantity = getProductStockQuantity(product);
+    if (stockQuantity === null || stockQuantity <= 0) {
+      return sum;
+    }
+    const unitPrice = Number(
+      hasActiveSalePrice(product)
+        ? getProductPrice(product, "sale_price")
+        : (getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0)
+    );
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      return sum;
+    }
+    return sum + (stockQuantity * unitPrice);
+  }, 0);
+  const mostSoldProducts = Array.isArray(dashboard?.products_metrics?.most_sold_products)
+    ? dashboard.products_metrics.most_sold_products
+    : [];
+  const mostSoldLabel = mostSoldProducts.length
+    ? mostSoldProducts.map((item) => `${item.name} (${formatNumber(item.quantity)})`).join(", ")
+    : "No sales data yet";
 
   const filteredProducts = (data.products || []).filter((product) => {
     const rules = product.pharmacy_rules || {};
@@ -7410,20 +7452,60 @@ export default function Page() {
 
             {currentPage === "products" && (
               <section className="page-view active">
-                <section className="operations-grid">
-                  <article className="panel compact">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Product stats</p>
-                        <h2>Catalog health</h2>
-                      </div>
+                <section className="products-redesign-hero">
+                  <article className="products-redesign-banner">
+                    <p className="section-kicker">Pharmacy catalog</p>
+                    <h2>Manage medicines, RX controls, stock visibility and pricing from one workflow.</h2>
+                    <p>Use this view to curate product availability, govern prescription-only items and keep inventory aligned with active consultations and orders.</p>
+                    <div className="products-redesign-actions">
+                      <button className="button-primary" type="button" onClick={openProductCreateModal}><InlineIcon id="i-plus" />New product</button>
+                      <button className="pill-button" type="button" onClick={() => startTransition(() => setProductCatalogView("products"))}>All products</button>
+                      <button className="pill-button" type="button" onClick={() => startTransition(() => setProductCatalogView("categories"))}>Categories</button>
                     </div>
-                    <div className="mini-stat-grid">
-                      <div className="mini-stat"><span>Total products</span><strong>{formatNumber((data.products || []).length)}</strong><small>available in current sync</small></div>
-                      <div className="mini-stat"><span>Published</span><strong>{formatNumber((data.products || []).filter((product) => getProductStatus(product) === "publish").length)}</strong><small>visible products</small></div>
-                      <div className="mini-stat"><span>In stock</span><strong>{formatNumber((data.products || []).filter((product) => (product.stock_status || "instock") === "instock").length)}</strong><small>ready to sell</small></div>
-                      <div className="mini-stat"><span>RX required</span><strong>{formatNumber((data.products || []).filter((product) => product.pharmacy_rules?.rx_required).length)}</strong><small>doctor workflow products</small></div>
-                    </div>
+                  </article>
+                  <article className="products-redesign-pulse">
+                    <p className="section-kicker">Catalog pulse</p>
+                    <h3>Product operations snapshot</h3>
+                    <p>Use the stats cards below to monitor product visibility, stock pressure, sales movement and inventory capital.</p>
+                  </article>
+                </section>
+
+                <section className="products-redesign-metrics">
+                  <article className="metric-card">
+                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-plus" /></span><StatusPill value="info">catalog</StatusPill></div>
+                    <span className="metric-label">In stock products</span>
+                    <strong className="metric-value">{formatNumber(productFilterCounts.in_stock || 0)}</strong>
+                    <small className="metric-note">products currently available for fulfilment</small>
+                  </article>
+                  <article className="metric-card primary">
+                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-pill" /></span><StatusPill value="success">catalog</StatusPill></div>
+                    <span className="metric-label">Published products</span>
+                    <strong className="metric-value">{formatNumber(productFilterCounts.published || 0)}</strong>
+                    <small className="metric-note">visible in storefront and checkout flows</small>
+                  </article>
+                  <article className="metric-card">
+                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-clipboard" /></span><StatusPill value="pending">rx</StatusPill></div>
+                    <span className="metric-label">Low stock products</span>
+                    <strong className="metric-value">{formatNumber(lowStockProducts)}</strong>
+                    <small className="metric-note">below threshold (default under 5)</small>
+                  </article>
+                  <article className="metric-card">
+                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-cart" /></span><StatusPill value="processing">stock</StatusPill></div>
+                    <span className="metric-label">Out of stock products</span>
+                    <strong className="metric-value">{formatNumber(outOfStockProducts)}</strong>
+                    <small className="metric-note">quantity at zero or stock flag outofstock</small>
+                  </article>
+                  <article className="metric-card accent">
+                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-mail" /></span><StatusPill value="warning">watchlist</StatusPill></div>
+                    <span className="metric-label">Total inventory value</span>
+                    <strong className="metric-value">{formatCompactMoney(totalInventoryValue, storeCurrency)}</strong>
+                    <small className="metric-note">capital currently tied down in stock</small>
+                  </article>
+                  <article className="metric-card">
+                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-cart" /></span><StatusPill value="processing">sales</StatusPill></div>
+                    <span className="metric-label">Most sold products</span>
+                    <strong className="metric-value">{mostSoldProducts[0]?.name || "No sales data"}</strong>
+                    <small className="metric-note">{mostSoldLabel}</small>
                   </article>
                 </section>
                 <section className="panel table-panel">

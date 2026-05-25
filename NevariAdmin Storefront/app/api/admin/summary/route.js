@@ -54,6 +54,34 @@ async function upstreamJson(request, baseUrl, path, params = {}) {
   return { payload };
 }
 
+function buildMostSoldProducts(orders = []) {
+  const quantities = new Map();
+  orders.forEach((order) => {
+    const status = String(order?.status || "").toLowerCase();
+    if (["cancelled", "failed", "refunded", "trash"].includes(status)) {
+      return;
+    }
+    const items = Array.isArray(order?.items) ? order.items : [];
+    items.forEach((item) => {
+      const quantity = Number(item?.quantity || 0);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        return;
+      }
+      const key = String(item?.product_id || item?.id || item?.sku || item?.name || "").trim();
+      if (!key) {
+        return;
+      }
+      const name = item?.name || `Product #${item?.product_id || item?.id || "n/a"}`;
+      const existing = quantities.get(key) || { key, name, quantity: 0 };
+      existing.quantity += quantity;
+      quantities.set(key, existing);
+    });
+  });
+  return [...quantities.values()]
+    .sort((left, right) => right.quantity - left.quantity)
+    .slice(0, 5);
+}
+
 export async function GET(request) {
   try {
     const url = new URL(request.url);
@@ -62,21 +90,32 @@ export async function GET(request) {
       return Response.json({ success: false, error: { message: "Missing baseUrl." } }, { status: 400 });
     }
 
-    const [dashboardResult, recentOrdersResult] = await Promise.all([
+    const [dashboardResult, recentOrdersResult, ordersForMetricsResult] = await Promise.all([
       upstreamJson(request, baseUrl, "/dashboard/store-admin"),
-      upstreamJson(request, baseUrl, "/orders", { per_page: 5, page: 1 })
+      upstreamJson(request, baseUrl, "/orders", { per_page: 5, page: 1 }),
+      upstreamJson(request, baseUrl, "/orders", { per_page: 100, page: 1 })
     ]);
 
-    const firstError = [dashboardResult, recentOrdersResult].find((result) => result.error);
+    const firstError = [dashboardResult, recentOrdersResult, ordersForMetricsResult].find((result) => result.error);
     if (firstError) {
       return Response.json(firstError.error, { status: firstError.status || 502 });
     }
+
+    const ordersForMetrics = ordersForMetricsResult.payload?.data || [];
+    const mostSoldProducts = buildMostSoldProducts(ordersForMetrics);
+    const dashboardData = dashboardResult.payload?.data || {};
 
     return Response.json(
       {
         success: true,
         data: {
-          dashboard: dashboardResult.payload?.data || {},
+          dashboard: {
+            ...dashboardData,
+            products_metrics: {
+              ...(dashboardData.products_metrics || {}),
+              most_sold_products: mostSoldProducts
+            }
+          },
           recent_orders: recentOrdersResult.payload?.data || []
         }
       },

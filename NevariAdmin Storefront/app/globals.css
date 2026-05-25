@@ -11404,3 +11404,136 @@ body.auth-locked .page-shell {
     grid-column: 1 / -1;
   }
 }
+
+.products-redesign-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.products-redesign-banner,
+.products-redesign-pulse {
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 24px;
+  box-shadow: 0 12px 30px rgba(10, 42, 94, 0.12);
+}
+
+.products-redesign-banner {
+  padding: 24px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(227, 215, 198, 0.42));
+}
+
+.products-redesign-banner h2 {
+  margin: 8px 0 10px;
+  letter-spacing: -0.04em;
+}
+
+.products-redesign-banner p {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.products-redesign-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.products-redesign-pulse {
+  background: linear-gradient(135deg, #0a2a5e, #11396f);
+  color: #fff;
+  padding: 20px;
+}
+
+.products-redesign-pulse .section-kicker {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.products-redesign-pulse-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.products-pulse-item {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.products-pulse-item span {
+  display: block;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.products-pulse-item strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 23px;
+  letter-spacing: -0.03em;
+}
+
+.products-pulse-item small {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.82);
+  line-height: 1.4;
+}
+
+.products-pulse-item-wide {
+  grid-column: 1 / -1;
+}
+
+.products-redesign-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.products-redesign-metrics .metric-card {
+  min-width: 0;
+}
+
+.products-redesign-metrics .metric-label {
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.products-redesign-metrics .metric-value {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: clamp(22px, 1.6vw, 34px);
+  line-height: 1.1;
+}
+
+.products-redesign-metrics .metric-note {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 1080px) {
+  .products-redesign-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .products-redesign-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .products-redesign-metrics {
+    grid-template-columns: 1fr;
+  }
+}
