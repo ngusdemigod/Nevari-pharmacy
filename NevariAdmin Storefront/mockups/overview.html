@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nevari Health Admin Overview</title>
+  <style>
+    :root {
+      --primary: #0A2A5E;
+      --primary-900: #061B3F;
+      --primary-800: #082651;
+      --primary-700: #11396F;
+      --primary-100: #E8EEF7;
+      --primary-50: #F4F7FB;
+      --accent: #E3D7C6;
+      --accent-900: #4B3D2B;
+      --accent-700: #8E7656;
+      --accent-500: #CBB89E;
+      --accent-100: #F4EEE6;
+      --accent-50: #FBF8F3;
+      --success: #1F8A5B;
+      --success-bg: #DDF4E8;
+      --warning: #B46A12;
+      --warning-bg: #FFF0D1;
+      --danger: #B23B3B;
+      --danger-bg: #FCE3E3;
+      --info: #2C6EB7;
+      --info-bg: #E2EFFC;
+      --purple: #7656A5;
+      --purple-bg: #EEE6FA;
+      --ink: #102039;
+      --muted: #667085;
+      --subtle: #98A2B3;
+      --line: rgba(10,42,94,.12);
+      --line-strong: rgba(10,42,94,.22);
+      --white: #FFFFFF;
+      --surface: rgba(255,255,255,.86);
+      --surface-soft: rgba(255,255,255,.64);
+      --page: #EFE9DE;
+      --font: Inter, Manrope, Product Sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --radius-sm: 14px;
+      --radius-md: 18px;
+      --radius-lg: 24px;
+      --radius-xl: 32px;
+      --pill: 999px;
+      --shadow-xs: 0 6px 14px rgba(10,42,94,.07);
+      --shadow-sm: 0 12px 28px rgba(10,42,94,.10);
+      --shadow-md: 0 22px 60px rgba(10,42,94,.14);
+      --inset: inset 0 1px 0 rgba(255,255,255,.72);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 6%, rgba(255,255,255,.74), transparent 28%),
+        radial-gradient(circle at 88% 2%, rgba(227,215,198,.82), transparent 28%),
+        linear-gradient(145deg, #F8F4EE, var(--page));
+      min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; border: 0; }
+    a { color: inherit; text-decoration: none; }
+
+    .svg-sprite { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
+    .ui-icon {
+      width: 20px;
+      height: 20px;
+      display: inline-block;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.85;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex: 0 0 auto;
+      vertical-align: middle;
+    }
+
+    .app-shell {
+      width: min(1480px, calc(100vw - 28px));
+      margin: 14px auto;
+      min-height: calc(100vh - 28px);
+      display: grid;
+      grid-template-columns: 284px 1fr;
+      border-radius: 22px;
+      overflow: hidden;
+      background: rgba(250,247,241,.88);
+      border: 1px solid rgba(255,255,255,.80);
+      box-shadow: var(--shadow-md), var(--inset);
+      backdrop-filter: blur(18px);
+    }
+
+    .admin-sidebar {
+      background: rgba(255,255,255,.92);
+      border-right: 1px solid rgba(10,42,94,.08);
+      padding: 26px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .side-brand {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      margin-bottom: 2px;
+    }
+    .side-logo-shell {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #F7F2EA, var(--accent));
+      box-shadow: 0 10px 24px rgba(10,42,94,.08), inset 0 0 0 8px rgba(255,255,255,.45);
+      flex: 0 0 auto;
+    }
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      border: 3px solid var(--primary);
+      color: var(--primary);
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: -.05em;
+      background: transparent;
+    }
+    .side-brand strong {
+      display: block;
+      color: var(--primary);
+      font-size: 15px;
+      letter-spacing: -.035em;
+      font-weight: 600;
+    }
+    .side-brand span {
+      display: block;
+      color: #5D6676;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .nav-group { display: grid; gap: 12px; }
+    .nav-label {
+      color: #606977;
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      margin: 6px 0 0;
+    }
+    .nav-stack { display: grid; gap: 10px; }
+    .nav-item {
+      min-height: 40px;
+      border-radius: 12px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      color: var(--primary);
+      background: transparent;
+      font-size: 12.5px;
+      font-weight: 500;
+      transition: background .15s ease, transform .15s ease;
+    }
+    .nav-item:hover,
+    .nav-item.active { background: rgba(10,42,94,.055); }
+    .nav-item:hover { transform: translateX(2px); }
+    .nav-icon {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      color: var(--primary);
+      flex: 0 0 auto;
+    }
+    .nav-icon .ui-icon { width: 20px; height: 20px; stroke-width: 1.95; }
+
+    .sidebar-summary {
+      margin-top: auto;
+      padding: 15px;
+      border-radius: 22px;
+      background: linear-gradient(160deg, var(--primary), var(--primary-800));
+      color: white;
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 18px 38px rgba(10,42,94,.18);
+    }
+    .sidebar-summary::after {
+      content: "";
+      position: absolute;
+      right: -45px;
+      bottom: -56px;
+      width: 138px;
+      height: 138px;
+      border-radius: 50%;
+      background: rgba(227,215,198,.18);
+    }
+    .sidebar-summary > * { position: relative; z-index: 1; }
+    .sidebar-summary span { display: block; color: rgba(255,255,255,.68); font-size: 11px; }
+    .sidebar-summary strong { display: block; margin-top: 8px; font-size: 20px; letter-spacing: -.035em; font-weight: 610; }
+    .sidebar-summary small { display: block; margin-top: 6px; color: rgba(255,255,255,.72); line-height: 1.45; }
+
+    .main {
+      min-width: 0;
+      padding: 18px;
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      min-height: 58px;
+      padding: 12px 14px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.76);
+      border: 1px solid rgba(10,42,94,.08);
+      box-shadow: var(--shadow-xs), var(--inset);
+    }
+    .search-box {
+      width: min(460px, 100%);
+      height: 40px;
+      border-radius: var(--pill);
+      background: rgba(255,255,255,.78);
+      border: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 14px;
+      color: var(--muted);
+      box-shadow: var(--inset);
+    }
+    .search-box input {
+      width: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--ink);
+      font-size: 13px;
+    }
+    .top-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
+    .date-pill, .user-pill, .icon-button {
+      min-height: 38px;
+      border-radius: var(--pill);
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.82);
+      box-shadow: var(--inset);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 560;
+    }
+    .icon-button { width: 38px; padding: 0; justify-content: center; }
+    .icon-button.primary { background: var(--primary); color: white; box-shadow: 0 10px 24px rgba(10,42,94,.16); }
+    .avatar-mini {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, var(--accent), rgba(10,42,94,.14));
+      color: var(--primary);
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .user-pill small { color: var(--muted); font-size: 11px; font-weight: 520; }
+
+    .overview-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(310px, .65fr);
+      gap: 16px;
+    }
+    .hero-panel,
+    .ops-panel,
+    .rx-surface,
+    .metric-card,
+    .stat-card-clean {
+      background: rgba(255,255,255,.84);
+      border: 1px solid rgba(10,42,94,.09);
+      box-shadow: var(--shadow-xs), var(--inset);
+    }
+    .hero-panel {
+      min-height: 210px;
+      border-radius: 28px;
+      padding: 22px;
+      overflow: hidden;
+      position: relative;
+      background:
+        radial-gradient(circle at 86% 10%, rgba(227,215,198,.70), transparent 30%),
+        linear-gradient(135deg, rgba(255,255,255,.92), rgba(244,247,251,.84));
+    }
+    .hero-panel::after {
+      content: "";
+      position: absolute;
+      width: 230px;
+      height: 230px;
+      right: -90px;
+      bottom: -120px;
+      border-radius: 50%;
+      background: rgba(10,42,94,.08);
+    }
+    .hero-panel > * { position: relative; z-index: 1; }
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .hero-panel h1 {
+      margin: 0;
+      max-width: 760px;
+      color: var(--primary);
+      font-size: clamp(28px, 4vw, 45px);
+      line-height: 1.02;
+      letter-spacing: -.055em;
+      font-weight: 630;
+    }
+    .hero-panel p {
+      margin: 12px 0 0;
+      max-width: 690px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.62;
+    }
+    .hero-actions {
+      display: flex;
+      gap: 9px;
+      flex-wrap: wrap;
+      margin-top: 18px;
+    }
+    .btn {
+      min-height: 39px;
+      padding: 0 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border-radius: var(--pill);
+      font-size: 12px;
+      font-weight: 560;
+      color: var(--primary);
+      border: 1px solid transparent;
+      transition: transform .15s ease, background .15s ease, box-shadow .15s ease;
+      white-space: nowrap;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary { background: var(--primary); color: white; box-shadow: 0 12px 24px rgba(10,42,94,.18); }
+    .btn-primary:hover { background: var(--primary-700); }
+    .btn-accent { background: var(--accent); color: var(--primary); box-shadow: 0 10px 20px rgba(75,61,43,.12); }
+    .btn-soft { background: var(--primary-100); color: var(--primary); }
+    .btn-outline { background: rgba(255,255,255,.58); color: var(--primary); border-color: var(--line); box-shadow: var(--inset); }
+
+    .command-panel {
+      border-radius: 28px;
+      padding: 18px;
+      background: linear-gradient(160deg, var(--primary), var(--primary-800));
+      color: white;
+      box-shadow: 0 18px 42px rgba(10,42,94,.20);
+      display: grid;
+      align-content: space-between;
+      gap: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+    .command-panel::after {
+      content: "";
+      position: absolute;
+      width: 170px;
+      height: 170px;
+      right: -58px;
+      top: -70px;
+      border-radius: 50%;
+      background: rgba(227,215,198,.16);
+    }
+    .command-panel > * { position: relative; z-index: 1; }
+    .command-panel h2 { margin: 0; font-size: 20px; letter-spacing: -.035em; font-weight: 610; }
+    .command-panel p { margin: 7px 0 0; color: rgba(255,255,255,.72); font-size: 12px; line-height: 1.55; }
+    .command-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; }
+    .command-card {
+      min-height: 76px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.10);
+      border: 1px solid rgba(255,255,255,.14);
+      padding: 12px;
+    }
+    .command-card span { display: block; color: rgba(255,255,255,.62); font-size: 10px; }
+    .command-card strong { display: block; margin-top: 7px; font-size: 17px; font-weight: 610; }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0,1fr));
+      gap: 12px;
+    }
+    .metric-card {
+      min-height: 132px;
+      border-radius: 24px;
+      padding: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .metric-card.primary { background: var(--primary); color: white; }
+    .metric-card.accent { background: linear-gradient(135deg, var(--accent), #F3ECE2); color: var(--primary); }
+    .metric-card.info { background: linear-gradient(135deg, var(--primary-50), #fff); }
+    .metric-card::after {
+      content: "";
+      position: absolute;
+      width: 118px;
+      height: 118px;
+      right: -54px;
+      bottom: -62px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.28);
+    }
+    .metric-card > * { position: relative; z-index: 1; }
+    .metric-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .metric-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: rgba(10,42,94,.08);
+      color: var(--primary);
+    }
+    .metric-card.primary .metric-icon { background: rgba(255,255,255,.13); color: white; }
+    .metric-label { margin-top: 14px; font-size: 11px; color: currentColor; opacity: .68; }
+    .metric-value { display: block; margin-top: 7px; font-size: 24px; line-height: 1; letter-spacing: -.04em; color: currentColor; font-weight: 640; }
+    .metric-note { display: block; margin-top: 7px; color: currentColor; opacity: .66; font-size: 10.5px; line-height: 1.35; }
+
+    .chip, .rx-status, .tone-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 26px;
+      padding: 0 10px;
+      border-radius: var(--pill);
+      font-size: 11px;
+      font-weight: 560;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .chip::before { content:""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .chip.pending { color: var(--warning); background: var(--warning-bg); border-color: rgba(180,106,18,.22); }
+    .chip.processing { color: var(--info); background: var(--info-bg); border-color: rgba(44,110,183,.22); }
+    .chip.paid, .chip.confirmed, .chip.available { color: var(--success); background: var(--success-bg); border-color: rgba(31,138,91,.20); }
+    .chip.cancelled, .chip.failed, .chip.expired { color: var(--danger); background: var(--danger-bg); border-color: rgba(178,59,59,.20); }
+    .chip.refunded { color: var(--purple); background: var(--purple-bg); border-color: rgba(118,86,165,.20); }
+    .chip.draft { color: var(--accent-900); background: var(--accent-100); border-color: rgba(75,61,43,.16); }
+    .tone-chip.blue { background: var(--primary-100); color: var(--primary); border-color: rgba(10,42,94,.10); }
+    .tone-chip.green { background: var(--success-bg); color: var(--success); border-color: rgba(31,138,91,.18); }
+    .tone-chip.orange { background: var(--warning-bg); color: var(--warning); border-color: rgba(180,106,18,.18); }
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(340px, .75fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .stack { display: grid; gap: 16px; }
+    .ops-panel, .rx-surface {
+      border-radius: 26px;
+      overflow: hidden;
+    }
+    .ops-panel.pad, .rx-surface { padding: 18px; }
+    .panel-head, .rx-panel-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .panel-head h3, .rx-title {
+      margin: 0;
+      color: var(--primary);
+      font-size: 17px;
+      line-height: 1.22;
+      letter-spacing: -.035em;
+      font-weight: 620;
+    }
+    .panel-head p, .rx-subtext {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .rx-kicker { margin: 0 0 7px; color: var(--muted); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .055em; }
+
+    .rx-tabs, .segmented-mini {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid rgba(10,42,94,.12);
+      background: rgba(255,255,255,.76);
+      border-radius: var(--pill);
+      box-shadow: var(--inset);
+      white-space: nowrap;
+    }
+    .rx-tab, .segmented-mini button {
+      min-height: 31px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 11px;
+      border-radius: var(--pill);
+      background: transparent;
+      color: #5D6676;
+      font-size: 12px;
+      font-weight: 450;
+      border: 1px solid transparent;
+    }
+    .rx-tab.active, .segmented-mini button.active {
+      background: var(--primary);
+      color: white;
+      box-shadow: 0 10px 24px rgba(10,42,94,.18);
+    }
+    .rx-count {
+      min-width: 18px;
+      height: 18px;
+      padding: 0 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: rgba(10,42,94,.08);
+      color: inherit;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .rx-tab.active .rx-count { background: rgba(255,255,255,.18); }
+
+    .revenue-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 260px;
+      gap: 16px;
+      align-items: stretch;
+    }
+    .bar-chart {
+      min-height: 262px;
+      display: grid;
+      grid-template-columns: repeat(7, minmax(42px,1fr));
+      align-items: end;
+      gap: 13px;
+      padding: 12px 4px 0;
+    }
+    .bar-item { display: grid; gap: 8px; justify-items: center; align-items: end; min-width: 0; }
+    .bar-track {
+      width: min(52px, 100%);
+      height: 190px;
+      border-radius: 999px 999px 12px 12px;
+      background: rgba(10,42,94,.07);
+      display: flex;
+      align-items: flex-end;
+      overflow: hidden;
+    }
+    .bar-fill {
+      width: 100%;
+      min-height: 8%;
+      border-radius: inherit;
+      background: repeating-linear-gradient(135deg, rgba(10,42,94,.92) 0 7px, rgba(10,42,94,.72) 7px 13px);
+    }
+    .bar-fill.accent { background: repeating-linear-gradient(135deg, #C7905B 0 7px, #E3B982 7px 13px); }
+    .bar-value { color: var(--primary); font-size: 12px; font-weight: 610; white-space: nowrap; }
+    .bar-day { color: var(--muted); font-size: 11px; }
+    .bar-orders { color: var(--subtle); font-size: 10px; text-align: center; }
+
+    .summary-card {
+      border-radius: 22px;
+      background: linear-gradient(160deg, var(--primary), var(--primary-800));
+      color: white;
+      padding: 16px;
+      display: grid;
+      align-content: space-between;
+      gap: 14px;
+      min-height: 100%;
+      position: relative;
+      overflow: hidden;
+    }
+    .summary-card::after {
+      content: "";
+      position: absolute;
+      right: -52px;
+      top: -56px;
+      width: 150px;
+      height: 150px;
+      border-radius: 50%;
+      background: rgba(227,215,198,.17);
+    }
+    .summary-card > * { position: relative; z-index: 1; }
+    .summary-card span { color: rgba(255,255,255,.66); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+    .summary-card strong { display: block; margin-top: 4px; font-size: 27px; line-height: 1; letter-spacing: -.045em; font-weight: 640; }
+    .summary-list { display: grid; gap: 10px; }
+    .summary-list div {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      padding-bottom: 9px;
+      border-bottom: 1px solid rgba(255,255,255,.12);
+      font-size: 12px;
+    }
+    .summary-list div:last-child { border-bottom: 0; padding-bottom: 0; }
+    .summary-list em { font-style: normal; color: rgba(255,255,255,.62); }
+    .summary-list b { font-weight: 610; text-align: right; }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 12px;
+    }
+    .stat-card-clean {
+      min-height: 112px;
+      border-radius: 22px;
+      padding: 16px;
+    }
+    .stat-card-clean label {
+      display: block;
+      font-size: 10.5px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .stat-card-clean strong {
+      display: block;
+      color: var(--primary);
+      font-size: 21px;
+      line-height: 1;
+      letter-spacing: -.035em;
+      font-weight: 640;
+    }
+    .stat-card-clean span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .rx-list { display: grid; gap: 11px; }
+    .rx-list-card {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 13px;
+      align-items: center;
+      padding: 13px;
+      border: 1px solid rgba(10,42,94,.09);
+      background: rgba(255,255,255,.68);
+      border-radius: 20px;
+      box-shadow: var(--inset);
+      transition: background .14s ease, transform .14s ease;
+    }
+    .rx-list-card:hover { background: white; transform: translateY(-1px); }
+    .rx-avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--accent);
+      color: var(--primary);
+      border: 2px solid white;
+      box-shadow: 0 8px 18px rgba(10,42,94,.10);
+      font-weight: 600;
+      letter-spacing: -.03em;
+      flex: 0 0 auto;
+      font-size: 12px;
+    }
+    .rx-avatar.blue { background: var(--primary); color: white; }
+    .rx-avatar.soft { background: var(--primary-100); color: var(--primary); }
+    .rx-avatar.green { background: var(--success-bg); color: var(--success); }
+    .rx-avatar.purple { background: var(--purple-bg); color: var(--purple); }
+    .rx-card-meta h4 { margin: 0; color: var(--primary); font-size: 13.5px; font-weight: 580; letter-spacing: -.02em; }
+    .rx-card-meta p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.42; }
+    .rx-card-side { text-align: right; display: grid; justify-items: end; gap: 7px; }
+
+    .inventory-list { display: grid; gap: 12px; }
+    .inventory-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 12px;
+      align-items: center;
+      border-radius: 18px;
+      border: 1px solid rgba(10,42,94,.08);
+      background: rgba(255,255,255,.68);
+      padding: 12px;
+      box-shadow: var(--inset);
+    }
+    .product-thumb {
+      width: 46px;
+      height: 46px;
+      border-radius: 15px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, var(--accent), var(--accent-100));
+      color: var(--primary);
+      border: 1px solid rgba(10,42,94,.08);
+      flex: 0 0 auto;
+    }
+    .inventory-row h4 { margin: 0; color: var(--primary); font-size: 13.5px; font-weight: 580; }
+    .inventory-row p { margin: 4px 0 0; color: var(--muted); font-size: 11.5px; }
+    .stock-bar {
+      width: 140px;
+      height: 8px;
+      border-radius: var(--pill);
+      background: rgba(10,42,94,.08);
+      overflow: hidden;
+      margin-top: 7px;
+    }
+    .stock-bar span { display: block; height: 100%; border-radius: inherit; background: var(--primary); }
+    .stock-bar.low span { background: var(--warning); }
+    .stock-bar.out span { background: var(--danger); }
+
+    .rx-table-wrap, .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      border-radius: 20px;
+      border: 1px solid rgba(10,42,94,.08);
+      background: rgba(255,255,255,.72);
+    }
+    table { width: 100%; border-collapse: collapse; min-width: 920px; color: var(--primary); }
+    th {
+      padding: 13px 14px;
+      text-align: left;
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .035em;
+      font-weight: 650;
+      background: rgba(244,247,251,.74);
+      border-bottom: 1px solid rgba(10,42,94,.08);
+      white-space: nowrap;
+    }
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid rgba(10,42,94,.06);
+      font-size: 12.5px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .table-person { display: flex; align-items: center; gap: 9px; }
+    .avatar-initial {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--primary);
+      color: white;
+      font-size: 10.5px;
+      font-weight: 620;
+      border: 2px solid white;
+      box-shadow: 0 8px 18px rgba(10,42,94,.10);
+      flex: 0 0 auto;
+    }
+    .order-id { color: var(--primary); font-weight: 650; }
+
+    .prescription-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0,1fr));
+      gap: 12px;
+    }
+    .rx-note-card {
+      border-radius: 20px;
+      padding: 14px;
+      border: 1px solid rgba(10,42,94,.08);
+      background: rgba(255,255,255,.72);
+      box-shadow: var(--inset);
+    }
+    .rx-note-card h4 { margin: 0; color: var(--primary); font-size: 13px; font-weight: 610; }
+    .rx-note-card p { margin: 7px 0 12px; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+    .rx-note-footer { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+
+    .mobile-tabs {
+      display: none;
+      position: sticky;
+      bottom: 0;
+      z-index: 40;
+      background: rgba(255,255,255,.92);
+      border: 1px solid rgba(10,42,94,.08);
+      box-shadow: 0 -12px 34px rgba(10,42,94,.08), var(--inset);
+      backdrop-filter: blur(16px);
+      padding: 8px;
+      border-radius: 20px 20px 0 0;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+    }
+    .mobile-tabs a {
+      min-height: 44px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      color: var(--primary);
+    }
+    .mobile-tabs a.active { background: var(--primary-100); }
+
+    @media (max-width: 1280px) {
+      .metric-grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
+      .overview-hero, .content-grid, .revenue-layout { grid-template-columns: 1fr; }
+      .command-grid { grid-template-columns: repeat(4, minmax(0,1fr)); }
+    }
+
+    @media (max-width: 980px) {
+      .app-shell {
+        width: min(100%, calc(100vw - 18px));
+        margin: 9px auto;
+        grid-template-columns: 1fr;
+      }
+      .admin-sidebar { display: none; }
+      .main { padding: 12px; padding-bottom: 76px; }
+      .mobile-tabs { display: grid; }
+      .topbar { align-items: stretch; flex-direction: column; }
+      .search-box { width: 100%; }
+      .top-actions { justify-content: flex-start; }
+      .hero-panel { min-height: auto; }
+      .command-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .prescription-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      body { background: linear-gradient(145deg, #F8F4EE, var(--page)); }
+      .metric-grid, .mini-grid { grid-template-columns: 1fr; }
+      .panel-head, .rx-panel-top { flex-direction: column; align-items: stretch; }
+      .rx-tabs { overflow-x: auto; max-width: 100%; }
+      .hero-panel, .command-panel, .ops-panel, .rx-surface { border-radius: 22px; }
+      .hero-panel h1 { font-size: 29px; }
+      .bar-chart { gap: 8px; overflow-x: auto; grid-template-columns: repeat(7, 54px); padding-bottom: 8px; }
+      .bar-track { height: 150px; }
+      .rx-list-card, .inventory-row { grid-template-columns: auto 1fr; }
+      .rx-card-side, .inventory-row > .chip { grid-column: 1 / -1; justify-self: start; text-align: left; justify-items: start; }
+      .stock-bar { width: 100%; max-width: 190px; }
+      .btn { width: 100%; }
+      .hero-actions, .top-actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+      .top-actions .user-pill { grid-column: 1 / -1; justify-content: center; }
+    }
+
+    @media (max-width: 480px) {
+      .app-shell { width: 100%; margin: 0; border-radius: 0; min-height: 100vh; }
+      .main { padding: 10px; padding-bottom: 76px; }
+      .topbar, .hero-panel, .command-panel, .metric-card, .ops-panel, .rx-surface { border-radius: 18px; }
+      .hero-actions, .top-actions, .command-grid { grid-template-columns: 1fr; }
+      .date-pill, .user-pill, .icon-button { width: 100%; justify-content: center; }
+      .icon-button { min-height: 38px; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-overview" viewBox="0 0 24 24"><path d="M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z"/></symbol>
+    <symbol id="i-products" viewBox="0 0 24 24"><path d="M9.5 14.5 14.5 9.5M7.4 16.6a4.2 4.2 0 0 1 0-5.9l3.3-3.3a4.2 4.2 0 1 1 5.9 5.9l-3.3 3.3a4.2 4.2 0 0 1-5.9 0Z"/></symbol>
+    <symbol id="i-cart" viewBox="0 0 24 24"><path d="M4 5h2.2l1.6 9.2a2 2 0 0 0 2 1.7h6.9a2 2 0 0 0 1.9-1.4l1.1-5.2H7.1M10 20h.1M17 20h.1"/></symbol>
+    <symbol id="i-card" viewBox="0 0 24 24"><path d="M4 7.5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 10h16M7.5 14.5h5"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M8.8 11.5a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4ZM3.8 19a5 5 0 0 1 10 0M16 10.5a2.6 2.6 0 1 0 0-5.2M15.2 14a4.5 4.5 0 0 1 5 4.5"/></symbol>
+    <symbol id="i-doctors" viewBox="0 0 24 24"><path d="M9 7V5.8A1.8 1.8 0 0 1 10.8 4h2.4A1.8 1.8 0 0 1 15 5.8V7M6.5 7h11A2.5 2.5 0 0 1 20 9.5v8A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-8A2.5 2.5 0 0 1 6.5 7ZM12 11v5M9.5 13.5h5"/></symbol>
+    <symbol id="i-stethoscope" viewBox="0 0 24 24"><path d="M7 4v5a4 4 0 0 0 8 0V4M5.5 4H7M15 4h1.5M11 13v2a4 4 0 0 0 8 0v-1.2M19 13.8a1.8 1.8 0 1 0 0-3.6 1.8 1.8 0 0 0 0 3.6Z"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24"><path d="M9 5.5h6M9.5 4h5A1.5 1.5 0 0 1 16 5.5v0A1.5 1.5 0 0 1 14.5 7h-5A1.5 1.5 0 0 1 8 5.5v0A1.5 1.5 0 0 1 9.5 4ZM7 6h-.5A2.5 2.5 0 0 0 4 8.5v9A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5v-9A2.5 2.5 0 0 0 17.5 6H17M8 12h8M8 16h5"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><path d="M5.5 6.5h13A2.5 2.5 0 0 1 21 9v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16V9a2.5 2.5 0 0 1 2.5-2.5ZM4 8l8 6 8-6"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><path d="M7 4v3M17 4v3M5.5 6h13A2.5 2.5 0 0 1 21 8.5v10A2.5 2.5 0 0 1 18.5 21h-13A2.5 2.5 0 0 1 3 18.5v-10A2.5 2.5 0 0 1 5.5 6ZM3 10h18M7.5 14h.1M12 14h.1M16.5 14h.1M7.5 17.5h.1M12 17.5h.1"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4ZM19.2 13.6l1.1.9-1.6 2.8-1.4-.5a7.7 7.7 0 0 1-1.7 1l-.2 1.5h-3.2l-.2-1.5a7.8 7.8 0 0 1-1.7-1l-1.4.5-1.6-2.8 1.1-.9a7.4 7.4 0 0 1 0-2l-1.1-.9 1.6-2.8 1.4.5a7.8 7.8 0 0 1 1.7-1l.2-1.5h3.2l.2 1.5a7.7 7.7 0 0 1 1.7 1l1.4-.5 1.6 2.8-1.1.9a7.4 7.4 0 0 1 0 2Z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><path d="M6 12h.1M12 12h.1M18 12h.1"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path d="m20 20-4.3-4.3M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></symbol>
+    <symbol id="i-inventory" viewBox="0 0 24 24"><path d="M4 7.5 12 3l8 4.5-8 4.5-8-4.5ZM4 7.5v9L12 21l8-4.5v-9M12 12v9"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="admin-sidebar" aria-label="Admin storefront navigation">
+      <div class="side-brand">
+        <div class="side-logo-shell"><div class="brand-mark">ne</div></div>
+        <div><strong>Nevari Health</strong><span>Admin Storefront</span></div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">Command</div>
+        <nav class="nav-stack">
+          <a class="nav-item active" href="#overview"><span class="nav-icon"><svg class="ui-icon"><use href="#i-overview"></use></svg></span>Overview</a>
+          <a class="nav-item" href="#bookings"><span class="nav-icon"><svg class="ui-icon"><use href="#i-calendar"></use></svg></span>Bookings</a>
+          <a class="nav-item" href="#products"><span class="nav-icon"><svg class="ui-icon"><use href="#i-products"></use></svg></span>Products</a>
+          <a class="nav-item" href="#orders"><span class="nav-icon"><svg class="ui-icon"><use href="#i-cart"></use></svg></span>Orders</a>
+          <a class="nav-item" href="#revenue"><span class="nav-icon"><svg class="ui-icon"><use href="#i-card"></use></svg></span>Revenue</a>
+        </nav>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">Care Ops</div>
+        <nav class="nav-stack">
+          <a class="nav-item" href="#prescriptions"><span class="nav-icon"><svg class="ui-icon"><use href="#i-clipboard"></use></svg></span>Prescriptions</a>
+          <a class="nav-item" href="#bookings"><span class="nav-icon"><svg class="ui-icon"><use href="#i-stethoscope"></use></svg></span>Consultations</a>
+          <a class="nav-item" href="#patients"><span class="nav-icon"><svg class="ui-icon"><use href="#i-users"></use></svg></span>Patients</a>
+        </nav>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">Trust</div>
+        <nav class="nav-stack">
+          <a class="nav-item" href="#payments"><span class="nav-icon"><svg class="ui-icon"><use href="#i-mail"></use></svg></span>Messages</a>
+          <a class="nav-item" href="#settings"><span class="nav-icon"><svg class="ui-icon"><use href="#i-settings"></use></svg></span>Settings</a>
+        </nav>
+      </div>
+
+      <div class="sidebar-summary">
+        <span>Today priority</span>
+        <strong>18 actions</strong>
+        <small>Review prescriptions, verify payments, approve bookings and restock urgent products.</small>
+      </div>
+    </aside>
+
+    <main class="main" id="overview">
+      <header class="topbar">
+        <div class="search-box">
+          <svg class="ui-icon"><use href="#i-search"></use></svg>
+          <input type="search" placeholder="Search bookings, prescriptions, products, orders or customers" />
+        </div>
+        <div class="top-actions">
+          <button class="icon-button primary" aria-label="Create new"><svg class="ui-icon"><use href="#i-plus"></use></svg></button>
+          <span class="date-pill"><svg class="ui-icon"><use href="#i-calendar"></use></svg>May 24, 2026</span>
+          <button class="icon-button" aria-label="Filter"><svg class="ui-icon"><use href="#i-filter"></use></svg></button>
+          <span class="user-pill"><span class="avatar-mini">AI</span>angus igbani <small>administrator</small></span>
+        </div>
+      </header>
+
+      <section class="overview-hero">
+        <article class="hero-panel">
+          <p class="eyebrow">Pharmacy operations overview</p>
+          <h1>One clean command centre for bookings, products, prescriptions and revenue.</h1>
+          <p>Track the work that affects patient experience and cash flow: confirmed appointments, prescription review, product availability, active orders, verified payments and revenue performance.</p>
+          <div class="hero-actions">
+            <button class="btn btn-primary"><svg class="ui-icon"><use href="#i-plus"></use></svg>New booking</button>
+            <button class="btn btn-accent">Review prescriptions</button>
+            <button class="btn btn-outline">Export report</button>
+          </div>
+        </article>
+
+        <aside class="command-panel">
+          <div>
+            <p class="eyebrow" style="color:rgba(255,255,255,.64);">Operational pulse</p>
+            <h2>Store health is stable</h2>
+            <p>Revenue is ahead of last week, but prescriptions and payment reviews need attention before dispatch.</p>
+          </div>
+          <div class="command-grid">
+            <div class="command-card"><span>Pending RX</span><strong>7</strong></div>
+            <div class="command-card"><span>Payment review</span><strong>5</strong></div>
+            <div class="command-card"><span>Low stock</span><strong>12</strong></div>
+            <div class="command-card"><span>Today bookings</span><strong>18</strong></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="metric-grid" aria-label="Core pharmacy metrics">
+        <article class="metric-card primary">
+          <div class="metric-top"><span class="metric-icon"><svg class="ui-icon"><use href="#i-card"></use></svg></span><span class="chip confirmed">verified</span></div>
+          <span class="metric-label">Revenue today</span>
+          <strong class="metric-value">₦2.38M</strong>
+          <small class="metric-note">₦406K awaiting verification</small>
+        </article>
+        <article class="metric-card accent">
+          <div class="metric-top"><span class="metric-icon"><svg class="ui-icon"><use href="#i-calendar"></use></svg></span><span class="chip processing">active</span></div>
+          <span class="metric-label">Bookings today</span>
+          <strong class="metric-value">18</strong>
+          <small class="metric-note">12 confirmed, 6 requested</small>
+        </article>
+        <article class="metric-card info">
+          <div class="metric-top"><span class="metric-icon"><svg class="ui-icon"><use href="#i-clipboard"></use></svg></span><span class="chip pending">review</span></div>
+          <span class="metric-label">Prescriptions</span>
+          <strong class="metric-value">24</strong>
+          <small class="metric-note">7 need pharmacist decision</small>
+        </article>
+        <article class="metric-card">
+          <div class="metric-top"><span class="metric-icon"><svg class="ui-icon"><use href="#i-products"></use></svg></span><span class="chip available">live</span></div>
+          <span class="metric-label">Active products</span>
+          <strong class="metric-value">426</strong>
+          <small class="metric-note">12 low stock, 3 out of stock</small>
+        </article>
+        <article class="metric-card">
+          <div class="metric-top"><span class="metric-icon"><svg class="ui-icon"><use href="#i-cart"></use></svg></span><span class="chip processing">orders</span></div>
+          <span class="metric-label">Orders in progress</span>
+          <strong class="metric-value">31</strong>
+          <small class="metric-note">9 ready for dispatch</small>
+        </article>
+        <article class="metric-card">
+          <div class="metric-top"><span class="metric-icon"><svg class="ui-icon"><use href="#i-card"></use></svg></span><span class="chip pending">finance</span></div>
+          <span class="metric-label">Payment reviews</span>
+          <strong class="metric-value">5</strong>
+          <small class="metric-note">2 customer name mismatches</small>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <div class="stack">
+          <article class="ops-panel pad" id="revenue">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Revenue and orders</p>
+                <h3>Weekly revenue and order velocity</h3>
+                <p>Shows paid revenue, pending payment checks and order count across the week.</p>
+              </div>
+              <div class="rx-tabs" aria-label="Revenue range">
+                <button class="rx-tab active">Week</button>
+                <button class="rx-tab">Month</button>
+                <button class="rx-tab">Live</button>
+              </div>
+            </div>
+            <div class="revenue-layout">
+              <div class="bar-chart" aria-label="Weekly revenue bars">
+                <div class="bar-item"><div class="bar-track"><div class="bar-fill accent" style="height:18%"></div></div><div class="bar-value">₦180K</div><div class="bar-day">Mon</div><div class="bar-orders">4 orders</div></div>
+                <div class="bar-item"><div class="bar-track"><div class="bar-fill accent" style="height:24%"></div></div><div class="bar-value">₦230K</div><div class="bar-day">Tue</div><div class="bar-orders">6 orders</div></div>
+                <div class="bar-item"><div class="bar-track"><div class="bar-fill" style="height:38%"></div></div><div class="bar-value">₦540K</div><div class="bar-day">Wed</div><div class="bar-orders">8 orders</div></div>
+                <div class="bar-item"><div class="bar-track"><div class="bar-fill" style="height:56%"></div></div><div class="bar-value">₦880K</div><div class="bar-day">Thu</div><div class="bar-orders">12 orders</div></div>
+                <div class="bar-item"><div class="bar-track"><div class="bar-fill" style="height:88%"></div></div><div class="bar-value">₦1.46M</div><div class="bar-day">Fri</div><div class="bar-orders">19 orders</div></div>
+                <div class="bar-item"><div class="bar-track"><div class="bar-fill" style="height:76%"></div></div><div class="bar-value">₦1.18M</div><div class="bar-day">Sat</div><div class="bar-orders">15 orders</div></div>
+                <div class="bar-item"><div class="bar-track"><div class="bar-fill accent" style="height:44%"></div></div><div class="bar-value">₦640K</div><div class="bar-day">Sun</div><div class="bar-orders">9 orders</div></div>
+              </div>
+              <aside class="summary-card">
+                <div><span>Week revenue</span><strong>₦5.11M</strong></div>
+                <div class="summary-list">
+                  <div><em>Paid orders</em><b>73</b></div>
+                  <div><em>Pending bank slips</em><b>₦406K</b></div>
+                  <div><em>Consultation fees</em><b>₦180K</b></div>
+                  <div><em>Average order value</em><b>₦70K</b></div>
+                </div>
+              </aside>
+            </div>
+          </article>
+
+          <article class="rx-surface" id="prescriptions">
+            <div class="rx-panel-top">
+              <div>
+                <p class="rx-kicker">Prescription control</p>
+                <h3 class="rx-title">Prescriptions needing review</h3>
+                <p class="rx-subtext">Prioritise orders that cannot move to packing until a pharmacist confirms the uploaded prescription.</p>
+              </div>
+              <div class="rx-tabs" aria-label="Prescription tabs">
+                <button class="rx-tab active">Needs review <span class="rx-count">7</span></button>
+                <button class="rx-tab">Approved <span class="rx-count">17</span></button>
+                <button class="rx-tab">Rejected <span class="rx-count">2</span></button>
+              </div>
+            </div>
+            <div class="prescription-grid">
+              <div class="rx-note-card">
+                <h4>RX 1028 · Antibiotics</h4>
+                <p>Customer uploaded handwritten prescription. Dose frequency must be confirmed before order approval.</p>
+                <div class="rx-note-footer"><span class="chip pending">Review</span><button class="btn btn-soft">Open</button></div>
+              </div>
+              <div class="rx-note-card">
+                <h4>RX 1027 · Diabetes refill</h4>
+                <p>Recurring customer. Prescription history available, but last upload is older than the accepted review period.</p>
+                <div class="rx-note-footer"><span class="chip processing">Follow up</span><button class="btn btn-soft">Open</button></div>
+              </div>
+              <div class="rx-note-card">
+                <h4>RX 1026 · Asthma inhaler</h4>
+                <p>Product is in stock. Pharmacist approval is the last blocker before the order moves to dispatch.</p>
+                <div class="rx-note-footer"><span class="chip pending">Approve</span><button class="btn btn-soft">Open</button></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="ops-panel pad" id="orders">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Fulfilment queue</p>
+                <h3>Orders that need action</h3>
+                <p>Orders are grouped by prescription status, payment verification and packing readiness.</p>
+              </div>
+              <button class="btn btn-outline">View all orders</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Order</th><th>Customer</th><th>Items</th><th>Prescription</th><th>Payment</th><th>Status</th><th>Next action</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td class="order-id">NV 2048</td><td><div class="table-person"><span class="avatar-initial">GB</span>Grace Bello</div></td><td>3 medicines</td><td><span class="chip confirmed">Approved</span></td><td><span class="chip paid">Paid</span></td><td><span class="chip processing">Packing</span></td><td>Dispatch by 4 PM</td></tr>
+                  <tr><td class="order-id">NV 2047</td><td><div class="table-person"><span class="avatar-initial" style="background:var(--accent);color:var(--primary);">OE</span>Ola Eze</div></td><td>1 product</td><td><span class="chip draft">Not needed</span></td><td><span class="chip pending">Slip review</span></td><td><span class="chip pending">Hold</span></td><td>Verify bank transfer</td></tr>
+                  <tr><td class="order-id">NV 2046</td><td><div class="table-person"><span class="avatar-initial">TA</span>Tara Adams</div></td><td>4 medicines</td><td><span class="chip pending">Pending</span></td><td><span class="chip failed">Failed</span></td><td><span class="chip cancelled">Stopped</span></td><td>Contact customer</td></tr>
+                  <tr><td class="order-id">NV 2045</td><td><div class="table-person"><span class="avatar-initial" style="background:var(--success-bg);color:var(--success);">MA</span>Musa Ali</div></td><td>2 medicines</td><td><span class="chip confirmed">Approved</span></td><td><span class="chip paid">Paid</span></td><td><span class="chip confirmed">Ready</span></td><td>Assign rider</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <aside class="stack">
+          <article class="ops-panel pad" id="bookings">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Bookings</p>
+                <h3>Today appointment flow</h3>
+                <p>Confirmed slots, requested slots and consultation workload.</p>
+              </div>
+              <button class="btn btn-outline">Calendar</button>
+            </div>
+            <div class="rx-list">
+              <div class="rx-list-card">
+                <span class="rx-avatar blue">10</span>
+                <div class="rx-card-meta"><h4>10:30 AM · Pharmacist consult</h4><p>Grace Bello · Diabetes refill review</p></div>
+                <div class="rx-card-side"><span class="chip confirmed">Confirmed</span></div>
+              </div>
+              <div class="rx-list-card">
+                <span class="rx-avatar">12</span>
+                <div class="rx-card-meta"><h4>12:00 PM · Pickup booking</h4><p>Order NV 2048 · Paid order collection</p></div>
+                <div class="rx-card-side"><span class="chip processing">Ready</span></div>
+              </div>
+              <div class="rx-list-card">
+                <span class="rx-avatar purple">03</span>
+                <div class="rx-card-meta"><h4>3:45 PM · Doctor follow up</h4><p>Prescription clarification required</p></div>
+                <div class="rx-card-side"><span class="chip pending">Requested</span></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="ops-panel pad" id="products">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Products and stock</p>
+                <h3>Inventory attention</h3>
+                <p>Products that can affect fulfilment today.</p>
+              </div>
+              <button class="btn btn-outline">Manage</button>
+            </div>
+            <div class="inventory-list">
+              <div class="inventory-row">
+                <span class="product-thumb"><svg class="ui-icon"><use href="#i-products"></use></svg></span>
+                <div><h4>Amoxicillin 500mg</h4><p>18 packs available · RX required</p><div class="stock-bar"><span style="width:68%"></span></div></div>
+                <span class="chip available">In stock</span>
+              </div>
+              <div class="inventory-row">
+                <span class="product-thumb"><svg class="ui-icon"><use href="#i-inventory"></use></svg></span>
+                <div><h4>Insulin storage pack</h4><p>5 packs available · cold chain</p><div class="stock-bar low"><span style="width:24%"></span></div></div>
+                <span class="chip pending">Low stock</span>
+              </div>
+              <div class="inventory-row">
+                <span class="product-thumb"><svg class="ui-icon"><use href="#i-products"></use></svg></span>
+                <div><h4>Salbutamol inhaler</h4><p>0 units available · fulfilment blocked</p><div class="stock-bar out"><span style="width:4%"></span></div></div>
+                <span class="chip failed">Out</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="ops-panel pad" id="payments">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Revenue checks</p>
+                <h3>Payment and finance summary</h3>
+                <p>Only finance items that affect release of orders.</p>
+              </div>
+            </div>
+            <div class="mini-grid">
+              <div class="stat-card-clean"><label>Verified today</label><strong>₦2.38M</strong><span>32 successful payments</span></div>
+              <div class="stat-card-clean"><label>Pending review</label><strong>₦406K</strong><span>5 uploaded bank slips</span></div>
+              <div class="stat-card-clean"><label>Refund requests</label><strong>2</strong><span>₦46K total exposure</span></div>
+              <div class="stat-card-clean"><label>Failed payments</label><strong>3</strong><span>Customer retry needed</span></div>
+            </div>
+          </article>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <nav class="mobile-tabs" aria-label="Mobile navigation">
+    <a class="active" href="#overview" aria-label="Overview"><svg class="ui-icon"><use href="#i-overview"></use></svg></a>
+    <a href="#bookings" aria-label="Bookings"><svg class="ui-icon"><use href="#i-calendar"></use></svg></a>
+    <a href="#products" aria-label="Products"><svg class="ui-icon"><use href="#i-products"></use></svg></a>
+    <a href="#prescriptions" aria-label="Prescriptions"><svg class="ui-icon"><use href="#i-clipboard"></use></svg></a>
+    <a href="#revenue" aria-label="Revenue"><svg class="ui-icon"><use href="#i-card"></use></svg></a>
+  </nav>
+</body>
+</html>

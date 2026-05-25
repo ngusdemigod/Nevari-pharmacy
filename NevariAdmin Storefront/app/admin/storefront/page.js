@@ -124,6 +124,7 @@ const FRONTEND_PAGES = [
 ];
 
 const SEARCH_PLACEHOLDERS = {
+  overview: "Search bookings, prescriptions, products, orders or customers",
   orders: "Search orders",
   payments: "Search payments",
   customers: "Search patients",
@@ -474,6 +475,17 @@ function formatMoney(value, currency = storedStoreCurrency()) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: resolvedCurrency,
+    maximumFractionDigits: 2
+  }).format(Number(value || 0));
+}
+
+function formatCompactMoney(value, currency = storedStoreCurrency()) {
+  const resolvedCurrency = normalizeCurrency(currency) || storedStoreCurrency();
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: resolvedCurrency,
+    currencyDisplay: "code",
+    notation: "compact",
     maximumFractionDigits: 2
   }).format(Number(value || 0));
 }
@@ -4479,8 +4491,8 @@ export default function Page() {
       setData((prev) => ({
         ...prev,
         dashboard: summary.dashboard || summary,
-        orders: ["orders", "payments"].includes(currentPage) ? prev.orders : recentOrders,
-        orderDetails: ["orders", "payments"].includes(currentPage) ? prev.orderDetails : recentOrders
+        orders: ["overview", "orders", "payments"].includes(currentPage) ? (prev.orders.length ? prev.orders : recentOrders) : recentOrders,
+        orderDetails: ["overview", "orders", "payments"].includes(currentPage) ? (prev.orderDetails.length ? prev.orderDetails : recentOrders) : recentOrders
       }));
       setLiveSnapshots((prev) => ([
         ...prev,
@@ -5010,13 +5022,13 @@ export default function Page() {
     dedupingInterval: 10_000
   };
   const ordersApiStatusFilter = currentPage === "orders" ? upstreamOrderStatusFilter(orderQueueFilter) : "";
-  const ordersListKey = canLoadSections && ["orders", "payments"].includes(currentPage)
+  const ordersListKey = canLoadSections && ["overview", "orders", "payments"].includes(currentPage)
     ? swrKeys.admin.orders(withBaseUrl(session, { per_page: 24, page: 1, status: ordersApiStatusFilter, search: deferredSearch }))
     : null;
-  const productsListKey = canLoadSections && currentPage === "products"
+  const productsListKey = canLoadSections && ["overview", "products"].includes(currentPage)
     ? swrKeys.admin.products(withBaseUrl(session, { per_page: 24, page: 1, search: deferredSearch }))
     : null;
-  const productCategoriesListKey = canLoadSections && currentPage === "products"
+  const productCategoriesListKey = canLoadSections && ["overview", "products"].includes(currentPage)
     ? swrKeys.admin.categories(withBaseUrl(session, { per_page: 100, page: 1 }))
     : null;
   const categoryPaneProductsListKey = canLoadSections && currentPage === "products" && productCatalogView === "categories"
@@ -5031,13 +5043,13 @@ export default function Page() {
   const customersListKey = canLoadSections && currentPage === "customers"
     ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 24, page: 1, search: deferredSearch }))
     : null;
-  const consultationsListKey = canLoadSections && currentPage === "consultations"
+  const consultationsListKey = canLoadSections && ["overview", "consultations"].includes(currentPage)
     ? swrKeys.admin.appointments(withBaseUrl(session, { per_page: 50, page: 1, search: deferredSearch }))
     : null;
-  const prescriptionsListKey = canLoadSections && currentPage === "prescriptions"
+  const prescriptionsListKey = canLoadSections && ["overview", "prescriptions"].includes(currentPage)
     ? swrKeys.admin.prescriptions(withBaseUrl(session, { per_page: 30, page: 1, search: deferredSearch }))
     : null;
-  const doctorsListKey = canLoadSections && currentPage === "doctors"
+  const doctorsListKey = canLoadSections && ["overview", "doctors"].includes(currentPage)
     ? swrKeys.admin.doctors(withBaseUrl(session, { per_page: 50, page: 1, search: deferredSearch }))
     : null;
   const emailsListKey = canLoadSections && currentPage === "emails"
@@ -5177,10 +5189,10 @@ export default function Page() {
   async function refreshDashboardData(activeSession = session) {
     const tasks = [fetchDashboardSummary(activeSession)];
 
-    if (["orders", "payments"].includes(currentPage) && ordersListKey) {
+    if (["overview", "orders", "payments"].includes(currentPage) && ordersListKey) {
       tasks.push(ordersQuery.mutate());
     }
-    if (currentPage === "products") {
+    if (["overview", "products"].includes(currentPage)) {
       if (productsListKey) {
         tasks.push(productsQuery.mutate());
       }
@@ -5200,13 +5212,13 @@ export default function Page() {
     if (currentPage === "customers" && customersListKey) {
       tasks.push(customersQuery.mutate());
     }
-    if (currentPage === "consultations" && consultationsListKey) {
+    if (["overview", "consultations"].includes(currentPage) && consultationsListKey) {
       tasks.push(consultationsQuery.mutate());
     }
-    if (currentPage === "prescriptions" && prescriptionsListKey) {
+    if (["overview", "prescriptions"].includes(currentPage) && prescriptionsListKey) {
       tasks.push(prescriptionsQuery.mutate());
     }
-    if (currentPage === "doctors" && doctorsListKey) {
+    if (["overview", "doctors"].includes(currentPage) && doctorsListKey) {
       tasks.push(doctorsQuery.mutate());
     }
     if (currentPage === "emails" && emailsListKey) {
@@ -5306,7 +5318,7 @@ export default function Page() {
   const emailsSummary = dashboard.emails || {};
   const doctorMap = new Map((data.doctors || []).map((doctor) => [doctor.user_id || doctor.id, doctor.display_name]));
   const query = deferredSearch.trim().toLowerCase();
-  const showPageSearch = currentPage !== "overview";
+  const showPageSearch = true;
   const searchPlaceholder = SEARCH_PLACEHOLDERS[currentPage] || "Search this page";
   const matchesSearch = (text, enabled) => !enabled || !query || normalizeText(text).includes(query);
   const siteName = session.siteName || DEFAULT_SITE_NAME;
@@ -5341,6 +5353,27 @@ export default function Page() {
     return days;
   })();
 
+  const monthlyTrend = (() => {
+    const orders = data.orderDetails || [];
+    const now = new Date();
+    return Array.from({ length: 4 }, (_, index) => {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(now.getDate() - ((3 - index) * 7) - 6);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 7);
+      const weekOrders = orders.filter((order) => {
+        const created = new Date(order.created_at);
+        return !Number.isNaN(created.getTime()) && created >= start && created < end;
+      });
+      return {
+        label: `Week ${index + 1}`,
+        total: weekOrders.reduce((sum, order) => sum + Number(order.total || 0), 0),
+        volume: weekOrders.length
+      };
+    });
+  })();
+
   const liveTrend = (() => {
     const placeholders = Array.from({ length: Math.max(0, 7 - liveSnapshots.length) }, (_, index) => ({
       label: index === 0 ? "Live" : "",
@@ -5351,7 +5384,7 @@ export default function Page() {
     return [...placeholders, ...liveSnapshots];
   })();
 
-  const trendSeries = trendMode === "live" ? liveTrend : weeklyTrend;
+  const trendSeries = trendMode === "live" ? liveTrend : trendMode === "month" ? monthlyTrend : weeklyTrend;
   const chartMax = Math.max(...trendSeries.map((day) => day.total), 1);
   const chartColors = ["#b9996d", "#d99860", "#d8cab6", "#344a6e", "#5c6d89", "#adb7c8", "#b9996d"];
 
@@ -5542,7 +5575,7 @@ export default function Page() {
     const names = (order.items_summary || order.items || []).map ? ((order.items_summary || order.items || []).map((item) => item.name || item)).join(" ") : "";
     const customer = resolveOrderCustomerSummary(order);
     const searchText = `${order.number} ${order.status} ${order.rx_status || ""} ${names} ${order.customer_id || ""} ${customer.name} ${customer.email}`;
-    return matchesSearch(searchText, currentPage === "orders") && matchesOrderQueueFilter(order, orderQueueFilter);
+    return matchesSearch(searchText, ["overview", "orders"].includes(currentPage)) && matchesOrderQueueFilter(order, orderQueueFilter);
   });
 
   const selectedOrderPrescription = selectedOrderDetail
@@ -5558,11 +5591,11 @@ export default function Page() {
   );
 
   const filteredAppointments = (data.appointments || []).filter((appointment) =>
-    matchesSearch(`${appointment.status} ${appointment.reason} ${appointment.type} ${appointment.patient_user_id} ${appointment.doctor_user_id}`, currentPage === "consultations")
+    matchesSearch(`${appointment.status} ${appointment.reason} ${appointment.type} ${appointment.patient_user_id} ${appointment.doctor_user_id}`, ["overview", "consultations"].includes(currentPage))
   );
 
   const filteredPrescriptions = (data.prescriptionDetails || []).filter((prescription) =>
-    matchesSearch(`${prescription.prescription_number} ${prescription.status} ${prescription.patient_user_id} ${prescription.doctor_user_id} ${prescription.diagnosis}`, currentPage === "prescriptions")
+    matchesSearch(`${prescription.prescription_number} ${prescription.status} ${prescription.patient_user_id} ${prescription.doctor_user_id} ${prescription.diagnosis}`, ["overview", "prescriptions"].includes(currentPage))
   );
 
   const productFilterCounts = {
@@ -5576,7 +5609,7 @@ export default function Page() {
 
   const filteredProducts = (data.products || []).filter((product) => {
     const rules = product.pharmacy_rules || {};
-    const matchesProductSearch = matchesSearch(`${product.name} ${product.sku} ${product.badge?.label} ${product.badge?.key} ${product.stock_status} ${rules.rx_required} ${rules.otc} ${rules.consultation_required}`, currentPage === "products");
+    const matchesProductSearch = matchesSearch(`${product.name} ${product.sku} ${product.badge?.label} ${product.badge?.key} ${product.stock_status} ${rules.rx_required} ${rules.otc} ${rules.consultation_required}`, ["overview", "products"].includes(currentPage));
     if (!matchesProductSearch) {
       return false;
     }
@@ -5858,7 +5891,7 @@ export default function Page() {
         return false;
       }
       const customer = customerSummary(order);
-      return matchesSearch(`${order.number} ${paymentStatus} ${order.rx_status || ""} ${order.customer_id || ""} ${customer.name} ${customer.email} ${order.total || 0}`, currentPage === "payments");
+      return matchesSearch(`${order.number} ${paymentStatus} ${order.rx_status || ""} ${order.customer_id || ""} ${customer.name} ${customer.email} ${order.total || 0}`, ["overview", "payments"].includes(currentPage));
     })
     .map((order) => {
       const paymentStatus = normalizedPaymentStatus(order);
@@ -6192,6 +6225,37 @@ export default function Page() {
         start.getDate() === today.getDate();
     })
     .slice(0, 6);
+
+  const overviewOrderRows = orderQueueRows.filter((order) => {
+    const itemNames = Array.isArray(order.items_summary || order.items) ? (order.items_summary || order.items).map((item) => item.name || item).join(" ") : "";
+    const customer = resolveOrderCustomerSummary(order);
+    return matchesSearch(`${order.number} ${order.status} ${order.rx_status || ""} ${itemNames} ${customer.name} ${customer.email}`, currentPage === "overview");
+  });
+  const overviewPaidOrders = overviewOrderRows.filter((order) => normalizedPaymentStatus(order) === "completed");
+  const overviewRevenueTotal = trendSeries.reduce((sum, row) => sum + Number(row.total || 0), 0);
+  const overviewAverageOrderValue = overviewPaidOrders.length
+    ? overviewPaidOrders.reduce((sum, order) => sum + Number(order.total || 0), 0) / overviewPaidOrders.length
+    : 0;
+  const overviewConsultationFees = (data.appointments || []).reduce((sum, appointment) => (
+    sum + safeNumber(appointment.fee || appointment.amount || appointment.consultation_fee || 0)
+  ), 0);
+  const overviewInventoryRows = (data.products || [])
+    .filter((product) => matchesSearch(`${product.name} ${product.sku || ""} ${product.stock_status || ""}`, currentPage === "overview"))
+    .sort((left, right) => safeNumber(getProductStockQuantity(left) ?? 0) - safeNumber(getProductStockQuantity(right) ?? 0))
+    .slice(0, 3);
+  const getOverviewStockFlag = (product) => {
+    const stockQuantity = getProductStockQuantity(product);
+    const stockStatus = String(product.stock_status || "").toLowerCase().replace(/[_\s]+/g, "-");
+    if (["outofstock", "out-of-stock"].includes(stockStatus) || (!stockStatus && stockQuantity !== null && stockQuantity <= 0)) {
+      return { value: "failed", label: "Out" };
+    }
+    if (["lowstock", "low-stock", "onbackorder", "on-backorder"].includes(stockStatus)) {
+      return { value: "pending", label: "Low stock" };
+    }
+    return { value: "completed", label: "In stock" };
+  };
+  const overviewPendingPaymentCount = allPaymentRows.filter((row) => row.paymentStatus === "pending").length;
+  const overviewInventoryAlertCount = (data.products || []).filter((product) => getOverviewStockFlag(product).value !== "completed").length;
 
   const urgentItems = [
     {
@@ -6654,204 +6718,232 @@ export default function Page() {
             {showPageSkeleton ? renderPageSkeleton() : (
               <>
             {currentPage === "overview" && (
-              <section className="page-view active">
-                <section className="metrics-grid">
-                  <article className="metric-card lime">
-                    <div className="metric-row">
-                      <span className="metric-icon"><InlineIcon id="i-cart" /></span>
-                      <button className="icon-button subtle" type="button" onClick={() => switchPage("orders")}><InlineIcon id="i-more" /></button>
-                    </div>
-                    <span className="metric-label">Gross sales</span>
-                    <strong>{formatMoney(sales.month || 0, storeCurrency)}</strong>
-                    <small><InlineIcon id="i-arrow-up-right" /> {formatMoney(sales.today || 0, storeCurrency)} processed today</small>
-                  </article>
-                  <article className="metric-card mint">
-                    <div className="metric-row">
-                      <span className="metric-icon"><InlineIcon id="i-stethoscope" /></span>
-                      <button className="icon-button subtle" type="button" onClick={() => switchPage("consultations")}><InlineIcon id="i-more" /></button>
-                    </div>
-                    <span className="metric-label">Appointments in progress</span>
-                    <strong>{formatNumber(appointmentInProgress)}</strong>
-                    <small>{formatNumber(consultations.confirmed || 0)} confirmed and {formatNumber(consultations.requested || 0)} requested</small>
-                  </article>
-                  <article className="metric-card rose">
-                    <div className="metric-row">
-                      <span className="metric-icon"><InlineIcon id="i-clipboard" /></span>
-                      <button className="icon-button subtle" type="button" onClick={() => switchPage("prescriptions")}><InlineIcon id="i-more" /></button>
-                    </div>
-                    <span className="metric-label">RX holds</span>
-                    <strong>{formatNumber(rxHolds)}</strong>
-                    <small>{formatNumber(prescriptionsSummary.draft || 0)} draft and {formatNumber(prescriptionsSummary.expired || 0)} expired</small>
-                  </article>
-                  <article className="metric-card violet">
-                    <div className="metric-row">
+              <section className="page-view active overview-reference">
+                <section className="metric-grid">
+                  <article className="metric-card primary">
+                    <div className="metric-top">
                       <span className="metric-icon"><InlineIcon id="i-mail" /></span>
-                      <button className="icon-button subtle" type="button" onClick={() => switchPage("emails")}><InlineIcon id="i-more" /></button>
+                      <StatusPill value="pending">finance</StatusPill>
                     </div>
-                    <span className="metric-label">Email failure rate</span>
-                    <strong>{formatPercent(emailFailureRate)}</strong>
-                    <small>{formatNumber(emailsSummary.failed_today || 0)} failed of {formatNumber(emailTotal)} processed today</small>
+                    <span className="metric-label">Total Revenue</span>
+                    <strong className="metric-value">{formatCompactMoney(sales.month || 0, storeCurrency)}</strong>
+                    <small className="metric-note">{formatCompactMoney(sales.today || 0, storeCurrency)} processed today</small>
+                  </article>
+                  <article className="metric-card accent">
+                    <div className="metric-top">
+                      <span className="metric-icon"><InlineIcon id="i-credit-card" /></span>
+                      <StatusPill value="completed">verified</StatusPill>
+                    </div>
+                    <span className="metric-label">Revenue today</span>
+                    <strong className="metric-value">{formatCompactMoney(sales.today || 0, storeCurrency)}</strong>
+                    <small className="metric-note">{formatCompactMoney(sales.pending || 0, storeCurrency)} awaiting verification</small>
+                  </article>
+                  <article className="metric-card">
+                    <div className="metric-top">
+                      <span className="metric-icon"><InlineIcon id="i-calendar" /></span>
+                      <StatusPill value="processing">active</StatusPill>
+                    </div>
+                    <span className="metric-label">Consultations today</span>
+                    <strong className="metric-value">{formatNumber(todayAppointments.length)}</strong>
+                    <small className="metric-note">{formatNumber(consultations.confirmed || 0)} confirmed, {formatNumber(consultations.requested || 0)} requested</small>
+                  </article>
+                  <article className="metric-card">
+                    <div className="metric-top">
+                      <span className="metric-icon"><InlineIcon id="i-clipboard" /></span>
+                      <StatusPill value="pending">review</StatusPill>
+                    </div>
+                    <span className="metric-label">Prescriptions</span>
+                    <strong className="metric-value">{formatNumber((data.prescriptions || []).length)}</strong>
+                    <small className="metric-note">{formatNumber(prescriptionsSummary.draft || 0)} need pharmacist decision</small>
+                  </article>
+                  <article className="metric-card">
+                    <div className="metric-top">
+                      <span className="metric-icon"><InlineIcon id="i-pill" /></span>
+                      <StatusPill value="completed">live</StatusPill>
+                    </div>
+                    <span className="metric-label">Active products</span>
+                    <strong className="metric-value">{formatNumber((data.products || []).length)}</strong>
+                    <small className="metric-note">{formatNumber(overviewInventoryAlertCount)} stock flags</small>
+                  </article>
+                  <article className="metric-card">
+                    <div className="metric-top">
+                      <span className="metric-icon"><InlineIcon id="i-cart" /></span>
+                      <StatusPill value="processing">orders</StatusPill>
+                    </div>
+                    <span className="metric-label">Orders in progress</span>
+                    <strong className="metric-value">{formatNumber(overviewOrderRows.filter((order) => ["pending", "processing", "on-hold"].includes(String(order.status || "").toLowerCase())).length)}</strong>
+                    <small className="metric-note">{formatNumber(overviewOrderRows.filter((order) => String(order.status || "").toLowerCase() === "completed").length)} completed recently</small>
                   </article>
                 </section>
 
-                <section className="analytics-grid">
-                  <article className="panel">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Commerce + care</p>
-                        <h2>Weekly revenue and order velocity</h2>
-                      </div>
-                      <div className="segmented">
-                        <button className={`segment ${trendMode === "week" ? "active" : ""}`} type="button" onClick={() => setTrendMode("week")}>Week</button>
-                        <button
-                          className={`segment ${trendMode === "live" ? "active" : ""}`}
-                          type="button"
-                          onClick={() => {
-                            setTrendMode("live");
-                            handleRefresh();
-                          }}
-                        >
-                          Live
-                        </button>
-                      </div>
-                    </div>
-                    <div className="chart-scroll">
-                    <div className="bar-chart">
-                      {trendSeries.map((day, index) => (
-                        <div className="bar-col" key={`${trendMode}-${day.label || "slot"}-${index}`}>
-                          <div className="bar-shell">
-                            <div
-                              className={`bar-fill ${day.placeholder ? "placeholder" : ""}`}
-                              style={{ height: `${Math.max(16, (day.total / chartMax) * 190)}px`, backgroundColor: chartColors[index] }}
-                            />
-                          </div>
-                          <div className="bar-note">
-                            <strong>{formatMoney(day.total, storeCurrency)}</strong>
-                            <span>{day.label}</span>
-                            <small>{day.volume ? `${formatNumber(day.volume)} orders` : (trendMode === "live" ? "Waiting for updates" : "No orders")}</small>
-                          </div>
+                <section className="overview-v2-content-grid">
+                  <div className="overview-v2-stack">
+                    <article className="panel overview-v2-panel">
+                      <div className="panel-header">
+                        <div>
+                          <p className="section-kicker">Revenue and orders</p>
+                          <h2>Weekly revenue and order velocity</h2>
+                          <p className="overview-v2-panel-copy">Shows paid revenue, pending payment checks and order count across the selected range.</p>
                         </div>
-                      ))}
-                    </div>
-                    </div>
-                  </article>
-
-                  <article className="panel">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Operational mix</p>
-                        <h2>Order and prescription states</h2>
+                        <div className="overview-v2-tabs" aria-label="Revenue range">
+                          <button className={`segment ${trendMode === "week" ? "active" : ""}`} type="button" onClick={() => setTrendMode("week")}>Week</button>
+                          <button className={`segment ${trendMode === "month" ? "active" : ""}`} type="button" onClick={() => setTrendMode("month")}>Month</button>
+                          <button className={`segment ${trendMode === "live" ? "active" : ""}`} type="button" onClick={() => { setTrendMode("live"); handleRefresh(); }}>Live</button>
+                        </div>
                       </div>
-                      <button className="icon-button" type="button" onClick={() => switchPage("audit")}><InlineIcon id="i-filter" /></button>
-                    </div>
-                    <div className="mix-layout">
-                      <div className="donut-wrap">
-                        <div className="donut-chart">
-                          <svg className="donut-svg" viewBox="0 0 140 140" aria-hidden="true">
-                            <circle className="donut-track" cx="70" cy="70" r="54" />
-                            {donutSegments.map((item) => (
-                              <circle
-                                key={item.label}
-                                className={`donut-segment ${item.color}`}
-                                cx="70"
-                                cy="70"
-                                r="54"
-                                strokeDasharray={item.dasharray}
-                                strokeDashoffset={item.dashoffset}
-                              />
+                      <div className="overview-v2-revenue-layout">
+                        <div className="chart-scroll">
+                          <div className="bar-chart">
+                            {trendSeries.map((day, index) => (
+                              <div className="bar-col" key={`${trendMode}-${day.label || "slot"}-${index}`}>
+                                <div className="bar-shell">
+                                  <div className={`bar-fill ${day.placeholder ? "placeholder" : ""}`} style={{ height: `${Math.max(16, (day.total / chartMax) * 190)}px`, backgroundColor: chartColors[index % chartColors.length] }} />
+                                </div>
+                                <div className="bar-note">
+                                  <strong>{formatCompactMoney(day.total, storeCurrency)}</strong>
+                                  <span>{day.label}</span>
+                                  <small>{day.volume ? `${formatNumber(day.volume)} orders` : (trendMode === "live" ? "Loading" : "N/A")}</small>
+                                </div>
+                              </div>
                             ))}
-                          </svg>
-                          <div className="donut-center">
-                            <span>Total active</span>
-                            <strong>{formatNumber(legendItems.reduce((sum, item) => sum + Number(item.value), 0))}</strong>
                           </div>
                         </div>
-                      </div>
-                      <div className="legend-list">
-                        {legendItems.map((item) => (
-                          <div className="legend-item" key={item.label}>
-                            <span className={`legend-swatch ${item.color}`} />
-                            <div><strong>{item.label}</strong><span>{formatNumber(item.value)}</span></div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </article>
-                </section>
-
-                <section className="overview-grid">
-                  <article className="panel compact">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Priority queue</p>
-                        <h2>Immediate operational focus</h2>
-                      </div>
-                    </div>
-                    <div className="priority-list">
-                      {urgentItems.map((item) => (
-                        <button className="priority-card" key={item.label} type="button" onClick={() => switchPage(item.action)}>
-                          <span>{item.label}</span>
-                          <strong>{formatNumber(item.value)}</strong>
-                          <small>{item.note}</small>
-                        </button>
-                      ))}
-                    </div>
-                  </article>
-                  <article className="panel compact">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Catalog controls</p>
-                        <h2>Products by badge and type</h2>
-                      </div>
-                    </div>
-                    {renderCatalogBlock()}
-                  </article>
-                  <article className="panel compact">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Clinical team</p>
-                        <h2>Doctors and patient access</h2>
-                      </div>
-                    </div>
-                    {renderTeamBlock()}
-                  </article>
-                </section>
-
-                <section className="overview-grid overview-grid-secondary">
-                  <article className="panel compact">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Today's appointments</p>
-                        <h2>Closest consultation slots</h2>
-                      </div>
-                      <button className="pill-button" type="button" onClick={() => switchPage("consultations")}>Open board</button>
-                    </div>
-                    <div className="signal-list">
-                      {todayAppointments.length ? todayAppointments.map((item) => (
-                        <div className="signal-row" key={item.id}>
+                        <aside className="overview-v2-summary-card">
                           <div>
-                            <strong>{patientLabel(item.patient_user_id)}</strong>
-                            <span>{doctorMap.get(item.doctor_user_id) || `Doctor #${item.doctor_user_id}`}</span>
+                            <span>{trendMode === "month" ? "Month revenue" : trendMode === "live" ? "Live captured revenue" : "Week revenue"}</span>
+                            <strong>{formatCompactMoney(overviewRevenueTotal, storeCurrency)}</strong>
                           </div>
-                          <div className="signal-meta">
-                            <StatusPill value={item.status}>{item.status}</StatusPill>
-                            <small>{formatDate(item.start_at, true)}</small>
+                          <div className="overview-v2-summary-list">
+                            <div><em>Paid orders</em><b>{formatNumber(overviewPaidOrders.length)}</b></div>
+                            <div><em>Pending payments</em><b>{formatCompactMoney(sales.pending || 0, storeCurrency)}</b></div>
+                            <div><em>Consultation fees</em><b>{formatCompactMoney(overviewConsultationFees, storeCurrency)}</b></div>
+                            <div><em>Average order value</em><b>{formatCompactMoney(overviewAverageOrderValue, storeCurrency)}</b></div>
                           </div>
-                        </div>
-                      )) : <div className="muted">No appointments scheduled for today.</div>}
-                    </div>
-                  </article>
-                  <article className="panel compact">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Comms</p>
-                        <h2>Email delivery health</h2>
+                        </aside>
                       </div>
-                    </div>
-                    {renderEmailBlock()}
-                  </article>
+                    </article>
+
+                    <article className="panel overview-v2-panel">
+                      <div className="panel-header">
+                        <div>
+                          <p className="section-kicker">Fulfilment queue</p>
+                          <h2>Orders that need action</h2>
+                          <p className="overview-v2-panel-copy">Orders grouped by prescription status, payment verification and packing readiness.</p>
+                        </div>
+                        <button className="pill-button" type="button" onClick={() => switchPage("orders")}>View all orders</button>
+                      </div>
+                      <div className="overview-v2-table-wrap">
+                        <table className="overview-v2-table">
+                          <thead>
+                            <tr><th>Order</th><th>Customer</th><th>Items</th><th>Prescription</th><th>Payment</th><th>Status</th><th>Next action</th></tr>
+                          </thead>
+                          <tbody>
+                            {overviewOrderRows.slice(0, 4).map((order) => {
+                              const customer = resolveOrderCustomerSummary(order);
+                              const itemCount = Array.isArray(order.items_summary || order.items) ? (order.items_summary || order.items).length : 0;
+                              const paymentStatus = normalizedPaymentStatus(order);
+                              const rxStatus = order.rx_status || (order.prescription_id ? "pending" : "not needed");
+                              const nextAction = paymentStatus === "pending"
+                                ? "Verify payment"
+                                : ["on_hold", "on-hold", "awaiting-prescription"].includes(String(rxStatus).toLowerCase())
+                                  ? "Review prescription"
+                                  : String(order.status || "").toLowerCase() === "completed"
+                                    ? "Archive order"
+                                    : "Prepare fulfilment";
+                              return (
+                                <tr className="interactive-row" key={order.id} onClick={() => openOrderDetails(order.id)}>
+                                  <td><strong>NV {order.number}</strong></td>
+                                  <td><div className="overview-v2-customer"><span>{getInitials(customer.name)}</span>{customer.name}</div></td>
+                                  <td>{formatNumber(itemCount)} {itemCount === 1 ? "item" : "items"}</td>
+                                  <td><StatusPill value={rxStatus}>{formatStatusLabel(rxStatus)}</StatusPill></td>
+                                  <td><StatusPill value={paymentStatus}>{formatStatusLabel(paymentStatus)}</StatusPill></td>
+                                  <td><StatusPill value={order.status}>{formatStatusLabel(order.status)}</StatusPill></td>
+                                  <td>{nextAction}</td>
+                                </tr>
+                              );
+                            })}
+                            {!overviewOrderRows.length ? <tr><td className="muted" colSpan="7">No orders need action in the current view.</td></tr> : null}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+                  </div>
+
+                  <aside className="overview-v2-stack">
+                    <article className="panel overview-v2-panel">
+                      <div className="panel-header">
+                        <div>
+                          <p className="section-kicker">Bookings</p>
+                          <h2>Today appointment flow</h2>
+                          
+                        </div>
+                        <button className="pill-button" type="button" onClick={() => switchPage("consultations")}>Calendar</button>
+                      </div>
+                      <div className="overview-v2-booking-list">
+                        {todayAppointments.length ? todayAppointments.slice(0, 3).map((item) => (
+                          <div className="overview-v2-booking-card" key={item.id}>
+                            <span className="overview-v2-booking-avatar">{new Date(item.start_at).toLocaleTimeString("en-US", { hour: "2-digit", hour12: true }).replace(/\D/g, "").slice(0, 2)}</span>
+                            <div className="overview-v2-booking-copy">
+                              <strong>{new Date(item.start_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })} - {formatStatusLabel(item.type || "consultation")}</strong>
+                              <span>{patientLabel(item.patient_user_id)} · {doctorMap.get(item.doctor_user_id) || `Doctor #${item.doctor_user_id}`}</span>
+                            </div>
+                            <div className="overview-v2-booking-status">
+                              <StatusPill value={item.status}>{item.status}</StatusPill>
+                            </div>
+                          </div>
+                        )) : <div className="muted">No appointments scheduled for today.</div>}
+                      </div>
+                    </article>
+
+                    <article className="panel overview-v2-panel">
+                      <div className="panel-header">
+                        <div>
+                          <p className="section-kicker">Products and stock</p>
+                          <h2>Inventory attention</h2>
+                          <p className="overview-v2-panel-copy">Products that can affect fulfilment today.</p>
+                        </div>
+                        <button className="pill-button" type="button" onClick={() => switchPage("products")}>Manage</button>
+                      </div>
+                      <div className="overview-v2-inventory-list">
+                        {overviewInventoryRows.map((product) => {
+                          const stockQuantity = getProductStockQuantity(product) ?? 0;
+                          const stockFlag = getOverviewStockFlag(product);
+                          const isOut = stockFlag.value === "failed";
+                          const isLow = stockFlag.value === "pending";
+                          return (
+                            <div className="overview-v2-inventory-row" key={product.id}>
+                              <span className="overview-v2-product-thumb">{getProductImage(product) ? <img src={getProductImage(product)} alt={product.name || "Product"} /> : <InlineIcon id="i-pill" />}</span>
+                              <div>
+                                <strong>{product.name || "Product"}</strong>
+                                <p>{formatNumber(stockQuantity)} units available{product.pharmacy_rules?.rx_required ? " - RX required" : ""}</p>
+                                <div className={`overview-v2-stock-bar ${isOut ? "out" : isLow ? "low" : ""}`}><span style={{ width: `${Math.min(100, Math.max(5, stockQuantity * 4))}%` }} /></div>
+                              </div>
+                              <StatusPill value={stockFlag.value}>{stockFlag.label}</StatusPill>
+                            </div>
+                          );
+                        })}
+                        {!overviewInventoryRows.length ? <div className="muted">No products match the current view.</div> : null}
+                      </div>
+                    </article>
+
+                    <article className="panel overview-v2-panel">
+                      <div className="panel-header">
+                        <div>
+                          <p className="section-kicker">Revenue checks</p>
+                          <h2>Payment and finance summary</h2>
+                          <p className="overview-v2-panel-copy">Only finance items that affect release of orders.</p>
+                        </div>
+                      </div>
+                      <div className="overview-v2-finance-grid">
+                        <div><span>Verified today</span><strong>{formatCompactMoney(sales.today || 0, storeCurrency)}</strong><small>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "completed").length)} successful payments</small></div>
+                        <div><span>Pending review</span><strong>{formatCompactMoney(sales.pending || 0, storeCurrency)}</strong><small>{formatNumber(overviewPendingPaymentCount)} pending payments</small></div>
+                        <div><span>Refund requests</span><strong>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "refunded").length)}</strong><small>Requires finance follow-up</small></div>
+                        <div><span>Failed payments</span><strong>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "failed").length)}</strong><small>Customer retry needed</small></div>
+                      </div>
+                    </article>
+                  </aside>
                 </section>
-                </section>
+              </section>
             )}
 
             {currentPage === "orders" && (
@@ -9857,3 +9949,4 @@ export default function Page() {
     </>
   );
 }
+
