@@ -5,6 +5,35 @@ import { FRONTENDS } from "./frontend-config";
 export const PAIRING_REQUIRED_ERROR_CODE = "frontend_pairing_required";
 const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
 
+function normalizeBaseUrl(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function dashboardOriginAllowlist() {
+  return String(process.env.NEXT_PUBLIC_NEVARI_DASHBOARD_ORIGINS || "")
+    .split(",")
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function currentOriginValue() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return window.location.origin === "null" ? "null" : window.location.origin;
+}
+
+function bootstrapPairingState() {
+  const origin = currentOriginValue();
+  const baseUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "");
+  const allowlist = dashboardOriginAllowlist();
+  const trustedOrigin = Boolean(origin && allowlist.includes(origin));
+  return {
+    baseUrl,
+    paired: Boolean(baseUrl && trustedOrigin)
+  };
+}
+
 function isSessionUsable(session) {
   if (!session || typeof session !== "object") {
     return false;
@@ -30,14 +59,15 @@ function clearAllDashboardCaches() {
 
 export function defaultSession(config) {
   const hasWindow = typeof window !== "undefined";
-  const origin = hasWindow ? window.location.origin : "";
+  const origin = hasWindow ? currentOriginValue() : "";
   const href = hasWindow ? window.location.href : "";
+  const bootstrap = bootstrapPairingState();
   return {
-    baseUrl: "",
+    baseUrl: bootstrap.baseUrl,
     frontendType: config.type,
-    frontendOrigin: origin === "null" ? "null" : origin,
+    frontendOrigin: origin,
     frontendUrl: origin === "null" ? "null" : href,
-    paired: false,
+    paired: bootstrap.paired,
     siteName: "",
     siteLogo: "",
     accessToken: "",
@@ -55,11 +85,12 @@ export function loadSession(config) {
     const ownSession = JSON.parse(localStorage.getItem(config.storageKey) || "{}");
     const adminSession = JSON.parse(localStorage.getItem("nevari_admin_storefront_session") || "{}");
     const isSharedFrontend = config.type !== "storefront";
+    const bootstrap = bootstrapPairingState();
     const sharedConnection = isSharedFrontend ? {
-      baseUrl: adminSession.baseUrl || "",
+      baseUrl: adminSession.baseUrl || bootstrap.baseUrl,
       frontendOrigin: adminSession.frontendOrigin || "",
       frontendUrl: adminSession.frontendUrl || "",
-      paired: Boolean(adminSession.paired),
+      paired: Boolean(adminSession.paired || bootstrap.paired),
       siteName: adminSession.siteName || "",
       siteLogo: adminSession.siteLogo || ""
     } : {};

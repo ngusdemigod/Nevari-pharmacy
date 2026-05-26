@@ -10,8 +10,38 @@ const STORE_CURRENCY_KEY = "nevari_store_currency";
 const STORE_TIMEZONE_KEY = "nevari_store_timezone";
 const FALLBACK_STORE_CURRENCY = "USD";
 const FALLBACK_STORE_TIMEZONE = "UTC";
+
+function normalizeBaseUrl(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function dashboardOriginAllowlist() {
+  return String(process.env.NEXT_PUBLIC_NEVARI_DASHBOARD_ORIGINS || "")
+    .split(",")
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function currentOriginValue() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return window.location.origin === "null" ? "null" : window.location.origin;
+}
+
+function bootstrapPairingState() {
+  const origin = currentOriginValue();
+  const baseUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "");
+  const allowlist = dashboardOriginAllowlist();
+  const trustedOrigin = Boolean(origin && allowlist.includes(origin));
+  return {
+    baseUrl,
+    paired: Boolean(baseUrl && trustedOrigin)
+  };
+}
+
 export const DEFAULT_SESSION = {
-  baseUrl: "",
+  baseUrl: normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
   frontendType: FRONTENDS.patient.type,
   frontendOrigin: "",
   frontendUrl: "",
@@ -42,11 +72,12 @@ export function hydrateStoredSession(frontend = "patient") {
     const ownSession = JSON.parse(localStorage.getItem(config.storageKey) || "{}");
     const adminSession = JSON.parse(localStorage.getItem(FRONTENDS.admin.storageKey) || "{}");
     const isSharedFrontend = config.type !== FRONTENDS.admin.type;
+    const bootstrap = bootstrapPairingState();
     const sharedConnection = isSharedFrontend ? {
-      baseUrl: adminSession.baseUrl || "",
+      baseUrl: adminSession.baseUrl || bootstrap.baseUrl,
       frontendOrigin: adminSession.frontendOrigin || "",
       frontendUrl: adminSession.frontendUrl || "",
-      paired: Boolean(adminSession.paired),
+      paired: Boolean(adminSession.paired || bootstrap.paired),
       siteName: adminSession.siteName || "",
       siteLogo: adminSession.siteLogo || ""
     } : {};
@@ -60,8 +91,8 @@ export function hydrateStoredSession(frontend = "patient") {
     }
 
     if (isSharedFrontend) {
-      nextSession.frontendOrigin = window.location.origin === "null" ? "null" : window.location.origin;
-      nextSession.frontendUrl = window.location.origin === "null" ? "null" : window.location.href;
+      nextSession.frontendOrigin = currentOriginValue();
+      nextSession.frontendUrl = currentOriginValue() === "null" ? "null" : window.location.href;
     }
 
     if (!isSessionUsable(nextSession)) {

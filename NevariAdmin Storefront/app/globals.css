@@ -2961,6 +2961,11 @@ body:has(.role-shell-exact) {
 .customer-appointment-list {
   display: grid;
   gap: 16px;
+  min-width: 0;
+}
+
+.customer-dashboard-stack > * {
+  min-width: 0;
 }
 
 .customer-appointment-history-slider {
@@ -2975,15 +2980,33 @@ body:has(.role-shell-exact) {
 .customer-appointment-history-track {
   display: flex;
   align-items: stretch;
-  gap: 14px;
+  gap: 10px;
   min-width: max-content;
 }
 
 .customer-appointment-card-slide {
-  flex: 0 0 min(86vw, 420px);
-  min-width: min(86vw, 420px);
-  max-width: min(86vw, 420px);
+  flex: 0 0 min(76vw, 320px);
+  min-width: min(76vw, 320px);
+  max-width: min(76vw, 320px);
   scroll-snap-align: start;
+  padding: 10px;
+  border-radius: 20px;
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+.customer-appointment-card-slide .customer-order-icon {
+  width: 34px;
+  height: 34px;
+}
+
+.customer-appointment-card-slide .card-title {
+  font-size: 14px;
+}
+
+.customer-appointment-card-slide .card-desc,
+.customer-appointment-card-slide .customer-meta-line {
+  font-size: 12px;
 }
 
 .book-doctor-shell .book-doctor-vertical-list {
@@ -3142,11 +3165,17 @@ body:has(.role-shell-exact) {
   margin-bottom: 14px;
 }
 
+.customer-panel-head > div {
+  min-width: 0;
+}
+
 .customer-panel-head h2,
 .customer-profile-hero h2 {
   margin: 0;
   color: var(--color-text);
   font-size: 22px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .customer-inline-link {
@@ -3369,6 +3398,18 @@ body:has(.role-shell-exact) {
 
 .customer-appointment-copy {
   min-width: 0;
+}
+
+.customer-appointment-copy .card-title,
+.customer-appointment-copy .card-desc,
+.customer-appointment-copy .customer-meta-line {
+  overflow-wrap: anywhere;
+}
+
+.customer-appointment-side {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
 }
 
 .customer-settings-shell {
@@ -3678,6 +3719,42 @@ body:has(.role-shell-exact) {
   .customer-appointment-card {
     grid-template-columns: 1fr;
     align-items: flex-start;
+    min-width: 0;
+  }
+
+  .customer-appointment-side {
+    justify-items: start;
+  }
+
+  .customer-list-shell,
+  .customer-panel-card,
+  .customer-profile-hero {
+    padding: 14px;
+  }
+
+  .customer-panel-head {
+    margin-bottom: 10px;
+    gap: 8px;
+  }
+
+  .customer-panel-head h2 {
+    font-size: 19px;
+    line-height: 1.25;
+  }
+
+  .customer-section-kicker {
+    margin-bottom: 4px;
+  }
+
+  .customer-filter-bar {
+    margin-bottom: 12px;
+  }
+
+  .customer-appointment-card-slide {
+    flex: 0 0 min(84vw, 292px);
+    min-width: min(84vw, 292px);
+    max-width: min(84vw, 292px);
+    border-radius: 18px;
   }
 
   .customer-status-grid {
@@ -3726,6 +3803,28 @@ body:has(.role-shell-exact) {
   .customer-settings-grid-design,
   .customer-profile-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .customer-list-shell,
+  .customer-panel-card,
+  .customer-profile-hero,
+  .customer-order-card,
+  .customer-appointment-card {
+    border-radius: 20px;
+  }
+
+  .customer-panel-head h2,
+  .customer-profile-hero h2 {
+    font-size: 17px;
+  }
+
+  .customer-appointment-card-slide {
+    flex: 0 0 min(88vw, 268px);
+    min-width: min(88vw, 268px);
+    max-width: min(88vw, 268px);
+    padding: 9px;
   }
 }
 

@@ -274,18 +274,21 @@ export default function OrderDocumentsPage() {
           <button className="doc-btn" type="button" onClick={printPage}>Print / Save PDF</button>
         </div>
       </div>
-      <iframe
-        ref={previewRef}
-        className="document-preview"
-        title={`${titleCase(activeDocumentType)} preview`}
-        srcDoc={documentHtml}
-      />
+      <div className="document-preview-shell">
+        <iframe
+          ref={previewRef}
+          className="document-preview"
+          title={`${titleCase(activeDocumentType)} preview`}
+          srcDoc={documentHtml}
+        />
+      </div>
       <style jsx>{`
         :global(:root) { --nevari-primary-blue: #0E2955; }
         .doc-toolbar { max-width: 850px; margin: 0 auto 10px; display: flex; justify-content: space-between; gap: 8px; }
         .doc-btn { border: 1px solid #dce4ef; background: #fff; color: var(--nevari-primary-blue); border-radius: 8px; padding: 9px 14px; font-weight: 700; margin-left: 6px; }
         .doc-btn:disabled { opacity: .6; cursor: wait; }
         .doc-secondary-action { max-width: 850px; margin: 0 auto 10px; text-align: right; }
+        .document-preview-shell { max-width: 100%; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
         .document-preview { display: block; width: 850px; height: 1120px; margin: 30px auto; background: #fff; border: 0; box-shadow: 0 0 0 1px #dce4ef; }
 
         @media print {
@@ -295,8 +298,10 @@ export default function OrderDocumentsPage() {
           @page { size: A4; margin: 8mm; }
         }
         @media (max-width: 900px) {
-          .doc-toolbar { flex-direction: column; }
-          .document-preview { width: 100%; height: 1120px; }
+          main { padding: 12px !important; }
+          .doc-toolbar { flex-direction: column; max-width: 100%; }
+          .doc-btn { margin-left: 0; width: 100%; }
+          .document-preview { width: 850px; min-width: 850px; margin: 12px auto; }
         }
       `}</style>
     </main>

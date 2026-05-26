@@ -232,24 +232,33 @@ export default function PaywallPage() {
         {error ? <p className="paywall-error">{error}</p> : null}
       </section>
       <style jsx>{`
-        .paywall-page { min-height: 100vh; display: grid; place-items: center; background: #f4f6f8; padding: 24px; color: #111; }
-        .paywall-card { width: min(520px, 100%); background: #fff; padding: 36px; border: 1px solid #dfe7f0; box-shadow: 0 24px 80px rgba(14, 41, 85, .12); }
+        .paywall-page { min-height: 100vh; display: grid; place-items: center; background: #f4f6f8; padding: 24px; color: #111; box-sizing: border-box; }
+        .paywall-card { width: min(520px, 100%); background: #fff; padding: 36px; border: 1px solid #dfe7f0; box-shadow: 0 24px 80px rgba(14, 41, 85, .12); box-sizing: border-box; }
         .paywall-card.error { color: #9f2f2f; }
         .paywall-logo { width: 72px; height: 72px; object-fit: contain; }
         .paywall-kicker { margin-top: 18px; color: #0E2955; text-transform: uppercase; font-weight: 700; font-size: 12px; }
-        h1 { margin: 8px 0 24px; color: #0E2955; font-size: 36px; }
+        h1 { margin: 8px 0 24px; color: #0E2955; font-size: 36px; line-height: 1.1; overflow-wrap: anywhere; }
         .paywall-grid { display: grid; grid-template-columns: 130px 1fr; gap: 8px 18px; margin-bottom: 24px; }
-        .paywall-grid span { color: #7c8796; }
-        .paywall-grid strong { text-align: right; }
+        .paywall-grid span { color: #7c8796; min-width: 0; }
+        .paywall-grid strong { text-align: right; min-width: 0; overflow-wrap: anywhere; }
         .paywall-items { border-top: 1px solid #e4eaf2; border-bottom: 1px solid #e4eaf2; padding: 16px 0; margin-bottom: 20px; }
         .paywall-items h2 { margin: 0 0 10px; color: #0E2955; font-size: 16px; }
         .paywall-item { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; color: #1f2a37; }
+        .paywall-item span { min-width: 0; overflow-wrap: anywhere; }
         .paywall-item strong { white-space: nowrap; }
         .paywall-muted { margin: 0; color: #7c8796; }
         .gateway-list { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 18px; }
         .gateway-button { border: 1px solid #0E2955; background: #0E2955; color: #fff; padding: 14px 18px; font-weight: 800; border-radius: 8px; font-size: 15px; }
         .gateway-button:disabled { opacity: .65; cursor: wait; }
         .paywall-error { margin-top: 14px; color: #9f2f2f; font-weight: 700; }
+        @media (max-width: 720px) {
+          .paywall-page { padding: 12px; align-items: start; }
+          .paywall-card { padding: 18px; }
+          h1 { font-size: 26px; margin-bottom: 16px; }
+          .paywall-grid { grid-template-columns: 1fr; gap: 4px; }
+          .paywall-grid strong { text-align: left; margin-bottom: 8px; }
+          .gateway-button { width: 100%; }
+        }
       `}</style>
     </main>
   );

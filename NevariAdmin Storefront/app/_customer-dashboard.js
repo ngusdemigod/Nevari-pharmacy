@@ -47,7 +47,7 @@ async function fetchCustomerDashboardPayload(session, settings, fallbackState = 
   const upcomingParams = { per_page: 5, page: 1, mine: "1", date_from: new Date().toISOString(), order: "ASC" };
   const [dashboard, orders, appointments, liveDoctors] = await Promise.all([
     apiRequest(session, "/dashboard/patient", { suppressHttpError: true }),
-    apiRequest(session, "/orders", { params: { per_page: 5, page: 1 }, suppressHttpError: true }),
+    apiRequest(session, "/orders", { params: { per_page: 5, page: 1, mine: "1" }, suppressHttpError: true }),
     apiRequest(session, "/appointments", { params: upcomingParams, suppressHttpError: true }),
     apiRequest(session, "/doctors", { params: { per_page: 8, page: 1 }, suppressHttpError: true })
   ]);
@@ -83,7 +83,7 @@ async function fetchCustomerDashboardPayload(session, settings, fallbackState = 
 }
 
 async function fetchCustomerOrders(session) {
-  return apiRequest(session, "/orders", { params: { per_page: 24, page: 1 }, suppressHttpError: true });
+  return apiRequest(session, "/orders", { params: { per_page: 24, page: 1, mine: "1" }, suppressHttpError: true });
 }
 
 async function fetchCustomerAppointments(session) {
@@ -208,7 +208,8 @@ export default function CustomerDashboard() {
       return;
     }
     setSession(hydratedSession);
-    setCacheKey(buildDashboardCacheKey("patient", CUSTOMER_DASHBOARD_CACHE_SCOPE, hydratedSession.user?.id || "guest"));
+    const userId = hydratedSession.user?.id;
+    setCacheKey(userId ? buildDashboardCacheKey("patient", CUSTOMER_DASHBOARD_CACHE_SCOPE, String(userId)) : null);
   }, [router]);
 
   const cachedCustomerState = (cacheKey && isSessionUsable(session))
@@ -219,10 +220,10 @@ export default function CustomerDashboard() {
     [cachedCustomerState, session, settings]
   );
   const customerSummaryKey = session
-    ? swrKeys.proxy.path("/customer-dashboard/summary", withBaseUrl(session, { user_id: session.user?.id || "guest", display_name: settings.displayName }))
+    ? swrKeys.proxy.path("/customer-dashboard/summary", withBaseUrl(session, { user_id: session.user?.id || "", display_name: settings.displayName }))
     : null;
   const customerOrdersKey = session && ["orders", "settings", "profile"].includes(page)
-    ? swrKeys.proxy.path("/orders", withBaseUrl(session, { per_page: 24, page: 1 }))
+    ? swrKeys.proxy.path("/orders", withBaseUrl(session, { per_page: 24, page: 1, mine: "1" }))
     : null;
   const customerAppointmentsKey = session && ["appointment", "settings", "profile"].includes(page)
     ? swrKeys.proxy.path("/appointments", withBaseUrl(session, { per_page: 40, page: 1, mine: "1" }))
@@ -1360,7 +1361,7 @@ function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, 
   const selectedDurationAvailable = !journey.selectedSlot || durationIsAvailable(journey.slots, journey.selectedSlot, selectedDuration, minimumBookingMinutes);
   return <section className="appointment-mobile-sheet">
     <div className="appointment-mobile-header">
-      <button className="appointment-circle-button" type="button" onClick={onBack}>{"<"}</button>
+      <button className="appointment-circle-button" type="button" aria-label="Go back" onClick={onBack}>{"←"}</button>
     </div>
     <div className="appointment-surface-card">
       <div className="appointment-surface-head">
@@ -1420,9 +1421,8 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, storeCur
   }, [journey.loading, onRefreshConfirmation, paymentUrl]);
   return <section className="appointment-mobile-sheet">
     <div className="appointment-mobile-header">
-      <button className="appointment-circle-button" type="button" onClick={onBack}>{"<"}</button>
-      <h2>Payment details</h2>
-      <div className="appointment-circle-button appointment-circle-button-static">$</div>
+      <button className="appointment-circle-button" type="button" aria-label="Go back" onClick={onBack}>{"←"}</button>
+      <div className="appointment-circle-button appointment-circle-button-static" aria-hidden="true" />
     </div>
     <div className="appointment-surface-card">
       <div className="checkout-summary-grid">
@@ -2077,11 +2077,9 @@ function resolveCheckoutInvoiceRef(checkout) {
 function buildAppointmentFilters(upcoming, past) {
   const all = [...upcoming, ...past];
   return [
-    { id: "all", label: "All", count: all.length },
-    { id: "upcoming", label: "Upcoming", count: upcoming.length },
-    { id: "past", label: "Past", count: past.length },
-    { id: "completed", label: "Completed", count: all.filter((item) => String(item.status) === "completed").length },
-    { id: "cancelled", label: "Cancelled", count: all.filter((item) => ["cancelled", "canceled"].includes(String(item.status))).length }
+    { id: "all", label: "all", count: all.length },
+    { id: "upcoming", label: "upcoming", count: upcoming.length },
+    { id: "past", label: "past", count: past.length }
   ];
 }
 
