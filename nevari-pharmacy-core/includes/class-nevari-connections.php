@@ -20,6 +20,12 @@ final class Nevari_Connections {
             'callback' => [__CLASS__, 'register_frontend'],
             'permission_callback' => '__return_true',
         ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/connections/status', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'frontend_status'],
+            'permission_callback' => '__return_true',
+        ]);
     }
 
     public static function frontend_types(): array {
@@ -108,6 +114,39 @@ final class Nevari_Connections {
         return $updated !== false;
     }
 
+    public static function delete_revoked_frontend(int $connection_id): bool {
+        global $wpdb;
+
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM " . Nevari_Helpers::table('frontend_connections') . " WHERE id = %d LIMIT 1",
+            $connection_id
+        ));
+        if (!$row || $row->trust_status !== 'revoked') {
+            return false;
+        }
+
+        $deleted = $wpdb->delete(
+            Nevari_Helpers::table('frontend_connections'),
+            ['id' => $connection_id],
+            ['%d']
+        );
+        if ($deleted === false) {
+            return false;
+        }
+
+        Nevari_Audit::log('security', 'nevari', 'connection.frontend_deleted', 'success', [
+            'actor_user_id' => get_current_user_id() ?: null,
+            'message' => 'Revoked frontend domain was permanently deleted.',
+            'metadata' => [
+                'connection_id' => $connection_id,
+                'frontend_type' => (string) $row->frontend_type,
+                'frontend_origin' => (string) $row->frontend_origin,
+            ],
+        ]);
+
+        return true;
+    }
+
     public static function verify_pairing(WP_REST_Request $request): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('pairing_verify', 20, 10 * MINUTE_IN_SECONDS, [Nevari_Helpers::client_ip()])) {
             return $response;
@@ -118,23 +157,23 @@ final class Nevari_Connections {
         $code = isset($params['pairing_code']) ? self::normalize_pairing_code((string) $params['pairing_code']) : '';
         $frontend_type = isset($params['frontend_type']) ? sanitize_key((string) $params['frontend_type']) : '';
         $frontend_url = isset($params['frontend_url']) ? trim((string) $params['frontend_url']) : '';
-        $frontend_origin = !empty($params['frontend_origin']) ? self::normalize_origin((string) $params['frontend_origin']) : self::normalize_origin($frontend_url);
-        $request_origin = self::request_origin();
+        $provided_origin = !empty($params['frontend_origin']) ? self::normalize_origin((string) $params['frontend_origin']) : self::normalize_origin($frontend_url);
+        $frontend_origin = self::verified_proxy_origin($frontend_type);
 
         if (!$code || !$frontend_type || !$frontend_origin) {
-            return Nevari_Helpers::error('validation_error', 'pairing_code, frontend_type, and frontend_origin are required.', 422);
+            return Nevari_Helpers::error('validation_error', 'pairing_code, frontend_type, and a valid request origin are required.', 422);
         }
 
         if (!isset(self::frontend_types()[$frontend_type])) {
             return Nevari_Helpers::error('invalid_frontend_type', 'Unsupported frontend type.', 422);
         }
 
-        if ($request_origin && $request_origin !== 'null' && $request_origin !== $frontend_origin) {
+        if ($provided_origin && $provided_origin !== 'null' && $provided_origin !== $frontend_origin) {
             Nevari_Audit::log('security', 'nevari', 'connection.origin_mismatch', 'error', [
                 'severity' => 'warning',
                 'message' => 'Pairing request origin did not match the supplied frontend origin.',
                 'metadata' => [
-                    'request_origin' => $request_origin,
+                    'request_origin' => $frontend_origin,
                     'frontend_origin' => $frontend_origin,
                     'frontend_type' => $frontend_type,
                 ],
@@ -204,14 +243,14 @@ final class Nevari_Connections {
         $session_uuid = isset($params['pairing_session_id']) ? sanitize_text_field((string) $params['pairing_session_id']) : '';
         $frontend_type = isset($params['frontend_type']) ? sanitize_key((string) $params['frontend_type']) : '';
         $frontend_url = isset($params['frontend_url']) ? trim((string) $params['frontend_url']) : '';
-        $frontend_origin = !empty($params['frontend_origin']) ? self::normalize_origin((string) $params['frontend_origin']) : self::normalize_origin($frontend_url);
-        $request_origin = self::request_origin();
+        $provided_origin = !empty($params['frontend_origin']) ? self::normalize_origin((string) $params['frontend_origin']) : self::normalize_origin($frontend_url);
+        $frontend_origin = self::verified_proxy_origin($frontend_type);
 
         if (!$session_uuid || !$frontend_type || !$frontend_origin) {
-            return Nevari_Helpers::error('validation_error', 'pairing_session_id, frontend_type, and frontend_origin are required.', 422);
+            return Nevari_Helpers::error('validation_error', 'pairing_session_id, frontend_type, and a valid request origin are required.', 422);
         }
 
-        if ($request_origin && $request_origin !== 'null' && $request_origin !== $frontend_origin) {
+        if ($provided_origin && $provided_origin !== 'null' && $provided_origin !== $frontend_origin) {
             return Nevari_Helpers::error('origin_mismatch', 'The registration request origin did not match the supplied frontend URL.', 403);
         }
 
@@ -276,24 +315,39 @@ final class Nevari_Connections {
         ]);
     }
 
+    public static function frontend_status(WP_REST_Request $request): WP_REST_Response {
+        $frontend_type = sanitize_key((string) ($request->get_param('frontend_type') ?: ($_SERVER['HTTP_X_NEVARI_FRONTEND_TYPE'] ?? '')));
+        if (!$frontend_type || !self::verified_proxy_origin($frontend_type)) {
+            return self::status_response(
+                Nevari_Helpers::error('invalid_request_origin', 'A verified frontend request origin is required.', 403)
+            );
+        }
+        $frontend = $frontend_type ? self::resolve_request_frontend(['frontend_type' => $frontend_type]) : null;
+        if (!$frontend) {
+            return self::status_response(Nevari_Helpers::success(['paired' => false]));
+        }
+        return self::status_response(Nevari_Helpers::success([
+            'paired' => true,
+            'site_name' => get_bloginfo('name'),
+            'site_logo' => self::site_logo_url(),
+            'site_url' => home_url(),
+            'frontend_type' => $frontend_type,
+            'frontend_origin' => $frontend['frontend_origin'],
+        ]));
+    }
+
     public static function resolve_request_frontend(array $params = []): ?array {
         $frontend_type = !empty($params['frontend_type']) ? sanitize_key((string) $params['frontend_type']) : '';
-        $frontend_url = !empty($params['frontend_url']) ? (string) $params['frontend_url'] : '';
         $explicit_origin = !empty($params['frontend_origin']) ? (string) $params['frontend_origin'] : '';
         $header_type = !empty($_SERVER['HTTP_X_NEVARI_FRONTEND_TYPE']) ? sanitize_key(wp_unslash($_SERVER['HTTP_X_NEVARI_FRONTEND_TYPE'])) : '';
-        $header_origin = !empty($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN'])) : '';
-        $request_origin = self::request_origin();
-
         if (!$frontend_type) {
             $frontend_type = $header_type;
         }
+        $frontend_origin = self::verified_proxy_origin($frontend_type);
+        $provided_origin = self::normalize_origin($explicit_origin);
 
-        $frontend_origin = self::normalize_origin($explicit_origin ?: $frontend_url);
-        if (!$frontend_origin && $header_origin) {
-            $frontend_origin = self::normalize_origin($header_origin);
-        }
-        if (!$frontend_origin && $request_origin) {
-            $frontend_origin = self::normalize_origin($request_origin);
+        if ($provided_origin && $provided_origin !== 'null' && $provided_origin !== $frontend_origin) {
+            return null;
         }
 
         if (!$frontend_type || !$frontend_origin) {
@@ -336,7 +390,7 @@ final class Nevari_Connections {
 
         $resolved = self::resolve_request_frontend([
             'frontend_type' => $payload['frontend_type'],
-            'frontend_url' => $payload['frontend_origin'],
+            'frontend_origin' => $payload['frontend_origin'],
         ]);
 
         if (!$resolved) {
@@ -352,12 +406,47 @@ final class Nevari_Connections {
         return $logo_id ? (wp_get_attachment_image_url($logo_id, 'medium') ?: null) : null;
     }
 
-    private static function request_origin(): ?string {
-        if (!empty($_SERVER['HTTP_ORIGIN'])) {
-            return self::normalize_origin((string) wp_unslash($_SERVER['HTTP_ORIGIN']));
+    private static function status_response(WP_REST_Response $response): WP_REST_Response {
+        $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        $response->header('Vary', 'Origin, X-Nevari-Frontend-Type, X-Nevari-Frontend-Origin');
+        return $response;
+    }
+
+    private static function verified_proxy_origin(string $frontend_type): ?string {
+        $request_origin = !empty($_SERVER['HTTP_ORIGIN'])
+            ? self::normalize_origin((string) wp_unslash($_SERVER['HTTP_ORIGIN']))
+            : null;
+        if (!$request_origin || $request_origin === 'null') {
+            return null;
         }
 
-        return null;
+        if (empty($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN'])) {
+            return null;
+        }
+        $origin = self::normalize_origin((string) wp_unslash($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN']));
+        $timestamp = !empty($_SERVER['HTTP_X_NEVARI_PROXY_TIMESTAMP']) ? (int) wp_unslash($_SERVER['HTTP_X_NEVARI_PROXY_TIMESTAMP']) : 0;
+        $signature = !empty($_SERVER['HTTP_X_NEVARI_PROXY_SIGNATURE']) ? strtolower(sanitize_text_field(wp_unslash($_SERVER['HTTP_X_NEVARI_PROXY_SIGNATURE']))) : '';
+        $secret = self::proxy_signing_secret();
+
+        if (!$origin || $origin === 'null' || !$frontend_type || !$timestamp || !$signature || !$secret) {
+            return null;
+        }
+        if ($origin !== $request_origin) {
+            return null;
+        }
+        if (abs(time() - $timestamp) > 300) {
+            return null;
+        }
+
+        $expected = hash_hmac('sha256', $timestamp . "\n" . $frontend_type . "\n" . $origin, $secret);
+        return hash_equals($expected, $signature) ? $origin : null;
+    }
+
+    private static function proxy_signing_secret(): string {
+        if (defined('NEVARI_PROXY_SIGNING_SECRET')) {
+            return trim((string) constant('NEVARI_PROXY_SIGNING_SECRET'));
+        }
+        return trim((string) getenv('NEVARI_PROXY_SIGNING_SECRET'));
     }
 
     public static function normalize_origin(string $value): ?string {

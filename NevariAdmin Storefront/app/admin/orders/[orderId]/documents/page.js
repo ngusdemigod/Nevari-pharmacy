@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { FRONTENDS } from "../../../../components/frontend-config";
 import { renderDocumentHtml } from "../../../../lib/documentHtml";
 
+const SESSION_MARKER = "server-session";
 const DEFAULT_SESSION = {
   baseUrl: "",
   frontendType: FRONTENDS.patient.type,
@@ -20,16 +21,23 @@ function hydrateSession(frontend = "patient") {
   if (typeof window === "undefined") return DEFAULT_SESSION;
   const config = FRONTENDS[frontend] || FRONTENDS.patient;
   const own = JSON.parse(localStorage.getItem(config.storageKey) || "{}");
+  if (own.accessToken && own.accessToken !== SESSION_MARKER) {
+    own.accessToken = "";
+    own.refreshToken = "";
+    own.expiresAt = 0;
+    own.user = null;
+    localStorage.setItem(config.storageKey, JSON.stringify(own));
+  }
   const admin = JSON.parse(localStorage.getItem(FRONTENDS.admin.storageKey) || "{}");
   const shared = config.type !== FRONTENDS.admin.type ? {
     baseUrl: admin.baseUrl || "",
-    frontendOrigin: admin.frontendOrigin || window.location.origin,
-    frontendUrl: admin.frontendUrl || window.location.href,
+    frontendOrigin: window.location.origin,
+    frontendUrl: window.location.href,
     paired: Boolean(admin.paired),
     siteName: admin.siteName || "",
     siteLogo: admin.siteLogo || ""
   } : {};
-  return { ...DEFAULT_SESSION, ...shared, ...own, frontendType: config.type };
+  return { ...DEFAULT_SESSION, ...shared, ...own, frontendType: config.type, frontendOrigin: window.location.origin, frontendUrl: window.location.href };
 }
 
 function buildUrl(session, path) {
@@ -45,7 +53,7 @@ async function request(session, path) {
       Accept: "application/json",
       Authorization: session.accessToken ? `Bearer ${session.accessToken}` : "",
       "X-Nevari-Frontend-Type": session.frontendType,
-      "X-Nevari-Frontend-Origin": session.frontendOrigin || window.location.origin
+      "X-Nevari-Frontend-Origin": window.location.origin
     }
   });
   const payload = await response.json().catch(() => null);
@@ -85,28 +93,15 @@ function parseOrderId(orderId, invoiceNumber = "") {
   return match ? Number(match[1]) : 0;
 }
 
-function buildPaymentUrl(orderId, invoiceNumber, role = "admin") {
-  return `/pay/${encodeURIComponent(invoiceNumber)}?role=${encodeURIComponent(role)}`;
+function buildPaymentUrl(orderId, invoiceNumber, role = "admin", paymentToken = "") {
+  if (!paymentToken) return "";
+  return `/pay/${encodeURIComponent(invoiceNumber)}?role=${encodeURIComponent(role)}&payment_token=${encodeURIComponent(paymentToken)}`;
 }
 
 function withBrandedPaymentUrl(data, role = "admin") {
-  if (!data?.invoice_number || typeof window === "undefined") return data;
-  const paymentUrl = `${window.location.origin}${buildPaymentUrl(data.order_id, data.invoice_number, role)}`;
+  if (!data?.invoice_number || !data?.payment_token || typeof window === "undefined") return data;
+  const paymentUrl = `${window.location.origin}${buildPaymentUrl(data.order_id, data.invoice_number, role, data.payment_token)}`;
   return { ...data, payment_url: paymentUrl, branded_payment_url: paymentUrl };
-}
-
-function documentSnapshotKey(orderId) {
-  return `nevari-document-order-${String(orderId || "")}`;
-}
-
-function readDocumentSnapshot(orderId) {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(documentSnapshotKey(orderId));
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
 }
 
 function normalizeDocumentData(rawOrder, prescription = null, role = "admin") {
@@ -140,8 +135,8 @@ function normalizeDocumentData(rawOrder, prescription = null, role = "admin") {
     prescription_number: `NVH-RX-${String(order.prescription_id || order.id || "").padStart(5, "0")}`,
     order_status: String(order.status || ""),
     payment_status: String(order.payment_status || ""),
-    payment_url: buildPaymentUrl(order.id, invoiceNumber, role),
-    branded_payment_url: buildPaymentUrl(order.id, invoiceNumber, role),
+    payment_url: "",
+    branded_payment_url: "",
     invoice_date: order.created_at,
     due_date: order.due_date || order.created_at,
     customer: {
@@ -203,9 +198,6 @@ export default function OrderDocumentsPage() {
             rawOrder = await request(session, `/orders/${endpointOrderId}`);
           } catch (requestError) {
             orderDataError = requestError;
-          }
-          if (!rawOrder) {
-            rawOrder = readDocumentSnapshot(endpointOrderId);
           }
           if (!rawOrder) {
             throw orderDataError || documentDataError || new Error("Could not load order document data.");

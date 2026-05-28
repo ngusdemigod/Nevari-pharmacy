@@ -52,6 +52,7 @@ The storefront then authenticates against the plugin REST API:
 - `POST /wp-json/nevari/v1/auth/refresh`
 - `POST /wp-json/nevari/v1/connections/verify`
 - `POST /wp-json/nevari/v1/connections/register`
+- `GET /wp-json/nevari/v1/connections/status`
 - `GET /wp-json/nevari/v1/dashboard/store-admin`
 - supporting live data endpoints for orders, appointments, prescriptions, doctors, emails, products, and audit logs
 
@@ -61,9 +62,29 @@ Set `NEVARI_PROXY_ALLOWED_ORIGINS` on the Next.js server to the comma-separated 
 $env:NEVARI_PROXY_ALLOWED_ORIGINS="https://pharmacy.example.com"
 ```
 
-The proxy rejects requests when this allowlist is missing, when the target is outside the allowlist, or when the target uses a private-network hostname.
+Set a long random `NEVARI_PROXY_SIGNING_SECRET` on both the Next.js deployment and the WordPress runtime. The Next.js proxy signs its server-derived storefront origin; the plugin rejects unsigned or replayed frontend-origin headers.
 
-Session tokens are currently stored in browser local storage for this frontend. Replace that with server-managed `HttpOnly` cookies before production deployment.
+```powershell
+$env:NEVARI_PROXY_SIGNING_SECRET="<random-secret-at-least-32-bytes>"
+```
+
+In WordPress, expose the same value through the environment or define it in `wp-config.php`:
+
+```php
+define('NEVARI_PROXY_SIGNING_SECRET', '<same-random-secret>');
+```
+
+If WordPress is behind a trusted reverse proxy and rate limits/audit logs must use forwarded visitor IPs, configure only the immediate proxy IP addresses in WordPress:
+
+```php
+define('NEVARI_TRUSTED_PROXY_IPS', '203.0.113.10,203.0.113.11');
+```
+
+If `NEVARI_TRUSTED_PROXY_IPS` is not configured, rate limits and audit events use the direct connection address and ignore `X-Forwarded-For`.
+
+The proxy rejects requests when either required configuration value is missing, when the target is outside the allowlist, when the target uses a private-network hostname, or when a browser request does not identify the deployed app origin.
+
+Session bearer tokens are held in server-managed `HttpOnly`, `SameSite=Strict` cookies. Browser storage contains only non-secret connection/UI state and a session-presence marker.
 
 ## Cross-origin note
 

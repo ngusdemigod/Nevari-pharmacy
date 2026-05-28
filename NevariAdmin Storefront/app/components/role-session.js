@@ -3,17 +3,11 @@
 import { FRONTENDS } from "./frontend-config";
 
 export const PAIRING_REQUIRED_ERROR_CODE = "frontend_pairing_required";
+export const SESSION_MARKER = "server-session";
 const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
-}
-
-function dashboardOriginAllowlist() {
-  return String(process.env.NEXT_PUBLIC_NEVARI_DASHBOARD_ORIGINS || "")
-    .split(",")
-    .map((value) => String(value || "").trim())
-    .filter(Boolean);
 }
 
 function currentOriginValue() {
@@ -21,17 +15,6 @@ function currentOriginValue() {
     return "";
   }
   return window.location.origin === "null" ? "null" : window.location.origin;
-}
-
-function bootstrapPairingState() {
-  const origin = currentOriginValue();
-  const baseUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "");
-  const allowlist = dashboardOriginAllowlist();
-  const trustedOrigin = Boolean(origin && allowlist.includes(origin));
-  return {
-    baseUrl,
-    paired: Boolean(baseUrl && trustedOrigin)
-  };
 }
 
 function isSessionUsable(session) {
@@ -47,27 +30,28 @@ function clearAllDashboardCaches() {
   if (typeof window === "undefined") {
     return;
   }
-  const keysToRemove = [];
-  for (let index = 0; index < window.localStorage.length; index += 1) {
-    const key = window.localStorage.key(index);
-    if (key && key.startsWith("nevari:")) {
-      keysToRemove.push(key);
+  [window.localStorage, window.sessionStorage].forEach((storage) => {
+    const keysToRemove = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key && key.startsWith("nevari:")) {
+        keysToRemove.push(key);
+      }
     }
-  }
-  keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+    keysToRemove.forEach((key) => storage.removeItem(key));
+  });
 }
 
 export function defaultSession(config) {
   const hasWindow = typeof window !== "undefined";
   const origin = hasWindow ? currentOriginValue() : "";
   const href = hasWindow ? window.location.href : "";
-  const bootstrap = bootstrapPairingState();
   return {
-    baseUrl: bootstrap.baseUrl,
+    baseUrl: normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
     frontendType: config.type,
     frontendOrigin: origin,
     frontendUrl: origin === "null" ? "null" : href,
-    paired: bootstrap.paired,
+    paired: false,
     siteName: "",
     siteLogo: "",
     accessToken: "",
@@ -83,16 +67,22 @@ export function loadSession(config) {
   }
   try {
     const ownSession = JSON.parse(localStorage.getItem(config.storageKey) || "{}");
+    if (ownSession.accessToken && ownSession.accessToken !== SESSION_MARKER) {
+      ownSession.accessToken = "";
+      ownSession.refreshToken = "";
+      ownSession.expiresAt = 0;
+      ownSession.user = null;
+      localStorage.setItem(config.storageKey, JSON.stringify(ownSession));
+    }
     const adminSession = JSON.parse(localStorage.getItem("nevari_admin_storefront_session") || "{}");
     const isSharedFrontend = config.type !== "storefront";
-    const bootstrap = bootstrapPairingState();
     const sharedConnection = isSharedFrontend ? {
-      baseUrl: adminSession.baseUrl || bootstrap.baseUrl,
-      frontendOrigin: adminSession.frontendOrigin || "",
-      frontendUrl: adminSession.frontendUrl || "",
-      paired: Boolean(adminSession.paired || bootstrap.paired),
-      siteName: adminSession.siteName || "",
-      siteLogo: adminSession.siteLogo || ""
+      baseUrl: ownSession.baseUrl || adminSession.baseUrl || normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+      frontendOrigin: ownSession.frontendOrigin || adminSession.frontendOrigin || "",
+      frontendUrl: ownSession.frontendUrl || adminSession.frontendUrl || "",
+      paired: Boolean(ownSession.paired || adminSession.paired),
+      siteName: ownSession.siteName || adminSession.siteName || "",
+      siteLogo: ownSession.siteLogo || adminSession.siteLogo || ""
     } : {};
     const nextSession = { ...defaultSession(config), ...sharedConnection, ...ownSession, frontendType: config.type };
 
@@ -103,10 +93,9 @@ export function loadSession(config) {
       nextSession.siteLogo = sharedConnection.siteLogo;
     }
 
-    if (isSharedFrontend) {
-      nextSession.frontendOrigin = window.location.origin === "null" ? "null" : window.location.origin;
-      nextSession.frontendUrl = window.location.origin === "null" ? "null" : window.location.href;
-    }
+    // Origin is request context, not persisted connection data.
+    nextSession.frontendOrigin = currentOriginValue();
+    nextSession.frontendUrl = nextSession.frontendOrigin === "null" ? "null" : window.location.href;
 
     if (!isSessionUsable(nextSession)) {
       return { ...nextSession, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
@@ -159,7 +148,8 @@ export function saveSession(config, session) {
     : [];
   const safeSession = {
     ...session,
-    refreshToken: "",
+    accessToken: session?.accessToken ? SESSION_MARKER : "",
+    refreshToken: session?.refreshToken ? SESSION_MARKER : "",
     user: session?.user ? {
       id: session.user.id || "",
       display_name: session.user.display_name || session.user.name || "",
@@ -193,9 +183,10 @@ export function buildUrl(session, path) {
 }
 
 export function frontendContext(session) {
+  const frontendOrigin = currentOriginValue() || session.frontendOrigin;
   return {
     frontend_type: session.frontendType,
-    frontend_origin: session.frontendOrigin,
-    frontend_url: session.frontendUrl
+    frontend_origin: frontendOrigin,
+    frontend_url: frontendOrigin === "null" ? "null" : (typeof window !== "undefined" ? window.location.href : session.frontendUrl)
   };
 }

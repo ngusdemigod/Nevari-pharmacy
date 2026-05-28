@@ -82,6 +82,13 @@ final class Nevari_Admin {
                 if ($connection_id && Nevari_Connections::revoke_frontend($connection_id)) {
                     echo '<div class="notice notice-success"><p>' . esc_html__('Frontend access revoked. The paired frontend is now disconnected and must complete initial setup again before it can reconnect.', 'nevari-pharmacy-core') . '</p></div>';
                 }
+            } elseif ($action === 'delete_revoked_frontend') {
+                $connection_id = isset($_POST['connection_id']) ? (int) $_POST['connection_id'] : 0;
+                if ($connection_id && Nevari_Connections::delete_revoked_frontend($connection_id)) {
+                    echo '<div class="notice notice-success"><p>' . esc_html__('Revoked frontend domain has been deleted.', 'nevari-pharmacy-core') . '</p></div>';
+                } else {
+                    echo '<div class="notice notice-error"><p>' . esc_html__('Only revoked frontend domains can be deleted.', 'nevari-pharmacy-core') . '</p></div>';
+                }
             } elseif ($action === 'save_google_meet_oauth') {
                 self::handle_google_meet_oauth_settings_save();
                 echo '<div class="notice notice-success"><p>' . esc_html__('Google Meet OAuth settings saved.', 'nevari-pharmacy-core') . '</p></div>';
@@ -271,7 +278,13 @@ final class Nevari_Admin {
                                             <?php submit_button(__('Revoke Access', 'nevari-pharmacy-core'), 'secondary', '', false); ?>
                                         </form>
                                     <?php else : ?>
-                                        <?php esc_html_e('Revoked', 'nevari-pharmacy-core'); ?>
+                                        <span style="display:block; margin-bottom:8px;"><?php esc_html_e('Revoked', 'nevari-pharmacy-core'); ?></span>
+                                        <form method="post">
+                                            <?php wp_nonce_field('nevari_connections_action'); ?>
+                                            <input type="hidden" name="nevari_connections_action" value="delete_revoked_frontend" />
+                                            <input type="hidden" name="connection_id" value="<?php echo esc_attr((string) $connection['id']); ?>" />
+                                            <?php submit_button(__('Delete', 'nevari-pharmacy-core'), 'delete', '', false, ['onclick' => "return confirm('Delete this revoked domain permanently?');"]); ?>
+                                        </form>
                                     <?php endif; ?>
                                 </td>
                             </tr>
@@ -802,6 +815,8 @@ final class Nevari_Admin {
             'auth_login_user' => ['label' => 'Login attempts by username', 'default_limit' => 10, 'default_window' => 15 * MINUTE_IN_SECONDS],
             'auth_password_reset_ip' => ['label' => 'Password reset requests by IP', 'default_limit' => 5, 'default_window' => 15 * MINUTE_IN_SECONDS],
             'auth_password_reset_user' => ['label' => 'Password reset requests by username', 'default_limit' => 5, 'default_window' => 15 * MINUTE_IN_SECONDS],
+            'auth_register_ip' => ['label' => 'Customer registration attempts by IP', 'default_limit' => 10, 'default_window' => 15 * MINUTE_IN_SECONDS],
+            'auth_register_email' => ['label' => 'Customer registration attempts by email', 'default_limit' => 5, 'default_window' => HOUR_IN_SECONDS],
             'auth_refresh_ip' => ['label' => 'Token refresh by IP', 'default_limit' => 20, 'default_window' => 15 * MINUTE_IN_SECONDS],
             'auth_refresh_token' => ['label' => 'Token refresh by token', 'default_limit' => 10, 'default_window' => 15 * MINUTE_IN_SECONDS],
             'auth_logout_ip' => ['label' => 'Logout by IP', 'default_limit' => 30, 'default_window' => 15 * MINUTE_IN_SECONDS],

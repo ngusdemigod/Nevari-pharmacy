@@ -1,5 +1,8 @@
+import { createHmac } from "node:crypto";
+
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
+const SESSION_MARKER = "server-session";
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -10,6 +13,46 @@ function allowedOrigins() {
     .split(",")
     .map((value) => normalizeBaseUrl(value))
     .filter(Boolean);
+}
+
+function cookieName(frontendType) {
+  return `nevari_access_${String(frontendType || "unknown").replace(/[^a-z0-9_-]/gi, "_")}`;
+}
+
+function requestCookie(request, name) {
+  const fromNextRequest = request.cookies?.get?.(name)?.value;
+  if (fromNextRequest) return fromNextRequest;
+  const match = String(request.headers.get("cookie") || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function assertFrontendRequest(request) {
+  const requestOrigin = new URL(request.url).origin;
+  const frontendOrigin = normalizeBaseUrl(request.headers.get("x-nevari-frontend-origin"));
+  const origin = normalizeBaseUrl(request.headers.get("origin"));
+  if (!frontendOrigin || frontendOrigin !== requestOrigin || (origin && origin !== requestOrigin)) {
+    throw new Error("Same-origin frontend request is required.");
+  }
+}
+
+function signedFrontendHeaders(request) {
+  const secret = String(process.env.NEVARI_PROXY_SIGNING_SECRET || "").trim();
+  const frontendType = String(request.headers.get("x-nevari-frontend-type") || "").trim();
+  if (!secret) {
+    throw new Error("Proxy signing secret is not configured.");
+  }
+  if (!frontendType) {
+    return {};
+  }
+  const frontendOrigin = new URL(request.url).origin;
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const message = `${timestamp}\n${frontendType}\n${frontendOrigin}`;
+  return {
+    "x-nevari-frontend-type": frontendType,
+    "x-nevari-frontend-origin": frontendOrigin,
+    "x-nevari-proxy-timestamp": timestamp,
+    "x-nevari-proxy-signature": createHmac("sha256", secret).update(message).digest("hex")
+  };
 }
 
 function assertAllowedTarget(target) {
@@ -36,12 +79,21 @@ function buildTarget(baseUrl, path, params = {}) {
 
 async function upstreamJson(request, baseUrl, path, params = {}) {
   const headers = new Headers();
-  ["accept", "authorization", "x-nevari-frontend-type", "x-nevari-frontend-origin"].forEach((name) => {
+  ["accept"].forEach((name) => {
     const value = request.headers.get(name);
     if (value) {
       headers.set(name, value);
     }
   });
+  const frontendType = String(request.headers.get("x-nevari-frontend-type") || "").trim();
+  const accessToken = requestCookie(request, cookieName(frontendType));
+  const requestedAuthorization = String(request.headers.get("authorization") || "");
+  if (accessToken) {
+    headers.set("authorization", `Bearer ${accessToken}`);
+  } else if (requestedAuthorization && requestedAuthorization !== `Bearer ${SESSION_MARKER}`) {
+    headers.set("authorization", requestedAuthorization);
+  }
+  Object.entries(signedFrontendHeaders(request)).forEach(([name, value]) => headers.set(name, value));
 
   const response = await fetch(buildTarget(baseUrl, path, params), {
     headers,
@@ -84,6 +136,7 @@ function buildMostSoldProducts(orders = []) {
 
 export async function GET(request) {
   try {
+    assertFrontendRequest(request);
     const url = new URL(request.url);
     const baseUrl = normalizeBaseUrl(url.searchParams.get("baseUrl"));
     if (!baseUrl) {

@@ -8,6 +8,25 @@ function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function cookieName(frontendType) {
+  return `nevari_access_${String(frontendType || "unknown").replace(/[^a-z0-9_-]/gi, "_")}`;
+}
+
+function requestCookie(request, name) {
+  const fromNextRequest = request.cookies?.get?.(name)?.value;
+  if (fromNextRequest) return fromNextRequest;
+  const match = String(request.headers.get("cookie") || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function assertFrontendRequest(request) {
+  const requestOrigin = new URL(request.url).origin;
+  const origin = normalizeBaseUrl(request.headers.get("origin"));
+  if (origin && origin !== requestOrigin) {
+    throw new Error("Cross-origin document requests are not allowed.");
+  }
+}
+
 function proxyUrl(origin, baseUrl, path) {
   const url = new URL("/api/nevari-proxy", origin);
   url.searchParams.set("baseUrl", normalizeBaseUrl(baseUrl));
@@ -77,19 +96,22 @@ function fallbackText(documentType, data, paymentUrl = "") {
   return `Hello ${data.customer?.name || "Customer"}, your ${title.toLowerCase()} for order #${data.order_number} is attached.${paymentText}`;
 }
 
-function appPaymentUrl(appOrigin, invoiceNumber) {
-  if (!appOrigin || !invoiceNumber) return "";
-  return `${String(appOrigin).replace(/\/+$/, "")}/pay/${encodeURIComponent(String(invoiceNumber))}?role=patient`;
+function appPaymentUrl(appOrigin, invoiceNumber, paymentToken) {
+  if (!appOrigin || !invoiceNumber || !paymentToken) return "";
+  return `${String(appOrigin).replace(/\/+$/, "")}/pay/${encodeURIComponent(String(invoiceNumber))}?role=patient&payment_token=${encodeURIComponent(String(paymentToken))}`;
 }
 
 export async function POST(request, { params }) {
   try {
+    assertFrontendRequest(request);
     const body = await request.json().catch(() => ({}));
     const documentType = String(body.document_type || "invoice").toLowerCase();
     if (!ALLOWED_TYPES.has(documentType)) {
       return Response.json({ success: false, error: { message: "Invalid document type." } }, { status: 422 });
     }
-    if (!body.baseUrl || !body.accessToken) {
+    const frontendType = body.frontendType || "storefront";
+    const accessToken = requestCookie(request, cookieName(frontendType));
+    if (!body.baseUrl || !accessToken) {
       return Response.json({ success: false, error: { message: "Admin session is required to send documents." } }, { status: 401 });
     }
 
@@ -97,13 +119,13 @@ export async function POST(request, { params }) {
     const orderId = params.orderId;
     const session = {
       baseUrl: body.baseUrl,
-      accessToken: body.accessToken,
-      frontendType: body.frontendType || "store_admin",
-      frontendOrigin: body.frontendOrigin || origin
+      accessToken,
+      frontendType,
+      frontendOrigin: origin
     };
     const data = await proxyRequest(origin, session, `/orders/${encodeURIComponent(orderId)}/document-data`);
     const appOrigin = body.appOrigin || origin;
-    const paymentUrl = documentType === "invoice" ? (appPaymentUrl(appOrigin, data.invoice_number) || body.fallback_payment_link || "") : "";
+    const paymentUrl = documentType === "invoice" ? appPaymentUrl(appOrigin, data.invoice_number, data.payment_token) : "";
     const renderData = documentType === "invoice"
       ? { ...data, branded_payment_url: paymentUrl, payment_url: paymentUrl }
       : data;

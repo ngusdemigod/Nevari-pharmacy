@@ -293,6 +293,8 @@ final class Nevari_Helpers {
             'auth_login_user' => ['limit' => 10, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_password_reset_ip' => ['limit' => 5, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_password_reset_user' => ['limit' => 5, 'window' => 15 * MINUTE_IN_SECONDS],
+            'auth_register_ip' => ['limit' => 10, 'window' => 15 * MINUTE_IN_SECONDS],
+            'auth_register_email' => ['limit' => 5, 'window' => HOUR_IN_SECONDS],
             'auth_refresh_ip' => ['limit' => 20, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_refresh_token' => ['limit' => 10, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_logout_ip' => ['limit' => 30, 'window' => 15 * MINUTE_IN_SECONDS],
@@ -430,14 +432,23 @@ final class Nevari_Helpers {
     }
 
     public static function client_ip(): string {
-        if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $remote_addr = !empty($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        if ($remote_addr && self::trusted_proxy_ip($remote_addr) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
             $ip = sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR']));
             return trim(explode(',', $ip)[0]);
         }
-        if (!empty($_SERVER['REMOTE_ADDR'])) {
-            return sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR']));
+        if ($remote_addr) {
+            return $remote_addr;
         }
         return 'unknown';
+    }
+
+    private static function trusted_proxy_ip(string $ip): bool {
+        $configured = defined('NEVARI_TRUSTED_PROXY_IPS')
+            ? (string) constant('NEVARI_TRUSTED_PROXY_IPS')
+            : (string) getenv('NEVARI_TRUSTED_PROXY_IPS');
+        $trusted = array_filter(array_map('trim', explode(',', $configured)));
+        return in_array($ip, $trusted, true);
     }
 
     public static function rate_limit(string $bucket, int $limit, int $window_seconds, array $segments = []): ?WP_REST_Response {

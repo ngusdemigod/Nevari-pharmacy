@@ -332,6 +332,11 @@ final class Nevari_Auth {
 
     public static function register_customer(WP_REST_Request $request): WP_REST_Response {
         $params = Nevari_Helpers::get_json_params($request);
+        $ip = Nevari_Helpers::client_ip();
+        if ($response = Nevari_Helpers::rate_limit('auth_register_ip', 10, 15 * MINUTE_IN_SECONDS, [$ip])) {
+            return $response;
+        }
+
         $frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$frontend || $frontend['frontend_type'] !== 'patient_dashboard') {
             return Nevari_Helpers::error('forbidden', 'Customer registration is available only from the customer dashboard.', 403);
@@ -346,8 +351,15 @@ final class Nevari_Auth {
         if (!$email || !is_email($email) || !$display_name || strlen($password) < 8) {
             return Nevari_Helpers::error('validation_error', 'Valid name, email, and password with at least 8 characters are required.', 422);
         }
+        if ($response = Nevari_Helpers::rate_limit('auth_register_email', 5, HOUR_IN_SECONDS, [strtolower($email)])) {
+            return $response;
+        }
         if (email_exists($email)) {
-            return Nevari_Helpers::error('email_exists', 'A user with this email already exists.', 409);
+            Nevari_Audit::log('security', 'nevari', 'auth.customer_registration_submitted', 'success', [
+                'message' => 'Customer registration request processed.',
+                'metadata' => ['result' => 'existing_account'],
+            ]);
+            return Nevari_Helpers::success(['created' => true], [], 201);
         }
 
         $email_parts = explode('@', $email);
@@ -521,7 +533,7 @@ final class Nevari_Auth {
             'user_id' => $user_id,
             'token_hash' => hash('sha256', $refresh_token),
             'user_agent' => !empty($_SERVER['HTTP_USER_AGENT']) ? substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])), 0, 1000) : null,
-            'ip_address' => !empty($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : null,
+            'ip_address' => Nevari_Helpers::client_ip(),
             'expires_at' => gmdate('Y-m-d H:i:s', time() + $refresh_ttl),
             'revoked_at' => null,
             'created_at' => Nevari_Helpers::now(),

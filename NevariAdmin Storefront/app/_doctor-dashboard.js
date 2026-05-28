@@ -143,7 +143,7 @@ export default function DoctorDashboard() {
   useEffect(() => {
     const hydratedSession = hydrateStoredSession("doctor");
     if (!hydratedSession.paired) {
-      router.replace(FRONTENDS.admin.setupPath);
+      router.replace(FRONTENDS.doctor.loginPath);
       return;
     }
     const nextDoctorId = hydratedSession.user?.id;

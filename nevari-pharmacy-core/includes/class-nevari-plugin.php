@@ -1305,11 +1305,7 @@ final class Nevari_Plugin {
             return null;
         }
 
-        $allowed = apply_filters('nevari_allowed_origins', [
-            home_url(),
-            site_url(),
-            'null',
-        ]);
+        $allowed = apply_filters('nevari_allowed_origins', []);
 
         if (class_exists('Nevari_Connections')) {
             foreach (Nevari_Connections::trusted_frontends() as $connection) {
@@ -1325,8 +1321,8 @@ final class Nevari_Plugin {
             }
 
             $value = trim($value);
-            if ($value === '' || $value === 'null' || $value === '*') {
-                return $value;
+            if ($value === '') {
+                return '';
             }
 
             if (class_exists('Nevari_Connections')) {
@@ -1346,31 +1342,20 @@ final class Nevari_Plugin {
             return $normalized;
         }, is_array($allowed) ? $allowed : [])));
 
-        if (in_array('*', $allowed, true) || in_array($origin, $allowed, true) || $this->is_local_development_origin($origin)) {
+        if (in_array($origin, $allowed, true)) {
             return $origin;
         }
 
+        Nevari_Audit::log('security', 'nevari', 'cors.origin_blocked', 'error', [
+            'severity' => 'warning',
+            'message' => 'CORS origin was blocked because it is not trusted.',
+            'metadata' => [
+                'origin' => $origin,
+                'rest_route' => $this->requested_rest_route(),
+            ],
+        ]);
+
         return null;
-    }
-
-    private function is_local_development_origin(string $origin): bool {
-        if ($origin === 'null') {
-            return false;
-        }
-
-        $parts = wp_parse_url($origin);
-        if (!is_array($parts)) {
-            return false;
-        }
-
-        $scheme = isset($parts['scheme']) ? strtolower((string) $parts['scheme']) : '';
-        $host = isset($parts['host']) ? strtolower((string) $parts['host']) : '';
-
-        if (!in_array($scheme, ['http', 'https'], true)) {
-            return false;
-        }
-
-        return in_array($host, ['localhost', '127.0.0.1', '::1'], true);
     }
 
     private function is_nevari_rest_preflight_request(): bool {
@@ -1443,6 +1428,7 @@ final class Nevari_Plugin {
             'Access-Control-Allow-Methods' => 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
             'Access-Control-Allow-Headers' => 'Authorization, Content-Type, X-Requested-With, X-Nevari-Frontend-Type, X-Nevari-Frontend-Origin',
             'Access-Control-Expose-Headers' => 'Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining',
+            'Access-Control-Allow-Credentials' => 'true',
             'Access-Control-Max-Age' => '600',
             'Vary' => 'Origin',
         ];

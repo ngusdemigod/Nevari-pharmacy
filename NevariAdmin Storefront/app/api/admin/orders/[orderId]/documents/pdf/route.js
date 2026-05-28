@@ -7,6 +7,26 @@ function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function cookieName(frontendType) {
+  return `nevari_access_${String(frontendType || "unknown").replace(/[^a-z0-9_-]/gi, "_")}`;
+}
+
+function requestCookie(request, name) {
+  const fromNextRequest = request.cookies?.get?.(name)?.value;
+  if (fromNextRequest) return fromNextRequest;
+  const match = String(request.headers.get("cookie") || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function assertFrontendRequest(request) {
+  const requestOrigin = new URL(request.url).origin;
+  const frontendOrigin = normalizeBaseUrl(request.headers.get("x-nevari-frontend-origin"));
+  const origin = normalizeBaseUrl(request.headers.get("origin"));
+  if (!frontendOrigin || frontendOrigin !== requestOrigin || (origin && origin !== requestOrigin)) {
+    throw new Error("Same-origin frontend request is required.");
+  }
+}
+
 function proxyUrl(origin, baseUrl, path) {
   const url = new URL("/api/nevari-proxy", origin);
   url.searchParams.set("baseUrl", normalizeBaseUrl(baseUrl));
@@ -48,19 +68,21 @@ async function htmlToPdf(html) {
 
 export async function GET(request, { params }) {
   try {
+    assertFrontendRequest(request);
     const url = new URL(request.url);
     const documentType = String(url.searchParams.get("document_type") || "receipt").toLowerCase();
     if (!ALLOWED_TYPES.has(documentType)) {
       return Response.json({ success: false, error: { message: "Invalid document type." } }, { status: 422 });
     }
+    const frontendType = url.searchParams.get("frontendType") || "patient";
     const session = {
       baseUrl: url.searchParams.get("baseUrl") || "",
-      accessToken: url.searchParams.get("accessToken") || "",
-      frontendType: url.searchParams.get("frontendType") || "patient",
-      frontendOrigin: url.searchParams.get("frontendOrigin") || url.origin
+      accessToken: requestCookie(request, cookieName(frontendType)),
+      frontendType,
+      frontendOrigin: url.origin
     };
-    if (!session.baseUrl) {
-      return Response.json({ success: false, error: { message: "WordPress base URL is required." } }, { status: 422 });
+    if (!session.baseUrl || !session.accessToken) {
+      return Response.json({ success: false, error: { message: "Authenticated session is required." } }, { status: 401 });
     }
 
     const data = await proxyRequest(url.origin, session, `/orders/${encodeURIComponent(params.orderId)}/document-data`);

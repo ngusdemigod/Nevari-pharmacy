@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { FRONTENDS } from "../../components/frontend-config";
 
+const SESSION_MARKER = "server-session";
 const DEFAULT_SESSION = {
-  baseUrl: "",
+  baseUrl: String(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "").trim().replace(/\/+$/, ""),
   frontendType: FRONTENDS.patient.type,
   frontendOrigin: "",
   frontendUrl: "",
@@ -16,13 +17,20 @@ function hydrateSession(frontend = "patient") {
   if (typeof window === "undefined") return DEFAULT_SESSION;
   const config = FRONTENDS[frontend] || FRONTENDS.patient;
   const own = JSON.parse(localStorage.getItem(config.storageKey) || "{}");
+  if (own.accessToken && own.accessToken !== SESSION_MARKER) {
+    own.accessToken = "";
+    own.refreshToken = "";
+    own.expiresAt = 0;
+    own.user = null;
+    localStorage.setItem(config.storageKey, JSON.stringify(own));
+  }
   const admin = JSON.parse(localStorage.getItem(FRONTENDS.admin.storageKey) || "{}");
   const shared = config.type !== FRONTENDS.admin.type ? {
-    baseUrl: admin.baseUrl || "",
-    frontendOrigin: admin.frontendOrigin || window.location.origin,
-    frontendUrl: admin.frontendUrl || window.location.href
+    baseUrl: admin.baseUrl || DEFAULT_SESSION.baseUrl,
+    frontendOrigin: window.location.origin,
+    frontendUrl: window.location.href
   } : {};
-  return { ...DEFAULT_SESSION, ...shared, ...own, frontendType: config.type };
+  return { ...DEFAULT_SESSION, ...shared, ...own, frontendType: config.type, frontendOrigin: window.location.origin, frontendUrl: window.location.href };
 }
 
 function buildUrl(session, path) {
@@ -40,7 +48,7 @@ async function request(session, path, { method = "GET", body } = {}) {
       "Content-Type": "application/json",
       Authorization: session.accessToken ? `Bearer ${session.accessToken}` : "",
       "X-Nevari-Frontend-Type": session.frontendType,
-      "X-Nevari-Frontend-Origin": session.frontendOrigin || window.location.origin
+      "X-Nevari-Frontend-Origin": window.location.origin
     },
     body: body ? JSON.stringify(body) : undefined
   });
@@ -80,6 +88,7 @@ export default function PaywallPage() {
   const [loading, setLoading] = useState(true);
   const [activeGateway, setActiveGateway] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const paymentToken = searchParams.get("payment_token") || "";
 
   useEffect(() => {
     const role = searchParams.get("role") || "patient";
@@ -94,7 +103,7 @@ export default function PaywallPage() {
       setLoading(true);
       setError("");
       try {
-        const payload = await request(session, `/invoices/${encodeURIComponent(String(invoiceRef || ""))}/payment-data`);
+        const payload = await request(session, `/invoices/${encodeURIComponent(String(invoiceRef || ""))}/payment-data?payment_token=${encodeURIComponent(paymentToken)}`);
         if (!active) return;
         const status = String(payload.payment_status || payload.order_status || "").toLowerCase();
         const terminal = ["paid", "completed", "cancelled", "refunded"].includes(status) || Number(payload?.totals?.balance_due || 0) <= 0;
@@ -129,7 +138,7 @@ export default function PaywallPage() {
       try {
         const verified = await request(session, `/orders/${data.order_id}/payment/verify`, {
           method: "POST",
-          body: { gateway, reference }
+          body: { gateway, reference, payment_token: paymentToken }
         });
         if (active && verified?.paid) {
           openReceipt(data.order_id);
@@ -154,17 +163,8 @@ export default function PaywallPage() {
     return `/admin/orders/${encodeURIComponent(orderId)}/documents?role=${encodeURIComponent(role)}&tab=receipt&statusMode=payment`;
   }
 
-  function receiptPdfFallbackUrl(orderId) {
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
-    return `/api/admin/orders/${encodeURIComponent(orderId)}/documents/pdf?document_type=receipt&statusMode=payment&baseUrl=${encodeURIComponent(session.baseUrl || "")}&accessToken=${encodeURIComponent(session.accessToken || "")}&frontendType=${encodeURIComponent(session.frontendType || "")}&frontendOrigin=${encodeURIComponent(session.frontendOrigin || origin)}`;
-  }
-
   function openReceipt(orderId) {
-    try {
-      window.location.href = receiptViewerUrl(orderId);
-    } catch {
-      window.location.href = receiptPdfFallbackUrl(orderId);
-    }
+    window.location.href = receiptViewerUrl(orderId);
   }
 
   async function startPayment(gateway = activeGateway) {
@@ -173,10 +173,10 @@ export default function PaywallPage() {
     setSubmitting(true);
     setError("");
     try {
-      const callbackUrl = `${window.location.origin}/pay/${encodeURIComponent(data.invoice_number)}?role=${encodeURIComponent(searchParams.get("role") || "patient")}&gateway=${encodeURIComponent(gateway)}`;
+      const callbackUrl = `${window.location.origin}/pay/${encodeURIComponent(data.invoice_number)}?role=${encodeURIComponent(searchParams.get("role") || "patient")}&gateway=${encodeURIComponent(gateway)}&payment_token=${encodeURIComponent(paymentToken)}`;
       const payload = await request(session, `/orders/${data.order_id}/payment/initialize`, {
         method: "POST",
-        body: { gateway, callback_url: callbackUrl }
+        body: { gateway, callback_url: callbackUrl, payment_token: paymentToken }
       });
       if (!payload?.payment_url) {
         throw new Error("Gateway did not return a payment URL.");

@@ -44,10 +44,10 @@ const emptyCustomerState = {
 };
 
 async function fetchCustomerDashboardPayload(session, settings, fallbackState = emptyCustomerState) {
-  const upcomingParams = { per_page: 5, page: 1, mine: "1", date_from: new Date().toISOString(), order: "ASC" };
+  const upcomingParams = { per_page: 5, page: 1, date_from: new Date().toISOString(), order: "ASC" };
   const [dashboard, orders, appointments, liveDoctors] = await Promise.all([
     apiRequest(session, "/dashboard/patient", { suppressHttpError: true }),
-    apiRequest(session, "/orders", { params: { per_page: 5, page: 1, mine: "1" }, suppressHttpError: true }),
+    apiRequest(session, "/orders", { params: { per_page: 5, page: 1 }, suppressHttpError: true }),
     apiRequest(session, "/appointments", { params: upcomingParams, suppressHttpError: true }),
     apiRequest(session, "/doctors", { params: { per_page: 8, page: 1 }, suppressHttpError: true })
   ]);
@@ -83,11 +83,11 @@ async function fetchCustomerDashboardPayload(session, settings, fallbackState = 
 }
 
 async function fetchCustomerOrders(session) {
-  return apiRequest(session, "/orders", { params: { per_page: 24, page: 1, mine: "1" }, suppressHttpError: true });
+  return apiRequest(session, "/orders", { params: { per_page: 24, page: 1 }, suppressHttpError: true });
 }
 
 async function fetchCustomerAppointments(session) {
-  return apiRequest(session, "/appointments", { params: { per_page: 40, page: 1, mine: "1" }, suppressHttpError: true });
+  return apiRequest(session, "/appointments", { params: { per_page: 40, page: 1 }, suppressHttpError: true });
 }
 
 async function fetchCustomerDoctors(session) {
@@ -199,7 +199,7 @@ export default function CustomerDashboard() {
     const hydratedSession = hydrateStoredSession("patient");
     setStoreUrl(hydratedSession.baseUrl || "#");
     if (!hydratedSession.paired) {
-      router.replace(FRONTENDS.admin.setupPath);
+      router.replace(FRONTENDS.patient.loginPath);
       return;
     }
     const roles = resolveUserRoles(hydratedSession.user);
@@ -220,13 +220,13 @@ export default function CustomerDashboard() {
     [cachedCustomerState, session, settings]
   );
   const customerSummaryKey = session
-    ? swrKeys.proxy.path("/customer-dashboard/summary", withBaseUrl(session, { user_id: session.user?.id || "", display_name: settings.displayName }))
+    ? swrKeys.proxy.path("/customer-dashboard/summary", withBaseUrl(session))
     : null;
   const customerOrdersKey = session && ["orders", "settings", "profile"].includes(page)
-    ? swrKeys.proxy.path("/orders", withBaseUrl(session, { per_page: 24, page: 1, mine: "1" }))
+    ? swrKeys.proxy.path("/orders", withBaseUrl(session, { per_page: 24, page: 1 }))
     : null;
   const customerAppointmentsKey = session && ["appointment", "settings", "profile"].includes(page)
-    ? swrKeys.proxy.path("/appointments", withBaseUrl(session, { per_page: 40, page: 1, mine: "1" }))
+    ? swrKeys.proxy.path("/appointments", withBaseUrl(session, { per_page: 40, page: 1 }))
     : null;
   const customerDoctorsKey = session && ["appointment", "settings", "profile"].includes(page)
     ? swrKeys.proxy.path("/doctors", withBaseUrl(session, { per_page: 24, page: 1 }))
@@ -2042,10 +2042,11 @@ function resolveBrandedAppointmentPayUrl(checkout) {
     return "";
   }
   const invoiceRef = resolveCheckoutInvoiceRef(checkout);
-  if (!invoiceRef) {
+  const paymentToken = String(checkout?.payment_token || checkout?.order?.payment_token || "").trim();
+  if (!invoiceRef || !paymentToken) {
     return "";
   }
-  return `${window.location.origin}/pay/${encodeURIComponent(invoiceRef)}?role=patient`;
+  return `${window.location.origin}/pay/${encodeURIComponent(invoiceRef)}?role=patient&payment_token=${encodeURIComponent(paymentToken)}`;
 }
 
 function resolveCheckoutInvoiceRef(checkout) {

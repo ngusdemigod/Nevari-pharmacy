@@ -254,7 +254,7 @@ function defaultSession() {
   const href = hasWindow ? window.location.href : "";
 
   return {
-    baseUrl: "",
+    baseUrl: normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
     frontendType: FRONTEND_TYPE,
     frontendOrigin: origin === "null" ? "null" : origin,
     frontendUrl: origin === "null" ? "null" : href,
@@ -405,7 +405,8 @@ function sanitizedPersistedSession(session = {}) {
     : [];
   return {
     ...session,
-    refreshToken: "",
+    accessToken: session.accessToken ? "server-session" : "",
+    refreshToken: session.refreshToken ? "server-session" : "",
     user: session?.user ? {
       id: session.user.id || "",
       display_name: session.user.display_name || session.user.name || "",
@@ -1376,10 +1377,12 @@ function isRouteMissingPayload(payload) {
 }
 
 function frontendContext(session) {
+  const hasWindow = typeof window !== "undefined";
+  const frontendOrigin = hasWindow ? (window.location.origin === "null" ? "null" : window.location.origin) : session.frontendOrigin;
   return {
     frontend_type: session.frontendType,
-    frontend_origin: session.frontendOrigin,
-    frontend_url: session.frontendUrl
+    frontend_origin: frontendOrigin,
+    frontend_url: hasWindow ? (frontendOrigin === "null" ? "null" : window.location.href) : session.frontendUrl
   };
 }
 
@@ -1841,6 +1844,7 @@ export default function Page() {
   const [authView, setAuthView] = useState("login");
   const [syncStatus, setSyncStatus] = useState({ text: "Disconnected", mode: "" });
   const [hydrated, setHydrated] = useState(false);
+  const [accessResolved, setAccessResolved] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [selectedOrderDetail, setSelectedOrderDetail] = useState(null);
   const [selectedOrderDoctorId, setSelectedOrderDoctorId] = useState("");
@@ -2010,8 +2014,15 @@ export default function Page() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw);
-        const merged = { ...defaultSession(), ...parsed };
+        const parsed = sanitizedPersistedSession(JSON.parse(raw));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+        const runtimeSession = defaultSession();
+        const merged = {
+          ...runtimeSession,
+          ...parsed,
+          frontendOrigin: runtimeSession.frontendOrigin,
+          frontendUrl: runtimeSession.frontendUrl
+        };
         setSession((prev) => (
           isSessionUsable(merged)
             ? { ...prev, ...merged }
@@ -2433,21 +2444,20 @@ export default function Page() {
       throw new Error("No customer email is available for contact.");
     }
     const documentType = requestedDocumentType || getOrderDocumentType(order);
-    const invoiceNumber = `NVH-INV-${String(order?.number || order?.id || "").padStart(5, "0")}`;
-    const paymentLink = normalizeOrderQueueValue(order?.payment_status || order?.status) === "pending"
-      ? `${window.location.origin}/pay/${encodeURIComponent(invoiceNumber)}?role=patient`
-      : "";
+    const paymentLink = "";
     const response = await fetch(`/api/admin/orders/${encodeURIComponent(order.id)}/documents/send`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Nevari-Frontend-Type": session.frontendType || FRONTEND_TYPE,
+        "X-Nevari-Frontend-Origin": window.location.origin
+      },
       body: JSON.stringify({
         document_type: documentType,
         baseUrl: session.baseUrl,
-        accessToken: session.accessToken,
         frontendType: session.frontendType || FRONTEND_TYPE,
-        frontendOrigin: session.frontendOrigin || window.location.origin,
+        frontendOrigin: window.location.origin,
         appOrigin: window.location.origin,
-        fallback_payment_link: paymentLink,
         fallback_body_html: buildOrderEmailFallbackHtml(order, documentType, paymentLink),
         fallback_body_text: buildOrderEmailFallbackText(order, documentType, paymentLink),
         fallback_variables: buildOrderEmailVariables(order, documentType, paymentLink)
@@ -2462,11 +2472,6 @@ export default function Page() {
 
   async function printReceiptForOrder(order, { documentType = getOrderDocumentType(order), feedback, statusMode = "order" } = {}) {
     const tab = documentType === "receipt" ? "receipt" : documentType === "prescription" ? "prescription" : "invoice";
-    if (typeof window !== "undefined" && order?.id) {
-      try {
-        window.localStorage.setItem(`nevari-document-order-${String(order.id)}`, JSON.stringify(order));
-      } catch {}
-    }
     const documentUrl = `/admin/orders/${encodeURIComponent(order.id || order.number || "")}/documents?role=admin&tab=${encodeURIComponent(tab)}&print=1&statusMode=${encodeURIComponent(statusMode)}`;
     const frame = document.createElement("iframe");
     frame.title = `${documentType} print frame`;
@@ -4300,7 +4305,7 @@ export default function Page() {
     const headers = {
       Accept: "application/json",
       "X-Nevari-Frontend-Type": activeSession.frontendType,
-      "X-Nevari-Frontend-Origin": activeSession.frontendOrigin
+      "X-Nevari-Frontend-Origin": window.location.origin
     };
 
     if (body !== undefined) {
@@ -4376,7 +4381,7 @@ export default function Page() {
           Accept: "application/json",
           Authorization: activeSession.accessToken ? `Bearer ${activeSession.accessToken}` : "",
           "X-Nevari-Frontend-Type": activeSession.frontendType,
-          "X-Nevari-Frontend-Origin": activeSession.frontendOrigin
+          "X-Nevari-Frontend-Origin": window.location.origin
         }
       });
     } catch (error) {
@@ -4656,8 +4661,8 @@ export default function Page() {
       setSession(workingSession);
       const pairingContext = {
         frontend_type: PAIRING_FRONTEND_TYPE,
-        frontend_origin: workingSession.frontendOrigin,
-        frontend_url: workingSession.frontendUrl
+        frontend_origin: window.location.origin,
+        frontend_url: window.location.href
       };
 
       const verifyPayload = await apiRequest("/connections/verify", {
@@ -4893,7 +4898,56 @@ export default function Page() {
     let cancelled = false;
 
     async function bootstrap() {
-      if (!session.paired) {
+      let activeSession = session;
+
+      if (activeSession.baseUrl) {
+        try {
+          const response = await fetch(buildUrl(activeSession, `/connections/status?frontend_type=${encodeURIComponent(activeSession.frontendType)}&probe=${Date.now()}`), {
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+              "X-Nevari-Frontend-Type": activeSession.frontendType,
+              "X-Nevari-Frontend-Origin": window.location.origin
+            }
+          });
+          const payload = await response.json().catch(() => null);
+          if (!cancelled && response.ok && payload?.success && payload.data?.paired) {
+            activeSession = {
+              ...activeSession,
+              paired: true,
+              siteName: payload.data.site_name || "",
+              siteLogo: payload.data.site_logo || "",
+              frontendOrigin: window.location.origin,
+              frontendUrl: window.location.href
+            };
+            setSession(activeSession);
+            persistSessionSnapshot(activeSession, currentPage);
+          } else if (!cancelled && response.ok && payload?.success && payload.data?.paired === false) {
+            activeSession = { ...activeSession, paired: false, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
+            setSession(activeSession);
+            persistSessionSnapshot(activeSession, currentPage);
+          } else if (!cancelled) {
+            router.replace("/admin/storefront/login");
+            setSyncStatus({ text: "Connection check failed", mode: "error" });
+            setAuthFeedback(payload?.error?.message || "Unable to verify the trusted dashboard domain. Try again shortly.");
+            return;
+          }
+        } catch (error) {
+          console.error("Could not confirm trusted storefront origin", error);
+          if (!cancelled) {
+            router.replace("/admin/storefront/login");
+            setSyncStatus({ text: "Connection check failed", mode: "error" });
+            setAuthFeedback("Unable to verify the trusted dashboard domain. Try again shortly.");
+            return;
+          }
+        }
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      if (!activeSession.paired) {
         router.replace("/admin/storefront/setup");
         setSetupFeedback(
           isFileProtocol()
@@ -4906,7 +4960,7 @@ export default function Page() {
 
       setSyncStatus({ text: "Paired", mode: "live" });
 
-      if (!isSessionUsable(session) && !session.refreshToken) {
+      if (!isSessionUsable(activeSession) && !activeSession.refreshToken) {
         router.replace("/admin/storefront/login");
         setAuthFeedback(
           isFileProtocol()
@@ -4919,10 +4973,10 @@ export default function Page() {
       hideAuthGate();
       setSyncStatus({ text: "Restoring session...", mode: "" });
 
-      let restoredSession = session;
-      if (!isSessionUsable(session) && session.refreshToken) {
+      let restoredSession = activeSession;
+      if (!isSessionUsable(activeSession) && activeSession.refreshToken) {
         try {
-          restoredSession = await refreshSession(session);
+          restoredSession = await refreshSession(activeSession);
         } catch (error) {
           if (!isExpiredRefreshSessionError(error) && !/stored session expired/i.test(String(error?.message || ""))) {
             console.error(error);
@@ -4934,7 +4988,7 @@ export default function Page() {
             forcePairingReset("Frontend access was revoked. Pair this dashboard again to continue.");
             return;
           }
-          const nextSession = { ...session, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
+          const nextSession = { ...activeSession, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
           setSession(nextSession);
           persistSessionSnapshot(nextSession, currentPage);
           router.replace("/admin/storefront/login");
@@ -4948,6 +5002,7 @@ export default function Page() {
         return;
       }
 
+      setAccessResolved(true);
       try {
         await fetchDashboardSummary(restoredSession);
         if (cancelled) {
@@ -6368,8 +6423,22 @@ export default function Page() {
 
   const showPageSkeleton = Boolean(session.accessToken && !appDataLoaded);
 
-  if (!hydrated) {
-    return renderPageSkeleton();
+  if (!hydrated || !accessResolved) {
+    return (
+      <div className="auth-gate">
+        <div className="auth-gate-shell">
+          <section className="auth-card auth-screen-card">
+            <div className="auth-card-body">
+              <div className="auth-intro">
+                <img className="auth-logo" src="/ne.webp" alt="Nevari logo" />
+                <h1 className="auth-title">Nevari Admin</h1>
+              </div>
+              <p className="auth-feedback">Checking your session...</p>
+            </div>
+          </section>
+        </div>
+      </div>
+    );
   }
 
   function renderMetricSkeletons(count = 4) {
@@ -8116,7 +8185,7 @@ export default function Page() {
                           ))}
                         </div>
                       </div>
-                      <div className={`email-preview-frame ${emailPreviewMode}`} dangerouslySetInnerHTML={{ __html: selectedEmailTemplatePreview }} />
+                      <iframe className={`email-preview-frame ${emailPreviewMode}`} title="Email template preview" sandbox="" srcDoc={selectedEmailTemplatePreview} />
                     </div>
                     </div>
                   </div>

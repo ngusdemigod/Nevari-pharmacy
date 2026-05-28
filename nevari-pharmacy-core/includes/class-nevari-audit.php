@@ -43,13 +43,7 @@ final class Nevari_Audit {
         $roles = $actor_user_id ? Nevari_Helpers::current_user_roles((int) $actor_user_id) : [];
         $actor_role = $args['actor_role'] ?? ($roles ? reset($roles) : null);
 
-        $ip = '';
-        if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-            $ip = sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR']));
-            $ip = trim(explode(',', $ip)[0]);
-        } elseif (!empty($_SERVER['REMOTE_ADDR'])) {
-            $ip = sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR']));
-        }
+        $ip = Nevari_Helpers::client_ip();
 
         $user_agent = !empty($_SERVER['HTTP_USER_AGENT']) ? substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])), 0, 1000) : null;
         $metadata = isset($args['metadata']) ? Nevari_Helpers::json_encode_safe($args['metadata']) : null;

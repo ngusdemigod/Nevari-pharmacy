@@ -41,14 +41,57 @@ export default function RoleLoginPage({ config }) {
   const [loadingAction, setLoadingAction] = useState("");
 
   useEffect(() => {
-    const next = loadSession(config);
-    setSession(next);
-    router.prefetch(config.dashboardPath);
-    if (!next.paired) {
-      router.replace(config.setupPath || FRONTENDS.admin.setupPath);
-    } else if (isSessionUsable(next)) {
-      router.replace(config.dashboardPath);
+    let active = true;
+    async function initializeSession() {
+      let next = loadSession(config);
+      router.prefetch(config.dashboardPath);
+      if (next.baseUrl) {
+        try {
+          const response = await fetch(buildUrl(next, `/connections/status?frontend_type=${encodeURIComponent(config.type)}&probe=${Date.now()}`), {
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+              "X-Nevari-Frontend-Type": config.type,
+              "X-Nevari-Frontend-Origin": window.location.origin
+            }
+          });
+          const payload = await response.json().catch(() => null);
+          if (response.ok && payload?.success && payload.data?.paired) {
+            next = {
+              ...next,
+              paired: true,
+              siteName: payload.data.site_name || "",
+              siteLogo: payload.data.site_logo || "",
+              frontendOrigin: window.location.origin,
+              frontendUrl: window.location.href
+            };
+            saveSession(config, next);
+          } else if (response.ok && payload?.success && payload.data?.paired === false) {
+            next = { ...next, paired: false, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
+            saveSession(config, next);
+          } else {
+            setFeedback(payload?.error?.message || "Unable to verify the trusted dashboard domain. Try again shortly.");
+            setSession(next);
+            return;
+          }
+        } catch {
+          setFeedback("Unable to verify the trusted dashboard domain. Try again shortly.");
+          setSession(next);
+          return;
+        }
+      }
+      if (!active) return;
+      setSession(next);
+      if (!next.paired) {
+        router.replace(config.setupPath || FRONTENDS.admin.setupPath);
+      } else if (isSessionUsable(next)) {
+        router.replace(config.dashboardPath);
+      }
     }
+    initializeSession();
+    return () => {
+      active = false;
+    };
   }, [config, router]);
 
   useEffect(() => {
@@ -71,7 +114,7 @@ export default function RoleLoginPage({ config }) {
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
-          "X-Nevari-Frontend-Origin": session.frontendOrigin
+          "X-Nevari-Frontend-Origin": window.location.origin
         },
         body: JSON.stringify({ username, password, ...frontendContext(session) })
       });
@@ -121,7 +164,7 @@ export default function RoleLoginPage({ config }) {
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
-          "X-Nevari-Frontend-Origin": session.frontendOrigin
+          "X-Nevari-Frontend-Origin": window.location.origin
         },
         body: JSON.stringify({
           challenge_id: verification.challengeId,
@@ -167,7 +210,7 @@ export default function RoleLoginPage({ config }) {
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
-          "X-Nevari-Frontend-Origin": session.frontendOrigin
+          "X-Nevari-Frontend-Origin": window.location.origin
         },
         body: JSON.stringify({
           challenge_id: verification.challengeId,
@@ -209,7 +252,7 @@ export default function RoleLoginPage({ config }) {
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
-          "X-Nevari-Frontend-Origin": session.frontendOrigin
+          "X-Nevari-Frontend-Origin": window.location.origin
         },
         body: JSON.stringify({ username: resetUsername, ...frontendContext(session) })
       });
@@ -243,7 +286,7 @@ export default function RoleLoginPage({ config }) {
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
-          "X-Nevari-Frontend-Origin": session.frontendOrigin
+          "X-Nevari-Frontend-Origin": window.location.origin
         },
         body: JSON.stringify({
           first_name: registration.firstName,

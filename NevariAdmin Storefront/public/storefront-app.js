@@ -1,6 +1,7 @@
 const STORAGE_KEY = "nevari_admin_storefront_session";
 const API_NAMESPACE = "nevari/v1";
 const FRONTEND_TYPE = "storefront";
+const SESSION_MARKER = "server-session";
 
 const state = {
   session: {
@@ -104,6 +105,13 @@ function loadSession() {
       return;
     }
     const parsed = JSON.parse(raw);
+    if (parsed.accessToken && parsed.accessToken !== SESSION_MARKER) {
+      parsed.accessToken = "";
+      parsed.refreshToken = "";
+      parsed.expiresAt = 0;
+      parsed.user = null;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+    }
     state.session = { ...state.session, ...parsed };
   } catch (error) {
     console.error("Could not load stored session", error);
@@ -111,7 +119,11 @@ function loadSession() {
 }
 
 function persistSession() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.session));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    ...state.session,
+    accessToken: state.session.accessToken ? SESSION_MARKER : "",
+    refreshToken: state.session.refreshToken ? SESSION_MARKER : ""
+  }));
 }
 
 function clearAuthSession() {
@@ -180,8 +192,8 @@ function buildUrl(path, params = {}) {
 function frontendContext() {
   return {
     frontend_type: state.session.frontendType,
-    frontend_origin: state.session.frontendOrigin,
-    frontend_url: state.session.frontendUrl
+    frontend_origin: window.location.origin,
+    frontend_url: window.location.href
   };
 }
 
@@ -370,7 +382,7 @@ async function apiRequest(path, { method = "GET", body, params = {}, auth = true
   const headers = {
     Accept: "application/json",
     "X-Nevari-Frontend-Type": state.session.frontendType,
-    "X-Nevari-Frontend-Origin": state.session.frontendOrigin
+    "X-Nevari-Frontend-Origin": window.location.origin
   };
 
   if (body !== undefined) {
@@ -449,8 +461,8 @@ async function verifyAndRegisterPairing(baseUrl, pairingCode) {
     body: {
       pairing_code: pairingCode,
       frontend_type: state.session.frontendType,
-      frontend_origin: state.session.frontendOrigin,
-      frontend_url: state.session.frontendUrl
+      frontend_origin: window.location.origin,
+      frontend_url: window.location.href
     }
   });
 
@@ -460,8 +472,8 @@ async function verifyAndRegisterPairing(baseUrl, pairingCode) {
     body: {
       pairing_session_id: verifyPayload.data.pairing_session_id,
       frontend_type: state.session.frontendType,
-      frontend_origin: state.session.frontendOrigin,
-      frontend_url: state.session.frontendUrl,
+      frontend_origin: window.location.origin,
+      frontend_url: window.location.href,
       connection_status: "trusted"
     }
   });

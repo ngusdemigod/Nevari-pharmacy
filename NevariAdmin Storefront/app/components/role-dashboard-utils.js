@@ -10,16 +10,10 @@ const STORE_CURRENCY_KEY = "nevari_store_currency";
 const STORE_TIMEZONE_KEY = "nevari_store_timezone";
 const FALLBACK_STORE_CURRENCY = "USD";
 const FALLBACK_STORE_TIMEZONE = "UTC";
+const SESSION_MARKER = "server-session";
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
-}
-
-function dashboardOriginAllowlist() {
-  return String(process.env.NEXT_PUBLIC_NEVARI_DASHBOARD_ORIGINS || "")
-    .split(",")
-    .map((value) => String(value || "").trim())
-    .filter(Boolean);
 }
 
 function currentOriginValue() {
@@ -27,17 +21,6 @@ function currentOriginValue() {
     return "";
   }
   return window.location.origin === "null" ? "null" : window.location.origin;
-}
-
-function bootstrapPairingState() {
-  const origin = currentOriginValue();
-  const baseUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "");
-  const allowlist = dashboardOriginAllowlist();
-  const trustedOrigin = Boolean(origin && allowlist.includes(origin));
-  return {
-    baseUrl,
-    paired: Boolean(baseUrl && trustedOrigin)
-  };
 }
 
 export const DEFAULT_SESSION = {
@@ -70,16 +53,22 @@ export function hydrateStoredSession(frontend = "patient") {
   try {
     const config = FRONTENDS[frontend] || FRONTENDS.patient;
     const ownSession = JSON.parse(localStorage.getItem(config.storageKey) || "{}");
+    if (ownSession.accessToken && ownSession.accessToken !== SESSION_MARKER) {
+      ownSession.accessToken = "";
+      ownSession.refreshToken = "";
+      ownSession.expiresAt = 0;
+      ownSession.user = null;
+      localStorage.setItem(config.storageKey, JSON.stringify(ownSession));
+    }
     const adminSession = JSON.parse(localStorage.getItem(FRONTENDS.admin.storageKey) || "{}");
     const isSharedFrontend = config.type !== FRONTENDS.admin.type;
-    const bootstrap = bootstrapPairingState();
     const sharedConnection = isSharedFrontend ? {
-      baseUrl: adminSession.baseUrl || bootstrap.baseUrl,
-      frontendOrigin: adminSession.frontendOrigin || "",
-      frontendUrl: adminSession.frontendUrl || "",
-      paired: Boolean(adminSession.paired || bootstrap.paired),
-      siteName: adminSession.siteName || "",
-      siteLogo: adminSession.siteLogo || ""
+      baseUrl: ownSession.baseUrl || adminSession.baseUrl || normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+      frontendOrigin: ownSession.frontendOrigin || adminSession.frontendOrigin || "",
+      frontendUrl: ownSession.frontendUrl || adminSession.frontendUrl || "",
+      paired: Boolean(ownSession.paired || adminSession.paired),
+      siteName: ownSession.siteName || adminSession.siteName || "",
+      siteLogo: ownSession.siteLogo || adminSession.siteLogo || ""
     } : {};
     const nextSession = { ...DEFAULT_SESSION, ...sharedConnection, ...ownSession, frontendType: config.type };
 
@@ -90,10 +79,8 @@ export function hydrateStoredSession(frontend = "patient") {
       nextSession.siteLogo = sharedConnection.siteLogo;
     }
 
-    if (isSharedFrontend) {
-      nextSession.frontendOrigin = currentOriginValue();
-      nextSession.frontendUrl = currentOriginValue() === "null" ? "null" : window.location.href;
-    }
+    nextSession.frontendOrigin = currentOriginValue();
+    nextSession.frontendUrl = nextSession.frontendOrigin === "null" ? "null" : window.location.href;
 
     if (!isSessionUsable(nextSession)) {
       return { ...nextSession, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
@@ -134,7 +121,7 @@ export async function apiRequest(session, path, { method = "GET", params = {}, b
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       Authorization: session.accessToken ? `Bearer ${session.accessToken}` : "",
       "X-Nevari-Frontend-Type": session.frontendType,
-      "X-Nevari-Frontend-Origin": session.frontendOrigin || window.location.origin
+      "X-Nevari-Frontend-Origin": currentOriginValue()
     },
     body: body !== undefined ? JSON.stringify(body) : undefined
   });
@@ -178,12 +165,13 @@ export function readDashboardCache(key, maxAgeMs = DASHBOARD_CACHE_TTL_MS) {
     return null;
   }
   try {
-    const cached = JSON.parse(window.localStorage.getItem(key) || "null");
+    window.localStorage.removeItem(key);
+    const cached = JSON.parse(window.sessionStorage.getItem(key) || "null");
     if (!cached?.cachedAt || !cached?.data) {
       return null;
     }
     if (maxAgeMs > 0 && (Date.now() - Number(cached.cachedAt)) > maxAgeMs) {
-      window.localStorage.removeItem(key);
+      window.sessionStorage.removeItem(key);
       return null;
     }
     return cached.data;
@@ -199,16 +187,18 @@ export function clearDashboardCacheForFrontend(frontend, userId) {
   const prefix = `nevari:${frontend}:`;
   const resolvedUserId = String(userId || "anonymous");
   const keysToRemove = [];
-  for (let index = 0; index < window.localStorage.length; index += 1) {
-    const key = window.localStorage.key(index);
-    if (!key || !key.startsWith(prefix)) {
-      continue;
+  [window.localStorage, window.sessionStorage].forEach((storage) => {
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (!key || !key.startsWith(prefix)) {
+        continue;
+      }
+      if (key.endsWith(`:${resolvedUserId}`) || key.includes(":dashboard:")) {
+        keysToRemove.push([storage, key]);
+      }
     }
-    if (key.endsWith(`:${resolvedUserId}`) || key.includes(":dashboard:")) {
-      keysToRemove.push(key);
-    }
-  }
-  keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+  });
+  keysToRemove.forEach(([storage, key]) => storage.removeItem(key));
 }
 
 export function writeDashboardCache(key, data) {
@@ -216,7 +206,7 @@ export function writeDashboardCache(key, data) {
     return;
   }
   try {
-    window.localStorage.setItem(key, JSON.stringify({
+    window.sessionStorage.setItem(key, JSON.stringify({
       cachedAt: Date.now(),
       data
     }));

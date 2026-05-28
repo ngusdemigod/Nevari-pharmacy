@@ -578,13 +578,13 @@ final class Nevari_Rest {
         }
         if (!Nevari_Helpers::is_store_admin()) {
             if (Nevari_Helpers::is_patient()) {
-                $current_user = wp_get_current_user();
-                $email = $current_user && !empty($current_user->user_email) ? sanitize_email((string) $current_user->user_email) : '';
-                if (!$email) {
-                    return Nevari_Helpers::error('forbidden', 'A customer account email is required to load orders.', 403);
+                $patient_user_id = (int) get_current_user_id();
+                if (!$patient_user_id) {
+                    return Nevari_Helpers::error('forbidden', 'A valid customer session is required to load orders.', 403);
                 }
-                // Enforce patient order scope on backend using the authenticated account email.
-                $args['billing_email'] = $email;
+                // Enforce patient scope on backend by authenticated account ID only.
+                // This prevents cross-account/history leakage from shared or legacy billing emails.
+                $args['customer_id'] = $patient_user_id;
             } elseif (Nevari_Helpers::is_doctor()) {
                 $args['meta_key'] = '_nevari_assigned_doctor_user_id';
                 $args['meta_value'] = (string) get_current_user_id();
@@ -709,6 +709,7 @@ final class Nevari_Rest {
         $total = (float) $order->get_total();
         $amount_paid = $order->get_date_paid() ? $total : 0.0;
         $balance_due = max(0.0, $total - $amount_paid);
+        $payment_token = ($balance_due > 0 && $order->needs_payment()) ? self::invoice_payment_token($order) : '';
         $payment_url = ($balance_due > 0 && $order->needs_payment()) ? self::branded_invoice_payment_url($order) : '';
         $settings = Nevari_Helpers::payment_gateway_settings();
         $active_gateway = isset($settings['active_gateway']) ? (string) $settings['active_gateway'] : 'woocommerce';
@@ -771,6 +772,7 @@ final class Nevari_Rest {
             'payment_status' => $order->get_date_paid() ? 'completed' : $order->get_status(),
             'payment_url' => $payment_url,
             'branded_payment_url' => $payment_url,
+            'payment_token' => $payment_token,
             'woocommerce_payment_url' => ($balance_due > 0 && $order->needs_payment()) ? $order->get_checkout_payment_url(false) : '',
             'payment_gateway_configured' => Nevari_Helpers::active_payment_gateway_configured(),
             'active_payment_gateway' => $active_gateway,
@@ -819,7 +821,7 @@ final class Nevari_Rest {
         }
 
         $order = self::get_order_for_invoice_number((string) $request['invoice_number']);
-        if (!$order) {
+        if (!$order || !self::invoice_payment_token_is_valid($order, self::payment_token_from_request($request))) {
             return Nevari_Helpers::error('invoice_not_found', 'Invoice not found.', 404);
         }
 
@@ -832,21 +834,25 @@ final class Nevari_Rest {
         }
 
         $order = wc_get_order((int) $request['id']);
-        if (!$order) {
+        $params = Nevari_Helpers::get_json_params($request);
+        $payment_token = self::payment_token_from_request($request, $params);
+        if (!$order || !self::invoice_payment_token_is_valid($order, $payment_token)) {
             return Nevari_Helpers::error('order_not_found', 'Order not found.', 404);
         }
         if (!$order->needs_payment()) {
             return Nevari_Helpers::error('payment_not_required', 'This order does not require payment.', 409);
         }
 
-        $params = Nevari_Helpers::get_json_params($request);
         $gateway = sanitize_key((string) ($params['gateway'] ?? ''));
         if (!in_array($gateway, self::available_invoice_gateways(), true)) {
             return Nevari_Helpers::error('invalid_gateway', 'Unsupported or unconfigured payment gateway.', 422);
         }
 
         $settings = Nevari_Helpers::payment_gateway_settings();
-        $callback_url = esc_url_raw((string) ($params['callback_url'] ?? self::branded_invoice_payment_url($order)));
+        $callback_url = self::validated_payment_callback_url((string) ($params['callback_url'] ?? ''), $order, $payment_token);
+        if (is_wp_error($callback_url)) {
+            return Nevari_Helpers::error($callback_url->get_error_code(), $callback_url->get_error_message(), 422);
+        }
         $reference = self::invoice_payment_reference($order, $gateway);
         $metadata = [
             'order_id' => (int) $order->get_id(),
@@ -860,8 +866,9 @@ final class Nevari_Rest {
             return Nevari_Helpers::error($initialized->get_error_code(), $initialized->get_error_message(), 502);
         }
 
+        $provider_reference = sanitize_text_field((string) ($initialized['reference'] ?? $reference));
         $order->update_meta_data('_nevari_invoice_payment_gateway', $gateway);
-        $order->update_meta_data('_nevari_invoice_payment_reference', $reference);
+        $order->update_meta_data('_nevari_invoice_payment_reference', $provider_reference);
         $order->save();
 
         return Nevari_Helpers::success($initialized);
@@ -873,13 +880,13 @@ final class Nevari_Rest {
         }
 
         $order = wc_get_order((int) $request['id']);
-        if (!$order) {
+        $params = Nevari_Helpers::get_json_params($request);
+        if (!$order || !self::invoice_payment_token_is_valid($order, self::payment_token_from_request($request, $params))) {
             return Nevari_Helpers::error('order_not_found', 'Order not found.', 404);
         }
 
-        $params = Nevari_Helpers::get_json_params($request);
-        $gateway = sanitize_key((string) ($params['gateway'] ?? $order->get_meta('_nevari_invoice_payment_gateway') ?: 'woocommerce'));
-        $reference = sanitize_text_field((string) ($params['reference'] ?? $order->get_meta('_nevari_invoice_payment_reference')));
+        $gateway = sanitize_key((string) ($params['gateway'] ?? ''));
+        $reference = sanitize_text_field((string) ($params['reference'] ?? ''));
         if (!$reference) {
             return Nevari_Helpers::error('missing_reference', 'Payment reference is required.', 422);
         }
@@ -1548,7 +1555,10 @@ final class Nevari_Rest {
     }
 
     private static function branded_invoice_payment_url($order): string {
-        return home_url('/pay/' . rawurlencode(self::invoice_number_for_order($order)));
+        return add_query_arg(
+            ['payment_token' => self::invoice_payment_token($order)],
+            home_url('/pay/' . rawurlencode(self::invoice_number_for_order($order)))
+        );
     }
 
     private static function documents_url_for_order($order): string {
@@ -1562,6 +1572,66 @@ final class Nevari_Rest {
             $order_id = (int) ltrim($matches[1], '0');
         }
         return $order_id > 0 ? wc_get_order($order_id) : null;
+    }
+
+    private static function invoice_payment_token($order): string {
+        $payload = [
+            'purpose' => 'invoice_payment',
+            'order_id' => (int) $order->get_id(),
+            'invoice_number' => self::invoice_number_for_order($order),
+            'exp' => time() + (int) apply_filters('nevari_invoice_payment_token_ttl', 7 * DAY_IN_SECONDS),
+        ];
+        $encoded = Nevari_Helpers::base64url_encode(wp_json_encode($payload));
+        $signature = Nevari_Helpers::base64url_encode(hash_hmac('sha256', $encoded, Nevari_Helpers::jwt_secret(), true));
+        return $encoded . '.' . $signature;
+    }
+
+    private static function payment_token_from_request(WP_REST_Request $request, ?array $params = null): string {
+        $params = $params ?? Nevari_Helpers::get_json_params($request);
+        $token = $request->get_param('payment_token');
+        if (!$token && !empty($params['payment_token'])) {
+            $token = $params['payment_token'];
+        }
+        return sanitize_text_field((string) $token);
+    }
+
+    private static function invoice_payment_token_is_valid($order, string $token): bool {
+        if (!$token || strpos($token, '.') === false) {
+            return false;
+        }
+        [$encoded, $signature] = explode('.', $token, 2);
+        $provided = Nevari_Helpers::base64url_decode($signature);
+        $expected = hash_hmac('sha256', $encoded, Nevari_Helpers::jwt_secret(), true);
+        if (!$provided || !hash_equals($expected, $provided)) {
+            return false;
+        }
+        $payload = json_decode(Nevari_Helpers::base64url_decode($encoded), true);
+        return is_array($payload)
+            && ($payload['purpose'] ?? '') === 'invoice_payment'
+            && (int) ($payload['order_id'] ?? 0) === (int) $order->get_id()
+            && (string) ($payload['invoice_number'] ?? '') === self::invoice_number_for_order($order)
+            && (int) ($payload['exp'] ?? 0) >= time();
+    }
+
+    private static function validated_payment_callback_url(string $candidate, $order, string $payment_token) {
+        $callback_url = esc_url_raw($candidate);
+        $frontend = Nevari_Connections::resolve_request_frontend();
+        if (!$callback_url || !$frontend) {
+            return new WP_Error('invalid_callback_url', 'Payment callback URL must be provided by a paired frontend.');
+        }
+        $origin = Nevari_Connections::normalize_origin($callback_url);
+        $parts = wp_parse_url($callback_url);
+        $expected_path = '/pay/' . rawurlencode(self::invoice_number_for_order($order));
+        $query = [];
+        if (!empty($parts['query'])) {
+            parse_str((string) $parts['query'], $query);
+        }
+        if ($origin !== $frontend['frontend_origin']
+            || ($parts['path'] ?? '') !== $expected_path
+            || !hash_equals($payment_token, sanitize_text_field((string) ($query['payment_token'] ?? '')))) {
+            return new WP_Error('invalid_callback_url', 'Payment callback URL is not valid for this invoice.');
+        }
+        return $callback_url;
     }
 
     private static function invoice_payment_data($order): array {
@@ -1608,6 +1678,7 @@ final class Nevari_Rest {
             'currency' => self::store_currency(),
             'store_currency' => self::store_currency(),
             'available_gateways' => self::available_invoice_gateways(),
+            'payment_token' => self::invoice_payment_token($order),
             'branded_payment_url' => self::branded_invoice_payment_url($order),
             'woocommerce_payment_url' => $order->needs_payment() ? $order->get_checkout_payment_url(false) : '',
         ];
@@ -1679,7 +1750,7 @@ final class Nevari_Rest {
         if ($gateway === 'stripe') {
             $body = [
                 'mode' => 'payment',
-                'success_url' => add_query_arg(['gateway' => 'stripe', 'reference' => $reference], $callback_url),
+                'success_url' => add_query_arg(['gateway' => 'stripe'], $callback_url) . '&reference={CHECKOUT_SESSION_ID}',
                 'cancel_url' => $callback_url,
                 'client_reference_id' => $reference,
                 'customer_email' => $email,
@@ -1726,8 +1797,12 @@ final class Nevari_Rest {
     }
 
     private static function verify_gateway_payment(string $gateway, string $reference, $order) {
-        if ($gateway === 'woocommerce') {
-            return ['paid' => !$order->needs_payment()];
+        $stored_gateway = sanitize_key((string) $order->get_meta('_nevari_invoice_payment_gateway'));
+        $stored_reference = sanitize_text_field((string) $order->get_meta('_nevari_invoice_payment_reference'));
+        if (!$stored_gateway || !$stored_reference
+            || !hash_equals($stored_gateway, $gateway)
+            || !hash_equals($stored_reference, $reference)) {
+            return new WP_Error('payment_context_mismatch', 'Payment does not match the initialized order transaction.');
         }
 
         $settings = Nevari_Helpers::payment_gateway_settings();
@@ -1736,26 +1811,26 @@ final class Nevari_Rest {
                 'headers' => ['Authorization' => 'Bearer ' . (string) $settings['paystack']['secret_key']],
                 'timeout' => 30,
             ]);
-            return self::verify_gateway_response($gateway, $reference, $order, $response, ['data', 'status'], 'success', ['data', 'reference']);
+            return self::verify_gateway_response($gateway, $reference, $order, $response, ['data', 'status'], 'success', ['data', 'reference'], ['data', 'amount'], 100, ['data', 'currency'], ['data', 'metadata', 'order_id']);
         }
         if ($gateway === 'flutterwave') {
             $response = wp_remote_get('https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=' . rawurlencode($reference), [
                 'headers' => ['Authorization' => 'Bearer ' . (string) $settings['flutterwave']['secret_key']],
                 'timeout' => 30,
             ]);
-            return self::verify_gateway_response($gateway, $reference, $order, $response, ['data', 'status'], 'successful', ['data', 'tx_ref']);
+            return self::verify_gateway_response($gateway, $reference, $order, $response, ['data', 'status'], 'successful', ['data', 'tx_ref'], ['data', 'amount'], 1, ['data', 'currency'], ['data', 'meta', 'order_id']);
         }
         if ($gateway === 'stripe') {
             $response = wp_remote_get('https://api.stripe.com/v1/checkout/sessions/' . rawurlencode($reference), [
                 'headers' => ['Authorization' => 'Bearer ' . (string) $settings['stripe']['secret_key']],
                 'timeout' => 30,
             ]);
-            return self::verify_gateway_response($gateway, $reference, $order, $response, ['payment_status'], 'paid', ['id']);
+            return self::verify_gateway_response($gateway, $reference, $order, $response, ['payment_status'], 'paid', ['id'], ['amount_total'], 100, ['currency'], ['metadata', 'order_id']);
         }
         return new WP_Error('invalid_gateway', 'Unsupported gateway.');
     }
 
-    private static function verify_gateway_response(string $gateway, string $reference, $order, $response, array $status_path, string $paid_value, array $transaction_path) {
+    private static function verify_gateway_response(string $gateway, string $reference, $order, $response, array $status_path, string $paid_value, array $transaction_path, array $amount_path, int $amount_divisor, array $currency_path, array $order_id_path) {
         if (is_wp_error($response)) {
             return $response;
         }
@@ -1768,6 +1843,22 @@ final class Nevari_Rest {
             return new WP_Error('payment_not_verified', 'Gateway has not verified this payment as successful.');
         }
         $transaction_id = (string) (self::array_path($body, $transaction_path) ?: $reference);
+        if (!$transaction_id || !hash_equals($reference, $transaction_id)) {
+            return new WP_Error('payment_reference_mismatch', 'Gateway payment reference does not match this order.');
+        }
+        $paid_amount = ((float) self::array_path($body, $amount_path)) / max(1, $amount_divisor);
+        $expected_amount = (float) $order->get_total();
+        if (abs($paid_amount - $expected_amount) > 0.00001) {
+            return new WP_Error('payment_amount_mismatch', 'Gateway payment amount does not match this order.');
+        }
+        $currency = strtoupper((string) self::array_path($body, $currency_path));
+        $expected_currency = strtoupper((string) ($order->get_currency() ?: get_woocommerce_currency()));
+        if (!$currency || !hash_equals($expected_currency, $currency)) {
+            return new WP_Error('payment_currency_mismatch', 'Gateway payment currency does not match this order.');
+        }
+        if ((int) self::array_path($body, $order_id_path) !== (int) $order->get_id()) {
+            return new WP_Error('payment_order_mismatch', 'Gateway payment metadata does not match this order.');
+        }
         self::complete_order_payment($order, $gateway, $transaction_id);
         return ['paid' => true, 'transaction_id' => $transaction_id];
     }
@@ -1804,12 +1895,12 @@ final class Nevari_Rest {
         if ($gateway === 'flutterwave') {
             $secret = (string) $settings['flutterwave']['webhook_secret'];
             $signature = (string) $request->get_header('secret-hash');
-            return !$secret || ($signature && hash_equals($secret, $signature));
+            return $secret && $signature && hash_equals($secret, $signature);
         }
         if ($gateway === 'stripe') {
             $secret = (string) $settings['stripe']['webhook_secret'];
             if (!$secret) {
-                return true;
+                return false;
             }
             $header = (string) $request->get_header('stripe-signature');
             preg_match('/t=(\d+)/', $header, $timestamp);
@@ -3338,13 +3429,7 @@ final class Nevari_Rest {
         $table = Nevari_Helpers::table('appointments');
         $where = ['1=1'];
         $params = [];
-        if (Nevari_Helpers::bool_param($request->get_param('mine')) && Nevari_Helpers::is_patient()) {
-            $where[] = 'patient_user_id = %d';
-            $params[] = get_current_user_id();
-        } elseif (Nevari_Helpers::bool_param($request->get_param('mine')) && Nevari_Helpers::is_doctor()) {
-            $where[] = 'doctor_user_id = %d';
-            $params[] = get_current_user_id();
-        } elseif (Nevari_Helpers::is_patient() && !Nevari_Helpers::is_store_admin()) {
+        if (Nevari_Helpers::is_patient() && !Nevari_Helpers::is_store_admin()) {
             $where[] = 'patient_user_id = %d';
             $params[] = get_current_user_id();
         } elseif (Nevari_Helpers::is_doctor() && !Nevari_Helpers::is_store_admin()) {
@@ -3649,7 +3734,9 @@ final class Nevari_Rest {
             'appointment' => Nevari_Helpers::format_appointment($appointment),
             'order_id' => (int) $order->get_id(),
             'order_number' => $order->get_order_number(),
-            'payment_url' => $order->get_checkout_payment_url(false),
+            'invoice_number' => self::invoice_number_for_order($order),
+            'payment_token' => self::invoice_payment_token($order),
+            'payment_url' => self::branded_invoice_payment_url($order),
             'payment_status' => Nevari_Helpers::appointment_payment_status($appointment, $order),
             'total' => (float) $order->get_total(),
             'currency' => $order->get_currency(),

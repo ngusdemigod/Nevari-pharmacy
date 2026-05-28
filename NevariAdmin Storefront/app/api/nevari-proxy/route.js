@@ -1,9 +1,13 @@
+import { createHmac, randomBytes } from "node:crypto";
+
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
 const UPSTREAM_RETRY_COUNT = 1;
 const SOFT_FAIL_TIMEOUT_MS = 8000;
 const SOFT_FAIL_RETRY_COUNT = 0;
 const inflightGetRequests = new Map();
+const SESSION_MARKER = "server-session";
+const CSRF_COOKIE_NAME = "nevari_csrf";
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -14,6 +18,89 @@ function allowedOrigins() {
     .split(",")
     .map((value) => normalizeBaseUrl(value))
     .filter(Boolean);
+}
+
+function proxySigningSecret() {
+  const secret = String(process.env.NEVARI_PROXY_SIGNING_SECRET || "").trim();
+  if (!secret) {
+    throw new Error("Proxy signing secret is not configured.");
+  }
+  return secret;
+}
+
+function cookieName(kind, frontendType) {
+  return `nevari_${kind}_${String(frontendType || "unknown").replace(/[^a-z0-9_-]/gi, "_")}`;
+}
+
+function requestCookie(request, name) {
+  const fromNextRequest = request.cookies?.get?.(name)?.value;
+  if (fromNextRequest) {
+    return fromNextRequest;
+  }
+  const match = String(request.headers.get("cookie") || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function setSessionCookie(response, request, name, value, maxAge) {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  response.headers.append(
+    "Set-Cookie",
+    `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.max(0, Number(maxAge || 0))}${secure}`
+  );
+}
+
+function setCsrfCookie(response, request, value, maxAge) {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  response.headers.append(
+    "Set-Cookie",
+    `${CSRF_COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; SameSite=Strict; Max-Age=${Math.max(0, Number(maxAge || 0))}${secure}`
+  );
+}
+
+function assertFrontendRequest(request) {
+  const requestOrigin = new URL(request.url).origin;
+  const frontendOrigin = normalizeBaseUrl(request.headers.get("x-nevari-frontend-origin"));
+  if (!frontendOrigin || frontendOrigin !== requestOrigin) {
+    throw new Error("Same-origin frontend request is required.");
+  }
+  const origin = normalizeBaseUrl(request.headers.get("origin"));
+  if (origin && origin !== requestOrigin) {
+    throw new Error("Cross-origin proxy requests are not allowed.");
+  }
+}
+
+function assertCsrf(request, frontendType) {
+  const method = String(request.method || "GET").toUpperCase();
+  if (["GET", "HEAD", "OPTIONS"].includes(method)) {
+    return;
+  }
+
+  const accessToken = requestCookie(request, cookieName("access", frontendType));
+  if (!accessToken) {
+    return;
+  }
+
+  const csrfCookie = requestCookie(request, CSRF_COOKIE_NAME);
+  const csrfHeader = String(request.headers.get("x-nevari-csrf") || "").trim();
+  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+    throw new Error("CSRF validation failed.");
+  }
+}
+
+function signedFrontendHeaders(request) {
+  const frontendType = String(request.headers.get("x-nevari-frontend-type") || "").trim();
+  if (!frontendType) {
+    return {};
+  }
+  const frontendOrigin = new URL(request.url).origin;
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const message = `${timestamp}\n${frontendType}\n${frontendOrigin}`;
+  return {
+    "x-nevari-frontend-type": frontendType,
+    "x-nevari-frontend-origin": frontendOrigin,
+    "x-nevari-proxy-timestamp": timestamp,
+    "x-nevari-proxy-signature": createHmac("sha256", proxySigningSecret()).update(message).digest("hex")
+  };
 }
 
 function isPrivateHostname(hostname) {
@@ -85,17 +172,15 @@ function withSoftFailStatus(status, softFail) {
 }
 
 async function proxyRequest(request, { params } = {}) {
+  assertFrontendRequest(request);
   const targetUrl = buildTargetUrl(request.url);
   const softFail = shouldSoftFail(request.url);
   const headers = new Headers();
+  const frontendType = String(request.headers.get("x-nevari-frontend-type") || "").trim();
+  assertCsrf(request, frontendType);
+  const accessToken = requestCookie(request, cookieName("access", frontendType));
 
-  const forwardedHeaders = [
-    "accept",
-    "authorization",
-    "content-type",
-    "x-nevari-frontend-type",
-    "x-nevari-frontend-origin"
-  ];
+  const forwardedHeaders = ["accept", "content-type"];
 
   forwardedHeaders.forEach((name) => {
     const value = request.headers.get(name);
@@ -103,6 +188,14 @@ async function proxyRequest(request, { params } = {}) {
       headers.set(name, value);
     }
   });
+  const requestedAuthorization = String(request.headers.get("authorization") || "");
+  if (accessToken) {
+    headers.set("authorization", `Bearer ${accessToken}`);
+  } else if (requestedAuthorization && requestedAuthorization !== `Bearer ${SESSION_MARKER}`) {
+    headers.set("authorization", requestedAuthorization);
+  }
+  Object.entries(signedFrontendHeaders(request)).forEach(([name, value]) => headers.set(name, value));
+  headers.set("origin", new URL(request.url).origin);
 
   const init = {
     method: request.method,
@@ -110,7 +203,17 @@ async function proxyRequest(request, { params } = {}) {
   };
 
   if (request.method !== "GET" && request.method !== "HEAD") {
-    init.body = await request.text();
+    const bodyText = await request.text();
+    if (targetUrl.pathname.endsWith("/auth/refresh") || targetUrl.pathname.endsWith("/auth/logout")) {
+      const body = JSON.parse(bodyText || "{}");
+      const refreshToken = requestCookie(request, cookieName("refresh", frontendType));
+      if (refreshToken) {
+        body.refresh_token = refreshToken;
+      }
+      init.body = JSON.stringify(body);
+    } else {
+      init.body = bodyText;
+    }
   }
 
   let response;
@@ -163,6 +266,29 @@ async function proxyRequest(request, { params } = {}) {
     );
   }
 
+  if (contentType.toLowerCase().includes("application/json")
+      && ["/auth/login", "/auth/verify-code", "/auth/refresh", "/auth/logout"].some((path) => targetUrl.pathname.endsWith(path))) {
+    const payload = await response.json().catch(() => null);
+    const outgoing = Response.json(payload || {}, {
+      status: withSoftFailStatus(response.status, softFail),
+      headers: responseHeaders
+    });
+    if (payload?.success && payload?.data?.access_token) {
+      setSessionCookie(outgoing, request, cookieName("access", frontendType), payload.data.access_token, payload.data.expires_in || 3600);
+      setSessionCookie(outgoing, request, cookieName("refresh", frontendType), payload.data.refresh_token || "", 30 * 24 * 60 * 60);
+      setCsrfCookie(outgoing, request, randomBytes(24).toString("hex"), 30 * 24 * 60 * 60);
+      payload.data.access_token = SESSION_MARKER;
+      payload.data.refresh_token = SESSION_MARKER;
+      return Response.json(payload, { status: response.status, headers: outgoing.headers });
+    }
+    if (targetUrl.pathname.endsWith("/auth/logout") && payload?.success) {
+      setSessionCookie(outgoing, request, cookieName("access", frontendType), "", 0);
+      setSessionCookie(outgoing, request, cookieName("refresh", frontendType), "", 0);
+      setCsrfCookie(outgoing, request, "", 0);
+    }
+    return outgoing;
+  }
+
   return new Response(response.body, {
     status: withSoftFailStatus(response.status, softFail),
     statusText: response.statusText,
@@ -199,6 +325,7 @@ async function fetchWithRetry(targetUrl, init, method, softFail = false) {
     try {
       return await fetch(targetUrl, {
         ...init,
+        cache: "no-store",
         signal: AbortSignal.timeout(timeoutMs)
       });
     } catch (error) {
