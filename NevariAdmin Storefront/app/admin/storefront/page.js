@@ -116,7 +116,7 @@ const FRONTEND_PAGES = [
   {
     label: "Trust",
     items: [
-      ["emails", "Emails", "i-mail"],
+      ["subscriptions", "Subscriptions", "i-credit-card"],
       ["audit", "Audit Center", "i-shield"],
       ["settings", "Settings", "i-settings"]
     ]
@@ -133,6 +133,7 @@ const SEARCH_PLACEHOLDERS = {
   products: "Search products",
   doctors: "Search doctors",
   emails: "Search emails",
+  subscriptions: "Search subscriptions",
   audit: "Search audit events",
   settings: "Search settings",
   profile: "Search profile"
@@ -334,6 +335,43 @@ function persistAdminAppointmentSettings(settings) {
     return;
   }
   window.localStorage.setItem(ADMIN_APPOINTMENT_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+const SUBSCRIPTION_SETTINGS_KEY = "nevari_admin_subscription_settings";
+
+function defaultSubscriptionSettings() {
+  return {
+    planName: "Nevari Access Pro",
+    amount: "10000",
+    currency: "NGN",
+    interval: "monthly",
+    publicKey: "",
+    manageBillingUrl: "",
+    notificationsEnabled: true,
+    autoRenew: true,
+    cancellationWindowDays: "3"
+  };
+}
+
+function loadSubscriptionSettings() {
+  if (typeof window === "undefined") {
+    return defaultSubscriptionSettings();
+  }
+  try {
+    return {
+      ...defaultSubscriptionSettings(),
+      ...JSON.parse(window.localStorage.getItem(SUBSCRIPTION_SETTINGS_KEY) || "{}")
+    };
+  } catch {
+    return defaultSubscriptionSettings();
+  }
+}
+
+function persistSubscriptionSettings(settings) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(SUBSCRIPTION_SETTINGS_KEY, JSON.stringify(settings));
 }
 
 function normalizeBaseUrl(value) {
@@ -1835,6 +1873,8 @@ export default function Page() {
   const [authResendLoading, setAuthResendLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [setupPairingCode, setSetupPairingCode] = useState("");
+  const [subscriptionSettings, setSubscriptionSettings] = useState(() => loadSubscriptionSettings());
+  const [subscriptionState, setSubscriptionState] = useState({ loading: false, error: "", data: null });
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [resetUsername, setResetUsername] = useState("");
@@ -1990,6 +2030,41 @@ export default function Page() {
   useEffect(() => {
     persistAdminAppointmentSettings(appointmentSettings);
   }, [appointmentSettings]);
+
+  useEffect(() => {
+    persistSubscriptionSettings(subscriptionSettings);
+  }, [subscriptionSettings]);
+
+  async function refreshSubscriptionStatus() {
+    if (!session.accessToken) {
+      return;
+    }
+
+    setSubscriptionState((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const payload = await apiRequest("/subscriptions/me");
+      setSubscriptionState({ loading: false, error: "", data: payload.data || null });
+    } catch (error) {
+      setSubscriptionState({ loading: false, error: String(error?.message || "Could not load subscription data."), data: null });
+    }
+  }
+
+  useEffect(() => {
+    if (!session.accessToken || !["subscriptions", "profile"].includes(currentPage)) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    setSubscriptionState((current) => ({ ...current, loading: true, error: "" }));
+    refreshSubscriptionStatus().finally(() => {
+      if (cancelled) {
+        return;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPage, session.accessToken]);
 
   useEffect(() => {
     setEmailTemplates(loadEmailTemplates());
@@ -6612,6 +6687,34 @@ export default function Page() {
       );
     }
 
+    if (currentPage === "subscriptions") {
+      return (
+        <section className="page-view active">
+          <section className="page-banner panel skeleton-panel">
+            <div className="detail-list">
+              <SkeletonBox className="skeleton-line skeleton-line-xs" />
+              <SkeletonBox className="skeleton-line skeleton-line-lg" />
+              <SkeletonBox className="skeleton-line skeleton-line-md" />
+            </div>
+            <div className="banner-actions">
+              <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+              <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+            </div>
+          </section>
+          <section className="settings-grid">
+            {Array.from({ length: 3 }, (_, index) => (
+              <article className="doctor-settings-card skeleton-panel" key={`subscription-skeleton-${index}`}>
+                <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                <SkeletonBox className="skeleton-line skeleton-line-lg" />
+                <SkeletonBox className="skeleton-line skeleton-line-md" />
+                <SkeletonBox className="skeleton-line skeleton-line-sm" />
+              </article>
+            ))}
+          </section>
+        </section>
+      );
+    }
+
     return (
       <section className="page-view active">
         <section className="panel table-panel skeleton-panel">
@@ -6828,6 +6931,48 @@ export default function Page() {
           <div className="pages-stack">
             {showPageSkeleton ? renderPageSkeleton() : (
               <>
+            {currentPage === "subscriptions" && (
+              <section className="page-view active">
+                <section className="page-banner panel">
+                  <div>
+                    <p className="section-kicker">Subscriptions</p>
+                    <h2>Nevari Access Pro management</h2>
+                    <p className="hero-text">Review the active billing plan, subscription health, and gateway settings used to provision premium access.</p>
+                  </div>
+                  <div className="banner-actions">
+                    <button className="button-primary" type="button" onClick={refreshSubscriptionStatus}>Refresh status</button>
+                    <button className="pill-button" type="button" onClick={() => switchPage("settings")}>Open settings</button>
+                  </div>
+                </section>
+                {subscriptionState.error ? <section className="panel"><p className="muted">{subscriptionState.error}</p></section> : null}
+
+                <section className="settings-grid">
+                  <article className="doctor-settings-card">
+                    <h3>Current subscription</h3>
+                    <div className="doctor-settings-summary"><span>Plan name</span><strong>{subscriptionState.data?.plan || subscriptionSettings.planName}</strong></div>
+                    <div className="doctor-settings-summary"><span>Status</span><strong>{subscriptionState.data?.status || "none"}</strong></div>
+                    <div className="doctor-settings-summary"><span>Renewal date</span><strong>{subscriptionState.data?.renewal_date || "Not scheduled"}</strong></div>
+                    <div className="doctor-settings-summary"><span>Entitlements</span><strong>{Array.isArray(subscriptionState.data?.entitlements) ? subscriptionState.data.entitlements.join(", ") : "None"}</strong></div>
+                  </article>
+
+                  <article className="doctor-settings-card">
+                    <h3>Billing settings</h3>
+                    <label><span>Plan name</span><input value={subscriptionSettings.planName} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, planName: event.target.value }))} /></label>
+                    <label><span>Amount (NGN)</span><input value={subscriptionSettings.amount} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, amount: event.target.value }))} /></label>
+                    <label><span>Billing interval</span><input value={subscriptionSettings.interval} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, interval: event.target.value }))} /></label>
+                    <label><span>Manage billing URL</span><input value={subscriptionSettings.manageBillingUrl} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, manageBillingUrl: event.target.value }))} /></label>
+                  </article>
+
+                  <article className="doctor-settings-card">
+                    <h3>Gateway controls</h3>
+                    <label><span>Paystack public key</span><input value={subscriptionSettings.publicKey} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, publicKey: event.target.value }))} /></label>
+                    <label className="customer-toggle-row"><span>Auto renew</span><input type="checkbox" checked={subscriptionSettings.autoRenew} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, autoRenew: event.target.checked }))} /></label>
+                    <label className="customer-toggle-row"><span>Notifications enabled</span><input type="checkbox" checked={subscriptionSettings.notificationsEnabled} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, notificationsEnabled: event.target.checked }))} /></label>
+                    <label><span>Cancellation window (days)</span><input value={subscriptionSettings.cancellationWindowDays} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, cancellationWindowDays: event.target.value }))} /></label>
+                  </article>
+                </section>
+              </section>
+            )}
             {currentPage === "overview" && (
               <section className="page-view active overview-reference">
                 <section className="metric-grid">
@@ -7521,24 +7666,6 @@ export default function Page() {
 
             {currentPage === "products" && (
               <section className="page-view active">
-                <section className="products-redesign-hero">
-                  <article className="products-redesign-banner">
-                    <p className="section-kicker">Pharmacy catalog</p>
-                    <h2>Manage medicines, RX controls, stock visibility and pricing from one workflow.</h2>
-                    <p>Use this view to curate product availability, govern prescription-only items and keep inventory aligned with active consultations and orders.</p>
-                    <div className="products-redesign-actions">
-                      <button className="button-primary" type="button" onClick={openProductCreateModal}><InlineIcon id="i-plus" />New product</button>
-                      <button className="pill-button" type="button" onClick={() => startTransition(() => setProductCatalogView("products"))}>All products</button>
-                      <button className="pill-button" type="button" onClick={() => startTransition(() => setProductCatalogView("categories"))}>Categories</button>
-                    </div>
-                  </article>
-                  <article className="products-redesign-pulse">
-                    <p className="section-kicker">Catalog pulse</p>
-                    <h3>Product operations snapshot</h3>
-                    <p>Use the stats cards below to monitor product visibility, stock pressure, sales movement and inventory capital.</p>
-                  </article>
-                </section>
-
                 <section className="products-redesign-metrics">
                   <article className="metric-card">
                     <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-plus" /></span><StatusPill value="info">catalog</StatusPill></div>
@@ -8396,6 +8523,7 @@ export default function Page() {
                   </div>
                   <div className="banner-actions">
                     <button className="button-primary" type="button" onClick={() => showAuthGate("auth")}>Manage session</button>
+                    <button className="pill-button" type="button" onClick={() => switchPage("subscriptions")}>Subscriptions</button>
                     <button className="pill-button" type="button" onClick={() => switchPage("settings")}>Open settings</button>
                     <button className="pill-button danger" type="button" onClick={handleLogout}>Logout</button>
                   </div>
