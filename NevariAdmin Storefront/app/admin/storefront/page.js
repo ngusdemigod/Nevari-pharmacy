@@ -6541,7 +6541,7 @@ export default function Page() {
     }
   ];
 
-  const showPageSkeleton = Boolean(session.accessToken && !appDataLoaded);
+  const showPageSkeleton = Boolean(session.accessToken && (!appDataLoaded || currentPage === "subscriptions"));
 
   if (!hydrated || !accessResolved) {
     return (
