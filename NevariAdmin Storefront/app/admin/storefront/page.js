@@ -2057,7 +2057,7 @@ export default function Page() {
 
     setSubscriptionState((current) => ({ ...current, loading: true, error: "" }));
     try {
-      const payload = await apiRequest("/subscriptions/me");
+      const payload = await apiRequest("/subscriptions/admin");
       setSubscriptionState({ loading: false, error: "", data: payload.data || null });
     } catch (error) {
       setSubscriptionState({ loading: false, error: String(error?.message || "Could not load subscription data."), data: null });
@@ -6511,7 +6511,7 @@ export default function Page() {
     }
   ];
 
-  const showPageSkeleton = Boolean(session.accessToken && (!appDataLoaded || currentPage === "subscriptions"));
+  const showPageSkeleton = Boolean(session.accessToken && !appDataLoaded);
 
   if (!hydrated || !accessResolved) {
     return (
@@ -6745,12 +6745,12 @@ export default function Page() {
               <section className="stat-grid">
                 <article className="stat-card-clean primary">
                   <label>Active subscriptions</label>
-                  <strong>{subscriptionState.data?.status === "active" ? "1" : "0"}</strong>
+                  <strong>{subscriptionState.data?.active_subscriptions != null ? formatNumber(subscriptionState.data.active_subscriptions) : "—"}</strong>
                   <span>Currently verified on the gateway</span>
                 </article>
                 <article className="stat-card-clean accent">
                   <label>Plan revenue</label>
-                  <strong>{subscriptionSettings.amount ? `${subscriptionSettings.currency || "NGN"} ${formatNumber(Number(subscriptionSettings.amount || 0))}` : "—"}</strong>
+                  <strong>{subscriptionState.data?.active_plan_amount_label || "—"}</strong>
                   <span>Monthly billing target</span>
                 </article>
                 <article className="stat-card-clean">
@@ -6845,8 +6845,8 @@ export default function Page() {
                       ))}
                     </div>
                     <div className="filter-row">
-                      <span className="filter-select-clean">Plan: —</span>
-                      <span className="filter-select-clean">Renewal: —</span>
+                      <span className="filter-select-clean">Plan: {subscriptionState.data?.plans?.[0]?.name || "—"}</span>
+                      <span className="filter-select-clean">Renewal: {subscriptionState.data?.renewals_this_month != null ? "This month" : "—"}</span>
                     </div>
                   </div>
 
@@ -6972,15 +6972,15 @@ export default function Page() {
                       </div>
                     </div>
                     <div>
-                      <h4 id="summaryPlanName">{subscriptionSettings.planName || "—"}</h4>
+                      <h4 id="summaryPlanName">{subscriptionSettings.planName || subscriptionState.data?.plans?.[0]?.name || "—"}</h4>
                       <p>Preview of the subscription configuration before saving.</p>
                     </div>
                     <div className="creation-summary-list">
-                      <div><span>Amount</span><strong>{subscriptionSettings.amount ? `${subscriptionSettings.currency || "NGN"} ${formatNumber(Number(subscriptionSettings.amount || 0))}` : "—"}</strong></div>
-                      <div><span>Interval</span><strong>{subscriptionSettings.interval ? formatStatusLabel(subscriptionSettings.interval) : "—"}</strong></div>
-                      <div><span>Users impacted</span><strong>—</strong></div>
-                      <div><span>Risk level</span><strong>—</strong></div>
-                      <div><span>Approval</span><strong>—</strong></div>
+                      <div><span>Amount</span><strong>{subscriptionState.data?.plans?.[0]?.price || "—"}</strong></div>
+                      <div><span>Interval</span><strong>{subscriptionState.data?.plans?.[0]?.billing || "—"}</strong></div>
+                      <div><span>Users impacted</span><strong>{subscriptionState.data?.plans?.[0]?.users != null ? formatNumber(subscriptionState.data.plans[0].users) : "—"}</strong></div>
+                      <div><span>Risk level</span><strong>{subscriptionState.data?.plans?.[0]?.featured ? "Featured" : "Standard"}</strong></div>
+                      <div><span>Approval</span><strong>Second admin</strong></div>
                     </div>
                     <div className="toggle-pills-row">
                       <span className="toggle-mini"><InlineIcon id="i-lock" /> Audit log</span>
@@ -7216,22 +7216,7 @@ export default function Page() {
           <div className="pages-stack">
             {showPageSkeleton ? renderPageSkeleton() : (
               <>
-            {currentPage === "subscriptions" && (
-              <section className="page-view active">
-                <section className="page-banner panel">
-                  <div>
-                    <p className="section-kicker">Subscriptions</p>
-                    <h2>Subscriptions</h2>
-                    <p className="hero-text">Review active plans, subscribers, and gateway settings.</p>
-                  </div>
-                  <div className="banner-actions">
-                    <button className="button-primary" type="button" onClick={refreshSubscriptionStatus}>Refresh status</button>
-                    <button className="pill-button" type="button" onClick={() => switchPage("settings")}>Open settings</button>
-                  </div>
-                </section>
-                {subscriptionState.error ? <section className="panel"><p className="muted">{subscriptionState.error}</p></section> : null}
-              </section>
-            )}
+            {currentPage === "subscriptions" && renderPageSkeleton()}
             {currentPage === "overview" && (
               <section className="page-view active overview-reference">
                 <section className="metric-grid">
