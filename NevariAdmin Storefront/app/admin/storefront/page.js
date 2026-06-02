@@ -338,6 +338,36 @@ function persistAdminAppointmentSettings(settings) {
 }
 
 const SUBSCRIPTION_SETTINGS_KEY = "nevari_admin_subscription_settings";
+const SUBSCRIPTION_PLAN_PREVIEW_ROWS = [
+  { name: "Free", slug: "FR", price: "NGN 0", billing: "Free", users: "814", note: "No billing frequency", featured: false },
+  { name: "Nevari Access Pro", slug: "PRO", price: "NGN 10,000", billing: "Monthly", users: "397", note: "Monthly billing frequency", featured: true },
+  { name: "Enterprise", slug: "EN", price: "Custom", billing: "Contract", users: "37", note: "Quarterly or annual frequency", featured: false },
+  { name: "Access Pro Annual", slug: "YR", price: "NGN 100,000", billing: "Yearly", users: "96", note: "Annual billing frequency", featured: false }
+];
+
+const SUBSCRIPTION_USER_PREVIEW_ROWS = [
+  { initials: "AI", name: "angus igbani", email: "angus@nevarihealth.com", plan: "Nevari Access Pro", status: "Active", statusTone: "confirmed", renewal: "June 30, 2026", amount: "NGN 10,000", ref: "PSK_92A01", action: "Modify", accent: "primary" },
+  { initials: "CB", name: "Chinwe Bello", email: "chinwe@example.com", plan: "Nevari Access Pro", status: "Past due", statusTone: "pending", renewal: "June 04, 2026", amount: "NGN 10,000", ref: "PSK_77L29", action: "Retry", accent: "accent" },
+  { initials: "DO", name: "Daniel Okafor", email: "daniel@example.com", plan: "Free", status: "Free", statusTone: "draft", renewal: "Not scheduled", amount: "NGN 0", ref: "—", action: "Upgrade", accent: "soft" },
+  { initials: "GO", name: "Grace Obi", email: "grace@example.com", plan: "Enterprise", status: "Manual active", statusTone: "confirmed", renewal: "Aug 01, 2026", amount: "Contract", ref: "INV_1021", action: "Seats", accent: "success" },
+  { initials: "KM", name: "Kemi Musa", email: "kemi@example.com", plan: "Nevari Access Pro", status: "Cancelled", statusTone: "cancelled", renewal: "Ended May 29, 2026", amount: "NGN 10,000", ref: "PSK_11Q70", action: "Restore", accent: "danger" }
+];
+
+const SUBSCRIPTION_FILTERS = [
+  { label: "All", count: "1.2k", active: true },
+  { label: "Active", count: "982" },
+  { label: "Past due", count: "41" },
+  { label: "Cancelled", count: "18" }
+];
+
+const SUBSCRIPTION_MODAL_ENTITLEMENTS = [
+  { label: "Premium dashboard", active: true },
+  { label: "Priority booking", active: true },
+  { label: "Advanced reports", active: true },
+  { label: "API access", active: false },
+  { label: "Email support", active: true },
+  { label: "Team seats", active: false }
+];
 
 function defaultSubscriptionSettings() {
   return {
@@ -1875,6 +1905,8 @@ export default function Page() {
   const [setupPairingCode, setSetupPairingCode] = useState("");
   const [subscriptionSettings, setSubscriptionSettings] = useState(() => loadSubscriptionSettings());
   const [subscriptionState, setSubscriptionState] = useState({ loading: false, error: "", data: null });
+  const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false);
+  const [subscriptionModalMode, setSubscriptionModalMode] = useState("create");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [resetUsername, setResetUsername] = useState("");
@@ -2034,6 +2066,19 @@ export default function Page() {
   useEffect(() => {
     persistSubscriptionSettings(subscriptionSettings);
   }, [subscriptionSettings]);
+
+  function openSubscriptionModal(mode = "create", planName = "Nevari Access Pro") {
+    setSubscriptionModalMode(mode);
+    setSubscriptionSettings((current) => ({
+      ...current,
+      planName: planName || current.planName || "Nevari Access Pro"
+    }));
+    setSubscriptionModalOpen(true);
+  }
+
+  function closeSubscriptionModal() {
+    setSubscriptionModalOpen(false);
+  }
 
   async function refreshSubscriptionStatus() {
     if (!session.accessToken) {
@@ -6690,27 +6735,287 @@ export default function Page() {
     if (currentPage === "subscriptions") {
       return (
         <section className="page-view active">
-          <section className="page-banner panel skeleton-panel">
-            <div className="detail-list">
-              <SkeletonBox className="skeleton-line skeleton-line-xs" />
-              <SkeletonBox className="skeleton-line skeleton-line-lg" />
-              <SkeletonBox className="skeleton-line skeleton-line-md" />
+          <section className="subscription-surface">
+            <div className="surface-topbar subscription-surface-topbar">
+              <label className="surface-search">
+                <InlineIcon id="i-search" />
+                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subscriptions" />
+              </label>
+              <div className="surface-actions">
+                <button className="mini-icon-btn" type="button" onClick={refreshSubscriptionStatus} aria-label="Refresh subscription data">
+                  <InlineIcon id="i-refresh-cw" />
+                </button>
+                <button className="mini-icon-btn primary" type="button" onClick={() => openSubscriptionModal("create")}>
+                  <InlineIcon id="i-plus" />
+                </button>
+                <span className="date-pill">{formatTopbarDate()}</span>
+                <button className="user-mini-pill" type="button" onClick={() => switchPage("profile")}>
+                  <span className="mini-avatar">{getInitials(session.user?.display_name || siteName)}</span>
+                  <span>
+                    <strong>{session.user?.display_name || siteName}</strong>
+                    <small>{session.user?.roles?.join(", ") || (session.paired ? "Paired frontend" : "WordPress pairing required")}</small>
+                  </span>
+                </button>
+              </div>
             </div>
-            <div className="banner-actions">
-              <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
-              <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+
+            <div className="surface-content">
+              <section className="section-hero-card">
+                <div>
+                  <p className="eyebrow">Subscriptions</p>
+                  <h1>Subscription plans and billing control in one view.</h1>
+                  <p>Manage plans, review subscriber status, and keep billing settings aligned with the active access model.</p>
+                </div>
+                <div className="hero-actions-inline">
+                  <button className="btn btn-primary" type="button" onClick={() => openSubscriptionModal("create")}>Create</button>
+                  <button className="btn btn-outline" type="button" onClick={refreshSubscriptionStatus}>Sync billing</button>
+                </div>
+              </section>
+
+              <section className="stat-grid">
+                <article className="stat-card-clean primary">
+                  <label>Active subscriptions</label>
+                  <strong>{subscriptionState.data?.status === "active" ? "1" : "0"}</strong>
+                  <span>Currently verified on the gateway</span>
+                </article>
+                <article className="stat-card-clean accent">
+                  <label>Plan revenue</label>
+                  <strong>{subscriptionSettings.amount ? `${subscriptionSettings.currency || "NGN"} ${formatNumber(Number(subscriptionSettings.amount || 0))}` : "NGN 10,000"}</strong>
+                  <span>Monthly billing target</span>
+                </article>
+                <article className="stat-card-clean">
+                  <label>Renewals this month</label>
+                  <strong>{formatNumber(41)}</strong>
+                  <span>Scheduled billing follow-ups</span>
+                </article>
+                <article className="stat-card-clean">
+                  <label>Gateway health</label>
+                  <strong>{subscriptionState.error ? "Review" : "Healthy"}</strong>
+                  <span>{subscriptionState.error || "Paystack and REST sync are available"}</span>
+                </article>
+              </section>
+
+              {subscriptionState.error ? <section className="panel subscription-alert"><p className="muted">{subscriptionState.error}</p></section> : null}
+
+              <section className="subscription-layout">
+                <article className="panel subscription-plans-panel">
+                  <div className="panel-header">
+                    <div>
+                      <h2>Subscription plans</h2>
+                      <p>Create, modify, activate or retire plan configurations.</p>
+                    </div>
+                    <button className="btn btn-primary" type="button" onClick={() => openSubscriptionModal("create")}>Create</button>
+                  </div>
+                  <div className="plans-stack">
+                    {SUBSCRIPTION_PLAN_PREVIEW_ROWS.map((plan) => (
+                      <article className={`plan-card ${plan.featured ? "featured" : ""}`} key={plan.name}>
+                        <div className="plan-head">
+                          <div className="plan-title">
+                            <div className="plan-mark">{plan.slug}</div>
+                            <div>
+                              <h3>{plan.name}</h3>
+                              <p>{plan.note}</p>
+                            </div>
+                          </div>
+                          <div className="plan-price">
+                            <strong>{plan.price}</strong>
+                            <span>{plan.billing}</span>
+                          </div>
+                        </div>
+                        <div className="plan-meta-grid">
+                          <div className="plan-meta-item"><span>Users</span><strong>{plan.users}</strong></div>
+                          <div className="plan-meta-item"><span>Billing</span><strong>{plan.billing}</strong></div>
+                          <div className="plan-meta-item"><span>Status</span><strong>{plan.featured ? "Featured" : "Standard"}</strong></div>
+                        </div>
+                        <div className="entitlement-list">
+                          <span className="chip confirmed">therapy_management</span>
+                          <span className="chip processing">priority booking</span>
+                          <span className="chip draft">reports</span>
+                        </div>
+                        <div className="plan-actions">
+                          <button className="btn btn-outline" type="button" onClick={() => openSubscriptionModal("edit", plan.name)}>Edit</button>
+                          <button className="btn btn-soft" type="button" onClick={refreshSubscriptionStatus}>Sync billing</button>
+                        </div>
+                      </article>
+                    ))}
+                    <div className="security-note warning">
+                      <span className="note-icon"><InlineIcon id="i-lock" /></span>
+                      <div>
+                        <strong>Authorization rule</strong>
+                        <span>Plan edits still require server-side role checks and audit logging.</span>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+
+                <article className="panel users-panel">
+                  <div className="panel-header">
+                    <div>
+                      <h2>List of users</h2>
+                      <p>Review subscribers, renewal dates, status, and assigned plan.</p>
+                    </div>
+                    <div className="filter-row">
+                      <button className="btn btn-soft" type="button" onClick={refreshSubscriptionStatus}>Sync billing</button>
+                    </div>
+                  </div>
+
+                  <div className="users-toolbar">
+                    <div className="segmented-mini" aria-label="User subscription filters">
+                      {SUBSCRIPTION_FILTERS.map((filter) => (
+                        <button className={filter.active ? "active" : ""} type="button" key={filter.label}>
+                          {filter.label} <span className="badge-count">{filter.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="filter-row">
+                      <span className="filter-select-clean">Plan: Access Pro</span>
+                      <span className="filter-select-clean">Renewal: This month</span>
+                    </div>
+                  </div>
+
+                  <div className="users-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>User</th>
+                          <th>Plan</th>
+                          <th>Status</th>
+                          <th>Renewal date</th>
+                          <th>Amount</th>
+                          <th>Gateway ref</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {SUBSCRIPTION_USER_PREVIEW_ROWS.map((row) => (
+                          <tr key={`${row.name}-${row.ref}`}>
+                            <td>
+                              <div className="user-cell">
+                                <div className="avatar-initial" data-tone={row.accent}>{row.initials}</div>
+                                <div>
+                                  <strong>{row.name}</strong>
+                                  <span>{row.email}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td>{row.plan}</td>
+                            <td><span className={`chip ${row.statusTone}`}>{row.status}</span></td>
+                            <td>{row.renewal}</td>
+                            <td>{row.amount}</td>
+                            <td>{row.ref}</td>
+                            <td>
+                              <div className="user-actions">
+                                <button className="btn btn-soft" type="button">View</button>
+                                <button className="btn btn-outline" type="button">{row.action}</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="users-pagination" aria-label="Users pagination">
+                    <div className="pagination-copy">Showing 1-5 of 1,237 users</div>
+                    <div className="pagination-controls">
+                      <button className="page-btn disabled" type="button">Previous</button>
+                      <button className="page-btn active" type="button" aria-current="page">1</button>
+                      <button className="page-btn" type="button">2</button>
+                      <button className="page-btn" type="button">3</button>
+                      <span className="page-ellipsis">...</span>
+                      <button className="page-btn" type="button">248</button>
+                      <button className="page-btn" type="button">Next</button>
+                    </div>
+                  </div>
+                </article>
+              </section>
             </div>
           </section>
-          <section className="settings-grid">
-            {Array.from({ length: 3 }, (_, index) => (
-              <article className="doctor-settings-card skeleton-panel" key={`subscription-skeleton-${index}`}>
-                <SkeletonBox className="skeleton-line skeleton-line-xs" />
-                <SkeletonBox className="skeleton-line skeleton-line-lg" />
-                <SkeletonBox className="skeleton-line skeleton-line-md" />
-                <SkeletonBox className="skeleton-line skeleton-line-sm" />
-              </article>
-            ))}
-          </section>
+
+          <div className={`subscription-modal-backdrop ${subscriptionModalOpen ? "open" : ""}`} aria-hidden={!subscriptionModalOpen}>
+            <article className="subscription-modal-frame" role="dialog" aria-modal="true" aria-labelledby="subscriptionModalTitle">
+              <div className="modal-head">
+                <div>
+                  <h3 id="subscriptionModalTitle">{subscriptionModalMode === "edit" ? "Update subscription plan" : "Create subscription plan"}</h3>
+                  <p>{subscriptionModalMode === "edit" ? "Modify plan details with protected step-up authentication before the update is applied." : "Create a subscription plan, define billing settings and choose the entitlements users receive after payment."}</p>
+                </div>
+                <button className="btn btn-outline btn-icon" type="button" onClick={closeSubscriptionModal} aria-label="Close">
+                  <InlineIcon id="i-x" />
+                </button>
+              </div>
+              <div className="modal-body">
+                <div className="subscription-modal-grid">
+                  <div className="subscription-modal-main">
+                    <h4 className="creation-section-title"><InlineIcon id="i-credit-card" /> Plan details</h4>
+                    <div className="creation-field-grid">
+                      <div className="creation-field"><label>Plan name</label><input className="form-control" value={subscriptionSettings.planName} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, planName: event.target.value }))} /></div>
+                      <div className="creation-field"><label>Plan slug</label><input className="form-control" value={normalizeCategoryKey(subscriptionSettings.planName || "nevari-access-pro").replace(/_/g, "-")} readOnly /></div>
+                      <div className="creation-field"><label>Amount</label><input className="form-control" value={subscriptionSettings.amount} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, amount: event.target.value }))} /></div>
+                      <div className="creation-field"><label>Currency</label><select className="form-control" value={subscriptionSettings.currency} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, currency: event.target.value }))}><option>NGN</option><option>USD</option></select></div>
+                      <div className="creation-field"><label>Billing interval</label><select className="form-control" value={subscriptionSettings.interval} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, interval: event.target.value }))}><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option><option value="manual">Manual</option></select></div>
+                      <div className="creation-field"><label>Cancellation window</label><input className="form-control" value={subscriptionSettings.cancellationWindowDays} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, cancellationWindowDays: event.target.value }))} /></div>
+                    </div>
+
+                    <h4 className="creation-section-title"><InlineIcon id="i-settings" /> Gateway controls</h4>
+                    <div className="creation-field-grid">
+                      <div className="creation-field"><label>Paystack plan code / public key</label><input className="form-control" value={subscriptionSettings.publicKey} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, publicKey: event.target.value }))} placeholder="PLN_xxxxx or public key" /></div>
+                      <div className="creation-field"><label>Manage billing URL</label><input className="form-control" value={subscriptionSettings.manageBillingUrl} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, manageBillingUrl: event.target.value }))} placeholder="https://..." /></div>
+                      <div className="creation-field"><label>Auto renew</label><select className="form-control" value={subscriptionSettings.autoRenew ? "Enabled" : "Disabled"} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, autoRenew: event.target.value === "Enabled" }))}><option>Enabled</option><option>Disabled</option></select></div>
+                      <div className="creation-field"><label>Notifications</label><select className="form-control" value={subscriptionSettings.notificationsEnabled ? "Enabled" : "Disabled"} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, notificationsEnabled: event.target.value === "Enabled" }))}><option>Enabled</option><option>Disabled</option></select></div>
+                    </div>
+
+                    <h4 className="creation-section-title"><InlineIcon id="i-users" /> Entitlements</h4>
+                    <div className="choice-row">
+                      {SUBSCRIPTION_MODAL_ENTITLEMENTS.map((entitlement) => (
+                        <button className={`creation-choice ${entitlement.active ? "active" : ""}`} type="button" key={entitlement.label}>
+                          {entitlement.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <h4 className="creation-section-title"><InlineIcon id="i-lock" /> Sensitive update protection</h4>
+                    <div className="creation-popup-note warning">For update actions, the backend should require a valid admin role, current password, authenticator OTP, CSRF/session check, and a single-use action token tied to the exact change.</div>
+                    <div className="creation-field-grid">
+                      <div className="creation-field"><label>Current password</label><input className="form-control" type="password" placeholder="Required before update" /></div>
+                      <div className="creation-field"><label>Authenticator OTP</label><input className="form-control" inputMode="numeric" placeholder="6-digit code" /></div>
+                      <div className="creation-field full-width"><label>Reason for change</label><textarea className="form-control" placeholder="Example: Price adjustment approved by finance team" /></div>
+                    </div>
+                  </div>
+
+                  <aside className="creation-side">
+                    <div className="security-note">
+                      <span className="note-icon"><InlineIcon id="i-shield" /></span>
+                      <div>
+                        <strong>Step-up required</strong>
+                        <span>Password + OTP must be verified server-side before applying plan changes.</span>
+                      </div>
+                    </div>
+                    <div>
+                      <h4 id="summaryPlanName">{subscriptionSettings.planName || "Nevari Access Pro"}</h4>
+                      <p>Preview of the subscription configuration before saving.</p>
+                    </div>
+                    <div className="creation-summary-list">
+                      <div><span>Amount</span><strong>{subscriptionSettings.currency || "NGN"} {formatNumber(Number(subscriptionSettings.amount || 0))}</strong></div>
+                      <div><span>Interval</span><strong>{formatStatusLabel(subscriptionSettings.interval)}</strong></div>
+                      <div><span>Users impacted</span><strong>{formatNumber(397)}</strong></div>
+                      <div><span>Risk level</span><strong>High</strong></div>
+                      <div><span>Approval</span><strong>Second admin</strong></div>
+                    </div>
+                    <div className="toggle-pills-row">
+                      <span className="toggle-mini"><InlineIcon id="i-lock" /> Audit log</span>
+                      <span className="toggle-mini"><InlineIcon id="i-shield" /> Owner alert</span>
+                    </div>
+                    <div className="creation-popup-note">Saving this mockup shows a toast only. In production, never allow plan changes from frontend state alone.</div>
+                  </aside>
+                </div>
+              </div>
+              <div className="modal-actions sticky-modal-actions">
+                <button className="btn btn-outline" type="button" onClick={closeSubscriptionModal}>Cancel</button>
+                <button className="btn btn-soft" type="button">Save draft</button>
+                <button className="btn btn-primary" type="button" onClick={closeSubscriptionModal}>Create protected plan</button>
+              </div>
+            </article>
+          </div>
         </section>
       );
     }
