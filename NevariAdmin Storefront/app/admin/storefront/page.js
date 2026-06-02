@@ -341,15 +341,15 @@ const SUBSCRIPTION_SETTINGS_KEY = "nevari_admin_subscription_settings";
 
 function defaultSubscriptionSettings() {
   return {
-    planName: "Nevari Access Pro",
-    amount: "10000",
+    planName: "",
+    amount: "",
     currency: "NGN",
-    interval: "monthly",
+    interval: "",
     publicKey: "",
     manageBillingUrl: "",
-    notificationsEnabled: true,
-    autoRenew: true,
-    cancellationWindowDays: "3"
+    notificationsEnabled: false,
+    autoRenew: false,
+    cancellationWindowDays: ""
   };
 }
 
@@ -2037,11 +2037,11 @@ export default function Page() {
     persistSubscriptionSettings(subscriptionSettings);
   }, [subscriptionSettings]);
 
-  function openSubscriptionModal(mode = "create", planName = "Nevari Access Pro") {
+  function openSubscriptionModal(mode = "create", planName = "") {
     setSubscriptionModalMode(mode);
     setSubscriptionSettings((current) => ({
       ...current,
-      planName: planName || current.planName || "Nevari Access Pro"
+      planName: planName || current.planName || ""
     }));
     setSubscriptionModalOpen(true);
   }
@@ -6750,7 +6750,7 @@ export default function Page() {
                 </article>
                 <article className="stat-card-clean accent">
                   <label>Plan revenue</label>
-                  <strong>{subscriptionSettings.amount ? `${subscriptionSettings.currency || "NGN"} ${formatNumber(Number(subscriptionSettings.amount || 0))}` : "NGN 10,000"}</strong>
+                  <strong>{subscriptionSettings.amount ? `${subscriptionSettings.currency || "NGN"} ${formatNumber(Number(subscriptionSettings.amount || 0))}` : "—"}</strong>
                   <span>Monthly billing target</span>
                 </article>
                 <article className="stat-card-clean">
@@ -6777,21 +6777,7 @@ export default function Page() {
                     <button className="btn btn-primary" type="button" onClick={() => openSubscriptionModal("create")}>Create</button>
                   </div>
                   <div className="plans-stack">
-                    {(
-                      Array.isArray(subscriptionState.data?.plans) && subscriptionState.data.plans.length
-                        ? subscriptionState.data.plans
-                        : [
-                            {
-                              name: subscriptionSettings.planName || "Subscription plan",
-                              slug: normalizeCategoryKey(subscriptionSettings.planName || "subscription-plan").replace(/_/g, "-").slice(0, 3).toUpperCase(),
-                              price: subscriptionSettings.amount ? `${subscriptionSettings.currency || "NGN"} ${formatNumber(Number(subscriptionSettings.amount || 0))}` : "—",
-                              billing: formatStatusLabel(subscriptionSettings.interval),
-                              users: subscriptionState.data?.subscriber_count != null ? String(subscriptionState.data.subscriber_count) : "—",
-                              note: "Current plan configuration.",
-                              featured: true
-                            }
-                          ]
-                    ).map((plan) => (
+                    {(Array.isArray(subscriptionState.data?.plans) ? subscriptionState.data.plans : []).map((plan) => (
                       <article className={`plan-card ${plan.featured ? "featured" : ""}`} key={plan.name}>
                         <div className="plan-head">
                           <div className="plan-title">
@@ -6857,8 +6843,8 @@ export default function Page() {
                       ))}
                     </div>
                     <div className="filter-row">
-                      <span className="filter-select-clean">Plan: Access Pro</span>
-                      <span className="filter-select-clean">Renewal: This month</span>
+                      <span className="filter-select-clean">Plan: —</span>
+                      <span className="filter-select-clean">Renewal: —</span>
                     </div>
                   </div>
 
@@ -6938,10 +6924,10 @@ export default function Page() {
                     <h4 className="creation-section-title"><InlineIcon id="i-credit-card" /> Plan details</h4>
                     <div className="creation-field-grid">
                       <div className="creation-field"><label>Plan name</label><input className="form-control" value={subscriptionSettings.planName} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, planName: event.target.value }))} /></div>
-                      <div className="creation-field"><label>Plan slug</label><input className="form-control" value={normalizeCategoryKey(subscriptionSettings.planName || "nevari-access-pro").replace(/_/g, "-")} readOnly /></div>
+                      <div className="creation-field"><label>Plan slug</label><input className="form-control" value={subscriptionSettings.planName ? normalizeCategoryKey(subscriptionSettings.planName).replace(/_/g, "-") : ""} readOnly /></div>
                       <div className="creation-field"><label>Amount</label><input className="form-control" value={subscriptionSettings.amount} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, amount: event.target.value }))} /></div>
-                      <div className="creation-field"><label>Currency</label><select className="form-control" value={subscriptionSettings.currency} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, currency: event.target.value }))}><option>NGN</option><option>USD</option></select></div>
-                      <div className="creation-field"><label>Billing interval</label><select className="form-control" value={subscriptionSettings.interval} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, interval: event.target.value }))}><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option><option value="manual">Manual</option></select></div>
+                      <div className="creation-field"><label>Currency</label><select className="form-control" value={subscriptionSettings.currency} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, currency: event.target.value }))}><option value="">Select currency</option><option>NGN</option><option>USD</option></select></div>
+                      <div className="creation-field"><label>Billing interval</label><select className="form-control" value={subscriptionSettings.interval} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, interval: event.target.value }))}><option value="">Select interval</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option><option value="manual">Manual</option></select></div>
                       <div className="creation-field"><label>Cancellation window</label><input className="form-control" value={subscriptionSettings.cancellationWindowDays} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, cancellationWindowDays: event.target.value }))} /></div>
                     </div>
 
@@ -6984,15 +6970,15 @@ export default function Page() {
                       </div>
                     </div>
                     <div>
-                      <h4 id="summaryPlanName">{subscriptionSettings.planName || "Nevari Access Pro"}</h4>
+                      <h4 id="summaryPlanName">{subscriptionSettings.planName || "—"}</h4>
                       <p>Preview of the subscription configuration before saving.</p>
                     </div>
                     <div className="creation-summary-list">
-                      <div><span>Amount</span><strong>{subscriptionSettings.currency || "NGN"} {formatNumber(Number(subscriptionSettings.amount || 0))}</strong></div>
-                      <div><span>Interval</span><strong>{formatStatusLabel(subscriptionSettings.interval)}</strong></div>
-                      <div><span>Users impacted</span><strong>{formatNumber(397)}</strong></div>
-                      <div><span>Risk level</span><strong>High</strong></div>
-                      <div><span>Approval</span><strong>Second admin</strong></div>
+                      <div><span>Amount</span><strong>{subscriptionSettings.amount ? `${subscriptionSettings.currency || "NGN"} ${formatNumber(Number(subscriptionSettings.amount || 0))}` : "—"}</strong></div>
+                      <div><span>Interval</span><strong>{subscriptionSettings.interval ? formatStatusLabel(subscriptionSettings.interval) : "—"}</strong></div>
+                      <div><span>Users impacted</span><strong>—</strong></div>
+                      <div><span>Risk level</span><strong>—</strong></div>
+                      <div><span>Approval</span><strong>—</strong></div>
                     </div>
                     <div className="toggle-pills-row">
                       <span className="toggle-mini"><InlineIcon id="i-lock" /> Audit log</span>
@@ -7234,8 +7220,8 @@ export default function Page() {
                 <section className="page-banner panel">
                   <div>
                     <p className="section-kicker">Subscriptions</p>
-                    <h2>Nevari Access Pro management</h2>
-                    <p className="hero-text">Review the active billing plan, subscription health, and gateway settings used to provision premium access.</p>
+                    <h2>Subscriptions</h2>
+                    <p className="hero-text">Review active plans, subscribers, and gateway settings.</p>
                   </div>
                   <div className="banner-actions">
                     <button className="button-primary" type="button" onClick={refreshSubscriptionStatus}>Refresh status</button>
