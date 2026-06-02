@@ -6755,7 +6755,7 @@ export default function Page() {
                 </article>
                 <article className="stat-card-clean">
                   <label>Renewals this month</label>
-                  <strong>{formatNumber(41)}</strong>
+                  <strong>{subscriptionState.data?.renewals_this_month != null ? formatNumber(subscriptionState.data.renewals_this_month) : "—"}</strong>
                   <span>Scheduled billing follow-ups</span>
                 </article>
                 <article className="stat-card-clean">
@@ -6798,9 +6798,11 @@ export default function Page() {
                           <div className="plan-meta-item"><span>Status</span><strong>{plan.featured ? "Featured" : "Standard"}</strong></div>
                         </div>
                         <div className="entitlement-list">
-                          <span className="chip confirmed">therapy_management</span>
-                          <span className="chip processing">priority booking</span>
-                          <span className="chip draft">reports</span>
+                          {(Array.isArray(plan.entitlements) ? plan.entitlements : []).map((entitlement) => (
+                            <span className={`chip ${String(entitlement.statusTone || entitlement.tone || "draft")}`} key={String(entitlement.label || entitlement)}>
+                              {String(entitlement.label || entitlement)}
+                            </span>
+                          ))}
                         </div>
                         <div className="plan-actions">
                           <button className="btn btn-outline" type="button" onClick={() => openSubscriptionModal("edit", plan.name)}>Edit</button>
@@ -6898,7 +6900,7 @@ export default function Page() {
                       <button className="page-btn" type="button">2</button>
                       <button className="page-btn" type="button">3</button>
                       <span className="page-ellipsis">...</span>
-                      <button className="page-btn" type="button">248</button>
+                      <button className="page-btn" type="button">{subscriptionState.data?.total_pages ? formatNumber(subscriptionState.data.total_pages) : "…"}</button>
                       <button className="page-btn" type="button">Next</button>
                     </div>
                   </div>
@@ -6984,7 +6986,6 @@ export default function Page() {
                       <span className="toggle-mini"><InlineIcon id="i-lock" /> Audit log</span>
                       <span className="toggle-mini"><InlineIcon id="i-shield" /> Owner alert</span>
                     </div>
-                    <div className="creation-popup-note">Saving this mockup shows a toast only. In production, never allow plan changes from frontend state alone.</div>
                   </aside>
                 </div>
               </div>
