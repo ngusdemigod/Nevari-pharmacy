@@ -338,36 +338,6 @@ function persistAdminAppointmentSettings(settings) {
 }
 
 const SUBSCRIPTION_SETTINGS_KEY = "nevari_admin_subscription_settings";
-const SUBSCRIPTION_PLAN_PREVIEW_ROWS = [
-  { name: "Free", slug: "FR", price: "NGN 0", billing: "Free", users: "814", note: "No billing frequency", featured: false },
-  { name: "Nevari Access Pro", slug: "PRO", price: "NGN 10,000", billing: "Monthly", users: "397", note: "Monthly billing frequency", featured: true },
-  { name: "Enterprise", slug: "EN", price: "Custom", billing: "Contract", users: "37", note: "Quarterly or annual frequency", featured: false },
-  { name: "Access Pro Annual", slug: "YR", price: "NGN 100,000", billing: "Yearly", users: "96", note: "Annual billing frequency", featured: false }
-];
-
-const SUBSCRIPTION_USER_PREVIEW_ROWS = [
-  { initials: "AI", name: "angus igbani", email: "angus@nevarihealth.com", plan: "Nevari Access Pro", status: "Active", statusTone: "confirmed", renewal: "June 30, 2026", amount: "NGN 10,000", ref: "PSK_92A01", action: "Modify", accent: "primary" },
-  { initials: "CB", name: "Chinwe Bello", email: "chinwe@example.com", plan: "Nevari Access Pro", status: "Past due", statusTone: "pending", renewal: "June 04, 2026", amount: "NGN 10,000", ref: "PSK_77L29", action: "Retry", accent: "accent" },
-  { initials: "DO", name: "Daniel Okafor", email: "daniel@example.com", plan: "Free", status: "Free", statusTone: "draft", renewal: "Not scheduled", amount: "NGN 0", ref: "—", action: "Upgrade", accent: "soft" },
-  { initials: "GO", name: "Grace Obi", email: "grace@example.com", plan: "Enterprise", status: "Manual active", statusTone: "confirmed", renewal: "Aug 01, 2026", amount: "Contract", ref: "INV_1021", action: "Seats", accent: "success" },
-  { initials: "KM", name: "Kemi Musa", email: "kemi@example.com", plan: "Nevari Access Pro", status: "Cancelled", statusTone: "cancelled", renewal: "Ended May 29, 2026", amount: "NGN 10,000", ref: "PSK_11Q70", action: "Restore", accent: "danger" }
-];
-
-const SUBSCRIPTION_FILTERS = [
-  { label: "All", count: "1.2k", active: true },
-  { label: "Active", count: "982" },
-  { label: "Past due", count: "41" },
-  { label: "Cancelled", count: "18" }
-];
-
-const SUBSCRIPTION_MODAL_ENTITLEMENTS = [
-  { label: "Premium dashboard", active: true },
-  { label: "Priority booking", active: true },
-  { label: "Advanced reports", active: true },
-  { label: "API access", active: false },
-  { label: "Email support", active: true },
-  { label: "Team seats", active: false }
-];
 
 function defaultSubscriptionSettings() {
   return {
@@ -6807,7 +6777,21 @@ export default function Page() {
                     <button className="btn btn-primary" type="button" onClick={() => openSubscriptionModal("create")}>Create</button>
                   </div>
                   <div className="plans-stack">
-                    {SUBSCRIPTION_PLAN_PREVIEW_ROWS.map((plan) => (
+                    {(
+                      Array.isArray(subscriptionState.data?.plans) && subscriptionState.data.plans.length
+                        ? subscriptionState.data.plans
+                        : [
+                            {
+                              name: subscriptionSettings.planName || "Subscription plan",
+                              slug: normalizeCategoryKey(subscriptionSettings.planName || "subscription-plan").replace(/_/g, "-").slice(0, 3).toUpperCase(),
+                              price: subscriptionSettings.amount ? `${subscriptionSettings.currency || "NGN"} ${formatNumber(Number(subscriptionSettings.amount || 0))}` : "—",
+                              billing: formatStatusLabel(subscriptionSettings.interval),
+                              users: subscriptionState.data?.subscriber_count != null ? String(subscriptionState.data.subscriber_count) : "—",
+                              note: "Current plan configuration.",
+                              featured: true
+                            }
+                          ]
+                    ).map((plan) => (
                       <article className={`plan-card ${plan.featured ? "featured" : ""}`} key={plan.name}>
                         <div className="plan-head">
                           <div className="plan-title">
@@ -6861,7 +6845,12 @@ export default function Page() {
 
                   <div className="users-toolbar">
                     <div className="segmented-mini" aria-label="User subscription filters">
-                      {SUBSCRIPTION_FILTERS.map((filter) => (
+                      {[
+                        { label: "All", count: subscriptionState.data?.total_subscriptions ?? 0, active: true },
+                        { label: "Active", count: subscriptionState.data?.active_subscriptions ?? 0 },
+                        { label: "Past due", count: subscriptionState.data?.past_due_subscriptions ?? 0 },
+                        { label: "Cancelled", count: subscriptionState.data?.cancelled_subscriptions ?? 0 }
+                      ].map((filter) => (
                         <button className={filter.active ? "active" : ""} type="button" key={filter.label}>
                           {filter.label} <span className="badge-count">{filter.count}</span>
                         </button>
@@ -6887,26 +6876,26 @@ export default function Page() {
                         </tr>
                       </thead>
                       <tbody>
-                        {SUBSCRIPTION_USER_PREVIEW_ROWS.map((row) => (
-                          <tr key={`${row.name}-${row.ref}`}>
+                        {(Array.isArray(subscriptionState.data?.users) ? subscriptionState.data.users : []).map((row, index) => (
+                          <tr key={row.id || row.ref || `${row.name || row.full_name || row.display_name || "subscriber"}-${index}`}>
                             <td>
                               <div className="user-cell">
-                                <div className="avatar-initial" data-tone={row.accent}>{row.initials}</div>
+                                <div className="avatar-initial" data-tone={row.accent || "primary"}>{getInitials(row.name || row.full_name || row.display_name || row.email || "Subscriber")}</div>
                                 <div>
-                                  <strong>{row.name}</strong>
-                                  <span>{row.email}</span>
+                                  <strong>{row.name || row.full_name || row.display_name || row.email || "Subscriber"}</strong>
+                                  <span>{row.email || "—"}</span>
                                 </div>
                               </div>
                             </td>
-                            <td>{row.plan}</td>
-                            <td><span className={`chip ${row.statusTone}`}>{row.status}</span></td>
-                            <td>{row.renewal}</td>
-                            <td>{row.amount}</td>
-                            <td>{row.ref}</td>
+                            <td>{row.plan || row.plan_name || subscriptionSettings.planName || "—"}</td>
+                            <td><span className={`chip ${row.statusTone || "draft"}`}>{row.status || row.subscription_status || "—"}</span></td>
+                            <td>{row.renewal || row.renewal_date || "—"}</td>
+                            <td>{row.amount || row.amount_label || "—"}</td>
+                            <td>{row.ref || row.gateway_ref || row.reference || "—"}</td>
                             <td>
                               <div className="user-actions">
                                 <button className="btn btn-soft" type="button">View</button>
-                                <button className="btn btn-outline" type="button">{row.action}</button>
+                                <button className="btn btn-outline" type="button">{row.action || "Edit"}</button>
                               </div>
                             </td>
                           </tr>
@@ -6916,7 +6905,7 @@ export default function Page() {
                   </div>
 
                   <div className="users-pagination" aria-label="Users pagination">
-                    <div className="pagination-copy">Showing 1-5 of 1,237 users</div>
+                    <div className="pagination-copy">{Array.isArray(subscriptionState.data?.users) && subscriptionState.data.users.length ? `Showing ${subscriptionState.data.users.length} subscribed users` : "No subscribed users loaded."}</div>
                     <div className="pagination-controls">
                       <button className="page-btn disabled" type="button">Previous</button>
                       <button className="page-btn active" type="button" aria-current="page">1</button>
@@ -6958,19 +6947,23 @@ export default function Page() {
 
                     <h4 className="creation-section-title"><InlineIcon id="i-settings" /> Gateway controls</h4>
                     <div className="creation-field-grid">
-                      <div className="creation-field"><label>Paystack plan code / public key</label><input className="form-control" value={subscriptionSettings.publicKey} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, publicKey: event.target.value }))} placeholder="PLN_xxxxx or public key" /></div>
-                      <div className="creation-field"><label>Manage billing URL</label><input className="form-control" value={subscriptionSettings.manageBillingUrl} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, manageBillingUrl: event.target.value }))} placeholder="https://..." /></div>
+                      <div className="creation-field"><label>Paystack plan code / public key</label><input className="form-control" value={subscriptionSettings.publicKey} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, publicKey: event.target.value }))} /></div>
+                      <div className="creation-field"><label>Manage billing URL</label><input className="form-control" value={subscriptionSettings.manageBillingUrl} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, manageBillingUrl: event.target.value }))} /></div>
                       <div className="creation-field"><label>Auto renew</label><select className="form-control" value={subscriptionSettings.autoRenew ? "Enabled" : "Disabled"} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, autoRenew: event.target.value === "Enabled" }))}><option>Enabled</option><option>Disabled</option></select></div>
                       <div className="creation-field"><label>Notifications</label><select className="form-control" value={subscriptionSettings.notificationsEnabled ? "Enabled" : "Disabled"} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, notificationsEnabled: event.target.value === "Enabled" }))}><option>Enabled</option><option>Disabled</option></select></div>
                     </div>
 
                     <h4 className="creation-section-title"><InlineIcon id="i-users" /> Entitlements</h4>
                     <div className="choice-row">
-                      {SUBSCRIPTION_MODAL_ENTITLEMENTS.map((entitlement) => (
-                        <button className={`creation-choice ${entitlement.active ? "active" : ""}`} type="button" key={entitlement.label}>
-                          {entitlement.label}
-                        </button>
-                      ))}
+                      {(Array.isArray(subscriptionState.data?.entitlements) ? subscriptionState.data.entitlements : []).length ? (
+                        (Array.isArray(subscriptionState.data?.entitlements) ? subscriptionState.data.entitlements : []).map((entitlement) => (
+                          <button className="creation-choice active" type="button" key={String(entitlement)}>
+                            {String(entitlement)}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="muted">No entitlements loaded.</p>
+                      )}
                     </div>
 
                     <h4 className="creation-section-title"><InlineIcon id="i-lock" /> Sensitive update protection</h4>
@@ -7250,32 +7243,6 @@ export default function Page() {
                   </div>
                 </section>
                 {subscriptionState.error ? <section className="panel"><p className="muted">{subscriptionState.error}</p></section> : null}
-
-                <section className="settings-grid">
-                  <article className="doctor-settings-card">
-                    <h3>Current subscription</h3>
-                    <div className="doctor-settings-summary"><span>Plan name</span><strong>{subscriptionState.data?.plan || subscriptionSettings.planName}</strong></div>
-                    <div className="doctor-settings-summary"><span>Status</span><strong>{subscriptionState.data?.status || "none"}</strong></div>
-                    <div className="doctor-settings-summary"><span>Renewal date</span><strong>{subscriptionState.data?.renewal_date || "Not scheduled"}</strong></div>
-                    <div className="doctor-settings-summary"><span>Entitlements</span><strong>{Array.isArray(subscriptionState.data?.entitlements) ? subscriptionState.data.entitlements.join(", ") : "None"}</strong></div>
-                  </article>
-
-                  <article className="doctor-settings-card">
-                    <h3>Billing settings</h3>
-                    <label><span>Plan name</span><input value={subscriptionSettings.planName} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, planName: event.target.value }))} /></label>
-                    <label><span>Amount (NGN)</span><input value={subscriptionSettings.amount} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, amount: event.target.value }))} /></label>
-                    <label><span>Billing interval</span><input value={subscriptionSettings.interval} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, interval: event.target.value }))} /></label>
-                    <label><span>Manage billing URL</span><input value={subscriptionSettings.manageBillingUrl} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, manageBillingUrl: event.target.value }))} /></label>
-                  </article>
-
-                  <article className="doctor-settings-card">
-                    <h3>Gateway controls</h3>
-                    <label><span>Paystack public key</span><input value={subscriptionSettings.publicKey} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, publicKey: event.target.value }))} /></label>
-                    <label className="customer-toggle-row"><span>Auto renew</span><input type="checkbox" checked={subscriptionSettings.autoRenew} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, autoRenew: event.target.checked }))} /></label>
-                    <label className="customer-toggle-row"><span>Notifications enabled</span><input type="checkbox" checked={subscriptionSettings.notificationsEnabled} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, notificationsEnabled: event.target.checked }))} /></label>
-                    <label><span>Cancellation window (days)</span><input value={subscriptionSettings.cancellationWindowDays} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, cancellationWindowDays: event.target.value }))} /></label>
-                  </article>
-                </section>
               </section>
             )}
             {currentPage === "overview" && (
