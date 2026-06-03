@@ -5,7 +5,7 @@ import React from "react";
 export default function GlobalError({ error, reset }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0, fontFamily: "Inter, system-ui, sans-serif", background: "#f6f8fc", color: "#102039" }}>
+      <body style={{ margin: 0, fontFamily: "\"Product Sans\", \"Google Sans\", system-ui, sans-serif", background: "#f6f8fc", color: "#102039" }}>
         <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}>
           <section style={{ maxWidth: 560, width: "100%", background: "#fff", border: "1px solid #d8e0ec", borderRadius: 20, padding: 24 }}>
             <h1 style={{ margin: 0, fontSize: 24, letterSpacing: "-0.02em" }}>Application error</h1>

@@ -46,6 +46,9 @@ final class Nevari_Activator {
         $login_challenges = Nevari_Helpers::table('login_challenges');
         $pairing_sessions = Nevari_Helpers::table('pairing_sessions');
         $frontend_connections = Nevari_Helpers::table('frontend_connections');
+        $subscription_plans = Nevari_Helpers::table('subscription_plans');
+        $subscriptions = Nevari_Helpers::table('subscriptions');
+        $subscription_payments = Nevari_Helpers::table('subscription_payments');
 
         dbDelta("CREATE TABLE {$doctor_settings} (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -83,11 +86,13 @@ final class Nevari_Activator {
             doctor_user_id BIGINT UNSIGNED NOT NULL,
             order_id BIGINT UNSIGNED NULL,
             type VARCHAR(30) NOT NULL,
+            title VARCHAR(191) NULL,
             status VARCHAR(30) NOT NULL DEFAULT 'requested',
             payment_status VARCHAR(30) NOT NULL DEFAULT 'pending',
             payment_required TINYINT(1) NOT NULL DEFAULT 1,
             start_at DATETIME NOT NULL,
             end_at DATETIME NOT NULL,
+            duration_minutes INT UNSIGNED NULL,
             timezone VARCHAR(100) NOT NULL DEFAULT 'UTC',
             reason TEXT NULL,
             symptoms LONGTEXT NULL,
@@ -373,6 +378,68 @@ final class Nevari_Activator {
             UNIQUE KEY frontend_type_origin (frontend_type, frontend_origin),
             KEY trust_status (trust_status),
             KEY pairing_session_id (pairing_session_id)
+        ) {$charset};");
+
+        dbDelta("CREATE TABLE {$subscription_plans} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            plan_key VARCHAR(100) NOT NULL,
+            plan_code VARCHAR(191) NULL,
+            name VARCHAR(191) NOT NULL,
+            amount_kobo INT UNSIGNED NOT NULL DEFAULT 0,
+            currency VARCHAR(8) NOT NULL DEFAULT 'NGN',
+            interval_unit VARCHAR(30) NOT NULL DEFAULT 'monthly',
+            status VARCHAR(30) NOT NULL DEFAULT 'active',
+            metadata LONGTEXT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY plan_key (plan_key),
+            KEY plan_code (plan_code)
+        ) {$charset};");
+
+        dbDelta("CREATE TABLE {$subscriptions} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id BIGINT UNSIGNED NOT NULL,
+            plan_key VARCHAR(100) NOT NULL,
+            plan_code VARCHAR(191) NULL,
+            reference VARCHAR(191) NULL,
+            subscription_code VARCHAR(191) NULL,
+            customer_code VARCHAR(191) NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'none',
+            amount_kobo INT UNSIGNED NOT NULL DEFAULT 0,
+            currency VARCHAR(8) NOT NULL DEFAULT 'NGN',
+            renewal_date DATETIME NULL,
+            starts_at DATETIME NULL,
+            ends_at DATETIME NULL,
+            cancelled_at DATETIME NULL,
+            metadata LONGTEXT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            KEY user_status (user_id, status),
+            KEY user_plan (user_id, plan_key),
+            KEY reference (reference),
+            KEY subscription_code (subscription_code)
+        ) {$charset};");
+
+        dbDelta("CREATE TABLE {$subscription_payments} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id BIGINT UNSIGNED NOT NULL,
+            subscription_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            reference VARCHAR(191) NOT NULL,
+            gateway VARCHAR(30) NOT NULL DEFAULT 'paystack',
+            amount_kobo INT UNSIGNED NOT NULL DEFAULT 0,
+            currency VARCHAR(8) NOT NULL DEFAULT 'NGN',
+            status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            paystack_subscription_code VARCHAR(191) NULL,
+            verified_at DATETIME NULL,
+            payload LONGTEXT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY reference (reference),
+            KEY user_status (user_id, status),
+            KEY subscription_id (subscription_id)
         ) {$charset};");
     }
 

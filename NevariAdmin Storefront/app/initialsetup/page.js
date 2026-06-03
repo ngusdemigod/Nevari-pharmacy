@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function LegacySetupPage() {
-  redirect("/admin/storefront/setup");
+  redirect("/admin/storefront/login");
 }

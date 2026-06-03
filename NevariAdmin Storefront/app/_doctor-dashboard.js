@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR, { mutate as mutateSWRKey, useSWRConfig } from "swr";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { AddCircleIcon, Calendar03Icon, Doctor01Icon, Home01Icon, Package01Icon, Settings01Icon, ShoppingCart01Icon, ShoppingBasket01Icon, StarIcon, UserIcon } from "@hugeicons/core-free-icons";
 import { replaceById, updateListPayload, upsertById } from "../lib/fetcher";
 import { isProxyAppointmentsKey, isProxyDashboardDoctorKey, isProxyDoctorPathKey, isProxyOrdersKey, swrKeys, withBaseUrl } from "../lib/swrKeys";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
-import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, describeDashboardFetchError, getOrderTypeMeta, hydrateStoredSession, isSessionUsable, money, monthGrid, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
+import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, describeDashboardFetchError, fitTextToContainer, getOrderTypeMeta, hydrateStoredSession, isSessionUsable, money, monthGrid, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
 import { clearSessionAuth } from "./components/role-session";
 
 const DOCTOR_SETTINGS_KEY = "nevari_doctor_frontend_settings";
@@ -130,6 +132,22 @@ export default function DoctorDashboard() {
   }, [page]);
 
   useEffect(() => {
+    const syncDoctorViewportMode = () => {
+      if (window.innerWidth <= 1024) {
+        document.body.classList.add("doctor-mobile-mode");
+      } else {
+        document.body.classList.remove("doctor-mobile-mode");
+      }
+    };
+    syncDoctorViewportMode();
+    window.addEventListener("resize", syncDoctorViewportMode);
+    return () => {
+      document.body.classList.remove("doctor-mobile-mode");
+      window.removeEventListener("resize", syncDoctorViewportMode);
+    };
+  }, []);
+
+  useEffect(() => {
     persistDoctorSettings(doctorSettings);
   }, [doctorSettings]);
 
@@ -142,10 +160,6 @@ export default function DoctorDashboard() {
 
   useEffect(() => {
     const hydratedSession = hydrateStoredSession("doctor");
-    if (!hydratedSession.paired) {
-      router.replace(FRONTENDS.doctor.loginPath);
-      return;
-    }
     const nextDoctorId = hydratedSession.user?.id;
     if (!isSessionUsable(hydratedSession) || !nextDoctorId || !hasDoctorRole(hydratedSession.user)) {
       router.replace("/admin/doctor/login");
@@ -370,6 +384,18 @@ export default function DoctorDashboard() {
     (page === "settings" && ((appointmentsQuery.isLoading && !appointmentsQuery.data) || (availabilityQuery.isLoading && !availabilityQuery.data)))
   );
   const showSkeleton = (isLoading && !hasDoctorDashboardData(state)) || pageQueryLoading;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const fitStats = () => {
+      document.querySelectorAll(".overview-action-value, .doctor-profile-metrics strong, .doctor-insight-card strong, .doctor-settings-summary strong, .metric-card strong, .mini-stat strong").forEach((node) => {
+        fitTextToContainer(node, { minFontSize: 12, step: 0.5 });
+      });
+    };
+    fitStats();
+    window.addEventListener("resize", fitStats);
+    return () => window.removeEventListener("resize", fitStats);
+  }, [showSkeleton, page, state.appointments.length, state.orders.length, state.products.length, state.patients.length]);
 
   return <RoleShell title="Nevari Doctor" pages={pages} active={page} onPageChange={setPage} renderNavIcon={renderDoctorNavIcon}>
     {state.error ? <p className="receipt-feedback">{state.error}</p> : null}
@@ -906,7 +932,6 @@ function DoctorProfileSkeleton() {
 function DoctorOverview({ doctor, dashboard, appointments, orders, patients, reviews, reviewSummary, estimatedRevenue, storeCurrency, onOpenConsultations, onOpenReviews, onOpenProfile }) {
   const upcoming = appointments.filter((item) => ["requested", "confirmed", "awaiting_payment"].includes(item.status)).slice(0, 3);
   const categories = doctor?.product_categories || [];
-  const pendingPayments = appointments.filter((item) => item.payment_status !== "paid").length;
   const todayKey = new Date().toISOString().slice(0, 10);
   const appointmentsToday = appointments.filter((item) => String(item.start_at || "").slice(0, 10) === todayKey).length;
 
@@ -924,21 +949,12 @@ function DoctorOverview({ doctor, dashboard, appointments, orders, patients, rev
       </div>
     </div>
 
-    <div className="tiny-title">Today</div>
-    <div className="category-grid doctor-category-grid">
-      {[
-        ["Appointments today", appointmentsToday],
-        ["Awaiting payment", pendingPayments],
-        ["Paid sessions", appointments.filter((item) => item.payment_status === "paid").length],
-        ["Customers", patients.length]
-      ].map(([label, value], index) => <div className="category-card" key={label}>
-        <div className={`category-icon ${["green", "yellow", "lilac", "blue"][index]}`}><span>{value}</span></div>
-        <div>
-          <div className="category-meta">{value} total</div>
-          <div className="category-name">{label}</div>
-        </div>
-      </div>)}
-    </div>
+    <OverviewActions
+      appointmentsTotal={appointments.length}
+      appointmentsToday={appointmentsToday}
+      ordersTotal={orders.length}
+      availableDoctors={Number(dashboard?.available_doctors ?? 4)}
+    />
 
     <div className="tiny-title doctor-clinical-title">Clinical profile</div>
     <div className="plan-card purple doctor-clinical-card" role="button" tabIndex={0} onClick={onOpenProfile} onKeyDown={(event) => {
@@ -993,6 +1009,43 @@ function DoctorOverview({ doctor, dashboard, appointments, orders, patients, rev
       </div>) : <div className="empty-card compact-empty"><div className="card-title">No upcoming consultations</div></div>}
     </div>
   </>;
+}
+
+function OverviewActions({ appointmentsTotal, appointmentsToday, ordersTotal, availableDoctors }) {
+  const valueRefs = useRef([]);
+  const cards = [
+    { key: "appointments-total", label: "Appointments", value: appointmentsTotal, icon: "appointments" },
+    { key: "appointments-today", label: "Appointments", value: appointmentsToday, icon: "appointments" },
+    { key: "orders", label: "Orders", value: ordersTotal, icon: "shopping-basket" },
+    { key: "available-doctors", label: "Available Doctors", value: availableDoctors, icon: "doctor" }
+  ];
+
+  useEffect(() => {
+    const fit = () => cards.forEach((card, index) => {
+      fitTextToContainer(valueRefs.current[index], { minFontSize: 14 });
+    });
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [appointmentsTotal, appointmentsToday, ordersTotal, availableDoctors]);
+
+  return <section className="overview-actions" aria-label="Overview metrics">
+    {cards.map((card, index) => <article className="overview-action-card" key={card.key}>
+      <div className="overview-action-icon">
+        <OverviewIcon name={card.icon} />
+      </div>
+      <div className="overview-action-info">
+        <p>{card.label}</p>
+        <strong ref={(node) => { valueRefs.current[index] = node; }} className="overview-action-value">{card.value}</strong>
+      </div>
+    </article>)}
+  </section>;
+}
+
+function OverviewIcon({ name }) {
+  if (name === "shopping-basket") return <HugeiconsIcon icon={ShoppingBasket01Icon} size={20} strokeWidth={1.7} />;
+  if (name === "doctor") return <HugeiconsIcon icon={Doctor01Icon} size={20} strokeWidth={1.7} />;
+  return <HugeiconsIcon icon={Calendar03Icon} size={20} strokeWidth={1.7} />;
 }
 
 function initials(value) {
@@ -1162,33 +1215,15 @@ function SettingsToggle({ label, checked, onChange }) {
 }
 
 function renderDoctorNavIcon(page) {
-  if (page === "overview") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5 12 4l8 8.5" /><path d="M7 10.5V20h10v-9.5" /></svg>;
-  }
-  if (page === "consultations") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v4" /><path d="M16 3v4" /><rect x="3" y="5" width="18" height="16" rx="3" /><path d="M3 10h18" /></svg>;
-  }
-  if (page === "reviews") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6-5.4-2.9-5.4 2.9 1-6-4.4-4.3 6.1-.9z" /></svg>;
-  }
-  if (page === "availability") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20" /><path d="M2 12h20" /><path d="m5 5 14 14" /><path d="m19 5-14 14" /></svg>;
-  }
-  if (page === "settings") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5" /><path d="M12 2v3" /><path d="M12 19v3" /><path d="m4.9 4.9 2.1 2.1" /><path d="m17 17 2.1 2.1" /><path d="M2 12h3" /><path d="M19 12h3" /><path d="m4.9 19.1 2.1-2.1" /><path d="M17 7l2.1-2.1" /></svg>;
-  }
-  if (page === "orders") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16" /><path d="M7 12h10" /><path d="M9 17h6" /><rect x="3" y="4" width="18" height="16" rx="3" /></svg>;
-  }
-  if (page === "products") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 21 3 14a5 5 0 0 1 7-7l7 7a5 5 0 0 1-7 7z" /><path d="m8 8 8 8" /></svg>;
-  }
-  if (page === "patients") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="9" r="3.5" /><circle cx="16.5" cy="10.5" r="2.5" /><path d="M3.5 20a6 6 0 0 1 11 0" /><path d="M14 19.5a4.8 4.8 0 0 1 6.5-3.6" /></svg>;
-  }
-  if (page === "profile") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7.5" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /><path d="M17.5 6.5h4" /><path d="M19.5 4.5v4" /></svg>;
-  }
+  if (page === "overview") return <HugeiconsIcon icon={Home01Icon} size={20} strokeWidth={1.7} />;
+  if (page === "consultations") return <HugeiconsIcon icon={Calendar03Icon} size={20} strokeWidth={1.7} />;
+  if (page === "reviews") return <HugeiconsIcon icon={StarIcon} size={20} strokeWidth={1.7} />;
+  if (page === "availability") return <HugeiconsIcon icon={AddCircleIcon} size={20} strokeWidth={1.7} />;
+  if (page === "settings") return <HugeiconsIcon icon={Settings01Icon} size={20} strokeWidth={1.7} />;
+  if (page === "orders") return <HugeiconsIcon icon={ShoppingCart01Icon} size={20} strokeWidth={1.7} />;
+  if (page === "products") return <HugeiconsIcon icon={Package01Icon} size={20} strokeWidth={1.7} />;
+  if (page === "patients") return <HugeiconsIcon icon={UserIcon} size={20} strokeWidth={1.7} />;
+  if (page === "profile") return <HugeiconsIcon icon={Doctor01Icon} size={20} strokeWidth={1.7} />;
   return null;
 }
 
@@ -1280,7 +1315,7 @@ export function RoleShell({
   const visibleNavPages = navPages;
   const labelFor = (page) => pageLabels[page] || titleCase(page);
   const [sideNavOpen, setSideNavOpen] = useState(false);
-  return <div className="desktop-dashboard-page role-shell-exact">
+  return <div className="desktop-dashboard-page role-shell-exact doctor-mobile-shell">
     <section className="desktop-dashboard-shell">
       {sideNavOpen ? <button className="dashboard-side-nav-backdrop" type="button" aria-label="Close navigation" onClick={() => setSideNavOpen(false)} /> : null}
       <aside className={`dashboard-side-nav ${sideNavOpen ? "is-open" : ""}`} aria-label={`${roleLabel} sections`}>

@@ -1,0 +1,963 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Appointments - Flow Patient App</title>
+  <style>
+    :root {
+      --primary: #082D68;
+      --text-dark: #021F4E;
+      --text-main: #424C5D;
+      --text-muted: #7E8798;
+      --border: #DFE4EC;
+      --soft: #F5F7FA;
+      --white: #FFFFFF;
+      --radius-12: 12px;
+      --radius-pill: 999px;
+      --header-height: 138px;
+      --shadow-soft: 0 1px 10px rgba(2, 31, 78, 0.06);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background: var(--white);
+      color: var(--text-main);
+    }
+
+    .app {
+      max-width: 420px;
+      margin: 0 auto;
+      min-height: 100vh;
+      background: var(--white);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .header {
+      position: fixed;
+      top: 0;
+      width: min(420px, 100vw);
+      background: var(--white);
+      z-index: 20;
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow-soft);
+      padding: 14px 20px 12px;
+    }
+
+    .search {
+      height: 44px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-pill);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 14px;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .search svg { width: 18px; height: 18px; stroke: var(--text-muted); }
+
+    .title-row {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .icon-btn {
+      width: 44px; height: 44px;
+      border: none; background: transparent; border-radius: 10px;
+      display: grid; place-items: center;
+      color: var(--primary); cursor: pointer;
+    }
+    .icon-btn:focus-visible, .btn:focus-visible, .tab:focus-visible, .row:focus-visible, .slot:focus-visible, .calendar-day:focus-visible {
+      outline: 2px solid rgba(8,45,104,0.35);
+      outline-offset: 2px;
+    }
+    .title {
+      margin: 0;
+      color: var(--primary);
+      font-size: 24px;
+      font-weight: 500;
+      line-height: 1.2;
+    }
+
+    .content {
+      padding: calc(var(--header-height) + 16px) 20px 20px;
+      min-height: 100vh;
+      overflow: auto;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .tab {
+      min-height: 44px;
+      border-radius: var(--radius-pill);
+      border: 1px solid transparent;
+      padding: 0 16px;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      cursor: pointer;
+      transition: background .2s ease, color .2s ease, border-color .2s ease;
+    }
+    .tab.active {
+      background: var(--soft);
+      border-color: var(--border);
+      color: var(--text-dark);
+    }
+
+    .view {
+      opacity: 0;
+      transform: translateY(6px);
+      pointer-events: none;
+      transition: opacity .26s ease, transform .26s ease;
+      display: none;
+    }
+    .view.active {
+      display: block;
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .empty {
+      min-height: 58vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      text-align: center;
+    }
+    .empty-icon {
+      width: 74px; height: 74px;
+      border-radius: 16px;
+      background: var(--soft);
+      border: 1px solid var(--border);
+      display: grid; place-items: center;
+      color: #C8D0DC;
+    }
+    .empty-icon svg { width: 34px; height: 34px; stroke: #C8D0DC; }
+    .empty p { margin: 0; font-size: 13px; color: #AAB3C0; }
+
+    .book-pill {
+      margin-top: 18px;
+      width: 230px;
+      min-height: 58px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--primary);
+      background: var(--white);
+      color: var(--primary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 6px 4px 22px;
+      font-size: 15px;
+      cursor: pointer;
+      transition: transform .18s ease, opacity .18s ease;
+    }
+    .book-pill:active, .btn:active, .row:active {
+      transform: scale(0.985);
+      opacity: .9;
+    }
+    .book-pill-icon {
+      width: 46px; height: 46px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: var(--white);
+      display: grid; place-items: center;
+    }
+    .book-pill-icon svg { width: 20px; height: 20px; stroke: var(--white); }
+
+    .list {
+      border-top: 1px solid var(--border);
+    }
+    .row {
+      width: 100%;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      background: transparent;
+      text-align: left;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 4px;
+      min-height: 74px;
+      cursor: pointer;
+      transition: background .2s ease, transform .2s ease, opacity .2s ease;
+    }
+    .row:hover { background: #FAFBFD; }
+    .clock {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--soft);
+      border: 1px solid var(--border);
+      display: grid; place-items: center;
+      flex: 0 0 auto;
+    }
+    .clock svg { width: 14px; height: 14px; stroke: var(--text-muted); }
+    .row-title { margin: 0 0 2px; color: #111827; font-size: 15px; font-weight: 600; }
+    .row-time { margin: 0; color: #111827; font-size: 12px; }
+    .row-link { margin: 1px 0 0; color: var(--primary); font-size: 12px; }
+
+    .back-link {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0;
+      min-height: 44px;
+      cursor: pointer;
+      margin: 2px 0 8px;
+      font-size: 13px;
+    }
+    .back-link svg { width: 16px; height: 16px; stroke: var(--text-muted); }
+
+    .field-label {
+      margin: 0 0 8px;
+      color: var(--text-main);
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .doctor-select-wrap { position: relative; margin-bottom: 14px; }
+    .doctor-btn {
+      width: 100%;
+      min-height: 56px;
+      border-radius: var(--radius-12);
+      border: 1px solid var(--border);
+      background: var(--soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .doctor-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .avatar {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--primary); color: var(--white);
+      display: grid; place-items: center;
+      font-size: 12px; font-weight: 600; flex: 0 0 auto;
+    }
+    .doctor-copy { min-width: 0; }
+    .doctor-name { margin: 0; color: var(--text-dark); font-size: 14px; font-weight: 600; }
+    .doctor-specialty { margin: 0; color: var(--text-muted); font-size: 12px; }
+    .doctor-menu {
+      position: absolute; top: calc(100% + 8px); left: 0; right: 0;
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-12);
+      box-shadow: 0 10px 26px rgba(2,31,78,.14);
+      overflow: hidden;
+      opacity: 0; transform: translateY(-4px);
+      pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+      z-index: 8;
+    }
+    .doctor-menu.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    .doctor-option {
+      width: 100%;
+      border: none;
+      background: var(--white);
+      border-bottom: 1px solid var(--border);
+      min-height: 54px;
+      padding: 9px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .doctor-option:last-child { border-bottom: none; }
+
+    .calendar-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-12);
+      background: var(--white);
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+    .cal-head {
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
+    }
+    .cal-month { margin: 0; color: var(--primary); font-size: 20px; font-weight: 600; }
+    .cal-arrows { display: flex; gap: 4px; }
+    .tiny-icon {
+      width: 34px; height: 34px;
+      border: none; background: transparent; border-radius: 10px;
+      display: grid; place-items: center; color: var(--primary); cursor: pointer;
+    }
+    .tiny-icon svg { width: 18px; height: 18px; stroke: var(--primary); }
+    .weekday, .dates { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+    .weekday span {
+      text-align: center;
+      font-size: 10px;
+      color: #A2ABBA;
+      letter-spacing: .2px;
+      text-transform: uppercase;
+      padding-bottom: 4px;
+    }
+    .calendar-day {
+      min-height: 36px;
+      border: none;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--text-dark);
+      font-size: 14px;
+      cursor: pointer;
+      display: grid; place-items: center;
+    }
+    .calendar-day.today { box-shadow: inset 0 0 0 1px rgba(8,45,104,0.28); }
+    .calendar-day.selected {
+      background: var(--primary);
+      color: var(--white);
+      font-weight: 600;
+    }
+    .calendar-day.disabled {
+      color: #B7C0CD;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .calendar-day.blank { visibility: hidden; pointer-events: none; }
+
+    .slots-label { margin: 0 0 8px; color: var(--text-main); font-size: 13px; font-weight: 500; }
+    .slots {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+      transition: opacity .2s ease;
+    }
+    .slots.refresh { opacity: .45; }
+    .slot {
+      min-height: 40px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--border);
+      background: var(--white);
+      color: var(--primary);
+      padding: 0 14px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .slot.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: var(--white);
+    }
+    .slot.disabled {
+      background: var(--soft);
+      color: #ADB6C4;
+      border-color: var(--border);
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .slot-empty {
+      margin: 0 0 14px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .textarea {
+      width: 100%;
+      min-height: 112px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-12);
+      background: var(--soft);
+      color: var(--text-main);
+      padding: 12px;
+      font: inherit;
+      font-size: 13px;
+      margin-bottom: 18px;
+    }
+    .textarea::placeholder { color: #9CA5B5; }
+    .textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(8,45,104,.10); outline: none; }
+
+    .btn {
+      width: 100%;
+      min-height: 48px;
+      border-radius: var(--radius-pill);
+      border: none;
+      background: var(--primary);
+      color: var(--white);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: transform .2s ease, opacity .2s ease, background .2s ease;
+    }
+    .btn:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+
+    .success-msg {
+      margin: 10px 0 0;
+      color: #0D6C42;
+      font-size: 13px;
+    }
+
+    .detail-card {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--white);
+      padding: 14px;
+      margin-top: 6px;
+    }
+    .detail-top {
+      display: flex; justify-content: space-between; gap: 8px; align-items: center;
+      margin-bottom: 12px;
+    }
+    .detail-title { margin: 0; color: var(--text-dark); font-size: 18px; font-weight: 600; }
+    .badge {
+      height: 26px; border-radius: var(--radius-pill);
+      padding: 0 10px; display: inline-flex; align-items: center;
+      border: 1px solid #C6D4EA;
+      background: #EDF3FC;
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .mini {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--soft);
+      padding: 10px;
+    }
+    .mini strong {
+      display: block; color: var(--text-muted); font-size: 11px; font-weight: 500; margin-bottom: 4px;
+    }
+    .mini span {
+      color: var(--text-dark); font-size: 13px; font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header" aria-label="Header">
+      <div class="search" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke-width="1.8"></circle><path d="M20 20L16.65 16.65" stroke-width="1.8" stroke-linecap="round"></path></svg>
+        <span>Search here for orders, appointments etc</span>
+      </div>
+      <div class="title-row">
+        <button class="icon-btn" type="button" aria-label="Open menu">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 7H20M4 12H20M4 17H20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg>
+        </button>
+        <h1 class="title">Appointments</h1>
+      </div>
+    </header>
+
+    <main class="content">
+      <section id="listView" class="view active" aria-label="Appointments list view">
+        <div class="tabs" role="tablist" aria-label="Appointment tabs">
+          <button class="tab active" type="button" data-tab="all" role="tab" aria-selected="true">All</button>
+          <button class="tab" type="button" data-tab="upcoming" role="tab" aria-selected="false">Upcoming</button>
+          <button class="tab" type="button" data-tab="previous" role="tab" aria-selected="false">Previous</button>
+        </div>
+        <div id="listBody"></div>
+      </section>
+
+      <section id="bookView" class="view" aria-label="Book appointment view">
+        <button class="back-link" id="backFromBook" type="button">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M15 6L9 12L15 18" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>Go back</span>
+        </button>
+
+        <p class="field-label">Select Doctor</p>
+        <div class="doctor-select-wrap">
+          <button id="doctorBtn" class="doctor-btn" type="button" aria-expanded="false" aria-haspopup="listbox">
+            <div class="doctor-main">
+              <div class="avatar" id="doctorAvatar">HA</div>
+              <div class="doctor-copy">
+                <p class="doctor-name" id="doctorName">Dr. Hazidat Ahmed</p>
+                <p class="doctor-specialty" id="doctorSpecialty">General Physician</p>
+              </div>
+            </div>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M6 9L12 15L18 9" stroke="#7E8798" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </button>
+          <div id="doctorMenu" class="doctor-menu" role="listbox" aria-label="Doctors"></div>
+        </div>
+
+        <div class="calendar-card">
+          <div class="cal-head">
+            <h2 id="monthTitle" class="cal-month"></h2>
+            <div class="cal-arrows">
+              <button class="tiny-icon" id="prevMonth" type="button" aria-label="Previous month">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M15 6L9 12L15 18" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </button>
+              <button class="tiny-icon" id="nextMonth" type="button" aria-label="Next month">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M9 6L15 12L9 18" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </button>
+            </div>
+          </div>
+          <div class="weekday">
+            <span>SUN</span><span>MON</span><span>TUE</span><span>WED</span><span>THU</span><span>FRI</span><span>SAT</span>
+          </div>
+          <div id="calendarDates" class="dates"></div>
+        </div>
+
+        <p class="slots-label">Available Times</p>
+        <div id="slots" class="slots" aria-live="polite"></div>
+        <p id="slotEmpty" class="slot-empty" hidden>No available times for this date. Please choose another date.</p>
+
+        <label class="field-label" for="reason">Reason for Appointment:</label>
+        <textarea id="reason" class="textarea" placeholder="Briefly state the reason for your appointment"></textarea>
+
+        <button id="bookBtn" class="btn" type="button" disabled>Book Appointment</button>
+        <p id="bookMsg" class="success-msg" hidden>Appointment booked successfully.</p>
+      </section>
+
+      <section id="detailsView" class="view" aria-label="Appointment details view">
+        <button class="back-link" id="backFromDetails" type="button">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M15 6L9 12L15 18" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>Go back</span>
+        </button>
+        <article class="detail-card">
+          <div class="detail-top">
+            <h2 id="detailTitle" class="detail-title">Weekly Checkup</h2>
+            <span class="badge" id="detailStatus">Upcoming</span>
+          </div>
+          <div class="grid" id="detailGrid"></div>
+          <button class="btn" type="button" id="joinBtn">Join Google Meet</button>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const state = {
+      activeView: "list",
+      listTab: "all",
+      selectedDoctorId: "HA",
+      selectedDate: null,
+      selectedTime: "",
+      selectedAppointmentId: null,
+      calendarMonthDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+      booking: false,
+      appointments: [
+        { id: "APT-20412", title: "Weekly Checkup", dateISO: addDaysISO(2), time24: "12:30", meeting: "Google meet", doctorId: "HA", status: "upcoming", ref: "NV-APT-20412" },
+        { id: "APT-20413", title: "Weekly Checkup", dateISO: addDaysISO(5), time24: "12:30", meeting: "Google meet", doctorId: "DS", status: "upcoming", ref: "NV-APT-20413" }
+      ]
+    };
+
+    const doctors = [
+      { id: "HA", name: "Dr. Hazidat Ahmed", specialty: "General Physician" },
+      { id: "DS", name: "Dr. Daniel Smith", specialty: "Cardiologist" },
+      { id: "MP", name: "Dr. Maria Peters", specialty: "Pediatrician" },
+      { id: "NO", name: "Dr. Nora Okafor", specialty: "Dermatologist" }
+    ];
+
+    const slotTemplates = {
+      HA: ["09:00","10:30","12:00","14:30","16:00"],
+      DS: ["09:30","11:00","13:30","15:00"],
+      MP: ["10:00","12:30","14:00","16:30"],
+      NO: ["09:15","11:45","15:30"]
+    };
+
+    const listBody = document.getElementById("listBody");
+    const tabs = document.querySelectorAll(".tab");
+    const listView = document.getElementById("listView");
+    const bookView = document.getElementById("bookView");
+    const detailsView = document.getElementById("detailsView");
+    const backFromBook = document.getElementById("backFromBook");
+    const backFromDetails = document.getElementById("backFromDetails");
+    const doctorBtn = document.getElementById("doctorBtn");
+    const doctorMenu = document.getElementById("doctorMenu");
+    const doctorAvatar = document.getElementById("doctorAvatar");
+    const doctorName = document.getElementById("doctorName");
+    const doctorSpecialty = document.getElementById("doctorSpecialty");
+    const monthTitle = document.getElementById("monthTitle");
+    const calendarDates = document.getElementById("calendarDates");
+    const prevMonth = document.getElementById("prevMonth");
+    const nextMonth = document.getElementById("nextMonth");
+    const slotsEl = document.getElementById("slots");
+    const slotEmpty = document.getElementById("slotEmpty");
+    const reason = document.getElementById("reason");
+    const bookBtn = document.getElementById("bookBtn");
+    const bookMsg = document.getElementById("bookMsg");
+    const detailTitle = document.getElementById("detailTitle");
+    const detailStatus = document.getElementById("detailStatus");
+    const detailGrid = document.getElementById("detailGrid");
+
+    function addDaysISO(days) {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      return localISODate(d);
+    }
+
+    function localISODate(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+
+    function parseISO(iso) {
+      const [y, m, d] = iso.split("-").map(Number);
+      return new Date(y, m - 1, d);
+    }
+
+    function formatDateHuman(iso) {
+      return parseISO(iso).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    }
+
+    function formatTime12h(time24) {
+      const [h, m] = time24.split(":").map(Number);
+      const ampm = h >= 12 ? "PM" : "AM";
+      const hour = h % 12 || 12;
+      return `${String(hour).padStart(2, "0")}:${String(m).padStart(2, "0")} ${ampm}`;
+    }
+
+    function toMinutes(time24) {
+      const [h, m] = time24.split(":").map(Number);
+      return h * 60 + m;
+    }
+
+    function monthLabel(d) {
+      return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    }
+
+    function todayStart() {
+      const t = new Date();
+      t.setHours(0,0,0,0);
+      return t;
+    }
+
+    function viewSwitch(name) {
+      state.activeView = name;
+      [listView, bookView, detailsView].forEach((v) => v.classList.remove("active"));
+      if (name === "list") listView.classList.add("active");
+      if (name === "book") bookView.classList.add("active");
+      if (name === "details") detailsView.classList.add("active");
+    }
+
+    function filteredAppointments() {
+      const now = new Date();
+      return state.appointments.filter((apt) => {
+        const dt = new Date(`${apt.dateISO}T${apt.time24}:00`);
+        if (state.listTab === "upcoming") return dt >= now && apt.status !== "previous";
+        if (state.listTab === "previous") return dt < now || apt.status === "previous";
+        return true;
+      }).sort((a, b) => new Date(`${a.dateISO}T${a.time24}:00`) - new Date(`${b.dateISO}T${b.time24}:00`));
+    }
+
+    function renderEmptyList() {
+      listBody.innerHTML = `
+        <div class="empty">
+          <div class="empty-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M3 12H21" stroke-width="1.8" stroke-linecap="round"/><path d="M7 12V9A5 5 0 0117 9V12" stroke-width="1.8" stroke-linecap="round"/><path d="M7 12V16A3 3 0 0010 19H14A3 3 0 0017 16V12" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </div>
+          <p>You have no appointments</p>
+          <button class="book-pill" id="emptyBookBtn" type="button">
+            <span>Book an appointment</span>
+            <span class="book-pill-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M7 3H17V21L12 17L7 21V3Z" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </span>
+          </button>
+        </div>
+      `;
+      document.getElementById("emptyBookBtn").addEventListener("click", () => {
+        bookMsg.hidden = true;
+        viewSwitch("book");
+      });
+    }
+
+    function renderListRows(items) {
+      const rows = items.map((apt) => `
+        <button class="row" type="button" data-id="${apt.id}">
+          <span class="clock" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke-width="1.8"></circle><path d="M12 8V12L15 14" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </span>
+          <span>
+            <p class="row-title">${apt.title}</p>
+            <p class="row-time">${formatTime12h(apt.time24).toLowerCase()}</p>
+            <p class="row-link">${apt.meeting}</p>
+          </span>
+        </button>
+      `).join("");
+      listBody.innerHTML = `<div class="list">${rows}</div>`;
+      listBody.querySelectorAll(".row").forEach((row) => {
+        row.addEventListener("click", () => {
+          state.selectedAppointmentId = row.dataset.id;
+          renderDetails();
+          viewSwitch("details");
+        });
+      });
+    }
+
+    function renderList() {
+      const items = filteredAppointments();
+      if (!items.length) {
+        renderEmptyList();
+      } else {
+        renderListRows(items);
+      }
+    }
+
+    function renderDoctorField() {
+      const doctor = doctors.find((d) => d.id === state.selectedDoctorId) || doctors[0];
+      doctorAvatar.textContent = doctor.id;
+      doctorName.textContent = doctor.name;
+      doctorSpecialty.textContent = doctor.specialty;
+    }
+
+    function renderDoctorMenu() {
+      doctorMenu.innerHTML = doctors.map((d) => `
+        <button class="doctor-option" type="button" data-id="${d.id}" role="option" aria-selected="${d.id === state.selectedDoctorId}">
+          <span class="avatar">${d.id}</span>
+          <span class="doctor-copy">
+            <span class="doctor-name">${d.name}</span>
+            <span class="doctor-specialty">${d.specialty}</span>
+          </span>
+        </button>
+      `).join("");
+      doctorMenu.querySelectorAll(".doctor-option").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.selectedDoctorId = btn.dataset.id;
+          state.selectedTime = "";
+          renderDoctorField();
+          closeDoctorMenu();
+          refreshSlots(true);
+          updateBookButton();
+        });
+      });
+    }
+
+    function openDoctorMenu() {
+      doctorMenu.classList.add("open");
+      doctorBtn.setAttribute("aria-expanded", "true");
+    }
+    function closeDoctorMenu() {
+      doctorMenu.classList.remove("open");
+      doctorBtn.setAttribute("aria-expanded", "false");
+    }
+
+    function renderCalendar() {
+      const month = state.calendarMonthDate;
+      monthTitle.textContent = monthLabel(month);
+      const year = month.getFullYear();
+      const monthIdx = month.getMonth();
+      const first = new Date(year, monthIdx, 1);
+      const last = new Date(year, monthIdx + 1, 0);
+      const leading = first.getDay();
+      const total = last.getDate();
+      const today = todayStart();
+      const nowMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      const isPastMonth = month < nowMonth;
+
+      const cells = [];
+      for (let i = 0; i < leading; i++) {
+        cells.push(`<button class="calendar-day blank" type="button" disabled aria-hidden="true"></button>`);
+      }
+      for (let day = 1; day <= total; day++) {
+        const d = new Date(year, monthIdx, day);
+        const dateISO = localISODate(d);
+        const isPastDay = d < today;
+        const disabled = isPastMonth || isPastDay;
+        const selected = state.selectedDate === dateISO;
+        const isToday = localISODate(today) === dateISO;
+        const cls = `calendar-day${selected ? " selected" : ""}${disabled ? " disabled" : ""}${isToday ? " today" : ""}`;
+        cells.push(`<button class="${cls}" type="button" ${disabled ? "disabled" : ""} data-date="${dateISO}">${day}</button>`);
+      }
+      calendarDates.innerHTML = cells.join("");
+      calendarDates.querySelectorAll(".calendar-day[data-date]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.selectedDate = btn.dataset.date;
+          state.selectedTime = "";
+          renderCalendar();
+          refreshSlots(true);
+          updateBookButton();
+        });
+      });
+    }
+
+    function slotListForCurrentSelection() {
+      if (!state.selectedDate) return [];
+      const all = slotTemplates[state.selectedDoctorId] || [];
+      const isToday = state.selectedDate === localISODate(new Date());
+      const nowMins = new Date().getHours() * 60 + new Date().getMinutes();
+      return all.map((time) => ({
+        time,
+        disabled: isToday ? toMinutes(time) <= nowMins : false
+      }));
+    }
+
+    function refreshSlots(withFade) {
+      if (withFade) slotsEl.classList.add("refresh");
+      window.setTimeout(() => {
+        const list = slotListForCurrentSelection();
+        if (!state.selectedDate || !list.some((s) => !s.disabled)) {
+          slotsEl.innerHTML = "";
+          slotEmpty.hidden = false;
+        } else {
+          slotEmpty.hidden = true;
+          slotsEl.innerHTML = list.map((slot) => {
+            const active = state.selectedTime === slot.time;
+            return `<button class="slot${active ? " active" : ""}${slot.disabled ? " disabled" : ""}" type="button" data-time="${slot.time}" ${slot.disabled ? "disabled" : ""}>${formatTime12h(slot.time)}</button>`;
+          }).join("");
+          slotsEl.querySelectorAll(".slot[data-time]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              if (btn.disabled) return;
+              state.selectedTime = btn.dataset.time;
+              refreshSlots(false);
+              updateBookButton();
+            });
+          });
+        }
+        slotsEl.classList.remove("refresh");
+      }, withFade ? 160 : 0);
+    }
+
+    function updateBookButton() {
+      const hasDoctor = !!state.selectedDoctorId;
+      const hasDate = !!state.selectedDate;
+      const hasTime = !!state.selectedTime;
+      const hasReason = reason.value.trim().length > 0;
+      bookBtn.disabled = !(hasDoctor && hasDate && hasTime && hasReason) || state.booking;
+    }
+
+    function renderDetails() {
+      const apt = state.appointments.find((a) => a.id === state.selectedAppointmentId);
+      if (!apt) return;
+      const doctor = doctors.find((d) => d.id === apt.doctorId) || doctors[0];
+      detailTitle.textContent = apt.title;
+      detailStatus.textContent = apt.status === "previous" ? "Previous" : "Upcoming";
+      detailGrid.innerHTML = `
+        <div class="mini"><strong>Doctor</strong><span>${doctor.name}</span></div>
+        <div class="mini"><strong>Specialty</strong><span>${doctor.specialty}</span></div>
+        <div class="mini"><strong>Date</strong><span>${formatDateHuman(apt.dateISO)}</span></div>
+        <div class="mini"><strong>Time</strong><span>${formatTime12h(apt.time24)}</span></div>
+        <div class="mini"><strong>Meeting Type</strong><span>${apt.meeting}</span></div>
+        <div class="mini"><strong>Reference</strong><span>${apt.ref}</span></div>
+      `;
+    }
+
+    function initTabHandlers() {
+      tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          state.listTab = tab.dataset.tab;
+          tabs.forEach((t) => {
+            const active = t === tab;
+            t.classList.toggle("active", active);
+            t.setAttribute("aria-selected", String(active));
+          });
+          renderList();
+        });
+      });
+    }
+
+    function initBookHandlers() {
+      backFromBook.addEventListener("click", () => viewSwitch("list"));
+      backFromDetails.addEventListener("click", () => viewSwitch("list"));
+
+      doctorBtn.addEventListener("click", () => {
+        const open = doctorMenu.classList.contains("open");
+        if (open) closeDoctorMenu();
+        else openDoctorMenu();
+      });
+      document.addEventListener("click", (event) => {
+        if (!doctorBtn.contains(event.target) && !doctorMenu.contains(event.target)) closeDoctorMenu();
+      });
+
+      prevMonth.addEventListener("click", () => {
+        state.calendarMonthDate = new Date(state.calendarMonthDate.getFullYear(), state.calendarMonthDate.getMonth() - 1, 1);
+        renderCalendar();
+        refreshSlots(true);
+      });
+      nextMonth.addEventListener("click", () => {
+        state.calendarMonthDate = new Date(state.calendarMonthDate.getFullYear(), state.calendarMonthDate.getMonth() + 1, 1);
+        renderCalendar();
+        refreshSlots(true);
+      });
+
+      reason.addEventListener("input", updateBookButton);
+      bookBtn.addEventListener("click", () => {
+        if (bookBtn.disabled || state.booking) return;
+        state.booking = true;
+        bookBtn.textContent = "Booking...";
+        bookBtn.disabled = true;
+        bookMsg.hidden = true;
+
+        const ref = `NV-APT-${Math.floor(Math.random() * 90000 + 10000)}`;
+        const newApt = {
+          id: `APT-${Date.now()}`,
+          title: "Doctor Consultation",
+          dateISO: state.selectedDate,
+          time24: state.selectedTime,
+          meeting: "Google meet",
+          doctorId: state.selectedDoctorId,
+          status: "upcoming",
+          ref
+        };
+
+        window.setTimeout(() => {
+          state.appointments.push(newApt);
+          state.listTab = "upcoming";
+          tabs.forEach((t) => {
+            const active = t.dataset.tab === "upcoming";
+            t.classList.toggle("active", active);
+            t.setAttribute("aria-selected", String(active));
+          });
+          bookMsg.hidden = false;
+          state.booking = false;
+          bookBtn.textContent = "Book Appointment";
+          state.selectedAppointmentId = newApt.id;
+          renderList();
+          renderDetails();
+          window.setTimeout(() => viewSwitch("list"), 700);
+        }, 850);
+      });
+    }
+
+    function init() {
+      renderDoctorMenu();
+      renderDoctorField();
+      renderCalendar();
+      refreshSlots(false);
+      renderList();
+      initTabHandlers();
+      initBookHandlers();
+      updateBookButton();
+
+      // Seed a valid initial date in current month (today or next day)
+      const t = todayStart();
+      state.selectedDate = localISODate(t);
+      refreshSlots(false);
+      renderCalendar();
+      if (!slotListForCurrentSelection().some((s) => !s.disabled)) {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        state.selectedDate = localISODate(tomorrow);
+        renderCalendar();
+        refreshSlots(false);
+      }
+
+      // Navigate to book view when list empty CTA is used, and expose via keyboard.
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeDoctorMenu();
+      });
+    }
+
+    // Allow list screen swap for demo:
+    // set state.appointments = [] to preview empty state.
+    init();
+  </script>
+</body>
+</html>

@@ -5,3 +5,4 @@
 .nevari-status-success { background: #d1fae5; color: #065f46; }
 .nevari-status-error { background: #fee2e2; color: #991b1b; }
 .nevari-audit-table pre { max-width: 600px; overflow: auto; background: #f6f7f7; padding: 8px; }
+.nevari-wordpress-log-tail { max-height: 420px; overflow: auto; background: #111827; color: #f9fafb; padding: 12px; white-space: pre-wrap; }

@@ -1,4 +1,8 @@
 import { createHmac } from "node:crypto";
+import {
+  isAllowedUrl,
+  sanitizeText
+} from "../../../lib/inputValidation";
 
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
@@ -83,7 +87,7 @@ export async function GET(request, context) {
   try {
     assertFrontendRequest(request);
     const params = await context.params;
-    const resource = String(params?.resource || "");
+    const resource = sanitizeText(params?.resource, { max: 40 });
     const upstreamPath = RESOURCE_PATHS[resource];
     if (!upstreamPath) {
       return Response.json({ success: false, error: { message: "Unknown admin resource." } }, { status: 404 });
@@ -91,15 +95,18 @@ export async function GET(request, context) {
 
     const requestUrl = new URL(request.url);
     const baseUrl = normalizeBaseUrl(requestUrl.searchParams.get("baseUrl"));
-    if (!baseUrl) {
+    if (!baseUrl || !isAllowedUrl(baseUrl, allowedOrigins())) {
       return Response.json({ success: false, error: { message: "Missing baseUrl." } }, { status: 400 });
     }
 
     const target = new URL(`${baseUrl}/wp-json/${API_NAMESPACE}${upstreamPath}`);
     assertAllowedTarget(target);
     requestUrl.searchParams.forEach((value, key) => {
+      if (!/^[a-zA-Z0-9_.-]{1,40}$/.test(key) || String(value).length > 240 || /[<>{}`]/.test(String(value))) {
+        throw new Error("Invalid query parameter.");
+      }
       if (key !== "baseUrl") {
-        target.searchParams.set(key, value);
+        target.searchParams.set(key, sanitizeText(value, { max: 240 }));
       }
     });
 

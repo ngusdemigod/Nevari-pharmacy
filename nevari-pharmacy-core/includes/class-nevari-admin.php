@@ -599,6 +599,8 @@ final class Nevari_Admin {
             'orders' => 'ORDERS',
             'payments' => 'PAYMENTS',
             'security' => 'SECURITY',
+            'storefront-logs' => 'STOREFRONT LOGS',
+            'wordpress-logs' => 'WORDPRESS LOGS',
             'consultation' => 'CONSULTATION',
             'emails' => 'EMAILS',
             'rate-limits' => 'RATE LIMITS',
@@ -615,16 +617,21 @@ final class Nevari_Admin {
         $result = null;
         $total_pages = 1;
         if ($active !== 'rate-limits') {
+            $is_storefront_logs = $active === 'storefront-logs';
+            $is_wordpress_logs = $active === 'wordpress-logs';
             $args = [
-                'category' => $active,
+                'category' => $is_storefront_logs ? '' : ($is_wordpress_logs ? '' : $active),
                 'status' => isset($_GET['status']) ? sanitize_key(wp_unslash($_GET['status'])) : '',
-                'source' => isset($_GET['source']) ? sanitize_key(wp_unslash($_GET['source'])) : '',
+                'source' => $is_wordpress_logs ? 'wordpress' : (isset($_GET['source']) ? sanitize_key(wp_unslash($_GET['source'])) : ''),
                 'search' => isset($_GET['s']) ? sanitize_text_field(wp_unslash($_GET['s'])) : '',
                 'date_from' => isset($_GET['date_from']) ? sanitize_text_field(wp_unslash($_GET['date_from'])) : '',
                 'date_to' => isset($_GET['date_to']) ? sanitize_text_field(wp_unslash($_GET['date_to'])) : '',
                 'page' => isset($_GET['paged']) ? max(1, (int) $_GET['paged']) : 1,
                 'per_page' => 25,
             ];
+            if ($is_storefront_logs) {
+                $args['categories'] = ['dashboard', 'security', 'orders', 'consultation', 'emails', 'payments'];
+            }
             $result = Nevari_Audit::query($args);
             $total_pages = max(1, (int) ceil($result['total'] / $result['per_page']));
         }
@@ -641,6 +648,11 @@ final class Nevari_Admin {
             <?php if ($active === 'rate-limits') : ?>
                 <?php self::render_rate_limit_settings_tab(); ?>
             <?php else : ?>
+                <?php if ($active === 'storefront-logs') : ?>
+                    <p><?php esc_html_e('Activity across the customer, doctor, and admin storefronts.', 'nevari-pharmacy-core'); ?></p>
+                <?php elseif ($active === 'wordpress-logs') : ?>
+                    <p><?php esc_html_e('WordPress-originated security events, including login, failed login, and password reset activity.', 'nevari-pharmacy-core'); ?></p>
+                <?php endif; ?>
                 <form method="get" class="nevari-audit-filters">
                     <input type="hidden" name="page" value="nevari-store" />
                     <input type="hidden" name="tab" value="<?php echo esc_attr($active); ?>" />
@@ -654,6 +666,10 @@ final class Nevari_Admin {
                         <option value="woocommerce" <?php selected($args['source'], 'woocommerce'); ?>>WooCommerce</option>
                         <option value="wordpress" <?php selected($args['source'], 'wordpress'); ?>>WordPress</option>
                         <option value="nevari" <?php selected($args['source'], 'nevari'); ?>>Nevari</option>
+                        <option value="customer" <?php selected($args['source'], 'customer'); ?>>Customer</option>
+                        <option value="doctor" <?php selected($args['source'], 'doctor'); ?>>Doctor</option>
+                        <option value="admin" <?php selected($args['source'], 'admin'); ?>>Admin</option>
+                        <option value="google" <?php selected($args['source'], 'google'); ?>>Google</option>
                         <option value="system" <?php selected($args['source'], 'system'); ?>>System</option>
                     </select>
                     <input type="date" name="date_from" value="<?php echo esc_attr($args['date_from']); ?>" />
@@ -723,6 +739,8 @@ final class Nevari_Admin {
                         if ($args['status']) { $base_url = add_query_arg('status', $args['status'], $base_url); }
                         if ($args['source']) { $base_url = add_query_arg('source', $args['source'], $base_url); }
                         if ($args['search']) { $base_url = add_query_arg('s', rawurlencode($args['search']), $base_url); }
+                        if ($args['date_from']) { $base_url = add_query_arg('date_from', rawurlencode($args['date_from']), $base_url); }
+                        if ($args['date_to']) { $base_url = add_query_arg('date_to', rawurlencode($args['date_to']), $base_url); }
                         echo esc_html(sprintf(__('Page %1$d of %2$d', 'nevari-pharmacy-core'), $result['page'], $total_pages));
                         if ($result['page'] > 1) {
                             echo ' <a class="button" href="' . esc_url(add_query_arg('paged', $result['page'] - 1, $base_url)) . '">&laquo; ' . esc_html__('Previous', 'nevari-pharmacy-core') . '</a>';
@@ -733,9 +751,49 @@ final class Nevari_Admin {
                         ?>
                     </div>
                 </div>
+                <?php if ($active === 'wordpress-logs') : ?>
+                    <?php $wordpress_log_lines = self::wordpress_debug_log_lines(); ?>
+                    <h2 style="margin-top:24px;"><?php echo esc_html__('WordPress debug.log', 'nevari-pharmacy-core'); ?></h2>
+                    <p><?php echo esc_html__('Recent entries from wp-content/debug.log, when WordPress debugging is enabled and the file is readable.', 'nevari-pharmacy-core'); ?></p>
+                    <?php if (empty($wordpress_log_lines)) : ?>
+                        <p><?php esc_html_e('No readable WordPress debug log entries were found.', 'nevari-pharmacy-core'); ?></p>
+                    <?php else : ?>
+                        <pre class="nevari-wordpress-log-tail"><?php echo esc_html(implode("\n", $wordpress_log_lines)); ?></pre>
+                    <?php endif; ?>
+                <?php endif; ?>
             <?php endif; ?>
         </div>
         <?php
+    }
+
+    private static function wordpress_debug_log_lines(int $line_limit = 120): array {
+        if (!defined('WP_CONTENT_DIR')) {
+            return [];
+        }
+
+        $path = trailingslashit(WP_CONTENT_DIR) . 'debug.log';
+        if (!is_readable($path) || !is_file($path)) {
+            return [];
+        }
+
+        $size = filesize($path);
+        if (!$size) {
+            return [];
+        }
+
+        $bytes = 262144;
+        $offset = max(0, $size - $bytes);
+        $contents = file_get_contents($path, false, null, $offset, $bytes);
+        if (!is_string($contents) || $contents === '') {
+            return [];
+        }
+
+        $lines = preg_split('/\r\n|\r|\n/', trim($contents));
+        if (!is_array($lines)) {
+            return [];
+        }
+
+        return array_slice(array_filter($lines, static fn($line) => trim((string) $line) !== ''), -max(1, $line_limit));
     }
 
     private static function render_rate_limit_settings_tab(): void {

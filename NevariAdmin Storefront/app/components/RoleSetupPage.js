@@ -7,6 +7,15 @@ import { buildUrl, defaultSession, frontendContext, loadSession, saveSession } f
 
 const PAIRING_FRONTEND_TYPE = "custom_frontend";
 
+function isRecoverablePairingProbeFailure(payload) {
+  const code = String(payload?.code || payload?.error?.code || "");
+  const message = String(payload?.message || payload?.error?.message || "");
+  return code === "invalid_request_origin"
+    || code === "validation_error"
+    || /verified frontend request origin/i.test(message)
+    || /valid request origin/i.test(message);
+}
+
 export default function RoleSetupPage({ config }) {
   const router = useRouter();
   const [session, setSession] = useState(() => defaultSession(config));
@@ -57,10 +66,15 @@ export default function RoleSetupPage({ config }) {
           setPairingRequired(true);
           return;
         }
+        if (isRecoverablePairingProbeFailure(payload)) {
+          setPairingRequired(true);
+          setFeedback(payload?.error?.message || "A verified frontend request origin is required. Enter a fresh pairing code to connect this dashboard.");
+          return;
+        }
         setPairingRequired(false);
         setFeedback(payload?.error?.message || "Unable to verify the trusted dashboard domain. Try again shortly.");
       } catch {
-        setPairingRequired(false);
+        setPairingRequired(true);
         setFeedback("Unable to verify the trusted dashboard domain. Try again shortly.");
       }
     }

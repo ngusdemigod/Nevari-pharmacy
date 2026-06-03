@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { createPortal } from "react-dom";
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -353,15 +353,34 @@ function defaultSubscriptionSettings() {
   };
 }
 
+function normalizeNairaAmount(value) {
+  const raw = String(value || "").replace(/[^0-9.]/g, "").trim();
+  if (!raw) {
+    return 0;
+  }
+  const amount = Number(raw);
+  return Number.isFinite(amount) && amount >= 0 ? amount : 0;
+}
+
+function formatNairaAmount(value, currency = "NGN") {
+  return `${currency} ${formatNumber(normalizeNairaAmount(value))}`;
+}
+
+function toPaystackAmount(value) {
+  return Math.round(normalizeNairaAmount(value) * 100);
+}
+
 function loadSubscriptionSettings() {
   if (typeof window === "undefined") {
     return defaultSubscriptionSettings();
   }
   try {
-    return {
+    const settings = {
       ...defaultSubscriptionSettings(),
       ...JSON.parse(window.localStorage.getItem(SUBSCRIPTION_SETTINGS_KEY) || "{}")
     };
+    settings.amount = String(normalizeNairaAmount(settings.amount) || "");
+    return settings;
   } catch {
     return defaultSubscriptionSettings();
   }
@@ -1876,7 +1895,10 @@ export default function Page() {
   const [subscriptionSettings, setSubscriptionSettings] = useState(() => loadSubscriptionSettings());
   const [subscriptionState, setSubscriptionState] = useState({ loading: false, error: "", data: null });
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false);
+  const [subscriptionProtectionOpen, setSubscriptionProtectionOpen] = useState(false);
+  const [subscriptionOtp, setSubscriptionOtp] = useState({ code: "", status: "", challengeId: "", maskedEmail: "" });
   const [subscriptionModalMode, setSubscriptionModalMode] = useState("create");
+  const [subscriptionCreateLoading, setSubscriptionCreateLoading] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [resetUsername, setResetUsername] = useState("");
@@ -2039,6 +2061,8 @@ export default function Page() {
 
   function openSubscriptionModal(mode = "create", planName = "") {
     setSubscriptionModalMode(mode);
+    setSubscriptionProtectionOpen(false);
+    setSubscriptionOtp({ code: "", status: "", challengeId: "", maskedEmail: "" });
     setSubscriptionSettings((current) => ({
       ...current,
       planName: planName || current.planName || ""
@@ -2047,7 +2071,88 @@ export default function Page() {
   }
 
   function closeSubscriptionModal() {
+    setSubscriptionProtectionOpen(false);
+    setSubscriptionOtp({ code: "", status: "", challengeId: "", maskedEmail: "" });
+    setSubscriptionCreateLoading(false);
     setSubscriptionModalOpen(false);
+  }
+
+  async function openSubscriptionProtectionModal() {
+    setSubscriptionProtectionOpen(true);
+    setSubscriptionOtp({ code: "", status: "Sending OTP to your email...", challengeId: "", maskedEmail: "" });
+    try {
+      const payload = await apiRequest("/auth/request-verification-code", {
+        method: "POST",
+        body: {
+          ...frontendContext(session)
+        }
+      }, session);
+      setSubscriptionOtp({
+        code: "",
+        challengeId: payload.data?.challenge_id || "",
+        maskedEmail: payload.data?.masked_email || "",
+        status: `OTP sent${payload.data?.masked_email ? ` to ${payload.data.masked_email}` : ""}.`
+      });
+    } catch (error) {
+      setSubscriptionOtp({ code: "", status: describeRequestError(error) });
+    }
+  }
+
+  function closeSubscriptionProtectionModal() {
+    setSubscriptionProtectionOpen(false);
+    setSubscriptionOtp({ code: "", status: "", challengeId: "", maskedEmail: "" });
+    setSubscriptionCreateLoading(false);
+  }
+
+  async function createSubscriptionPlanAfterOtp() {
+    if (subscriptionOtp.code.length !== 6) {
+      setSubscriptionOtp((current) => ({ ...current, status: "Enter the 6-digit code sent to your email." }));
+      return;
+    }
+
+    setSubscriptionCreateLoading(true);
+    setSubscriptionOtp((current) => ({ ...current, status: "Verifying code and creating subscription plan..." }));
+
+    try {
+      const payload = await apiRequest("/subscriptions/admin", {
+        method: "POST",
+        body: {
+          ...frontendContext(session),
+          plan_name: subscriptionSettings.planName,
+          plan_key: subscriptionSettings.planName ? normalizeCategoryKey(subscriptionSettings.planName).replace(/_/g, "-") : "nevari_access_pro",
+          amount: normalizeNairaAmount(subscriptionSettings.amount),
+          amount_kobo: toPaystackAmount(subscriptionSettings.amount),
+          currency: subscriptionSettings.currency || "NGN",
+          interval: subscriptionSettings.interval || "monthly",
+          public_key: subscriptionSettings.publicKey || "",
+          manage_billing_url: subscriptionSettings.manageBillingUrl || "",
+          notifications_enabled: Boolean(subscriptionSettings.notificationsEnabled),
+          auto_renew: Boolean(subscriptionSettings.autoRenew),
+          cancellation_window_days: subscriptionSettings.cancellationWindowDays || "",
+          challenge_id: subscriptionOtp.challengeId,
+          code: subscriptionOtp.code
+        }
+      });
+
+      setSubscriptionState((current) => ({
+        ...current,
+        data: payload.data || current.data,
+        error: ""
+      }));
+      setSubscriptionOtp((current) => ({
+        ...current,
+        status: "Subscription plan created."
+      }));
+      closeSubscriptionModal();
+      await refreshSubscriptionStatus();
+      showSnackbar("Subscription plan created.", "success");
+    } catch (error) {
+      const message = describeRequestError(error);
+      setSubscriptionOtp((current) => ({ ...current, status: message }));
+      showSnackbar(message, "error");
+    } finally {
+      setSubscriptionCreateLoading(false);
+    }
   }
 
   async function refreshSubscriptionStatus() {
@@ -6706,35 +6811,14 @@ export default function Page() {
       return (
         <section className="page-view active">
           <section className="subscription-surface">
-            <div className="surface-topbar subscription-surface-topbar">
-              <label className="surface-search">
-                <InlineIcon id="i-search" />
-                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subscriptions" />
-              </label>
-              <div className="surface-actions">
-                <button className="mini-icon-btn" type="button" onClick={refreshSubscriptionStatus} aria-label="Refresh subscription data">
-                  <InlineIcon id="i-refresh-cw" />
-                </button>
-                <button className="mini-icon-btn primary" type="button" onClick={() => openSubscriptionModal("create")}>
-                  <InlineIcon id="i-plus" />
-                </button>
-                <span className="date-pill">{formatTopbarDate()}</span>
-                <button className="user-mini-pill" type="button" onClick={() => switchPage("profile")}>
-                  <span className="mini-avatar">{getInitials(session.user?.display_name || siteName)}</span>
-                  <span>
-                    <strong>{session.user?.display_name || siteName}</strong>
-                    <small>{session.user?.roles?.join(", ") || (session.paired ? "Paired frontend" : "WordPress pairing required")}</small>
-                  </span>
-                </button>
-              </div>
-            </div>
+            
 
             <div className="surface-content">
               <section className="section-hero-card">
                 <div>
-                  <p className="eyebrow">Subscriptions</p>
-                  <h1>Subscription plans and billing control in one view.</h1>
-                  <p>Manage plans, review subscriber status, and keep billing settings aligned with the active access model.</p>
+                  
+                  <h1>Nevari Access Subscriptions</h1>
+                  <p>Manage plans, review subscriber status.</p>
                 </div>
                 <div className="hero-actions-inline">
                   <button className="btn btn-primary" type="button" onClick={() => openSubscriptionModal("create")}>Create</button>
@@ -6742,28 +6826,7 @@ export default function Page() {
                 </div>
               </section>
 
-              <section className="stat-grid">
-                <article className="stat-card-clean primary">
-                  <label>Active subscriptions</label>
-                  <strong>{subscriptionState.data?.active_subscriptions != null ? formatNumber(subscriptionState.data.active_subscriptions) : "—"}</strong>
-                  <span>Currently verified on the gateway</span>
-                </article>
-                <article className="stat-card-clean accent">
-                  <label>Plan revenue</label>
-                  <strong>{subscriptionState.data?.active_plan_amount_label || "—"}</strong>
-                  <span>Monthly billing target</span>
-                </article>
-                <article className="stat-card-clean">
-                  <label>Renewals this month</label>
-                  <strong>{subscriptionState.data?.renewals_this_month != null ? formatNumber(subscriptionState.data.renewals_this_month) : "—"}</strong>
-                  <span>Scheduled billing follow-ups</span>
-                </article>
-                <article className="stat-card-clean">
-                  <label>Gateway health</label>
-                  <strong>{subscriptionState.error ? "Review" : "Healthy"}</strong>
-                  <span>{subscriptionState.error || "Paystack and REST sync are available"}</span>
-                </article>
-              </section>
+              
 
               {subscriptionState.error ? <section className="panel subscription-alert"><p className="muted">{subscriptionState.error}</p></section> : null}
 
@@ -6784,18 +6847,17 @@ export default function Page() {
                             <div className="plan-mark">{plan.slug}</div>
                             <div>
                               <h3>{plan.name}</h3>
-                              <p>{plan.note}</p>
+                              <p>Users {formatNumber(plan.users)}</p>
                             </div>
                           </div>
+                          
                           <div className="plan-price">
                             <strong>{plan.price}</strong>
                             <span>{plan.billing}</span>
                           </div>
-                        </div>
-                        <div className="plan-meta-grid">
-                          <div className="plan-meta-item"><span>Users</span><strong>{plan.users}</strong></div>
-                          <div className="plan-meta-item"><span>Billing</span><strong>{plan.billing}</strong></div>
-                          <div className="plan-meta-item"><span>Status</span><strong>{plan.featured ? "Featured" : "Standard"}</strong></div>
+                          <div className="plan-actions">
+                            <button className="btn btn-outline plan-edit-btn" type="button" onClick={() => openSubscriptionModal("edit", plan.name)}>Edit</button>
+                          </div>
                         </div>
                         <div className="entitlement-list">
                           {(Array.isArray(plan.entitlements) ? plan.entitlements : []).map((entitlement) => (
@@ -6804,19 +6866,10 @@ export default function Page() {
                             </span>
                           ))}
                         </div>
-                        <div className="plan-actions">
-                          <button className="btn btn-outline" type="button" onClick={() => openSubscriptionModal("edit", plan.name)}>Edit</button>
-                          <button className="btn btn-soft" type="button" onClick={refreshSubscriptionStatus}>Sync billing</button>
-                        </div>
+                       
                       </article>
                     ))}
-                    <div className="security-note warning">
-                      <span className="note-icon"><InlineIcon id="i-lock" /></span>
-                      <div>
-                        <strong>Authorization rule</strong>
-                        <span>Plan edits still require server-side role checks and audit logging.</span>
-                      </div>
-                    </div>
+                    
                   </div>
                 </article>
 
@@ -6913,12 +6966,16 @@ export default function Page() {
             <article className="subscription-modal-frame" role="dialog" aria-modal="true" aria-labelledby="subscriptionModalTitle">
               <div className="modal-head">
                 <div>
+                  <span className="subscription-modal-eyebrow">{subscriptionModalMode === "edit" ? "Protected update" : "Plan builder"}</span>
                   <h3 id="subscriptionModalTitle">{subscriptionModalMode === "edit" ? "Update subscription plan" : "Create subscription plan"}</h3>
                   <p>{subscriptionModalMode === "edit" ? "Modify plan details with protected step-up authentication before the update is applied." : "Create a subscription plan, define billing settings and choose the entitlements users receive after payment."}</p>
                 </div>
-                <button className="btn btn-outline btn-icon" type="button" onClick={closeSubscriptionModal} aria-label="Close">
-                  <InlineIcon id="i-x" />
-                </button>
+                <div className="subscription-modal-head-meta">
+                  <span className={`chip ${subscriptionModalMode === "edit" ? "processing" : "draft"}`}>{subscriptionModalMode === "edit" ? "Edit mode" : "Create mode"}</span>
+                  <button className="btn btn-outline btn-icon" type="button" onClick={closeSubscriptionModal} aria-label="Close">
+                    <InlineIcon id="i-x" />
+                  </button>
+                </div>
               </div>
               <div className="modal-body">
                 <div className="subscription-modal-grid">
@@ -6927,64 +6984,32 @@ export default function Page() {
                     <div className="creation-field-grid">
                       <div className="creation-field"><label>Plan name</label><input className="form-control" value={subscriptionSettings.planName} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, planName: event.target.value }))} /></div>
                       <div className="creation-field"><label>Plan slug</label><input className="form-control" value={subscriptionSettings.planName ? normalizeCategoryKey(subscriptionSettings.planName).replace(/_/g, "-") : ""} readOnly /></div>
-                      <div className="creation-field"><label>Amount</label><input className="form-control" value={subscriptionSettings.amount} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, amount: event.target.value }))} /></div>
+                      <div className="creation-field">
+                        <label>Amount</label>
+                        <input
+                          className="form-control"
+                          inputMode="decimal"
+                          value={subscriptionSettings.amount}
+                          onChange={(event) => setSubscriptionSettings((current) => ({ ...current, amount: event.target.value }))}
+                        />
+                      </div>
                       <div className="creation-field"><label>Currency</label><select className="form-control" value={subscriptionSettings.currency} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, currency: event.target.value }))}><option value="">Select currency</option><option>NGN</option><option>USD</option></select></div>
                       <div className="creation-field"><label>Billing interval</label><select className="form-control" value={subscriptionSettings.interval} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, interval: event.target.value }))}><option value="">Select interval</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option><option value="manual">Manual</option></select></div>
-                      <div className="creation-field"><label>Cancellation window</label><input className="form-control" value={subscriptionSettings.cancellationWindowDays} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, cancellationWindowDays: event.target.value }))} /></div>
-                    </div>
-
-                    <h4 className="creation-section-title"><InlineIcon id="i-settings" /> Gateway controls</h4>
-                    <div className="creation-field-grid">
-                      <div className="creation-field"><label>Paystack plan code / public key</label><input className="form-control" value={subscriptionSettings.publicKey} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, publicKey: event.target.value }))} /></div>
-                      <div className="creation-field"><label>Manage billing URL</label><input className="form-control" value={subscriptionSettings.manageBillingUrl} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, manageBillingUrl: event.target.value }))} /></div>
-                      <div className="creation-field"><label>Auto renew</label><select className="form-control" value={subscriptionSettings.autoRenew ? "Enabled" : "Disabled"} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, autoRenew: event.target.value === "Enabled" }))}><option>Enabled</option><option>Disabled</option></select></div>
-                      <div className="creation-field"><label>Notifications</label><select className="form-control" value={subscriptionSettings.notificationsEnabled ? "Enabled" : "Disabled"} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, notificationsEnabled: event.target.value === "Enabled" }))}><option>Enabled</option><option>Disabled</option></select></div>
-                    </div>
-
-                    <h4 className="creation-section-title"><InlineIcon id="i-users" /> Entitlements</h4>
-                    <div className="choice-row">
-                      {(Array.isArray(subscriptionState.data?.entitlements) ? subscriptionState.data.entitlements : []).length ? (
-                        (Array.isArray(subscriptionState.data?.entitlements) ? subscriptionState.data.entitlements : []).map((entitlement) => (
-                          <button className="creation-choice active" type="button" key={String(entitlement)}>
-                            {String(entitlement)}
-                          </button>
-                        ))
-                      ) : (
-                        <p className="muted">No entitlements loaded.</p>
-                      )}
-                    </div>
-
-                    <h4 className="creation-section-title"><InlineIcon id="i-lock" /> Sensitive update protection</h4>
-                    <div className="creation-popup-note warning">For update actions, the backend should require a valid admin role, current password, authenticator OTP, CSRF/session check, and a single-use action token tied to the exact change.</div>
-                    <div className="creation-field-grid">
-                      <div className="creation-field"><label>Current password</label><input className="form-control" type="password" placeholder="Required before update" /></div>
-                      <div className="creation-field"><label>Authenticator OTP</label><input className="form-control" inputMode="numeric" placeholder="6-digit code" /></div>
-                      <div className="creation-field full-width"><label>Reason for change</label><textarea className="form-control" placeholder="Example: Price adjustment approved by finance team" /></div>
                     </div>
                   </div>
-
-                  <aside className="creation-side">
-                    <div className="security-note">
-                      <span className="note-icon"><InlineIcon id="i-shield" /></span>
-                      <div>
-                        <strong>Step-up required</strong>
-                        <span>Password + OTP must be verified server-side before applying plan changes.</span>
-                      </div>
-                    </div>
-                    <div>
-                      <h4 id="summaryPlanName">{subscriptionSettings.planName || subscriptionState.data?.plans?.[0]?.name || "—"}</h4>
-                      <p>Preview of the subscription configuration before saving.</p>
+                  <aside className="creation-side subscription-side">
+                    <div className="subscription-preview-card">
+                      <div className="subscription-preview-badge">{subscriptionSettings.interval ? subscriptionSettings.interval.toUpperCase() : "MONTHLY"}</div>
+                      <div className="subscription-preview-value">{formatNairaAmount(subscriptionSettings.amount || 0)}</div>
+                      
                     </div>
                     <div className="creation-summary-list">
-                      <div><span>Amount</span><strong>{subscriptionState.data?.plans?.[0]?.price || "—"}</strong></div>
-                      <div><span>Interval</span><strong>{subscriptionState.data?.plans?.[0]?.billing || "—"}</strong></div>
-                      <div><span>Users impacted</span><strong>{subscriptionState.data?.plans?.[0]?.users != null ? formatNumber(subscriptionState.data.plans[0].users) : "—"}</strong></div>
-                      <div><span>Risk level</span><strong>{subscriptionState.data?.plans?.[0]?.featured ? "Featured" : "Standard"}</strong></div>
-                      <div><span>Approval</span><strong>Second admin</strong></div>
+                      <div><span>Plan </span><strong>{subscriptionSettings.planName || "Nevari Access Pro"}</strong></div>
+                      <div><span>Currency </span><strong>{subscriptionSettings.currency || "NGN"}</strong></div>
+                      <div><span>Billing </span><strong>{subscriptionSettings.interval || "monthly"}</strong></div>
                     </div>
-                    <div className="toggle-pills-row">
-                      <span className="toggle-mini"><InlineIcon id="i-lock" /> Audit log</span>
-                      <span className="toggle-mini"><InlineIcon id="i-shield" /> Owner alert</span>
+                    <div className="creation-popup-note">
+                      New Subscription plan preview
                     </div>
                   </aside>
                 </div>
@@ -6992,7 +7017,59 @@ export default function Page() {
               <div className="modal-actions sticky-modal-actions">
                 <button className="btn btn-outline" type="button" onClick={closeSubscriptionModal}>Cancel</button>
                 <button className="btn btn-soft" type="button">Save draft</button>
-                <button className="btn btn-primary" type="button" onClick={closeSubscriptionModal}>Create protected plan</button>
+                <button className="btn btn-primary" type="button" onClick={openSubscriptionProtectionModal}>Create</button>
+              </div>
+            </article>
+          </div>
+
+          <div className={`subscription-modal-backdrop subscription-protection-backdrop ${subscriptionProtectionOpen ? "open" : ""}`} aria-hidden={!subscriptionProtectionOpen}>
+            <article className="subscription-modal-frame subscription-protection-frame" role="dialog" aria-modal="true" aria-labelledby="subscriptionProtectionTitle">
+              <div className="modal-head">
+                <div>
+                  <span className="subscription-modal-eyebrow">Step-up verification</span>
+                  <h3 id="subscriptionProtectionTitle">Verify to continue</h3>
+                  <p>Verify the change before the subscription is created.</p>
+                </div>
+                <button className="btn btn-outline btn-icon" type="button" onClick={closeSubscriptionProtectionModal} aria-label="Close protection popup">
+                  <InlineIcon id="i-x" />
+                </button>
+              </div>
+              <div className="modal-body">
+                <div className="subscription-protection-grid">
+                  <div className="subscription-protection-summary">
+                    <div className="subscription-preview-card subscription-preview-card-light">
+                      <div className="subscription-preview-badge">OTP</div>
+                      <div className="subscription-preview-value">{subscriptionSettings.planName || "Nevari Access Pro"}</div>
+                      <div className="subscription-preview-note">{formatNairaAmount(subscriptionSettings.amount || 0)} monthly billing</div>
+                    </div>
+                    <div className="creation-summary-list">
+                      <div><span>Recipient</span><strong>{subscriptionOtp.maskedEmail || "Waiting for OTP"}</strong></div>
+                      <div><span>Challenge</span><strong>{subscriptionOtp.challengeId ? "Issued" : "Pending"}</strong></div>
+                    </div>
+                  </div>
+                  <label className="creation-field full-width">
+                    <span>One Time Password</span>
+                    <input
+                      className="form-control subscription-otp-input"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      autoFocus
+                      placeholder="6-digit code"
+                      value={subscriptionOtp.code}
+                      onChange={(event) => setSubscriptionOtp((current) => ({ ...current, code: event.target.value.replace(/\D+/g, "").slice(0, 6) }))}
+                    />
+                  </label>
+                  {subscriptionOtp.status ? <p className="subscription-otp-status">{subscriptionOtp.status}</p> : null}
+                </div>
+              </div>
+              <div className="modal-actions sticky-modal-actions">
+                <button className="btn btn-outline" type="button" onClick={closeSubscriptionProtectionModal}>Back</button>
+                <button className="btn btn-primary" type="button" disabled={subscriptionCreateLoading || subscriptionOtp.code.length !== 6} onClick={createSubscriptionPlanAfterOtp}>
+                  <InlineIcon id="i-lock" />
+                  {subscriptionCreateLoading ? "Creating..." : "Create subscription"}
+                </button>
               </div>
             </article>
           </div>

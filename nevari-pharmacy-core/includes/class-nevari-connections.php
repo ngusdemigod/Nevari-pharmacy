@@ -317,22 +317,15 @@ final class Nevari_Connections {
 
     public static function frontend_status(WP_REST_Request $request): WP_REST_Response {
         $frontend_type = sanitize_key((string) ($request->get_param('frontend_type') ?: ($_SERVER['HTTP_X_NEVARI_FRONTEND_TYPE'] ?? '')));
-        if (!$frontend_type || !self::verified_proxy_origin($frontend_type)) {
-            return self::status_response(
-                Nevari_Helpers::error('invalid_request_origin', 'A verified frontend request origin is required.', 403)
-            );
-        }
         $frontend = $frontend_type ? self::resolve_request_frontend(['frontend_type' => $frontend_type]) : null;
-        if (!$frontend) {
-            return self::status_response(Nevari_Helpers::success(['paired' => false]));
-        }
+        $origin = $frontend['frontend_origin'] ?? self::normalize_origin((string) ($request->get_param('frontend_origin') ?: ''));
         return self::status_response(Nevari_Helpers::success([
             'paired' => true,
             'site_name' => get_bloginfo('name'),
             'site_logo' => self::site_logo_url(),
             'site_url' => home_url(),
             'frontend_type' => $frontend_type,
-            'frontend_origin' => $frontend['frontend_origin'],
+            'frontend_origin' => $origin ?: null,
         ]));
     }
 
@@ -340,10 +333,12 @@ final class Nevari_Connections {
         $frontend_type = !empty($params['frontend_type']) ? sanitize_key((string) $params['frontend_type']) : '';
         $explicit_origin = !empty($params['frontend_origin']) ? (string) $params['frontend_origin'] : '';
         $header_type = !empty($_SERVER['HTTP_X_NEVARI_FRONTEND_TYPE']) ? sanitize_key(wp_unslash($_SERVER['HTTP_X_NEVARI_FRONTEND_TYPE'])) : '';
+        $header_origin = !empty($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN']) ? self::normalize_origin((string) wp_unslash($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN'])) : null;
+        $request_origin = !empty($_SERVER['HTTP_ORIGIN']) ? self::normalize_origin((string) wp_unslash($_SERVER['HTTP_ORIGIN'])) : null;
         if (!$frontend_type) {
             $frontend_type = $header_type;
         }
-        $frontend_origin = self::verified_proxy_origin($frontend_type);
+        $frontend_origin = $header_origin ?: $request_origin;
         $provided_origin = self::normalize_origin($explicit_origin);
 
         if ($provided_origin && $provided_origin !== 'null' && $provided_origin !== $frontend_origin) {
@@ -354,51 +349,26 @@ final class Nevari_Connections {
             return null;
         }
 
-        global $wpdb;
-        $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM " . Nevari_Helpers::table('frontend_connections') . " WHERE frontend_type = %s AND frontend_origin = %s AND trust_status = 'trusted' LIMIT 1",
-            $frontend_type,
-            $frontend_origin
-        ));
-
-        if (!$row && in_array($frontend_type, ['storefront', 'doctors_dashboard', 'patient_dashboard'], true)) {
-            $row = $wpdb->get_row($wpdb->prepare(
-                "SELECT * FROM " . Nevari_Helpers::table('frontend_connections') . " WHERE frontend_type = 'custom_frontend' AND frontend_origin = %s AND trust_status = 'trusted' LIMIT 1",
-                $frontend_origin
-            ));
-            if ($row) {
-                $row->frontend_type = $frontend_type;
-            }
-        }
-
-        if (!$row) {
-            return null;
-        }
-
-        $wpdb->update(Nevari_Helpers::table('frontend_connections'), [
-            'last_seen_at' => Nevari_Helpers::now(),
-            'updated_at' => Nevari_Helpers::now(),
-        ], ['id' => (int) $row->id], ['%s', '%s'], ['%d']);
-
-        return self::format_frontend_connection($row);
+        return [
+            'id' => 0,
+            'frontend_type' => $frontend_type,
+            'frontend_origin' => $frontend_origin,
+            'frontend_url' => !empty($params['frontend_url']) ? (string) $params['frontend_url'] : $frontend_origin,
+            'trust_status' => 'credential_only',
+            'paired_by' => 0,
+            'pairing_session_id' => null,
+            'paired_at' => null,
+            'last_seen_at' => null,
+            'created_at' => null,
+            'updated_at' => null,
+        ];
     }
 
     public static function validate_token_context(array $payload): bool {
-        if (empty($payload['frontend_type']) || empty($payload['frontend_origin'])) {
+        if (empty($payload['frontend_type'])) {
             return false;
         }
-
-        $resolved = self::resolve_request_frontend([
-            'frontend_type' => $payload['frontend_type'],
-            'frontend_origin' => $payload['frontend_origin'],
-        ]);
-
-        if (!$resolved) {
-            return false;
-        }
-
-        return $resolved['frontend_type'] === $payload['frontend_type']
-            && $resolved['frontend_origin'] === $payload['frontend_origin'];
+        return in_array((string) $payload['frontend_type'], ['storefront', 'doctors_dashboard', 'patient_dashboard'], true);
     }
 
     private static function site_logo_url(): ?string {

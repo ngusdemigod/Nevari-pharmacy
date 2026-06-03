@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { isAllowedUrl, sanitizeText } from "../../../lib/inputValidation";
 
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
@@ -70,8 +71,11 @@ function buildTarget(baseUrl, path, params = {}) {
   const target = new URL(`${normalizeBaseUrl(baseUrl)}/wp-json/${API_NAMESPACE}${path}`);
   assertAllowedTarget(target);
   Object.entries(params).forEach(([key, value]) => {
+    if (!/^[a-zA-Z0-9_.-]{1,40}$/.test(key) || String(value).length > 120 || /[<>{}`]/.test(String(value))) {
+      throw new Error("Invalid query parameter.");
+    }
     if (value !== undefined && value !== null && value !== "") {
-      target.searchParams.set(key, String(value));
+      target.searchParams.set(key, sanitizeText(value, { max: 120 }));
     }
   });
   return target;
@@ -139,7 +143,7 @@ export async function GET(request) {
     assertFrontendRequest(request);
     const url = new URL(request.url);
     const baseUrl = normalizeBaseUrl(url.searchParams.get("baseUrl"));
-    if (!baseUrl) {
+    if (!baseUrl || !isAllowedUrl(baseUrl, allowedOrigins())) {
       return Response.json({ success: false, error: { message: "Missing baseUrl." } }, { status: 400 });
     }
 

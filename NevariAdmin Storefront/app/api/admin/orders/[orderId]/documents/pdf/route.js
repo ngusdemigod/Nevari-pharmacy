@@ -1,5 +1,10 @@
 import { chromium } from "playwright";
 import { documentFilename, renderDocumentHtml } from "../../../../../../lib/documentHtml";
+import {
+  isAllowedUrl,
+  isValidId,
+  sanitizeText
+} from "../../../../../../lib/inputValidation";
 
 const ALLOWED_TYPES = new Set(["invoice", "receipt", "prescription"]);
 
@@ -74,9 +79,20 @@ export async function GET(request, { params }) {
     if (!ALLOWED_TYPES.has(documentType)) {
       return Response.json({ success: false, error: { message: "Invalid document type." } }, { status: 422 });
     }
-    const frontendType = url.searchParams.get("frontendType") || "patient";
+    const frontendType = sanitizeText(url.searchParams.get("frontendType") || "patient", { max: 40 });
+    if (!/^[a-zA-Z0-9_-]{1,40}$/.test(frontendType)) {
+      return Response.json({ success: false, error: { message: "Invalid frontend type." } }, { status: 422 });
+    }
+    const baseUrl = sanitizeText(url.searchParams.get("baseUrl") || "", { max: 300 });
+    const orderId = sanitizeText(params.orderId, { max: 80 });
+    if (!isValidId(orderId)) {
+      return Response.json({ success: false, error: { message: "Invalid order id." } }, { status: 422 });
+    }
+    if (!isAllowedUrl(baseUrl)) {
+      return Response.json({ success: false, error: { message: "Invalid backend URL." } }, { status: 422 });
+    }
     const session = {
-      baseUrl: url.searchParams.get("baseUrl") || "",
+      baseUrl,
       accessToken: requestCookie(request, cookieName(frontendType)),
       frontendType,
       frontendOrigin: url.origin
@@ -85,7 +101,7 @@ export async function GET(request, { params }) {
       return Response.json({ success: false, error: { message: "Authenticated session is required." } }, { status: 401 });
     }
 
-    const data = await proxyRequest(url.origin, session, `/orders/${encodeURIComponent(params.orderId)}/document-data`);
+    const data = await proxyRequest(url.origin, session, `/orders/${encodeURIComponent(orderId)}/document-data`);
     const statusMode = url.searchParams.get("statusMode") === "payment" ? "payment" : "order";
     const html = renderDocumentHtml(data, documentType, { appOrigin: url.origin, statusMode });
     const pdf = await htmlToPdf(html);

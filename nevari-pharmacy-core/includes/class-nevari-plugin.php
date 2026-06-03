@@ -37,6 +37,7 @@ final class Nevari_Plugin {
         Nevari_Auth::init();
         Nevari_Connections::init();
         Nevari_Rest::init();
+        Nevari_Subscriptions::init();
         Nevari_Admin::init();
         Nevari_Emails::init();
 
@@ -64,6 +65,8 @@ final class Nevari_Plugin {
             'customer_followup_sent_at' => "ALTER TABLE {$table} ADD customer_followup_sent_at DATETIME NULL",
             'cancelled_at' => "ALTER TABLE {$table} ADD cancelled_at DATETIME NULL",
             'rescheduled_at' => "ALTER TABLE {$table} ADD rescheduled_at DATETIME NULL",
+            'title' => "ALTER TABLE {$table} ADD title VARCHAR(191) NULL",
+            'duration_minutes' => "ALTER TABLE {$table} ADD duration_minutes INT UNSIGNED NULL",
         ];
 
         foreach ($columns as $column => $sql) {
@@ -990,7 +993,7 @@ final class Nevari_Plugin {
         $appointments_table = Nevari_Helpers::table('appointments');
         $wpdb->update($appointments_table, [
             'payment_status' => 'failed',
-            'status' => 'failed_payment',
+            'status' => 'failed',
             'reserved_until' => null,
             'updated_at' => Nevari_Helpers::now(),
         ], ['id' => $appointment_id], ['%s', '%s', '%s', '%s'], ['%d']);
@@ -1090,8 +1093,8 @@ final class Nevari_Plugin {
             return;
         }
         $wpdb->update($appointments_table, [
-            'status' => 'abandoned',
-            'payment_status' => 'abandoned',
+            'status' => 'failed',
+            'payment_status' => 'failed',
             'reserved_until' => null,
             'updated_at' => Nevari_Helpers::now(),
         ], ['id' => $appointment_id], ['%s', '%s', '%s', '%s'], ['%d']);

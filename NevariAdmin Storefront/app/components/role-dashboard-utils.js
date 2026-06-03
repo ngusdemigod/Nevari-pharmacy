@@ -264,6 +264,29 @@ export function titleCase(value) {
   return String(value || "n/a").replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+export function fitTextToContainer(element, { minFontSize = 18, step = 0.5 } = {}) {
+  if (!element || typeof window === "undefined") {
+    return;
+  }
+
+  const style = window.getComputedStyle(element);
+  const baseFontSize = Number.parseFloat(element.dataset.baseFontSize || style.fontSize);
+  if (!Number.isFinite(baseFontSize) || baseFontSize <= 0) {
+    return;
+  }
+
+  element.dataset.baseFontSize = String(baseFontSize);
+  element.style.fontSize = `${baseFontSize}px`;
+
+  let fontSize = baseFontSize;
+  let attempts = 0;
+  while (attempts < 40 && fontSize > minFontSize && (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1)) {
+    fontSize = Math.max(minFontSize, fontSize - step);
+    element.style.fontSize = `${fontSize}px`;
+    attempts += 1;
+  }
+}
+
 function normalizeOrderTypeValue(value) {
   return String(value || "")
     .trim()

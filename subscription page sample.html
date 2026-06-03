@@ -1,0 +1,1376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nevari subscriptions — Mockup</title>
+  <style>
+    :root {
+      --primary: #0A2A5E;
+      --primary-900: #061B3F;
+      --primary-800: #082651;
+      --primary-700: #11396F;
+      --primary-100: #E8EEF7;
+      --primary-50: #F4F7FB;
+      --accent: #E3D7C6;
+      --accent-900: #4B3D2B;
+      --accent-700: #8E7656;
+      --accent-500: #CBB89E;
+      --accent-100: #F4EEE6;
+      --accent-50: #FBF8F3;
+      --success: #1F8A5B;
+      --success-bg: #DDF4E8;
+      --warning: #B46A12;
+      --warning-bg: #FFF0D1;
+      --danger: #B23B3B;
+      --danger-bg: #FCE3E3;
+      --info: #2C6EB7;
+      --info-bg: #E2EFFC;
+      --purple: #7656A5;
+      --purple-bg: #EEE6FA;
+      --ink: #102039;
+      --muted: #667085;
+      --subtle: #98A2B3;
+      --line: rgba(10,42,94,.12);
+      --line-strong: rgba(10,42,94,.22);
+      --white: #FFFFFF;
+      --surface: rgba(255,255,255,.82);
+      --surface-soft: rgba(255,255,255,.58);
+      --page: #EFE9DE;
+      --font: Inter, Manrope, Product Sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --radius-xs: 10px;
+      --radius-sm: 14px;
+      --radius-md: 18px;
+      --radius-lg: 24px;
+      --radius-xl: 32px;
+      --pill: 999px;
+      --shadow-xs: 0 6px 14px rgba(10,42,94,.07);
+      --shadow-sm: 0 12px 28px rgba(10,42,94,.10);
+      --shadow-md: 0 22px 60px rgba(10,42,94,.14);
+      --inset: inset 0 1px 0 rgba(255,255,255,.72);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 16% 7%, rgba(255,255,255,.86), transparent 26%),
+        radial-gradient(circle at 88% 0%, rgba(227,215,198,.88), transparent 30%),
+        linear-gradient(145deg, #F8F4EE, var(--page));
+      padding: 28px;
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input, select, textarea { font: inherit; }
+    button { border: 0; cursor: pointer; }
+    a { color: inherit; text-decoration: none; }
+
+    .svg-sprite { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
+    .ui-icon {
+      width: 18px;
+      height: 18px;
+      display: inline-block;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.85;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex: 0 0 auto;
+      vertical-align: middle;
+    }
+
+    .page-wrap { max-width: 1480px; margin: 0 auto; }
+
+    .page-surface {
+      min-height: calc(100vh - 56px);
+      background: rgba(255,255,255,.74);
+      border: 1px solid rgba(255,255,255,.82);
+      border-radius: 28px;
+      box-shadow: var(--shadow-sm), var(--inset);
+      backdrop-filter: blur(18px);
+      overflow: hidden;
+    }
+
+    .surface-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(251,248,243,.92), rgba(255,255,255,.76));
+    }
+
+    .surface-search {
+      min-width: 260px;
+      flex: 1;
+      max-width: 410px;
+      height: 42px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.74);
+      border: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 16px;
+      color: var(--subtle);
+      box-shadow: var(--inset);
+    }
+
+    .surface-search input {
+      width: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .surface-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+
+    .mini-icon-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: rgba(255,255,255,.78);
+      border: 1px solid var(--line);
+      box-shadow: var(--inset);
+      color: var(--primary);
+      transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+    }
+
+    .mini-icon-btn:hover { transform: translateY(-1px); background: white; box-shadow: var(--shadow-xs), var(--inset); }
+    .mini-icon-btn.primary { background: var(--primary); color: white; border-color: var(--primary); box-shadow: 0 10px 24px rgba(10,42,94,.16); }
+
+    .date-pill, .user-mini-pill {
+      min-height: 40px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.78);
+      box-shadow: var(--inset);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 13px;
+      font-size: 12px;
+      font-weight: 560;
+      color: var(--primary);
+      white-space: nowrap;
+    }
+
+    .user-mini-pill .mini-avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, var(--accent), rgba(10,42,94,.15));
+      color: var(--primary);
+      font-size: 11px;
+      font-weight: 700;
+      border: 2px solid rgba(255,255,255,.9);
+    }
+
+    .user-mini-pill strong { display: block; font-size: 12px; line-height: 1.2; }
+    .user-mini-pill small { display: block; color: var(--muted); font-size: 10.5px; font-weight: 520; line-height: 1.2; margin-top: 2px; }
+
+    .surface-content { padding: 22px; }
+
+    .section-hero-card {
+      border-radius: 26px;
+      background:
+        radial-gradient(circle at 9% 18%, rgba(227,215,198,.62), transparent 30%),
+        linear-gradient(135deg, rgba(255,255,255,.90), rgba(250,247,242,.78));
+      border: 1px solid rgba(10,42,94,.08);
+      padding: 26px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 24px;
+      box-shadow: var(--shadow-xs), var(--inset);
+      margin-bottom: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .section-hero-card::after {
+      content: "";
+      position: absolute;
+      width: 260px;
+      height: 260px;
+      right: -100px;
+      bottom: -120px;
+      border-radius: 50%;
+      background: rgba(10,42,94,.055);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      margin: 0 0 9px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .section-hero-card h1 {
+      margin: 0 0 8px;
+      font-size: clamp(28px, 3vw, 42px);
+      line-height: 1.08;
+      letter-spacing: -.055em;
+      color: var(--primary);
+      font-weight: 640;
+    }
+
+    .section-hero-card p {
+      margin: 0;
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .hero-actions-inline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; position: relative; z-index: 2; }
+
+    .btn {
+      min-height: 39px;
+      padding: 0 16px;
+      border-radius: var(--pill);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      font-size: 12px;
+      font-weight: 560;
+      transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
+      white-space: nowrap;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary { background: var(--primary); color: white; box-shadow: 0 12px 24px rgba(10,42,94,.18); }
+    .btn-primary:hover { background: var(--primary-700); }
+    .btn-accent { background: var(--accent); color: var(--primary); box-shadow: 0 10px 20px rgba(75,61,43,.12); }
+    .btn-outline { background: rgba(255,255,255,.48); color: var(--primary); border: 1px solid var(--line); box-shadow: var(--inset); }
+    .btn-soft { background: var(--primary-100); color: var(--primary); }
+    .btn-danger { background: var(--danger-bg); color: var(--danger); }
+    .btn-light { background: white; color: var(--primary); }
+    .btn-icon { width: 39px; padding: 0; }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .stat-card-clean {
+      min-height: 120px;
+      border-radius: 22px;
+      background: rgba(255,255,255,.82);
+      border: 1px solid rgba(10,42,94,.08);
+      padding: 17px;
+      box-shadow: var(--shadow-xs), var(--inset);
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card-clean.primary { background: var(--primary); color: white; }
+    .stat-card-clean.accent { background: linear-gradient(135deg, var(--accent), #F3ECE2); color: var(--primary); }
+    .stat-card-clean::after {
+      content: "";
+      position: absolute;
+      right: -44px;
+      bottom: -44px;
+      width: 115px;
+      height: 115px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.28);
+    }
+    .stat-card-clean label { display: block; font-size: 11px; font-weight: 540; color: inherit; opacity: .72; margin-bottom: 14px; position: relative; z-index: 1; }
+    .stat-card-clean strong { display: block; font-size: 23px; line-height: 1.2; letter-spacing: -.04em; color: inherit; font-weight: 650; position: relative; z-index: 1; }
+    .stat-card-clean span { display: block; margin-top: 6px; color: inherit; opacity: .72; font-size: 11px; line-height: 1.45; position: relative; z-index: 1; }
+
+    .subscription-layout {
+      display: grid;
+      grid-template-columns: minmax(360px, .92fr) minmax(0, 1.45fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      border: 1px solid rgba(255,255,255,.74);
+      box-shadow: var(--shadow-xs), var(--inset);
+      padding: 18px;
+      min-width: 0;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 15px;
+    }
+    .panel-header h2, .panel-header h3 { margin: 0; color: var(--primary); font-size: 17px; line-height: 1.2; letter-spacing: -.035em; font-weight: 620; }
+    .panel-header p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+    .plans-stack { display: grid; gap: 12px; }
+
+    .plan-card {
+      border-radius: 22px;
+      background: rgba(255,255,255,.74);
+      border: 1px solid rgba(10,42,94,.10);
+      box-shadow: var(--inset);
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    .plan-card:hover { transform: translateY(-2px); background: rgba(255,255,255,.92); border-color: rgba(10,42,94,.18); box-shadow: var(--shadow-xs), var(--inset); }
+    .plan-card.featured {
+      background:
+        linear-gradient(145deg, rgba(10,42,94,.98), rgba(10,42,94,.90));
+      color: white;
+      border-color: rgba(10,42,94,.20);
+      box-shadow: 0 18px 42px rgba(10,42,94,.18), var(--inset);
+    }
+    .plan-card.featured::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      bottom: -70px;
+      width: 180px;
+      height: 180px;
+      background: rgba(227,215,198,.18);
+      border-radius: 50%;
+    }
+    .plan-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; position: relative; z-index: 1; }
+    .plan-title { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+    .plan-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      background: var(--primary-100);
+      color: var(--primary);
+      border: 1px solid rgba(10,42,94,.08);
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+    .plan-card.featured .plan-mark { background: rgba(255,255,255,.16); color: white; border-color: rgba(255,255,255,.16); }
+    .plan-title h3 { margin: 0; font-size: 15px; line-height: 1.25; letter-spacing: -.02em; font-weight: 640; color: inherit; }
+    .plan-title p { margin: 4px 0 0; color: inherit; opacity: .70; font-size: 11.5px; line-height: 1.4; }
+    .plan-price { position: relative; z-index: 1; }
+    .plan-price strong { display: block; font-size: 26px; line-height: 1; letter-spacing: -.055em; font-weight: 650; color: inherit; }
+    .plan-price span { display: block; margin-top: 5px; color: inherit; opacity: .68; font-size: 11px; }
+    .plan-meta-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; position: relative; z-index: 1; }
+    .plan-meta-item {
+      min-height: 58px;
+      border-radius: 16px;
+      padding: 10px;
+      background: rgba(255,255,255,.56);
+      border: 1px solid rgba(10,42,94,.08);
+    }
+    .plan-card.featured .plan-meta-item { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.12); }
+    .plan-meta-item span { display: block; font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; color: inherit; opacity: .58; font-weight: 650; }
+    .plan-meta-item strong { display: block; margin-top: 4px; font-size: 12px; color: inherit; font-weight: 600; }
+    .entitlement-list { display: flex; flex-wrap: wrap; gap: 7px; position: relative; z-index: 1; }
+
+    .chip, .tone-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 26px;
+      padding: 0 10px;
+      border-radius: var(--pill);
+      font-size: 11px;
+      font-weight: 560;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .chip::before { content:""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .chip.pending { color: var(--warning); background: var(--warning-bg); border-color: rgba(180,106,18,.22); }
+    .chip.processing { color: var(--info); background: var(--info-bg); border-color: rgba(44,110,183,.22); }
+    .chip.paid, .chip.confirmed, .chip.available { color: var(--success); background: var(--success-bg); border-color: rgba(31,138,91,.20); }
+    .chip.cancelled, .chip.failed, .chip.expired { color: var(--danger); background: var(--danger-bg); border-color: rgba(178,59,59,.20); }
+    .chip.refunded { color: var(--purple); background: var(--purple-bg); border-color: rgba(118,86,165,.20); }
+    .chip.draft { color: var(--accent-900); background: var(--accent-100); border-color: rgba(75,61,43,.16); }
+    .plan-card.featured .chip { background: rgba(255,255,255,.16); color: white; border-color: rgba(255,255,255,.12); }
+
+    .plan-actions { display: flex; gap: 8px; flex-wrap: wrap; position: relative; z-index: 1; }
+    .plan-actions .btn { min-height: 34px; }
+
+    .security-note {
+      border-radius: 18px;
+      background: rgba(10,42,94,.055);
+      border: 1px solid rgba(10,42,94,.08);
+      padding: 13px;
+      display: flex;
+      gap: 11px;
+      align-items: flex-start;
+      color: var(--primary);
+    }
+    .security-note.warning { background: var(--warning-bg); color: var(--warning); border-color: rgba(180,106,18,.18); }
+    .security-note .note-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: white;
+      color: inherit;
+      flex: 0 0 auto;
+      box-shadow: var(--inset);
+    }
+    .security-note strong { display: block; color: inherit; font-size: 12px; font-weight: 640; }
+    .security-note span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+
+    .tabs-bar, .segmented-mini {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      background: rgba(255,255,255,.72);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px;
+      box-shadow: var(--inset);
+    }
+    .segmented-mini button {
+      height: 32px;
+      padding: 0 13px;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 580;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .segmented-mini button.active { background: var(--primary); color: white; box-shadow: 0 8px 18px rgba(10,42,94,.14); }
+    .segmented-mini .badge-count {
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+      background: rgba(10,42,94,.08);
+      color: inherit;
+    }
+    .segmented-mini button.active .badge-count { background: rgba(255,255,255,.18); }
+
+    .users-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .filter-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .filter-select-clean {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.92);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 560;
+      box-shadow: var(--inset);
+    }
+
+    .users-table-wrap {
+      overflow: auto;
+      border-radius: 22px;
+      border: 1px solid rgba(10,42,94,.08);
+      background: rgba(255,255,255,.68);
+    }
+    table { width: 100%; border-collapse: collapse; min-width: 880px; }
+    th {
+      text-align: left;
+      color: var(--muted);
+      font-size: 10.5px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      padding: 13px 15px;
+      background: rgba(250,247,242,.95);
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap;
+    }
+    td {
+      padding: 14px 15px;
+      border-bottom: 1px solid rgba(10,42,94,.08);
+      font-size: 12.5px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: rgba(244,247,251,.78); }
+    .user-cell { display: flex; align-items: center; gap: 10px; min-width: 210px; }
+    .avatar-initial {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      background: var(--primary);
+      color: var(--accent);
+      border: 2px solid rgba(255,255,255,.92);
+      box-shadow: 0 8px 18px rgba(10,42,94,.12);
+      flex: 0 0 auto;
+    }
+    .user-cell strong { display: block; color: var(--primary); font-size: 13px; font-weight: 620; }
+    .user-cell span { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .user-actions { display: inline-flex; gap: 7px; }
+
+
+    .users-pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+      padding: 13px 14px;
+      border-radius: 20px;
+      background: rgba(255,255,255,.72);
+      border: 1px solid rgba(10,42,94,.08);
+      box-shadow: var(--inset);
+    }
+    .pagination-copy {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .pagination-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+    .page-btn {
+      min-width: 34px;
+      height: 34px;
+      padding: 0 11px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,.86);
+      border: 1px solid var(--line);
+      color: var(--primary);
+      font-size: 11.5px;
+      font-weight: 600;
+      box-shadow: var(--inset);
+      transition: transform .15s ease, background .15s ease, color .15s ease;
+    }
+    .page-btn:hover { transform: translateY(-1px); background: white; }
+    .page-btn.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+      box-shadow: 0 8px 18px rgba(10,42,94,.16);
+    }
+    .page-btn.disabled {
+      color: var(--subtle);
+      background: rgba(255,255,255,.44);
+      cursor: not-allowed;
+      transform: none;
+    }
+    .page-ellipsis {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 0 2px;
+    }
+
+    /* Modal and popup template layer from Nevari design system */
+    .rx-live-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(6,27,63,.38);
+      backdrop-filter: blur(6px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
+    }
+    .rx-live-modal.visible { opacity: 1; pointer-events: auto; }
+
+    .modal-frame {
+      position: relative;
+      z-index: 1;
+      width: min(920px, 100%);
+      border-radius: 30px;
+      background: #FBF8F3;
+      border: 1px solid rgba(255,255,255,.78);
+      box-shadow: var(--shadow-sm), var(--inset);
+      backdrop-filter: blur(18px);
+      display: flex;
+      flex-direction: column;
+      max-height: min(760px, calc(100vh - 40px));
+      overflow: hidden;
+      transform: translateY(12px);
+      transition: transform .2s ease;
+    }
+    .rx-live-modal.visible .modal-frame { transform: translateY(0); }
+    .modal-frame .modal-head {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      flex: 0 0 auto;
+      margin: 0;
+      padding: 24px 24px 18px;
+      background: linear-gradient(180deg, rgba(251,248,243,.98), rgba(251,248,243,.94));
+      border-bottom: 1px solid rgba(10,42,94,.08);
+      border-radius: 30px 30px 0 0;
+      backdrop-filter: blur(14px);
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .modal-head h3 { margin: 0; font-size: 20px; line-height: 1.2; letter-spacing: -.045em; font-weight: 650; color: var(--primary); }
+    .modal-head p { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; max-width: 650px; }
+    .modal-frame .modal-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 18px 24px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(10,42,94,.22) transparent;
+    }
+    .modal-frame .modal-body::-webkit-scrollbar { width: 8px; }
+    .modal-frame .modal-body::-webkit-scrollbar-track { background: transparent; }
+    .modal-frame .modal-body::-webkit-scrollbar-thumb { background: rgba(10,42,94,.18); border-radius: 999px; border: 2px solid rgba(251,248,243,.95); }
+    .modal-frame .modal-actions {
+      position: sticky;
+      bottom: 0;
+      z-index: 5;
+      flex: 0 0 auto;
+      margin: 0;
+      padding: 18px 24px 24px;
+      background: linear-gradient(180deg, rgba(251,248,243,.88), rgba(251,248,243,.98));
+      border-top: 1px solid rgba(10,42,94,.08);
+      border-radius: 0 0 30px 30px;
+      backdrop-filter: blur(14px);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .creation-popup-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 18px;
+      align-items: start;
+    }
+    .creation-main,
+    .creation-side {
+      min-width: 0;
+      border: 1px solid rgba(10,42,94,.10);
+      background: rgba(255,255,255,.58);
+      border-radius: 24px;
+      padding: 16px;
+      box-shadow: var(--inset);
+    }
+    .creation-side { position: sticky; top: 0; display: grid; gap: 12px; }
+    .creation-section-title {
+      margin: 0 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: -.01em;
+    }
+    .creation-field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .creation-field-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .creation-field-grid.one { grid-template-columns: 1fr; }
+    .creation-field { display: grid; gap: 6px; min-width: 0; }
+    .creation-field label { color: var(--primary); font-size: 11.5px; font-weight: 560; letter-spacing: -.01em; }
+    .form-control {
+      width: 100%;
+      min-width: 0;
+      height: 42px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.74);
+      padding: 0 14px;
+      outline: none;
+      color: var(--primary);
+      box-shadow: var(--inset);
+      font-size: 12px;
+      font-weight: 430;
+    }
+    textarea.form-control { height: 92px; padding: 12px 14px; resize: vertical; line-height: 1.5; }
+    .choice-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .creation-choice {
+      min-height: 32px;
+      padding: 0 12px;
+      border-radius: var(--pill);
+      border: 1px solid rgba(10,42,94,.12);
+      background: rgba(255,255,255,.70);
+      color: var(--primary);
+      font-size: 11.5px;
+      font-weight: 520;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background .14s ease, color .14s ease, transform .14s ease;
+    }
+    .creation-choice:hover { transform: translateY(-1px); background: white; }
+    .creation-choice.active { background: var(--primary); color: white; border-color: var(--primary); }
+    .creation-popup-note {
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(10,42,94,.055);
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+    .creation-popup-note.warning { background: var(--warning-bg); color: #70440B; border: 1px solid rgba(180,106,18,.14); }
+    .creation-side h4 { margin: 0; color: var(--primary); font-size: 14px; font-weight: 620; letter-spacing: -.02em; }
+    .creation-side p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .creation-summary-list { display: grid; gap: 9px; margin-top: 4px; }
+    .creation-summary-list div { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid rgba(10,42,94,.08); padding-top: 9px; color: var(--muted); font-size: 11.5px; }
+    .creation-summary-list strong { color: var(--primary); font-weight: 560; text-align: right; }
+    .toggle-mini {
+      height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.84);
+      border: 1px solid var(--line);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--primary);
+      font-weight: 560;
+    }
+    .toggle-pills-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    .rx-live-toast {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      width: min(360px, calc(100vw - 32px));
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 14px;
+      border-radius: 20px;
+      background: rgba(255,255,255,.96);
+      border: 1px solid rgba(10,42,94,.12);
+      box-shadow: 0 24px 54px rgba(10,42,94,.20), var(--inset);
+      color: var(--primary);
+      transform: translateY(18px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+      z-index: 95;
+    }
+    .rx-live-toast.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    .rx-live-toast-icon { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--primary); color: white; }
+    .rx-live-toast strong { display:block; font-size: 13px; font-weight: 560; }
+    .rx-live-toast span { display:block; margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .rx-live-toast-close { border:0; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; }
+
+    @media (max-width: 1180px) {
+      body { padding: 20px; }
+      .subscription-layout { grid-template-columns: 1fr; }
+      .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 840px) {
+      .surface-topbar, .section-hero-card { grid-template-columns: 1fr; flex-direction: column; align-items: stretch; }
+      .surface-search { max-width: none; min-width: 0; }
+      .hero-actions-inline, .surface-actions { justify-content: flex-start; }
+      .creation-popup-layout { grid-template-columns: 1fr; }
+      .creation-side { position: static; }
+      .creation-field-grid, .creation-field-grid.three { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 560px) {
+      body { padding: 12px; }
+      .surface-content { padding: 14px; }
+      .section-hero-card, .panel { padding: 16px; border-radius: 22px; }
+      .stat-grid, .plan-meta-grid { grid-template-columns: 1fr; }
+      .btn, .date-pill, .user-mini-pill { width: 100%; }
+      .modal-frame { border-radius: 24px; max-height: calc(100vh - 22px); }
+      .modal-frame .modal-head { padding: 18px; border-radius: 24px 24px 0 0; }
+      .modal-frame .modal-body { padding: 14px 18px; }
+      .modal-frame .modal-actions { padding: 14px 18px 18px; border-radius: 0 0 24px 24px; }
+    }
+
+    /* Compact horizontal subscription plan cards */
+    .plans-stack { display: grid; gap: 10px; }
+
+    .plan-card {
+      min-height: 82px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.78);
+      border: 1px solid rgba(10,42,94,.10);
+      box-shadow: var(--inset);
+      padding: 14px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 84px 126px auto;
+      align-items: center;
+      gap: 14px;
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+      position: relative;
+      overflow: hidden;
+      color: var(--primary);
+    }
+
+    .plan-card:hover {
+      transform: translateY(-1px);
+      background: rgba(255,255,255,.94);
+      border-color: rgba(10,42,94,.18);
+      box-shadow: var(--shadow-xs), var(--inset);
+    }
+
+    .plan-card.featured {
+      background: rgba(255,255,255,.90);
+      color: var(--primary);
+      border-color: rgba(10,42,94,.22);
+      box-shadow: 0 12px 28px rgba(10,42,94,.10), var(--inset);
+    }
+
+    .plan-card.featured::after { display: none; }
+
+    .plan-card.featured::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 14px;
+      bottom: 14px;
+      width: 4px;
+      border-radius: 0 999px 999px 0;
+      background: var(--primary);
+    }
+
+    .plan-title {
+      display: flex;
+      gap: 11px;
+      align-items: center;
+      min-width: 0;
+      position: relative;
+      z-index: 1;
+    }
+
+    .plan-mark {
+      width: 38px;
+      height: 38px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: var(--primary-100);
+      color: var(--primary);
+      border: 1px solid rgba(10,42,94,.08);
+      font-size: 11px;
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+
+    .plan-card.featured .plan-mark {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+      box-shadow: 0 8px 18px rgba(10,42,94,.16);
+    }
+
+    .plan-title h3 {
+      margin: 0;
+      color: var(--primary);
+      font-size: 14px;
+      line-height: 1.25;
+      letter-spacing: -.02em;
+      font-weight: 640;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .plan-title p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      opacity: 1;
+      font-size: 11px;
+      line-height: 1.25;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .plan-users,
+    .plan-price {
+      position: relative;
+      z-index: 1;
+      text-align: right;
+      min-width: 0;
+    }
+
+    .plan-users span,
+    .plan-price span {
+      display: block;
+      color: var(--muted);
+      opacity: 1;
+      font-size: 10px;
+      line-height: 1.25;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .035em;
+    }
+
+    .plan-users strong,
+    .plan-price strong {
+      display: block;
+      margin-top: 4px;
+      color: var(--primary);
+      font-size: 14px;
+      line-height: 1.2;
+      font-weight: 650;
+      letter-spacing: -.02em;
+    }
+
+    .plan-price strong {
+      font-size: 16px;
+      letter-spacing: -.035em;
+      white-space: nowrap;
+    }
+
+    .plan-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: nowrap;
+      position: relative;
+      z-index: 1;
+    }
+
+    .plan-actions .btn {
+      min-height: 34px;
+      padding: 0 12px;
+    }
+
+    .plan-card.featured .chip,
+    .plan-card.featured .btn-outline {
+      background: rgba(255,255,255,.48);
+      color: var(--primary);
+      border-color: rgba(10,42,94,.12);
+    }
+
+    @media (max-width: 720px) {
+      .plan-card {
+        grid-template-columns: 1fr auto;
+        align-items: start;
+      }
+      .plan-title { grid-column: 1 / -1; }
+      .plan-users,
+      .plan-price { text-align: left; }
+      .plan-actions { grid-column: 1 / -1; justify-content: flex-start; }
+    }
+
+  </style>
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path d="m20 20-4.3-4.3M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><path d="M7 4v3M17 4v3M5.5 6h13A2.5 2.5 0 0 1 21 8.5v10A2.5 2.5 0 0 1 18.5 21h-13A2.5 2.5 0 0 1 3 18.5v-10A2.5 2.5 0 0 1 5.5 6ZM3 10h18M7.5 14h.1M12 14h.1M16.5 14h.1M7.5 17.5h.1M12 17.5h.1"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4ZM19.2 13.6l1.1.9-1.6 2.8-1.4-.5a7.7 7.7 0 0 1-1.7 1l-.2 1.5h-3.2l-.2-1.5a7.8 7.8 0 0 1-1.7-1l-1.4.5-1.6-2.8 1.1-.9a7.4 7.4 0 0 1 0-2l-1.1-.9 1.6-2.8 1.4.5a7.8 7.8 0 0 1 1.7-1l.2-1.5h3.2l.2 1.5a7.7 7.7 0 0 1 1.7 1l1.4-.5 1.6 2.8-1.1.9a7.4 7.4 0 0 1 0 2Z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2M6.5 10h11A2.5 2.5 0 0 1 20 12.5v5A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-5A2.5 2.5 0 0 1 6.5 10ZM12 14v2"/></symbol>
+    <symbol id="i-card" viewBox="0 0 24 24"><path d="M4 7.5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 10h16M7.5 14.5h5"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M8.8 11.5a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4ZM3.8 19a5 5 0 0 1 10 0M16 10.5a2.6 2.6 0 1 0 0-5.2M15.2 14a4.5 4.5 0 0 1 5 4.5"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4.5L19 9.5a2.1 2.1 0 0 0-3-3L5.5 17 4 20ZM14.5 8 16 9.5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 19 6v5.5c0 4.2-2.9 7.8-7 9.5-4.1-1.7-7-5.3-7-9.5V6l7-3ZM9.5 12l1.7 1.7 3.4-3.7"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><path d="M6 12h.1M12 12h.1M18 12h.1"/></symbol>
+  </svg>
+
+  <main class="page-wrap">
+    <section class="page-surface">
+      <div class="surface-topbar">
+        <div class="surface-search">
+          <svg class="ui-icon" aria-hidden="true"><use href="#i-search"></use></svg>
+          <input type="text" value="Search subscriptions, users, plans" aria-label="Search subscriptions" />
+        </div>
+        <div class="surface-actions">
+          <button class="mini-icon-btn primary" type="button" data-open-plan-modal="create" aria-label="Create subscription plan"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"></use></svg></button>
+          <button class="date-pill" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-calendar"></use></svg>June 2, 2026</button>
+          <button class="mini-icon-btn" type="button" aria-label="Settings"><svg class="ui-icon" aria-hidden="true"><use href="#i-settings"></use></svg></button>
+          <button class="user-mini-pill" type="button"><span class="mini-avatar">AI</span><span><strong>angus igbani</strong><small>administrator</small></span></button>
+        </div>
+      </div>
+
+      <div class="surface-content">
+        <section class="section-hero-card">
+          <div>
+            <p class="eyebrow">Subscriptions</p>
+            <h1>Nevari subscriptions</h1>
+            <p>Create plans, change pricing and entitlements, review subscribed users, and protect every sensitive plan update with role checks, password, authenticator OTP and approval logging.</p>
+          </div>
+          <div class="hero-actions-inline">
+            <button class="btn btn-outline" type="button">Export users</button>
+          </div>
+        </section>
+
+        <section class="subscription-layout">
+          <article class="panel plans-panel" aria-label="Subscription plans list">
+            <div class="panel-header">
+              <div>
+                <h2>Subscription plans</h2>
+                <p>Create, modify, activate or retire plan configurations.</p>
+              </div>
+              <button class="btn btn-primary" type="button" data-open-plan-modal="create"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"></use></svg>Create</button>
+            </div>
+
+            <div class="plans-stack">
+              <article class="plan-card">
+                <div class="plan-title">
+                  <div class="plan-mark">FR</div>
+                  <div><h3>Free</h3><p>No billing frequency</p></div>
+                </div>
+                <div class="plan-users"><span>Users</span><strong>814</strong></div>
+                <div class="plan-price"><strong>₦0</strong><span>Free</span></div>
+                <div class="plan-actions">
+                  <button class="btn btn-outline" type="button" data-open-plan-modal="edit" data-plan="Free"><svg class="ui-icon" aria-hidden="true"><use href="#i-edit"></use></svg>Edit</button>
+                </div>
+              </article>
+
+              <article class="plan-card featured">
+                <div class="plan-title">
+                  <div class="plan-mark">PRO</div>
+                  <div><h3>Nevari Access Pro</h3><p>Monthly billing frequency</p></div>
+                </div>
+                <div class="plan-users"><span>Users</span><strong>397</strong></div>
+                <div class="plan-price"><strong>₦10,000</strong><span>Monthly</span></div>
+                <div class="plan-actions">
+                  <button class="btn btn-primary" type="button" data-open-plan-modal="edit" data-plan="Nevari Access Pro"><svg class="ui-icon" aria-hidden="true"><use href="#i-edit"></use></svg>Edit</button>
+                </div>
+              </article>
+
+              <article class="plan-card">
+                <div class="plan-title">
+                  <div class="plan-mark">EN</div>
+                  <div><h3>Enterprise</h3><p>Quarterly or annual frequency</p></div>
+                </div>
+                <div class="plan-users"><span>Users</span><strong>37</strong></div>
+                <div class="plan-price"><strong>Custom</strong><span>Contract</span></div>
+                <div class="plan-actions">
+                  <button class="btn btn-outline" type="button" data-open-plan-modal="edit" data-plan="Enterprise"><svg class="ui-icon" aria-hidden="true"><use href="#i-edit"></use></svg>Edit</button>
+                </div>
+              </article>
+
+              <article class="plan-card">
+                <div class="plan-title">
+                  <div class="plan-mark">YR</div>
+                  <div><h3>Access Pro Annual</h3><p>Annual billing frequency</p></div>
+                </div>
+                <div class="plan-users"><span>Users</span><strong>96</strong></div>
+                <div class="plan-price"><strong>₦100,000</strong><span>Yearly</span></div>
+                <div class="plan-actions">
+                  <button class="btn btn-outline" type="button" data-open-plan-modal="edit" data-plan="Access Pro Annual"><svg class="ui-icon" aria-hidden="true"><use href="#i-edit"></use></svg>Edit</button>
+                </div>
+              </article>
+
+              <div class="security-note warning">
+                <span class="note-icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-lock"></use></svg></span>
+                <div><strong>Authorization rule</strong><span>All plan edits open the protected popup and must still be verified on the backend with role check, password, OTP and audit logging.</span></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel users-panel" aria-label="Subscribed users list">
+            <div class="panel-header">
+              <div>
+                <h2>List of users</h2>
+                <p>Review subscribers, renewal dates, status, and assigned plan.</p>
+              </div>
+              <div class="filter-row">
+                <button class="btn btn-soft" type="button">Sync billing</button>
+              </div>
+            </div>
+
+            <div class="users-toolbar">
+              <div class="segmented-mini" aria-label="User subscription filters">
+                <button class="active" type="button">All <span class="badge-count">1.2k</span></button>
+                <button type="button">Active <span class="badge-count">982</span></button>
+                <button type="button">Past due <span class="badge-count">41</span></button>
+                <button type="button">Cancelled <span class="badge-count">18</span></button>
+              </div>
+              <div class="filter-row">
+                <span class="filter-select-clean">Plan: Access Pro</span>
+                <span class="filter-select-clean">Renewal: This month</span>
+              </div>
+            </div>
+
+            <div class="users-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Plan</th>
+                    <th>Status</th>
+                    <th>Renewal date</th>
+                    <th>Amount</th>
+                    <th>Gateway ref</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><div class="user-cell"><div class="avatar-initial">AI</div><div><strong>angus igbani</strong><span>angus@nevarihealth.com</span></div></div></td>
+                    <td>Nevari Access Pro</td>
+                    <td><span class="chip confirmed">Active</span></td>
+                    <td>June 30, 2026</td>
+                    <td>₦10,000</td>
+                    <td>PSK_92A01</td>
+                    <td><div class="user-actions"><button class="btn btn-soft" type="button">View</button><button class="btn btn-outline" type="button">Modify</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><div class="user-cell"><div class="avatar-initial" style="background:var(--accent);color:var(--primary);">CB</div><div><strong>Chinwe Bello</strong><span>chinwe@example.com</span></div></div></td>
+                    <td>Nevari Access Pro</td>
+                    <td><span class="chip pending">Past due</span></td>
+                    <td>June 04, 2026</td>
+                    <td>₦10,000</td>
+                    <td>PSK_77L29</td>
+                    <td><div class="user-actions"><button class="btn btn-soft" type="button">View</button><button class="btn btn-outline" type="button">Retry</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><div class="user-cell"><div class="avatar-initial" style="background:var(--primary-100);color:var(--primary);">DO</div><div><strong>Daniel Okafor</strong><span>daniel@example.com</span></div></div></td>
+                    <td>Free</td>
+                    <td><span class="chip draft">Free</span></td>
+                    <td>Not scheduled</td>
+                    <td>₦0</td>
+                    <td>—</td>
+                    <td><div class="user-actions"><button class="btn btn-soft" type="button">View</button><button class="btn btn-outline" type="button">Upgrade</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><div class="user-cell"><div class="avatar-initial" style="background:var(--success-bg);color:var(--success);">GO</div><div><strong>Grace Obi</strong><span>grace@example.com</span></div></div></td>
+                    <td>Enterprise</td>
+                    <td><span class="chip confirmed">Manual active</span></td>
+                    <td>Aug 01, 2026</td>
+                    <td>Contract</td>
+                    <td>INV_1021</td>
+                    <td><div class="user-actions"><button class="btn btn-soft" type="button">View</button><button class="btn btn-outline" type="button">Seats</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><div class="user-cell"><div class="avatar-initial" style="background:var(--danger-bg);color:var(--danger);">KM</div><div><strong>Kemi Musa</strong><span>kemi@example.com</span></div></div></td>
+                    <td>Nevari Access Pro</td>
+                    <td><span class="chip cancelled">Cancelled</span></td>
+                    <td>Ended May 29, 2026</td>
+                    <td>₦10,000</td>
+                    <td>PSK_11Q70</td>
+                    <td><div class="user-actions"><button class="btn btn-soft" type="button">View</button><button class="btn btn-outline" type="button">Restore</button></div></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="users-pagination" aria-label="Users pagination">
+              <div class="pagination-copy">Showing 1–5 of 1,237 users</div>
+              <div class="pagination-controls">
+                <button class="page-btn disabled" type="button" aria-label="Previous page">Previous</button>
+                <button class="page-btn active" type="button" aria-current="page">1</button>
+                <button class="page-btn" type="button">2</button>
+                <button class="page-btn" type="button">3</button>
+                <span class="page-ellipsis">…</span>
+                <button class="page-btn" type="button">248</button>
+                <button class="page-btn" type="button" aria-label="Next page">Next</button>
+              </div>
+            </div>
+          </article>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div class="rx-live-modal" id="subscriptionModal" aria-hidden="true">
+    <article class="modal-frame creation-frame" role="dialog" aria-modal="true" aria-labelledby="subscriptionModalTitle">
+      <div class="modal-head">
+        <div>
+          <h3 id="subscriptionModalTitle">Create subscription plan</h3>
+          <p id="subscriptionModalText">Create a subscription plan, define billing settings and choose the entitlements users receive after payment.</p>
+        </div>
+        <button class="btn btn-outline btn-icon" type="button" data-close-modal aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="creation-popup-layout">
+          <div class="creation-main">
+            <h4 class="creation-section-title"><svg class="ui-icon" aria-hidden="true"><use href="#i-card"></use></svg>Plan details</h4>
+            <div class="creation-field-grid">
+              <div class="creation-field"><label>Plan name</label><input class="form-control" data-plan-name value="Nevari Access Pro" /></div>
+              <div class="creation-field"><label>Plan slug</label><input class="form-control" value="nevari-access-pro" /></div>
+              <div class="creation-field"><label>Amount</label><input class="form-control" value="10000" /></div>
+              <div class="creation-field"><label>Currency</label><select class="form-control"><option>NGN</option><option>USD</option></select></div>
+              <div class="creation-field"><label>Billing interval</label><select class="form-control"><option>Monthly</option><option>Quarterly</option><option>Yearly</option><option>Manual</option></select></div>
+              <div class="creation-field"><label>Cancellation window</label><input class="form-control" value="3 days" /></div>
+            </div>
+
+            <h4 class="creation-section-title" style="margin-top:18px;"><svg class="ui-icon" aria-hidden="true"><use href="#i-settings"></use></svg>Gateway controls</h4>
+            <div class="creation-field-grid">
+              <div class="creation-field"><label>Paystack plan code / public key</label><input class="form-control" placeholder="PLN_xxxxx or public key" /></div>
+              <div class="creation-field"><label>Manage billing URL</label><input class="form-control" placeholder="https://..." /></div>
+              <div class="creation-field"><label>Auto renew</label><select class="form-control"><option>Enabled</option><option>Disabled</option></select></div>
+              <div class="creation-field"><label>Notifications</label><select class="form-control"><option>Enabled</option><option>Disabled</option></select></div>
+            </div>
+
+            <h4 class="creation-section-title" style="margin-top:18px;"><svg class="ui-icon" aria-hidden="true"><use href="#i-users"></use></svg>Entitlements</h4>
+            <div class="choice-row" data-choice-row>
+              <button class="creation-choice active" type="button">Premium dashboard</button>
+              <button class="creation-choice active" type="button">Priority booking</button>
+              <button class="creation-choice active" type="button">Advanced reports</button>
+              <button class="creation-choice" type="button">API access</button>
+              <button class="creation-choice active" type="button">Email support</button>
+              <button class="creation-choice" type="button">Team seats</button>
+            </div>
+
+            <h4 class="creation-section-title" style="margin-top:18px;"><svg class="ui-icon" aria-hidden="true"><use href="#i-lock"></use></svg>Sensitive update protection</h4>
+            <div class="creation-popup-note warning">For update actions, the backend should require a valid admin role, current password, authenticator OTP, CSRF/session check, and a single-use action token tied to the exact change.</div>
+            <div class="creation-field-grid" style="margin-top:12px;">
+              <div class="creation-field"><label>Current password</label><input class="form-control" type="password" placeholder="Required before update" /></div>
+              <div class="creation-field"><label>Authenticator OTP</label><input class="form-control" inputmode="numeric" placeholder="6-digit code" /></div>
+              <div class="creation-field" style="grid-column:1/-1;"><label>Reason for change</label><textarea class="form-control" placeholder="Example: Price adjustment approved by finance team"></textarea></div>
+            </div>
+          </div>
+
+          <aside class="creation-side">
+            <div class="security-note">
+              <span class="note-icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-shield"></use></svg></span>
+              <div><strong>Step-up required</strong><span>Password + OTP must be verified server-side before applying plan changes.</span></div>
+            </div>
+            <div>
+              <h4 id="summaryPlanName">Nevari Access Pro</h4>
+              <p>Preview of the subscription configuration before saving.</p>
+            </div>
+            <div class="creation-summary-list">
+              <div><span>Amount</span><strong>₦10,000</strong></div>
+              <div><span>Interval</span><strong>Monthly</strong></div>
+              <div><span>Users impacted</span><strong>397</strong></div>
+              <div><span>Risk level</span><strong>High</strong></div>
+              <div><span>Approval</span><strong>Second admin</strong></div>
+            </div>
+            <div class="toggle-pills-row">
+              <span class="toggle-mini"><svg class="ui-icon" aria-hidden="true"><use href="#i-lock"></use></svg> Audit log</span>
+              <span class="toggle-mini"><svg class="ui-icon" aria-hidden="true"><use href="#i-shield"></use></svg> Owner alert</span>
+            </div>
+            <div class="creation-popup-note">Saving this mockup shows a toast only. In production, never allow plan changes from frontend state alone.</div>
+          </aside>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" type="button" data-close-modal>Cancel</button>
+        <button class="btn btn-soft" type="button">Save draft</button>
+        <button class="btn btn-primary" type="button" data-submit-plan><svg class="ui-icon" aria-hidden="true"><use href="#i-lock"></use></svg><span id="modalSubmitText">Create protected plan</span></button>
+      </div>
+    </article>
+  </div>
+
+  <div class="rx-live-toast" id="rxLiveToast" role="status" aria-live="polite">
+    <div class="rx-live-toast-icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-shield"></use></svg></div>
+    <div><strong id="rxLiveToastTitle">Updated</strong><span id="rxLiveToastText">The mockup interaction completed.</span></div>
+    <button class="rx-live-toast-close" type="button" aria-label="Close">×</button>
+  </div>
+
+  <script>
+    (function () {
+      const modal = document.getElementById('subscriptionModal');
+      const title = document.getElementById('subscriptionModalTitle');
+      const text = document.getElementById('subscriptionModalText');
+      const submitText = document.getElementById('modalSubmitText');
+      const planInput = modal.querySelector('[data-plan-name]');
+      const summaryPlanName = document.getElementById('summaryPlanName');
+      const toast = document.getElementById('rxLiveToast');
+      const toastTitle = document.getElementById('rxLiveToastTitle');
+      const toastText = document.getElementById('rxLiveToastText');
+      let toastTimer;
+
+      function showToast(titleValue, textValue) {
+        toastTitle.textContent = titleValue;
+        toastText.textContent = textValue;
+        toast.classList.add('visible');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove('visible'), 3200);
+      }
+
+      function openModal(mode, planName) {
+        if (mode === 'edit') {
+          title.textContent = 'Update subscription plan';
+          text.textContent = 'Modify plan details with protected step-up authentication before the update is applied.';
+          submitText.textContent = 'Verify and request update';
+          planInput.value = planName || 'Nevari Access Pro';
+        } else {
+          title.textContent = 'Create subscription plan';
+          text.textContent = 'Create a subscription plan, define billing settings and choose the entitlements users receive after payment.';
+          submitText.textContent = 'Create protected plan';
+          planInput.value = 'Nevari Access Pro';
+        }
+        summaryPlanName.textContent = planInput.value || 'New subscription plan';
+        modal.classList.add('visible');
+        modal.setAttribute('aria-hidden', 'false');
+      }
+
+      function closeModal() {
+        modal.classList.remove('visible');
+        modal.setAttribute('aria-hidden', 'true');
+      }
+
+      document.querySelectorAll('[data-open-plan-modal]').forEach(button => {
+        button.addEventListener('click', () => openModal(button.dataset.openPlanModal, button.dataset.plan));
+      });
+
+      document.querySelectorAll('[data-close-modal]').forEach(button => button.addEventListener('click', closeModal));
+      modal.addEventListener('click', event => { if (event.target === modal) closeModal(); });
+
+      planInput.addEventListener('input', () => {
+        summaryPlanName.textContent = planInput.value || 'New subscription plan';
+      });
+
+      document.querySelectorAll('.creation-choice').forEach(choice => {
+        choice.addEventListener('click', () => choice.classList.toggle('active'));
+      });
+
+      document.querySelector('[data-submit-plan]').addEventListener('click', () => {
+        showToast('Protected request prepared', 'Password + OTP verification and approval logging would run server-side before saving.');
+        closeModal();
+      });
+
+      document.querySelector('.rx-live-toast-close').addEventListener('click', () => toast.classList.remove('visible'));
+    })();
+  </script>
+</body>
+</html>

@@ -1,5 +1,12 @@
 import { chromium } from "playwright";
 import { documentFilename, renderDocumentHtml } from "../../../../../../lib/documentHtml";
+import {
+  escapeHtml,
+  isAllowedUrl,
+  isValidId,
+  rejectUnknownFields,
+  sanitizeText
+} from "../../../../../../lib/inputValidation";
 
 const API_NAMESPACE = "nevari/v1";
 const ALLOWED_TYPES = new Set(["invoice", "receipt", "prescription"]);
@@ -83,9 +90,9 @@ function fallbackSubject(documentType, data) {
 function fallbackBody(documentType, data, paymentUrl = "") {
   const title = documentType[0].toUpperCase() + documentType.slice(1);
   const paymentLink = documentType === "invoice" && paymentUrl && Number(data?.totals?.balance_due || 0) > 0
-    ? `<p><a href="${paymentUrl}" target="_blank" rel="noopener noreferrer">Pay now</a></p>`
+    ? `<p><a href="${escapeHtml(paymentUrl)}" target="_blank" rel="noopener noreferrer">Pay now</a></p>`
     : "";
-  return `<p>Hello ${data.customer?.name || "Customer"},</p><p>Your ${title.toLowerCase()} for order <strong>#${data.order_number}</strong> is attached.</p>${paymentLink}<p>Thank you for choosing Nevari Health.</p>`;
+  return `<p>Hello ${escapeHtml(data.customer?.name || "Customer")},</p><p>Your ${escapeHtml(title.toLowerCase())} for order <strong>#${escapeHtml(data.order_number)}</strong> is attached.</p>${paymentLink}<p>Thank you for choosing Nevari Health.</p>`;
 }
 
 function fallbackText(documentType, data, paymentUrl = "") {
@@ -105,26 +112,42 @@ export async function POST(request, { params }) {
   try {
     assertFrontendRequest(request);
     const body = await request.json().catch(() => ({}));
+    const unknownFieldError = rejectUnknownFields(body, ["document_type", "frontendType", "baseUrl", "appOrigin", "fallback_variables"]);
+    if (unknownFieldError) {
+      return Response.json({ success: false, error: { message: unknownFieldError } }, { status: 400 });
+    }
+    if (body.fallback_variables !== undefined && (!body.fallback_variables || typeof body.fallback_variables !== "object" || Array.isArray(body.fallback_variables))) {
+      return Response.json({ success: false, error: { message: "fallback_variables must be an object." } }, { status: 400 });
+    }
     const documentType = String(body.document_type || "invoice").toLowerCase();
     if (!ALLOWED_TYPES.has(documentType)) {
       return Response.json({ success: false, error: { message: "Invalid document type." } }, { status: 422 });
     }
-    const frontendType = body.frontendType || "storefront";
+    const frontendType = sanitizeText(body.frontendType || "storefront", { max: 40 });
+    if (!/^[a-zA-Z0-9_-]{1,40}$/.test(frontendType)) {
+      return Response.json({ success: false, error: { message: "Invalid frontend type." } }, { status: 422 });
+    }
     const accessToken = requestCookie(request, cookieName(frontendType));
-    if (!body.baseUrl || !accessToken) {
+    if (!body.baseUrl || !isAllowedUrl(body.baseUrl) || !accessToken) {
       return Response.json({ success: false, error: { message: "Admin session is required to send documents." } }, { status: 401 });
     }
 
     const origin = new URL(request.url).origin;
-    const orderId = params.orderId;
+    const orderId = sanitizeText(params.orderId, { max: 80 });
+    if (!isValidId(orderId)) {
+      return Response.json({ success: false, error: { message: "Invalid order id." } }, { status: 422 });
+    }
     const session = {
-      baseUrl: body.baseUrl,
+      baseUrl: sanitizeText(body.baseUrl, { max: 300 }),
       accessToken,
       frontendType,
       frontendOrigin: origin
     };
     const data = await proxyRequest(origin, session, `/orders/${encodeURIComponent(orderId)}/document-data`);
-    const appOrigin = body.appOrigin || origin;
+    const appOrigin = sanitizeText(body.appOrigin || origin, { max: 300 });
+    if (!isAllowedUrl(appOrigin)) {
+      return Response.json({ success: false, error: { message: "Invalid application origin." } }, { status: 422 });
+    }
     const paymentUrl = documentType === "invoice" ? appPaymentUrl(appOrigin, data.invoice_number, data.payment_token) : "";
     const renderData = documentType === "invoice"
       ? { ...data, branded_payment_url: paymentUrl, payment_url: paymentUrl }
@@ -147,7 +170,10 @@ export async function POST(request, { params }) {
         body_html: fallbackBody(documentType, data, paymentUrl),
         body_text: fallbackText(documentType, data, paymentUrl),
         variables: {
-          ...(body.fallback_variables || {}),
+          ...Object.fromEntries(Object.entries(body.fallback_variables || {}).map(([key, value]) => [
+            sanitizeText(key, { max: 60 }),
+            sanitizeText(value, { max: 500 })
+          ])),
           customer_name: data.customer?.name || "Customer",
           customer_email: data.customer?.email || "",
           order_id: String(data.order_id || ""),

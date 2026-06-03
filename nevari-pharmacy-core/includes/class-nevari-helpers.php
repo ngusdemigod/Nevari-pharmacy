@@ -385,6 +385,37 @@ final class Nevari_Helpers {
             ]);
         }
 
+        if (class_exists('Nevari_Audit')) {
+            $frontend = isset($context['dashboard']) ? sanitize_key((string) $context['dashboard']) : '';
+            if (in_array($frontend, ['patient', 'customer'], true)) {
+                $frontend = 'customer';
+            } elseif (in_array($frontend, ['store_admin', 'store-admin', 'sales'], true)) {
+                $frontend = 'admin';
+            } elseif (!in_array($frontend, ['doctor', 'customer', 'admin'], true)) {
+                $frontend = '';
+            }
+            if ($frontend === '') {
+                if (str_starts_with($event, 'dashboard.patient.')) {
+                    $frontend = 'customer';
+                } elseif (str_starts_with($event, 'dashboard.doctor.')) {
+                    $frontend = 'doctor';
+                } elseif (str_starts_with($event, 'dashboard.store_admin.') || str_starts_with($event, 'dashboard.sales.')) {
+                    $frontend = 'admin';
+                }
+            }
+
+            Nevari_Audit::log('dashboard', $frontend ?: 'nevari', $event, $normalized_level === 'error' ? 'error' : 'success', [
+                'actor_user_id' => get_current_user_id(),
+                'severity' => $normalized_level === 'error' ? 'error' : 'info',
+                'message' => isset($context['message']) ? sanitize_text_field((string) $context['message']) : null,
+                'metadata' => array_merge($context, [
+                    'request_id' => self::request_id(),
+                    'event' => $event,
+                    'level' => $normalized_level ?: 'info',
+                ]),
+            ]);
+        }
+
         error_log('Nevari dashboard log ' . $encoded); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
     }
 
@@ -822,6 +853,14 @@ final class Nevari_Helpers {
         ));
         $doctor = self::user_summary((int) $row->doctor_user_id);
         $patient = self::user_summary((int) $row->patient_user_id);
+        $duration_minutes = isset($row->duration_minutes) && $row->duration_minutes ? (int) $row->duration_minutes : null;
+        if (!$duration_minutes && !empty($row->start_at) && !empty($row->end_at)) {
+            $duration_minutes = max(0, (int) round((strtotime((string) $row->end_at) - strtotime((string) $row->start_at)) / 60));
+        }
+        $prescription_row = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, prescription_number, status, order_id FROM " . self::table('prescriptions') . " WHERE appointment_id = %d ORDER BY id DESC LIMIT 1",
+            (int) $row->id
+        ));
         return [
             'id' => (int) $row->id,
             'patient_user_id' => (int) $row->patient_user_id,
@@ -830,11 +869,13 @@ final class Nevari_Helpers {
             'doctor' => $doctor,
             'patient' => $patient,
             'type' => $row->type,
+            'title' => isset($row->title) ? trim((string) $row->title) : '',
             'status' => $row->status,
             'payment_status' => self::appointment_payment_status($row, $order),
             'payment_required' => isset($row->payment_required) ? (bool) $row->payment_required : true,
             'start_at' => self::iso_datetime($row->start_at),
             'end_at' => self::iso_datetime($row->end_at),
+            'duration_minutes' => $duration_minutes,
             'timezone' => $row->timezone,
             'reason' => $row->reason,
             'symptoms' => self::json_decode_safe($row->symptoms),
@@ -849,6 +890,13 @@ final class Nevari_Helpers {
             'google_calendar_event_id' => isset($row->google_calendar_event_id) && $row->google_calendar_event_id ? (string) $row->google_calendar_event_id : null,
             'google_meet_error' => isset($row->google_meet_error) && $row->google_meet_error ? (string) $row->google_meet_error : null,
             'google_meet_created_at' => isset($row->google_meet_created_at) ? self::iso_datetime($row->google_meet_created_at) : null,
+            'prescription' => $prescription_row ? [
+                'id' => (int) $prescription_row->id,
+                'prescription_number' => (string) $prescription_row->prescription_number,
+                'status' => (string) $prescription_row->status,
+                'order_id' => $prescription_row->order_id ? (int) $prescription_row->order_id : null,
+            ] : null,
+            'prescription_order_id' => ($prescription_row && $prescription_row->order_id) ? (int) $prescription_row->order_id : null,
             'review' => $review ? self::format_review_row($review) : null,
             'review_eligible' => $row->status === 'completed' && !$review,
             'created_at' => self::iso_datetime($row->created_at),

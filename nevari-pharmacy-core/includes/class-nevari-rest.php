@@ -1428,14 +1428,21 @@ final class Nevari_Rest {
         foreach ($items as $item) {
             $items_summary[] = wp_strip_all_tags($item->get_name());
         }
+        $branded_payment_url = $order->needs_payment() ? self::branded_invoice_payment_url($order) : null;
+        $woocommerce_payment_url = $order->needs_payment() ? $order->get_checkout_payment_url(false) : null;
         $data = [
             'id' => $order->get_id(),
             'number' => $order->get_order_number(),
+            'invoice_number' => self::invoice_number_for_order($order),
             'status' => $order->get_status(),
             'currency' => $order->get_currency(),
             'total' => $order->get_total(),
             'payment_status' => $order->get_date_paid() ? 'completed' : $order->get_status(),
-            'payment_url' => $order->needs_payment() ? $order->get_checkout_payment_url(false) : null,
+            // Backend-issued branded invoice URL is the canonical payment link exposed to frontends.
+            'payment_url' => $branded_payment_url,
+            'branded_payment_url' => $branded_payment_url,
+            'payment_token' => $order->needs_payment() ? self::invoice_payment_token($order) : null,
+            'woocommerce_payment_url' => $woocommerce_payment_url,
             'customer_id' => $order->get_user_id(),
             'customer_name' => $customer_name ?: null,
             'customer_display_name' => $account_name ?: null,
@@ -3497,6 +3504,7 @@ final class Nevari_Rest {
         $start = Nevari_Helpers::normalize_datetime($params['start_at'] ?? null);
         $end = Nevari_Helpers::normalize_datetime($params['end_at'] ?? null);
         $reason = isset($params['reason']) && trim((string) $params['reason']) !== '' ? sanitize_textarea_field((string) $params['reason']) : 'Doctor consultation booking';
+        $title = isset($params['title']) ? sanitize_text_field((string) $params['title']) : '';
 
         if ($order_id) {
             $order = self::get_order_scoped($order_id);
@@ -3569,17 +3577,19 @@ final class Nevari_Rest {
             return Nevari_Helpers::error('appointment_slot_unavailable', 'This appointment slot is no longer available.', 409);
         }
         $now = Nevari_Helpers::now();
-        $reserved_until = gmdate('Y-m-d H:i:s', time() + (15 * MINUTE_IN_SECONDS));
+        $reserved_until = gmdate('Y-m-d H:i:s', time() + (30 * MINUTE_IN_SECONDS));
         $wpdb->insert($table, [
             'patient_user_id' => $patient_id,
             'doctor_user_id' => $doctor_id,
             'order_id' => null,
             'type' => $type,
+            'title' => $title,
             'status' => 'awaiting_payment',
             'payment_status' => 'pending',
             'payment_required' => 1,
             'start_at' => $start,
             'end_at' => $end,
+            'duration_minutes' => $requested_duration,
             'timezone' => isset($params['timezone']) ? sanitize_text_field((string) $params['timezone']) : 'UTC',
             'reason' => $reason,
             'symptoms' => isset($params['symptoms']) ? Nevari_Helpers::json_encode_safe($params['symptoms']) : null,
@@ -3604,6 +3614,42 @@ final class Nevari_Rest {
         $wpdb->update($table, ['order_id' => (int) $checkout_order->get_id(), 'updated_at' => Nevari_Helpers::now()], ['id' => $appointment_id], ['%d', '%s'], ['%d']);
         $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock_name));
         Nevari_Plugin::instance()->schedule_appointment_reservation_expiry($appointment_id, $reserved_until);
+        $patient = get_user_by('id', $patient_id);
+        $doctor = get_user_by('id', $doctor_id);
+        $payment_link = self::branded_invoice_payment_url($checkout_order);
+        if ($patient && is_email($patient->user_email) && $payment_link) {
+            $appointment_start = Nevari_Helpers::iso_datetime($start);
+            $payment_link_html = sprintf('<a href="%1$s" target="_blank" rel="noopener noreferrer">Proceed to payment</a>', esc_url($payment_link));
+            Nevari_Emails::queue_or_send([
+                'template_key' => 'appointment_requested',
+                'recipient_email' => $patient->user_email,
+                'related_object_type' => 'appointment',
+                'related_object_id' => $appointment_id,
+                'variables' => [
+                    'patient_name' => $patient->display_name ?: 'Patient',
+                    'doctor_name' => $doctor ? $doctor->display_name : 'Doctor',
+                    'appointment_start' => $appointment_start,
+                    'payment_link' => $payment_link,
+                    'payment_link_html' => $payment_link_html,
+                    'google_meet_link' => '',
+                    'google_meet_link_html' => '',
+                ],
+                'body_html' => sprintf(
+                    '<p>Hello %1$s,</p><p>Your appointment with %2$s has been created for %3$s and is pending payment.</p><p>This booking expires after 10 minutes if payment is not completed.</p><p>%4$s</p>',
+                    esc_html($patient->display_name ?: 'Patient'),
+                    esc_html($doctor ? $doctor->display_name : 'Doctor'),
+                    esc_html($appointment_start),
+                    $payment_link_html
+                ),
+                'body_text' => sprintf(
+                    'Hello %1$s, your appointment with %2$s has been created for %3$s and is pending payment. This booking expires after 10 minutes if unpaid. Pay now: %4$s',
+                    $patient->display_name ?: 'Patient',
+                    $doctor ? $doctor->display_name : 'Doctor',
+                    $appointment_start,
+                    $payment_link
+                ),
+            ], false);
+        }
         Nevari_Audit::log('consultation', 'nevari', 'appointment.created', 'success', ['appointment_id' => $appointment_id, 'related_user_id' => $patient_id, 'message' => 'Appointment created.']);
 
         return Nevari_Helpers::success(Nevari_Helpers::format_appointment(self::get_appointment_row($appointment_id)), [], 201);
@@ -3621,6 +3667,8 @@ final class Nevari_Rest {
         $params = Nevari_Helpers::get_json_params($request);
         $data = ['updated_at' => Nevari_Helpers::now()];
         if (isset($params['reason']) && (Nevari_Helpers::is_patient() || Nevari_Helpers::is_store_admin())) { $data['reason'] = sanitize_textarea_field((string) $params['reason']); }
+        if (isset($params['title']) && (Nevari_Helpers::is_doctor() || Nevari_Helpers::is_store_admin())) { $data['title'] = sanitize_text_field((string) $params['title']); }
+        if (isset($params['duration_minutes']) && (Nevari_Helpers::is_doctor() || Nevari_Helpers::is_store_admin())) { $data['duration_minutes'] = max(0, (int) $params['duration_minutes']); }
         if (isset($params['doctor_notes']) && (Nevari_Helpers::is_doctor() || Nevari_Helpers::is_store_admin())) { $data['doctor_notes'] = wp_kses_post((string) $params['doctor_notes']); }
         $wpdb->update(Nevari_Helpers::table('appointments'), $data, ['id' => (int) $appointment->id]);
         Nevari_Audit::log('consultation', 'nevari', 'appointment.updated', 'success', ['appointment_id' => (int) $appointment->id]);
@@ -3689,6 +3737,7 @@ final class Nevari_Rest {
             }
             $data['start_at'] = $start;
             $data['end_at'] = $end;
+            $data['duration_minutes'] = (int) round((strtotime($end) - strtotime($start)) / 60);
             $data['status'] = 'confirmed';
             $data['rescheduled_at'] = Nevari_Helpers::now();
             $data['customer_reminder_24h_sent_at'] = null;

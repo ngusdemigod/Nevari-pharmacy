@@ -1,29 +1,38 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { ArrowLeft01Icon, ArrowRight01Icon, ArrowUpRight01Icon, BatteryFullIcon, Calendar03Icon, Clock01Icon, Doctor01Icon, FileUploadIcon, Home01Icon, Logout01Icon, MedicalMaskIcon, Medicine01Icon, Menu01Icon, MoreHorizontalIcon, Search01Icon, Settings01Icon, ShoppingBasket01Icon, ShoppingCart01Icon, SignalFull01Icon, Upload01Icon, UserIcon, Wallet01Icon, Wifi01Icon } from "@hugeicons/core-free-icons";
 import { removeById, replaceById, updateListPayload, upsertById } from "../lib/fetcher";
 import { isProxyAppointmentsKey, isProxyDoctorsKey, isProxyOrdersKey, swrKeys, withBaseUrl } from "../lib/swrKeys";
+import ManageSubscription from "./components/profile/ManageSubscription";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
-import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, getOrderTypeMeta, hydrateStoredSession, isSessionUsable, money, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
+import { apiRequest, buildDashboardCacheKey, buildUrl, clearDashboardCacheForFrontend, DASHBOARD_CACHE_TTL_MS, fitTextToContainer, getOrderTypeMeta, hydrateStoredSession, isSessionUsable, money, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
 import { clearSessionAuth } from "./components/role-session";
-import { RoleShell, SkeletonBox } from "./_doctor-dashboard";
+import ProtectedFeature from "./components/subscription/ProtectedFeature";
+import SubscriptionGate from "./components/subscription/SubscriptionGate";
+import { useSubscription } from "./hooks/use-subscription";
+import { SkeletonBox } from "./_doctor-dashboard";
 
 const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
+const CUSTOMER_NURSE_REQUESTS_KEY = "nevari_customer_nurse_requests";
 const CUSTOMER_DASHBOARD_CACHE_SCOPE = "customer-dashboard";
 const SSR_SAFE_STORE_CURRENCY = "USD";
 const SSR_SAFE_STORE_TIMEZONE = "UTC";
-const pages = ["overview", "orders", "appointment", "settings", "profile"];
+const pages = ["overview", "orders", "appointment", "request", "settings", "profile", "therapy"];
 const CUSTOMER_DASHBOARD_REFRESH_MS = 60_000;
 const pageLabels = {
   overview: "Overview",
   orders: "Orders",
   appointment: "Appointment",
+  request: "Request a Nurse",
   settings: "Settings",
-  profile: "My Profile"
+  profile: "My Profile",
+  therapy: "Medical Therapy Management"
 };
 
 function resolveUserRoles(user = null) {
@@ -44,25 +53,35 @@ const emptyCustomerState = {
 };
 
 async function fetchCustomerDashboardPayload(session, settings, fallbackState = emptyCustomerState) {
-  const upcomingParams = { per_page: 5, page: 1, date_from: new Date().toISOString(), order: "ASC" };
-  const [dashboard, orders, appointments, liveDoctors] = await Promise.all([
+  const nowIso = new Date().toISOString();
+  const upcomingParams = { per_page: 5, page: 1, date_from: nowIso, order: "ASC" };
+  const pastParams = { per_page: 5, page: 1, date_to: nowIso, order: "DESC" };
+  const [dashboard, orders, upcomingAppointments, pastAppointments, liveDoctors] = await Promise.all([
     apiRequest(session, "/dashboard/patient", { suppressHttpError: true }),
     apiRequest(session, "/orders", { params: { per_page: 5, page: 1 }, suppressHttpError: true }),
     apiRequest(session, "/appointments", { params: upcomingParams, suppressHttpError: true }),
+    apiRequest(session, "/appointments", { params: pastParams, suppressHttpError: true }),
     apiRequest(session, "/doctors", { params: { per_page: 8, page: 1 }, suppressHttpError: true })
   ]);
   rememberStoreContext(dashboard || fallbackState.dashboard || {});
   const resolvedDashboard = dashboard || fallbackState.dashboard || {};
   const hasOrderFailure = orders === null;
-  const hasAppointmentFailure = appointments === null;
+  const hasUpcomingFailure = upcomingAppointments === null;
+  const hasPastFailure = pastAppointments === null;
   const hasDoctorFailure = liveDoctors === null;
   const resolvedOrders = hasOrderFailure ? (fallbackState.orders || []) : (orders || []);
-  const resolvedAppointments = hasAppointmentFailure ? (fallbackState.appointments || []) : (appointments || []);
+  const resolvedAppointments = (hasUpcomingFailure && hasPastFailure)
+    ? (fallbackState.appointments || [])
+    : mergeAppointments(
+      hasUpcomingFailure ? [] : (upcomingAppointments || []),
+      hasPastFailure ? [] : (pastAppointments || []),
+      fallbackState.appointments || []
+    );
   const resolvedDoctors = hasDoctorFailure
     ? ((fallbackState.doctors && fallbackState.doctors.length) ? fallbackState.doctors : buildFallbackDoctors(resolvedAppointments, resolvedOrders))
     : (liveDoctors || []);
   const blockingErrors = [];
-  if (hasOrderFailure || hasAppointmentFailure) {
+  if (hasOrderFailure || hasUpcomingFailure || hasPastFailure) {
     blockingErrors.push("The pharmacy server is temporarily unavailable. Showing the last available customer dashboard data.");
   }
   const fallbackProfile = {
@@ -80,6 +99,17 @@ async function fetchCustomerDashboardPayload(session, settings, fallbackState = 
     doctors: resolvedDoctors,
     doctorsUnavailable: !resolvedDoctors.length
   };
+}
+
+function mergeAppointments(upcoming = [], past = [], fallback = []) {
+  const merged = [...upcoming, ...past, ...fallback];
+  const seen = new Set();
+  return merged.filter((item) => {
+    const key = String(item?.id || "");
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 async function fetchCustomerOrders(session) {
@@ -176,9 +206,11 @@ export default function CustomerDashboard() {
   const { mutate: globalMutate } = useSWRConfig();
   const [page, setPage] = useState("overview");
   const [session, setSession] = useState(null);
+  const [authResolved, setAuthResolved] = useState(false);
   const [cacheKey, setCacheKey] = useState(null);
   const [expandedOrderId, setExpandedOrderId] = useState(null);
   const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [selectedOrder, setSelectedOrder] = useState(null);
   const [appointmentActionBusy, setAppointmentActionBusy] = useState(false);
   const [storeUrl, setStoreUrl] = useState("#");
   const [journey, setJourney] = useState(createJourneyState());
@@ -192,6 +224,13 @@ export default function CustomerDashboard() {
   }, [page]);
 
   useEffect(() => {
+    document.body.classList.add("customer-mobile-mode");
+    return () => {
+      document.body.classList.remove("customer-mobile-mode");
+    };
+  }, []);
+
+  useEffect(() => {
     persistCustomerSettings(settings);
   }, [settings]);
 
@@ -199,17 +238,20 @@ export default function CustomerDashboard() {
     const hydratedSession = hydrateStoredSession("patient");
     setStoreUrl(hydratedSession.baseUrl || "#");
     if (!hydratedSession.paired) {
+      setAuthResolved(true);
       router.replace(FRONTENDS.patient.loginPath);
       return;
     }
     const roles = resolveUserRoles(hydratedSession.user);
     if (!hydratedSession.accessToken || !roles.some((role) => ["customer", "patient"].includes(role))) {
+      setAuthResolved(true);
       router.replace("/login");
       return;
     }
     setSession(hydratedSession);
-    const userId = hydratedSession.user?.id;
-    setCacheKey(userId ? buildDashboardCacheKey("patient", CUSTOMER_DASHBOARD_CACHE_SCOPE, String(userId)) : null);
+    const cacheUserKey = hydratedSession.user?.id || hydratedSession.user?.email || hydratedSession.user?.username || null;
+    setCacheKey(cacheUserKey ? buildDashboardCacheKey("patient", CUSTOMER_DASHBOARD_CACHE_SCOPE, String(cacheUserKey)) : null);
+    setAuthResolved(true);
   }, [router]);
 
   const cachedCustomerState = (cacheKey && isSessionUsable(session))
@@ -225,7 +267,7 @@ export default function CustomerDashboard() {
   const customerOrdersKey = session && ["orders", "settings", "profile"].includes(page)
     ? swrKeys.proxy.path("/orders", withBaseUrl(session, { per_page: 24, page: 1 }))
     : null;
-  const customerAppointmentsKey = session && ["appointment", "settings", "profile"].includes(page)
+  const customerAppointmentsKey = session && ["overview", "appointment", "settings", "profile"].includes(page)
     ? swrKeys.proxy.path("/appointments", withBaseUrl(session, { per_page: 40, page: 1 }))
     : null;
   const customerDoctorsKey = session && ["appointment", "settings", "profile"].includes(page)
@@ -298,6 +340,7 @@ export default function CustomerDashboard() {
 
   const profile = state.dashboard?.profile || {};
   const visibleDoctors = useMemo(() => sortPreferredDoctors(state.doctors, settings.preferredDoctorIds), [settings.preferredDoctorIds, state.doctors]);
+  const subscriptionState = useSubscription(session);
   useEffect(() => {
     rememberStoreContext(state.dashboard || {});
   }, [state.dashboard]);
@@ -355,16 +398,35 @@ export default function CustomerDashboard() {
       .reduce((total, order) => total + Number(order.total || 0), 0);
   }, [state.orders]);
   const now = Date.now();
-  const sortedAppointments = useMemo(() => [...state.appointments].sort((left, right) => new Date(left.start_at || 0) - new Date(right.start_at || 0)), [state.appointments]);
+  const sortedAppointments = useMemo(() => sortByDateDesc(state.appointments, ["start_at", "created_at", "updated_at"]), [state.appointments]);
   const upcomingAppointments = sortedAppointments.filter((appointment) => new Date(appointment.start_at || 0).getTime() >= now);
-  const pastAppointments = [...sortedAppointments.filter((appointment) => new Date(appointment.start_at || 0).getTime() < now)].reverse();
+  const pastAppointments = sortedAppointments.filter((appointment) => new Date(appointment.start_at || 0).getTime() < now);
   const selectedDoctor = visibleDoctors.find((doctor) => String(doctor.user_id || doctor.id) === String(journey.doctorId)) || null;
   const pageQueryLoading = (
     (page === "orders" && ordersQuery.isLoading && !ordersQuery.data) ||
     (page === "appointment" && ((appointmentsQuery.isLoading && !appointmentsQuery.data) || (doctorsQuery.isLoading && !doctorsQuery.data))) ||
     (["settings", "profile"].includes(page) && ((ordersQuery.isLoading && !ordersQuery.data) || (appointmentsQuery.isLoading && !appointmentsQuery.data)))
   );
+  const ordersLoading = Boolean(customerOrdersKey) && ordersQuery.isLoading && !Array.isArray(ordersQuery.data);
+  const appointmentsLoading = Boolean(customerAppointmentsKey) && appointmentsQuery.isLoading && !Array.isArray(appointmentsQuery.data);
+  const doctorsLoading = Boolean(customerDoctorsKey) && doctorsQuery.isLoading && !Array.isArray(doctorsQuery.data);
   const showSkeleton = (isLoading && !hasCustomerDashboardData(state)) || pageQueryLoading;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const fitStats = () => {
+      document.querySelectorAll(".overview-action-value, .customer-mobile-stat-card strong, .customer-stat-card strong, .customer-status-tile strong").forEach((node) => {
+        fitTextToContainer(node, { minFontSize: 12, step: 0.5 });
+      });
+    };
+    fitStats();
+    window.addEventListener("resize", fitStats);
+    return () => window.removeEventListener("resize", fitStats);
+  }, [showSkeleton, page, orderCounts.total, spentThisMonth, state.appointments.length, state.orders.length]);
+
+  if (!authResolved) {
+    return <CustomerMobileSkeleton page={page} />;
+  }
 
   function openOrderDocuments(order) {
     if (!order?.id) return;
@@ -472,7 +534,7 @@ export default function CustomerDashboard() {
           start_at: journey.selectedSlot.start_at,
           end_at: appointmentEndForSelection(journey.selectedSlot, journey.durationMinutes || minimumBookingMinutes),
           duration_minutes: journey.durationMinutes || minimumBookingMinutes,
-          reason: journey.reason?.trim() || "Doctor consultation booking",
+          reason: sanitizeClientText(journey.reason, { max: 500 }).trim() || "Doctor consultation booking",
           timezone: settings.timezone || storeTimeZone
         }
       });
@@ -645,7 +707,12 @@ export default function CustomerDashboard() {
   }
 
   function handleLogout() {
-    clearSessionAuth(FRONTENDS.patient, session || hydrateStoredSession("patient"));
+    const activeSession = session || hydrateStoredSession("patient");
+    clearDashboardCacheForFrontend("patient", activeSession?.user?.id);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(CUSTOMER_NURSE_REQUESTS_KEY);
+    }
+    clearSessionAuth(FRONTENDS.patient, activeSession);
     router.replace("/login");
   }
 
@@ -677,91 +744,85 @@ export default function CustomerDashboard() {
     }
   }
 
-  return <RoleShell
-    title="Nevari Customer"
-    pages={pages}
-    active={page}
-    onPageChange={(nextPage) => {
-      setPage(nextPage);
-      if (nextPage !== "appointment") {
-        setJourney(createJourneyState());
-      }
-    }}
-    showHeader={page !== "overview"}
-    topContent={<CustomerAppHeader profile={profile} />}
-    pageLabels={pageLabels}
-    renderNavIcon={renderDashboardIcon}
-  >
-    {state.error ? <p className="receipt-feedback">{state.error}</p> : null}
-    {showSkeleton ? <CustomerDashboardSkeleton page={page} /> : null}
-    {!showSkeleton && page === "overview" ? <CustomerOverview
-      doctors={visibleDoctors}
-      doctorsUnavailable={state.doctorsUnavailable}
-      orders={state.orders}
-      appointments={state.appointments}
+  async function cancelCheckoutAppointment() {
+    if (!journey.appointment?.id) {
+      return;
+    }
+    await cancelAppointmentFromDetails(journey.appointment.id);
+    setJourney(createJourneyState());
+  }
+
+  return <>
+    <CustomerMobileDashboard
+      page={page}
+      setPage={setPage}
+      showSkeleton={showSkeleton}
+      state={state}
+      stateError={state.error}
+      profile={profile}
+      settings={settings}
+      setSettings={setSettings}
       orderCounts={orderCounts}
       spentThisMonth={spentThisMonth}
-      onOpenPage={setPage}
-      onOpenAvailability={openDoctorAvailability}
-      onOpenReviews={openDoctorReviews}
-      onOpenAppointment={setSelectedAppointment}
       storeCurrency={storeCurrency}
       storeTimeZone={storeTimeZone}
       storeUrl={storeUrl}
-    /> : null}
-    {!showSkeleton && page === "orders" ? <OrdersPage
-      orders={state.orders}
-      counts={orderCounts}
-      expandedOrderId={expandedOrderId}
-      onToggleOrder={(id) => setExpandedOrderId((current) => current === id ? null : id)}
-      onOpenOrderDocuments={openOrderDocuments}
-      onCancelPendingOrder={cancelPendingOrder}
-      storeCurrency={storeCurrency}
-      storeTimeZone={storeTimeZone}
-    /> : null}
-    {!showSkeleton && page === "appointment" ? <AppointmentPage
-      doctors={visibleDoctors}
+      visibleDoctors={visibleDoctors}
       doctorsUnavailable={state.doctorsUnavailable}
-      journey={journey}
       selectedDoctor={selectedDoctor}
-      upcoming={upcomingAppointments}
-      past={pastAppointments}
+      expandedOrderId={expandedOrderId}
+      setExpandedOrderId={setExpandedOrderId}
+      setSelectedOrder={setSelectedOrder}
+      upcomingAppointments={upcomingAppointments}
+      pastAppointments={pastAppointments}
+      journey={journey}
+      setJourney={setJourney}
+      createJourneyState={createJourneyState}
+      minimumBookingMinutes={minimumBookingMinutes}
+      storefrontSettings={storefrontSettings}
+      ordersLoading={ordersLoading}
+      appointmentsLoading={appointmentsLoading}
+      doctorsLoading={doctorsLoading}
+      subscriptionState={subscriptionState}
       onOpenAvailability={openDoctorAvailability}
       onOpenReviews={openDoctorReviews}
+      onOpenAppointment={setSelectedAppointment}
+      onOpenOrderDocuments={openOrderDocuments}
+      onCancelPendingOrder={cancelPendingOrder}
       onUpdateAvailabilityDate={updateAvailabilityDate}
       onSelectSlot={(slot) => setJourney((current) => ({ ...current, selectedSlot: slot }))}
       onDurationChange={(durationMinutes) => setJourney((current) => ({ ...current, durationMinutes }))}
       onReasonChange={(reason) => setJourney((current) => ({ ...current, reason }))}
       onCreateAppointmentCheckout={createAppointmentCheckout}
       onRefreshConfirmation={refreshConfirmation}
+      onCancelCheckoutAppointment={cancelCheckoutAppointment}
       onResetJourney={resetAppointmentJourney}
       onReviewDraftChange={(field, value) => setJourney((current) => ({ ...current, reviewDraft: { ...current.reviewDraft, [field]: value } }))}
       onSubmitReview={submitReview}
-      calendarDownloadUrl={journey.appointment?.mock ? "" : (journey.appointment?.id ? buildUrl(hydrateStoredSession("patient"), `/appointments/${journey.appointment.id}/calendar`) : "")}
-      storeCurrency={storeCurrency}
-      storeTimeZone={storeTimeZone}
-      storefrontSettings={storefrontSettings}
-      minimumBookingMinutes={minimumBookingMinutes}
-    /> : null}
-    {!showSkeleton && page === "settings" ? <SettingsPage
-      profile={profile}
-      doctors={visibleDoctors}
-      orders={state.orders}
-      appointments={state.appointments}
-      settings={settings}
-      onSettingsChange={setSettings}
+      nurseRequestAuth={{
+        baseUrl: session?.baseUrl || "",
+        accessToken: session?.accessToken || "",
+        adminEmail: "careteam@nevarihealth.com"
+      }}
       onLogout={handleLogout}
-    /> : null}
-    {!showSkeleton && page === "profile" ? <ProfilePage profile={profile} orders={state.orders} appointments={state.appointments} doctors={visibleDoctors} settings={settings} onSettingsChange={setSettings} onLogout={handleLogout} /> : null}
+    />
     {selectedAppointment ? <AppointmentDetailsModal
       appointment={selectedAppointment}
       doctors={visibleDoctors}
       storeTimeZone={storeTimeZone}
       busy={appointmentActionBusy}
       onCancelAppointment={cancelAppointmentFromDetails}
+      onOpenOrderDocuments={openOrderDocuments}
       onClose={() => setSelectedAppointment(null)}
     /> : null}
-  </RoleShell>;
+    {selectedOrder ? <OrderDetailsModal
+      order={selectedOrder}
+      storeCurrency={storeCurrency}
+      onOpenOrderDocuments={openOrderDocuments}
+      onCancelPendingOrder={cancelPendingOrder}
+      onClose={() => setSelectedOrder(null)}
+    /> : null}
+  </>;
 }
 
 function hasCustomerDashboardData(state) {
@@ -1072,7 +1133,10 @@ function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, o
             <div className="card-title">{titleCase(appointment.type || "consultation")}</div>
             <div className="card-desc">{shortDate(appointment.start_at, true, storeTimeZone)}</div>
           </div>
-          <span className={`status-badge ${appointment.payment_status === "paid" ? "success" : "warning"}`}>{titleCase(appointment.status)}</span>
+          <div className="appointment-status-stack">
+            <span className={`chip ${appointmentChipTone(appointment)}`}><span className="chip-dot" />{appointmentChipLabel(appointment)}</span>
+            {appointmentHasPrescription(appointment) ? <span className="appointment-prescription-availability">Prescription Available</span> : null}
+          </div>
         </button>)}
       </div>
     </div> : <div className="empty-card compact-empty mobile-gap-bottom"><div className="card-title">No appointment yet</div></div>}
@@ -1082,17 +1146,32 @@ function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, o
   </>;
 }
 
-function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = false, onCancelAppointment, onClose }) {
+function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = false, onCancelAppointment, onOpenOrderDocuments, onClose }) {
   const doctor = doctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id)) || appointment.doctor || null;
   const joinUrl = getAppointmentJoinUrl(appointment);
   const paymentUrl = resolveAppointmentCheckoutUrl({ appointment, order: appointment?.order, payment_url: appointment?.payment_url, checkout_url: appointment?.checkout_url });
+  const prescriptionOrderId = appointment?.prescription?.order_id || appointment?.prescription_order_id || null;
   const status = String(appointment?.status || "").toLowerCase();
   const paymentStatus = String(appointment?.payment_status || "").toLowerCase();
+  const appointmentStartMs = new Date(appointment?.start_at || 0).getTime();
+  const isPastAppointment = Number.isFinite(appointmentStartMs) && appointmentStartMs > 0 && appointmentStartMs < Date.now();
   const isCancelled = status === "cancelled" || status === "canceled";
   const isCompleted = status === "completed";
   const isPendingPayment = !isCancelled && !isCompleted && ["pending", "failed", "abandoned"].includes(paymentStatus) && Boolean(paymentUrl);
   const isConfirmedPaid = !isCancelled && !isCompleted && paymentStatus === "paid";
   const canCancel = isConfirmedPaid && typeof onCancelAppointment === "function";
+
+  const statusTone = appointmentChipTone(appointment);
+  const statusLabel = appointmentChipLabel(appointment);
+  const detailRows = [
+    ["Date", friendlyDate(appointment.start_at, storeTimeZone)],
+    ["Time", formatTime(appointment.start_at, storeTimeZone)],
+    ["Duration", appointmentDurationLabel(appointment) || "Not set"],
+    ["Doctor", doctor?.display_name || `Doctor #${appointment.doctor_user_id}`],
+    ["Title", appointment?.title || "Not set"],
+    ["Payment", titleCase(appointment.payment_status || "pending")],
+    ["Appointment ID", `#${appointment.id}`]
+  ];
 
   return <div className="customer-appointment-modal" role="dialog" aria-modal="true" aria-label="Appointment details">
     <button className="customer-appointment-modal-backdrop" type="button" aria-label="Close appointment details" onClick={onClose} />
@@ -1100,31 +1179,76 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
       <div className="customer-panel-head">
         <div>
           <span className="customer-section-kicker">Appointment details</span>
-          <h2>{titleCase(appointment.type || "consultation")}</h2>
+          <h2>{doctor?.display_name || `Doctor #${appointment.doctor_user_id}`}</h2>
         </div>
         <button className="icon-btn" type="button" aria-label="Close appointment details" onClick={onClose}>x</button>
       </div>
-      <div className="checkout-summary-grid">
-        <div><span>Date</span><strong>{friendlyDate(appointment.start_at, storeTimeZone)}</strong></div>
-        <div><span>Time</span><strong>{formatTime(appointment.start_at, storeTimeZone)}</strong></div>
-        <div><span>Doctor</span><strong>{doctor?.display_name || `Doctor #${appointment.doctor_user_id}`}</strong></div>
-        <div><span>Status</span><strong>{titleCase(appointment.status)}</strong></div>
-        <div><span>Payment</span><strong>{titleCase(appointment.payment_status || "pending")}</strong></div>
-        <div><span>Appointment ID</span><strong>#{appointment.id}</strong></div>
+      <div className="customer-detail-summary-panel">
+        <div className="customer-detail-summary-head">
+          <span className="customer-detail-summary-icon"><DashboardIcon name="appointment" /></span>
+          <div>
+            <div className="customer-detail-summary-title">{doctor?.display_name || `Doctor #${appointment.doctor_user_id}`}</div>
+            <div className="customer-detail-summary-sub">{friendlyDate(appointment.start_at, storeTimeZone)} • {formatTime(appointment.start_at, storeTimeZone)}</div>
+          </div>
+          <div className="appointment-status-stack">
+            <span className={`chip ${statusTone}`}><span className="chip-dot" />{statusLabel}</span>
+            {appointmentHasPrescription(appointment) ? <span className="appointment-prescription-availability">Prescription Available</span> : null}
+          </div>
+        </div>
       </div>
-      {appointment.reason ? <div className="appointment-detail-note"><span>Reason</span><strong>{appointment.reason}</strong></div> : null}
-      <div className="calendar-action-stack">
-        {isPendingPayment ? <a className="appointment-primary-cta appointment-link-cta" href={paymentUrl} target="_blank" rel="noreferrer">Pay now</a> : null}
-        {isConfirmedPaid && joinUrl ? <a className="appointment-primary-cta appointment-link-cta" href={joinUrl} target="_blank" rel="noreferrer">Join meeting</a> : null}
+      {appointmentHasPrescription(appointment) ? <div className="appointment-prescription-availability detail-prescription-availability">Prescription Available</div> : null}
+      <div className="detail-section">
+        <h3 className="detail-section-title">Appointment Information</h3>
+        <div className="detail-card info-list">
+          {detailRows.map(([label, value]) => <div className="info-row" key={label}>
+            <span className="info-label">{label}</span>
+            <strong className="info-value">{value}</strong>
+          </div>)}
+        </div>
+      </div>
+      {appointment.reason ? <div className="detail-section">
+        <h3 className="detail-section-title">Reason for Appointment</h3>
+        <div className="note-card">{appointment.reason}</div>
+      </div> : null}
+      {prescriptionOrderId ? <div className="detail-section">
+        <h3 className="detail-section-title">Prescription</h3>
+        <div className="note-card">Order #{prescriptionOrderId}</div>
+      </div> : null}
+      {!isPastAppointment ? <div className="action-stack">
+        {isPendingPayment ? <a className="btn btn-primary btn-wide appointment-link-cta" href={paymentUrl} target="_blank" rel="noreferrer">Pay now</a> : null}
+        {isConfirmedPaid && joinUrl ? <a className="btn btn-primary btn-wide appointment-link-cta" href={joinUrl} target="_blank" rel="noreferrer">Join Google Meet</a> : null}
         {isConfirmedPaid && !joinUrl ? <div className="appointment-inline-alert">Google Meet link will appear when the appointment is confirmed.</div> : null}
-        {canCancel ? <button className="pill-button danger" type="button" disabled={busy} onClick={() => onCancelAppointment(appointment.id)}>{busy ? "Cancelling..." : "Cancel appointment"}</button> : null}
-        {appointment.calendar?.ics_url ? <a className="appointment-secondary-cta appointment-link-cta" href={appointment.calendar.ics_url} target="_blank" rel="noreferrer">Download calendar invite</a> : null}
-      </div>
+        {prescriptionOrderId && typeof onOpenOrderDocuments === "function" ? <button className="btn btn-outline btn-wide" type="button" onClick={() => onOpenOrderDocuments({ id: prescriptionOrderId })}>Open prescription order details</button> : null}
+        {canCancel ? <button className="btn btn-outline btn-wide" type="button" disabled={busy} onClick={() => onCancelAppointment(appointment.id)}>{busy ? "Cancelling..." : "Cancel appointment"}</button> : null}
+        {appointment.calendar?.ics_url ? <a className="btn btn-outline btn-wide appointment-link-cta" href={appointment.calendar.ics_url} target="_blank" rel="noreferrer">Download calendar invite</a> : null}
+      </div> : null}
     </section>
   </div>;
 }
 
-function DoctorCards({ doctors, doctorsUnavailable, onOpenAvailability, onOpenReviews, showReviewsAction = false, storeCurrency, className = "" }) {
+function DoctorCards({ doctors, doctorsUnavailable, loading = false, onOpenAvailability, onOpenReviews, showReviewsAction = false, storeCurrency, className = "" }) {
+  if (loading) {
+    return <div className={`booking-list desktop-booking-list booking-list-vertical ${className}`.trim()}>
+      {Array.from({ length: 3 }, (_, index) => <div className="booking-card booking-card-interactive skeleton-panel" key={`customer-doctor-skeleton-live-${index}`}>
+        <div className="booking-row">
+          <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
+          <div className="booking-meta">
+            <SkeletonBox className="skeleton-line skeleton-line-md" />
+            <SkeletonBox className="skeleton-line skeleton-line-sm" />
+          </div>
+          <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+        </div>
+        <div className="booking-stat-split">
+          <div className="booking-stat"><SkeletonBox className="skeleton-line skeleton-line-sm" /><SkeletonBox className="skeleton-line skeleton-line-sm" /></div>
+          <div className="booking-stat"><SkeletonBox className="skeleton-line skeleton-line-sm" /><SkeletonBox className="skeleton-line skeleton-line-sm" /></div>
+        </div>
+        <div className="doctor-card-actions">
+          <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+          <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+        </div>
+      </div>)}
+    </div>;
+  }
   return <div className={`booking-list desktop-booking-list booking-list-vertical ${className}`.trim()}>
     {doctors.length ? doctors.map((doctor) => {
       const doctorId = String(doctor.user_id || doctor.id);
@@ -1154,7 +1278,7 @@ function DoctorCards({ doctors, doctorsUnavailable, onOpenAvailability, onOpenRe
   </div>;
 }
 
-function OrdersPage({ orders, counts, expandedOrderId, onToggleOrder, onOpenOrderDocuments, onCancelPendingOrder, storeCurrency }) {
+function OrdersPage({ orders, counts, expandedOrderId, loading = false, onToggleOrder, onOpenOrderDocuments, onCancelPendingOrder, onOpenOrderDetails, storeCurrency }) {
   const orderedRows = [...orders].sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0));
   const pendingInProgress = orders.filter((order) => ["pending", "processing", "on-hold"].includes(String(order.status || "").toLowerCase())).length;
   const totalSpent = orders
@@ -1183,14 +1307,28 @@ function OrdersPage({ orders, counts, expandedOrderId, onToggleOrder, onOpenOrde
         </div>
       </div>
       <div className="customer-order-list">
-        {orderedRows.length ? orderedRows.map((order) => {
+        {loading ? Array.from({ length: 4 }, (_, index) => <article className="customer-order-card skeleton-panel" key={`customer-orders-live-skeleton-${index}`}>
+          <div className="customer-order-summary">
+            <div className="customer-order-main">
+              <div>
+                <SkeletonBox className="skeleton-line skeleton-line-md" />
+                <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+              </div>
+            </div>
+            <div className="customer-order-side">
+              <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+              <SkeletonBox className="skeleton-line skeleton-line-sm" />
+            </div>
+          </div>
+        </article>) : orderedRows.length ? orderedRows.map((order) => {
           const isExpanded = expandedOrderId === order.id;
           const quantity = order.totals?.items_quantity || order.items?.reduce((sum, item) => sum + Number(item.quantity || 0), 0) || 0;
           const statusMeta = orderStatusMeta(order.status);
           const typeMeta = getOrderTypeMeta(order);
 
           return <article className={`customer-order-card ${isExpanded ? "expanded" : ""}`} key={order.id}>
-            <button className="customer-order-summary" type="button" onClick={() => onToggleOrder(order.id)}>
+            <button className="customer-order-summary" type="button" onClick={() => onOpenOrderDetails(order)}>
               <div className="customer-order-main">
                 <div>
                   <div className="card-title">{orderPrimaryLabel(order)}</div>
@@ -1232,6 +1370,8 @@ function OrdersPage({ orders, counts, expandedOrderId, onToggleOrder, onOpenOrde
 function AppointmentPage({
   doctors,
   doctorsUnavailable,
+  doctorsLoading = false,
+  appointmentsLoading = false,
   journey,
   selectedDoctor,
   upcoming,
@@ -1244,6 +1384,7 @@ function AppointmentPage({
   onReasonChange,
   onCreateAppointmentCheckout,
   onRefreshConfirmation,
+  onCancelCheckoutAppointment,
   onResetJourney,
   onReviewDraftChange,
   onSubmitReview,
@@ -1255,6 +1396,7 @@ function AppointmentPage({
 }) {
   const [filter, setFilter] = useState("all");
   const [doctorTab, setDoctorTab] = useState("recent");
+  const bookDoctorSectionRef = useRef(null);
   const filters = useMemo(() => buildAppointmentFilters(upcoming, past), [past, upcoming]);
   const allAppointments = useMemo(() => [...upcoming, ...past], [past, upcoming]);
   const visibleAppointments = useMemo(() => filterAppointmentsList(allAppointments, filter), [allAppointments, filter]);
@@ -1273,6 +1415,7 @@ function AppointmentPage({
   }, [allAppointments]);
   const recentDoctors = useMemo(() => recentDoctorIds.map((doctorId) => doctors.find((item) => String(item.user_id || item.id) === doctorId)).filter(Boolean), [doctors, recentDoctorIds]);
   const displayedDoctors = doctorTab === "recent" && recentDoctors.length ? recentDoctors : doctors;
+  const showBookAppointmentPlus = appointmentsLoading || visibleAppointments.length > 0;
 
   if (journey.mode === "slots") {
     return <AvailableTimePage
@@ -1290,7 +1433,7 @@ function AppointmentPage({
   }
 
   if (journey.mode === "checkout") {
-    return <CheckoutPage journey={journey} doctor={selectedDoctor} onBack={onResetJourney} onRefreshConfirmation={onRefreshConfirmation} storeCurrency={storeCurrency} storeTimeZone={storeTimeZone} livePaymentsEnabled={storefrontSettings.livePaymentsEnabled} />;
+    return <CheckoutPage journey={journey} doctor={selectedDoctor} onBack={onResetJourney} onRefreshConfirmation={onRefreshConfirmation} onCancelCheckoutAppointment={onCancelCheckoutAppointment} storeCurrency={storeCurrency} storeTimeZone={storeTimeZone} livePaymentsEnabled={storefrontSettings.livePaymentsEnabled} />;
   }
 
   if (journey.mode === "confirmation") {
@@ -1308,6 +1451,13 @@ function AppointmentPage({
     />;
   }
 
+  function handleNewAppointmentClick() {
+    setDoctorTab("all");
+    if (bookDoctorSectionRef.current && typeof bookDoctorSectionRef.current.scrollIntoView === "function") {
+      bookDoctorSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
   return <div className="customer-dashboard-stack">
     <section className="customer-list-shell book-doctor-shell">
       <div className="customer-panel-head">
@@ -1315,6 +1465,7 @@ function AppointmentPage({
           <span className="customer-section-kicker">Appointment</span>
           <h2>Appointment history</h2>
         </div>
+        {showBookAppointmentPlus ? <button className="pill-button customer-panel-booknow-btn" type="button" aria-label="Book now" title="Book now" onClick={handleNewAppointmentClick}>Book Now</button> : null}
       </div>
       <div className="filter-bar customer-filter-bar" role="tablist" aria-label="Appointment filters">
         {filters.map((item) => <button className={`filter-btn ${filter === item.id ? "active" : ""}`} key={item.id} type="button" role="tab" aria-selected={filter === item.id} onClick={() => setFilter(item.id)}>
@@ -1322,9 +1473,9 @@ function AppointmentPage({
           <span className="filter-count">{item.count}</span>
         </button>)}
       </div>
-      <AppointmentSection title="Appointments" items={visibleAppointments} tone={filter} doctors={doctors} storeTimeZone={storeTimeZone} />
+      <AppointmentSection title="Appointments" items={visibleAppointments} tone={filter} doctors={doctors} storeTimeZone={storeTimeZone} loading={appointmentsLoading} />
     </section>
-    <section className="customer-list-shell">
+    <section className="customer-list-shell" ref={bookDoctorSectionRef}>
       <div className="customer-panel-head">
         <div>
           <span className="customer-section-kicker">Book appointment</span>
@@ -1344,12 +1495,102 @@ function AppointmentPage({
       <DoctorCards
         doctors={displayedDoctors}
         doctorsUnavailable={doctorsUnavailable}
+        loading={doctorsLoading}
         onOpenAvailability={onOpenAvailability}
         onOpenReviews={onOpenReviews}
         showReviewsAction={doctorTab === "recent"}
         storeCurrency={storeCurrency}
         className="book-doctor-vertical-list"
       />
+    </section>
+  </div>;
+}
+
+function OrderDetailsModal({ order, storeCurrency, onOpenOrderDocuments, onCancelPendingOrder, onClose }) {
+  const statusMeta = orderStatusMeta(order?.status);
+  const typeMeta = getOrderTypeMeta(order || {});
+  const canCancel = String(order?.status || "").toLowerCase() === "pending";
+  const orderPaymentUrl = resolveOrderPaymentUrl(order);
+  const canPayNow = Boolean(orderPaymentUrl);
+  const items = Array.isArray(order?.items) ? order.items : [];
+  const subtotal = items.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.price || 0)), 0);
+  const deliveryFee = Math.max(0, Number(order?.total || 0) - subtotal);
+  const timeline = [
+    { label: "Order confirmed", done: true },
+    { label: "Processing", done: ["processing", "completed"].includes(String(order?.status || "").toLowerCase()) },
+    { label: "Delivered", done: String(order?.status || "").toLowerCase() === "completed" }
+  ];
+
+  return <div className="customer-appointment-modal" role="dialog" aria-modal="true" aria-label="Order details">
+    <button className="customer-appointment-modal-backdrop" type="button" aria-label="Close order details" onClick={onClose} />
+    <section className="customer-appointment-detail-card customer-order-details-card">
+      <div className="customer-panel-head">
+        <div>
+          <span className="customer-section-kicker">Order details</span>
+          <h2>Order #{order?.number || order?.id}</h2>
+        </div>
+        <button className="icon-btn" type="button" aria-label="Close order details" onClick={onClose}>x</button>
+      </div>
+
+      <div className="customer-detail-summary-panel">
+        <div className="customer-detail-summary-head">
+          <span className="customer-detail-summary-icon"><DashboardIcon name="orders" /></span>
+          <div>
+            <div className="customer-detail-summary-title">{orderPrimaryLabel(order) || "Order"}</div>
+            <div className="customer-detail-summary-sub">{shortDate(order?.created_at, true)}</div>
+          </div>
+          <span className={`status-badge ${statusMeta.tone}`}>{statusMeta.label}</span>
+        </div>
+      </div>
+
+      <div className="detail-section">
+        <h3 className="detail-section-title">Order Information</h3>
+        <div className="detail-card info-list">
+          <div className="info-row"><span className="info-label">Type</span><span className="info-value">{typeMeta.label}</span></div>
+          <div className="info-row"><span className="info-label">Payment</span><span className="info-value">{titleCase(order?.payment_status || order?.status)}</span></div>
+          <div className="info-row"><span className="info-label">Items</span><span className="info-value">{order?.totals?.items_quantity || items.length || 0}</span></div>
+          <div className="info-row"><span className="info-label">Doctor</span><span className="info-value">{order?.assigned_doctor?.display_name || "Not assigned"}</span></div>
+        </div>
+      </div>
+
+      {items.length ? <div className="detail-section">
+        <h3 className="detail-section-title">Items</h3>
+        <div className="detail-card">
+          {items.map((item, index) => <div className="order-item" key={`${item.id || item.product_id || item.name || "item"}-${index}`}>
+            <div className="product-thumb"><DashboardIcon name="orders" /></div>
+            <div>
+              <div className="order-item-title">{item.name || "Order item"}</div>
+              <div className="order-item-meta">Qty {item.quantity || 1}</div>
+            </div>
+            <div className="order-price">{money((Number(item.price || 0) * Number(item.quantity || 1)), storeCurrency)}</div>
+          </div>)}
+        </div>
+      </div> : null}
+
+      <div className="detail-section">
+        <h3 className="detail-section-title">Order Summary</h3>
+        <div className="detail-card info-list">
+          <div className="info-row"><span className="info-label">Subtotal</span><span className="info-value">{money(subtotal, storeCurrency)}</span></div>
+          <div className="info-row"><span className="info-label">Delivery</span><span className="info-value">{money(deliveryFee, storeCurrency)}</span></div>
+          <div className="info-row"><span className="info-label">Total</span><span className="info-value">{money(order?.total || 0, storeCurrency)}</span></div>
+        </div>
+      </div>
+
+      <div className="detail-section">
+        <h3 className="detail-section-title">Delivery Progress</h3>
+        <div className="detail-card timeline">
+          {timeline.map((step) => <div key={step.label} className={`timeline-step ${step.done ? "done" : ""}`}>
+            <span className="timeline-dot">{step.done ? "✓" : ""}</span>
+            <div><div className="timeline-title">{step.label}</div></div>
+          </div>)}
+        </div>
+      </div>
+
+      <div className="action-stack">
+        {canPayNow ? <a className="btn btn-primary btn-wide appointment-link-cta" href={orderPaymentUrl} target="_blank" rel="noreferrer">Pay now</a> : null}
+        <button className="btn btn-outline btn-wide" type="button" onClick={() => onOpenOrderDocuments(order)}>Open receipt</button>
+        {canCancel ? <button className="btn btn-primary btn-wide" type="button" onClick={() => onCancelPendingOrder(order)}>Cancel order</button> : null}
+      </div>
     </section>
   </div>;
 }
@@ -1400,14 +1641,14 @@ function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, 
       {!selectedDurationAvailable ? <div className="appointment-inline-alert">That duration extends beyond the doctor's available time.</div> : null}
       <label className="appointment-reason-field">
         <span>Reason</span>
-        <textarea rows={3} value={journey.reason} placeholder="Briefly describe what you want to discuss" onChange={(event) => onReasonChange(event.target.value)} />
+        <textarea rows={3} value={journey.reason} placeholder="Briefly describe what you want to discuss" onChange={(event) => onReasonChange(sanitizeClientText(event.target.value, { max: 500 }))} />
       </label>
     </div>
     <button className="appointment-primary-cta" type="button" disabled={!journey.selectedSlot || journey.loading || !journey.reason.trim() || !selectedDurationAvailable} onClick={onCreateAppointmentCheckout}>Book appointment</button>
   </section>;
 }
 
-function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, storeCurrency, storeTimeZone, livePaymentsEnabled = false }) {
+function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancelCheckoutAppointment, storeCurrency, storeTimeZone, livePaymentsEnabled = false }) {
   const appointment = journey.checkout?.appointment || journey.appointment;
   const paymentUrl = resolveAppointmentCheckoutUrl(journey.checkout);
   useEffect(() => {
@@ -1433,10 +1674,13 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, storeCur
       </div>
       <div className="checkout-status-banner">
         <strong>{titleCase(journey.checkout?.payment_status || appointment?.payment_status || "pending")}</strong>
-        <span>Your booking is reserved. Complete payment to proceed.</span>
+        <span>Your booking is pending payment and will expire after 10 minutes if unpaid.</span>
       </div>
       {journey.error ? <p className="receipt-feedback">{journey.error}</p> : null}
-      {paymentUrl ? <a className="appointment-primary-cta appointment-link-cta" href={paymentUrl} target="_blank" rel="noreferrer">{!livePaymentsEnabled && paymentUrl === "#demo-payment" ? "Open demo payment" : "Proceed to payment"}</a> : null}
+      <div className="calendar-action-stack">
+        {paymentUrl ? <a className="appointment-primary-cta appointment-link-cta" href={paymentUrl} target="_blank" rel="noreferrer">{!livePaymentsEnabled && paymentUrl === "#demo-payment" ? "Open demo payment" : "Proceed to payment"}</a> : null}
+        <button className="appointment-secondary-cta" type="button" onClick={onCancelCheckoutAppointment}>Cancel appointment</button>
+      </div>
     </div>
   </section>;
 }
@@ -1506,7 +1750,7 @@ function PatientReviewsPage({ doctor, journey, pastAppointments, onBack, onRevie
       <div className="review-star-picker">
         {[1, 2, 3, 4, 5].map((rating) => <button key={rating} className={journey.reviewDraft.rating >= rating ? "active" : ""} type="button" onClick={() => onReviewDraftChange("rating", rating)}>*</button>)}
       </div>
-      <textarea className="review-textarea" rows={4} placeholder="Share your consultation experience" value={journey.reviewDraft.reviewText} onChange={(event) => onReviewDraftChange("reviewText", event.target.value)} />
+      <textarea className="review-textarea" rows={4} placeholder="Share your consultation experience" value={journey.reviewDraft.reviewText} onChange={(event) => onReviewDraftChange("reviewText", sanitizeClientText(event.target.value, { max: 1000 }))} />
       <button className="appointment-primary-cta" type="button" onClick={onSubmitReview} disabled={journey.loading}>Submit review</button>
     </div> : null}
     <div className="review-list-stack">
@@ -1526,7 +1770,24 @@ function PatientReviewsPage({ doctor, journey, pastAppointments, onBack, onRevie
   </section>;
 }
 
-function AppointmentSection({ title, items, tone, doctors, storeTimeZone }) {
+function AppointmentSection({ title, items, tone, doctors, storeTimeZone, loading = false }) {
+  if (loading) {
+    return <div className="customer-appointment-history-slider" role="region" aria-label={`${title} loading`}>
+      <div className="customer-appointment-history-track">
+        {Array.from({ length: 3 }, (_, index) => <article className={`customer-appointment-card customer-appointment-card-slide ${tone} skeleton-panel`} key={`customer-appointment-live-skeleton-${index}`}>
+          <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
+          <div className="customer-appointment-copy">
+            <SkeletonBox className="skeleton-line skeleton-line-md" />
+            <SkeletonBox className="skeleton-line skeleton-line-sm" />
+            <SkeletonBox className="skeleton-line skeleton-line-sm" />
+          </div>
+          <div className="customer-appointment-side">
+            <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+          </div>
+        </article>)}
+      </div>
+    </div>;
+  }
   if (!items.length) {
     return <div className="customer-appointment-list">
       <div className="empty-card compact-empty"><div className="card-title">No appointments in this section.</div></div>
@@ -1546,7 +1807,10 @@ function AppointmentSection({ title, items, tone, doctors, storeTimeZone }) {
             <div className="customer-meta-line">{doctor?.display_name || `Doctor #${appointment.doctor_user_id}`}</div>
           </div>
           <div className="customer-appointment-side">
-            <span className={`chip ${chipTone}`}><span className="chip-dot" />{appointmentChipLabel(appointment)}</span>
+            <div className="appointment-status-stack">
+              <span className={`chip ${chipTone}`}><span className="chip-dot" />{appointmentChipLabel(appointment)}</span>
+              {appointmentHasPrescription(appointment) ? <span className="appointment-prescription-availability">Prescription Available</span> : null}
+            </div>
             {getAppointmentJoinUrl(appointment) ? <a className="pill-button" href={getAppointmentJoinUrl(appointment)} target="_blank" rel="noreferrer">Join</a> : null}
           </div>
         </article>;
@@ -1599,10 +1863,10 @@ function SettingsPage({ profile, doctors, orders, appointments, settings, onSett
             <div className="card-desc">Identity and delivery information</div>
           </div>
           <div className="customer-settings-form-grid">
-            <label><span>Display name</span><input value={settings.displayName} placeholder={profile.display_name || "Customer"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: event.target.value }))} /></label>
-            <label><span>Email</span><input value={settings.email} placeholder={profile.email || "customer@email.com"} onChange={(event) => onSettingsChange((current) => ({ ...current, email: event.target.value }))} /></label>
-            <label><span>Phone number</span><input value={settings.phone} placeholder="+234 ..." onChange={(event) => onSettingsChange((current) => ({ ...current, phone: event.target.value }))} /></label>
-            <label><span>Address</span><textarea rows={3} value={settings.address} onChange={(event) => onSettingsChange((current) => ({ ...current, address: event.target.value }))} /></label>
+            <label><span>Display name</span><input value={settings.displayName} placeholder={profile.display_name || "Customer"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} /></label>
+            <label><span>Email</span><input value={settings.email} placeholder={profile.email || "customer@email.com"} onChange={(event) => onSettingsChange((current) => ({ ...current, email: sanitizeClientText(event.target.value, { max: 254 }) }))} /></label>
+            <label><span>Phone number</span><input value={settings.phone} placeholder="+234 ..." onChange={(event) => onSettingsChange((current) => ({ ...current, phone: sanitizeClientText(event.target.value, { max: 24 }) }))} /></label>
+            <label><span>Address</span><textarea rows={3} value={settings.address} onChange={(event) => onSettingsChange((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} /></label>
           </div>
         </article>
 
@@ -1619,7 +1883,7 @@ function SettingsPage({ profile, doctors, orders, appointments, settings, onSett
                 <option value="in_person">In person</option>
               </select>
             </label>
-            <label><span>Timezone</span><input value={settings.timezone} onChange={(event) => onSettingsChange((current) => ({ ...current, timezone: event.target.value }))} /></label>
+            <label><span>Timezone</span><input value={settings.timezone} onChange={(event) => onSettingsChange((current) => ({ ...current, timezone: sanitizeClientText(event.target.value, { max: 80 }) }))} /></label>
           </div>
           <div className="customer-tag-list">
             {doctors.length ? doctors.map((doctor) => {
@@ -1680,7 +1944,7 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, onSetti
     <section className="customer-profile-grid customer-profile-grid-editable">
       <article className="customer-profile-card">
         <span>Display name</span>
-        <input value={settings.displayName} placeholder={profile.display_name || "Customer"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: event.target.value }))} />
+        <input value={settings.displayName} placeholder={profile.display_name || "Customer"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />
       </article>
       <article className="customer-profile-card">
         <span>Email address</span>
@@ -1688,11 +1952,11 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, onSetti
       </article>
       <article className="customer-profile-card">
         <span>Phone number</span>
-        <input value={settings.phone} placeholder="+234 ..." onChange={(event) => onSettingsChange((current) => ({ ...current, phone: event.target.value }))} />
+        <input value={settings.phone} placeholder="+234 ..." onChange={(event) => onSettingsChange((current) => ({ ...current, phone: sanitizeClientText(event.target.value, { max: 24 }) }))} />
       </article>
       <article className="customer-profile-card customer-profile-card-wide">
         <span>Address</span>
-        <textarea rows={3} value={settings.address} onChange={(event) => onSettingsChange((current) => ({ ...current, address: event.target.value }))} />
+        <textarea rows={3} value={settings.address} onChange={(event) => onSettingsChange((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
       </article>
       <article className="customer-profile-card">
         <span>Orders placed</span>
@@ -1715,19 +1979,11 @@ function renderDashboardIcon(page) {
 }
 
 function DashboardIcon({ name }) {
-  if (name === "orders") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16" /><path d="M7 12h10" /><path d="M9 17h6" /><rect x="3" y="4" width="18" height="16" rx="3" /></svg>;
-  }
-  if (name === "appointment") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v4" /><path d="M16 3v4" /><rect x="3" y="5" width="18" height="16" rx="3" /><path d="M3 10h18" /></svg>;
-  }
-  if (name === "settings") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5" /><path d="M12 2v3" /><path d="M12 19v3" /><path d="m4.9 4.9 2.1 2.1" /><path d="m17 17 2.1 2.1" /><path d="M2 12h3" /><path d="M19 12h3" /><path d="m4.9 19.1 2.1-2.1" /><path d="M17 7l2.1-2.1" /></svg>;
-  }
-  if (name === "profile") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8Z" /><path d="M5 20a7 7 0 0 1 14 0" /></svg>;
-  }
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5 12 4l8 8.5" /><path d="M7 10.5V20h10v-9.5" /></svg>;
+  if (name === "orders") return <HugeiconsIcon icon={ShoppingCart01Icon} size={20} strokeWidth={1.7} />;
+  if (name === "appointment") return <HugeiconsIcon icon={Calendar03Icon} size={20} strokeWidth={1.7} />;
+  if (name === "settings") return <HugeiconsIcon icon={Settings01Icon} size={20} strokeWidth={1.7} />;
+  if (name === "profile") return <HugeiconsIcon icon={UserIcon} size={20} strokeWidth={1.7} />;
+  return <HugeiconsIcon icon={Home01Icon} size={20} strokeWidth={1.7} />;
 }
 
 function initials(value) {
@@ -1738,6 +1994,13 @@ function initials(value) {
     .map((part) => part[0])
     .join("")
     .toUpperCase() || "N";
+}
+
+function firstName(value) {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)[0] || "Customer";
 }
 
 function orderPrimaryLabel(order) {
@@ -1801,6 +2064,34 @@ function formatTime(value, timeZone = storedStoreTimeZone()) {
     return "n/a";
   }
   return new Intl.DateTimeFormat("en-US", { timeZone, hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+function formatSlotTime(value) {
+  if (!value) return "";
+  const [hours = "0", minutes = "0"] = String(value).split(":");
+  const date = new Date();
+  date.setHours(Number(hours), Number(minutes), 0, 0);
+  return new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function sanitizeClientText(value, { max = 500, allowMarkup = false } = {}) {
+  const text = String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ");
+  const cleaned = allowMarkup ? text : text.replace(/[<>`]/g, "");
+  return cleaned.slice(0, max);
+}
+
+function isAllowedMedicalFile(file) {
+  if (!file) return false;
+  const allowedExtensions = /\.(pdf|png|jpe?g|webp|docx?)$/i;
+  const allowedTypes = new Set([
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ]);
+  return file.size <= 5 * 1024 * 1024 && allowedExtensions.test(file.name || "") && (!file.type || allowedTypes.has(file.type));
 }
 
 function normalizeBookingMinutes(value) {
@@ -1902,7 +2193,7 @@ function buildMockAppointment(journey, selectedDoctor, settings, storeCurrency) 
     status: "requested",
     type: settings.preferredConsultationType,
     timezone: settings.timezone,
-    reason: journey.reason?.trim() || "Doctor consultation booking",
+    reason: sanitizeClientText(journey.reason, { max: 500 }).trim() || "Doctor consultation booking",
     doctor: { display_name: selectedDoctor?.display_name || "Doctor" },
     calendar: { google_url: "" },
     currency: storeCurrency,
@@ -2037,6 +2328,22 @@ function resolveAppointmentCheckoutUrl(checkout) {
   return "";
 }
 
+function resolveOrderPaymentUrl(order) {
+  if (!order || typeof order !== "object") {
+    return "";
+  }
+  const branded = typeof order.branded_payment_url === "string" ? order.branded_payment_url.trim() : "";
+  if (branded) {
+    return branded;
+  }
+  const paymentUrl = typeof order.payment_url === "string" ? order.payment_url.trim() : "";
+  if (paymentUrl && /\/pay\//i.test(paymentUrl)) {
+    return paymentUrl;
+  }
+  // Do not fall back to WooCommerce checkout URLs for customer dashboard pay actions.
+  return "";
+}
+
 function resolveBrandedAppointmentPayUrl(checkout) {
   if (typeof window === "undefined") {
     return "";
@@ -2088,10 +2395,10 @@ function filterAppointmentsList(appointments, filter) {
   const now = Date.now();
   const upcoming = appointments
     .filter((item) => new Date(item.start_at || 0).getTime() >= now)
-    .sort((left, right) => new Date(left.start_at || 0) - new Date(right.start_at || 0));
+    .sort((left, right) => dateTimeValue(right, ["start_at", "created_at", "updated_at"]) - dateTimeValue(left, ["start_at", "created_at", "updated_at"]));
   const past = appointments
     .filter((item) => new Date(item.start_at || 0).getTime() < now)
-    .sort((left, right) => new Date(right.start_at || 0) - new Date(left.start_at || 0));
+    .sort((left, right) => dateTimeValue(right, ["start_at", "created_at", "updated_at"]) - dateTimeValue(left, ["start_at", "created_at", "updated_at"]));
 
   if (filter === "upcoming") {
     return upcoming;
@@ -2102,34 +2409,2206 @@ function filterAppointmentsList(appointments, filter) {
   if (filter === "completed") {
     return appointments
       .filter((item) => String(item.status) === "completed")
-      .sort((left, right) => new Date(right.start_at || 0) - new Date(left.start_at || 0));
+      .sort((left, right) => dateTimeValue(right, ["start_at", "created_at", "updated_at"]) - dateTimeValue(left, ["start_at", "created_at", "updated_at"]));
   }
   if (filter === "cancelled") {
     return appointments
       .filter((item) => ["cancelled", "canceled"].includes(String(item.status)))
-      .sort((left, right) => new Date(right.start_at || 0) - new Date(left.start_at || 0));
+      .sort((left, right) => dateTimeValue(right, ["start_at", "created_at", "updated_at"]) - dateTimeValue(left, ["start_at", "created_at", "updated_at"]));
   }
-  return [...upcoming, ...past];
+  return sortByDateDesc([...upcoming, ...past], ["start_at", "created_at", "updated_at"]);
 }
 
 function appointmentChipTone(appointment) {
-  const status = String(appointment.status || "").toLowerCase();
-  if (status === "completed") {
-    return "complete";
-  }
-  if (status === "cancelled" || status === "canceled") {
-    return "canceled";
-  }
-  if (status === "processing" || status === "confirmed") {
-    return "processing";
-  }
-  return "pending";
+  return appointmentStatusMeta(appointment).tone;
 }
 
 function appointmentChipLabel(appointment) {
-  const status = String(appointment.status || "");
-  if (!status) {
-    return "Pending";
+  return appointmentStatusMeta(appointment).label;
+}
+
+function appointmentHasPrescription(appointment) {
+  return Boolean(appointment?.prescription?.id || appointment?.prescription_order_id || appointment?.prescription_id);
+}
+
+function appointmentStatusMeta(appointment) {
+  const status = String(appointment?.status || "").toLowerCase();
+  const paymentStatus = String(appointment?.payment_status || "").toLowerCase();
+  const startMs = new Date(appointment?.start_at || 0).getTime();
+  const endMs = new Date(appointment?.end_at || 0).getTime();
+  const now = Date.now();
+  const minutesToStart = Number.isFinite(startMs) && startMs > now ? Math.max(1, Math.round((startMs - now) / 60000)) : null;
+
+  if (status === "cancelled" || status === "canceled") {
+    return { tone: "canceled", label: "Canceled" };
   }
-  return titleCase(status);
+  if (paymentStatus === "failed" || status === "failed") {
+    return { tone: "canceled", label: "Failed" };
+  }
+  if ((status === "awaiting_payment" || paymentStatus === "pending" || paymentStatus === "abandoned") && paymentStatus !== "paid") {
+    return { tone: "pending", label: "Awaiting Payment" };
+  }
+  if (status === "requested" || status === "awaiting_confirmation") {
+    return { tone: "processing", label: "Awaiting Confirmation" };
+  }
+  if (status === "checked_in") {
+    return { tone: "processing", label: "In progress" };
+  }
+  if (Number.isFinite(startMs) && startMs > now && minutesToStart !== null && minutesToStart <= 30) {
+    return { tone: "warning", label: `In ${minutesToStart} min` };
+  }
+  if (Number.isFinite(startMs) && Number.isFinite(endMs) && now >= startMs && now < endMs) {
+    return { tone: "processing", label: "In progress" };
+  }
+  if (status === "completed" || (Number.isFinite(endMs) && endMs > 0 && now >= endMs)) {
+    return { tone: "complete", label: "Ended" };
+  }
+  return { tone: "processing", label: "Awaiting Confirmation" };
+}
+
+function appointmentDurationLabel(appointment) {
+  const explicit = Number(appointment?.duration_minutes || 0);
+  if (Number.isFinite(explicit) && explicit > 0) return `${explicit} min`;
+  const start = new Date(appointment?.start_at || 0).getTime();
+  const end = new Date(appointment?.end_at || 0).getTime();
+  const derived = Math.max(0, Math.round((end - start) / 60000));
+  return derived > 0 ? `${derived} min` : "";
+}
+
+function dateTimeValue(item, fields = ["start_at", "created_at", "updated_at", "date"]) {
+  for (const field of fields) {
+    const value = item?.[field];
+    const time = value ? new Date(value).getTime() : 0;
+    if (!Number.isNaN(time) && time > 0) return time;
+  }
+  return 0;
+}
+
+function sortByDateDesc(items = [], fields) {
+  return [...items].sort((left, right) => dateTimeValue(right, fields) - dateTimeValue(left, fields));
+}
+
+function appointmentDisplayTitle(appointment, doctor) {
+  const reasonTitle = String(appointment?.reason || "").trim();
+  if (reasonTitle) return reasonTitle;
+  const doctorName = String(doctor?.display_name || appointment?.doctor?.display_name || "Doctor").trim();
+  const doctorTitle = String(appointment?.title || "").trim();
+  return doctorTitle ? `${doctorName}, ${doctorTitle}` : doctorName;
+}
+
+function appointmentDoctorLabel(appointment, doctor) {
+  const fullName = String(
+    doctor?.display_name
+    || appointment?.doctor?.display_name
+    || appointment?.doctor_name
+    || "Care team"
+  ).trim();
+  const title = String(
+    appointment?.title
+    || doctor?.title
+    || appointment?.doctor?.title
+    || ""
+  ).trim();
+  if (!fullName) return "Care team";
+  return title ? `${title} ${fullName}`.trim() : fullName;
+}
+
+function formatAppointmentListDateTime(value, timeZone = storedStoreTimeZone()) {
+  if (!value) return "Date not set";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date not set";
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long" }).format(date);
+  const month = new Intl.DateTimeFormat("en-US", { timeZone, month: "short" }).format(date);
+  const day = Number(new Intl.DateTimeFormat("en-US", { timeZone, day: "numeric" }).format(date));
+  const hourTime = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(date).toLowerCase();
+  const suffix = day % 10 === 1 && day % 100 !== 11 ? "st"
+    : day % 10 === 2 && day % 100 !== 12 ? "nd"
+      : day % 10 === 3 && day % 100 !== 13 ? "rd"
+        : "th";
+  return `${weekday} ${day}${suffix} ${month}, ${hourTime}`;
+}
+
+function localDateInputValue(date = new Date()) {
+  const d = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+  return d.toISOString().slice(0, 10);
+}
+
+function CustomerMobileDashboard({
+  page,
+  setPage,
+  showSkeleton,
+  state,
+  stateError,
+  profile,
+  settings,
+  setSettings,
+  orderCounts,
+  spentThisMonth,
+  storeCurrency,
+  storeTimeZone,
+  storeUrl,
+  visibleDoctors,
+  selectedDoctor,
+  expandedOrderId,
+  setExpandedOrderId,
+  setSelectedOrder,
+  upcomingAppointments,
+  pastAppointments,
+  journey,
+  createJourneyState,
+  setJourney,
+  minimumBookingMinutes,
+  storefrontSettings,
+  ordersLoading = false,
+  appointmentsLoading = false,
+  doctorsLoading = false,
+  subscriptionState,
+  onOpenAvailability,
+  onOpenAppointment,
+  onOpenOrderDocuments,
+  onCancelPendingOrder,
+  onUpdateAvailabilityDate,
+  onSelectSlot,
+  onDurationChange,
+  onReasonChange,
+  onCreateAppointmentCheckout,
+  onRefreshConfirmation,
+  onCancelCheckoutAppointment,
+  onResetJourney,
+  onReviewDraftChange,
+  onSubmitReview,
+  nurseRequestAuth,
+  onLogout
+}) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [previousPage, setPreviousPage] = useState("overview");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [appointmentTab, setAppointmentTab] = useState("all");
+  const [appointmentComposerOpen, setAppointmentComposerOpen] = useState(false);
+  const [appointmentComposerLoading, setAppointmentComposerLoading] = useState(false);
+  const [appointmentComposerMonth, setAppointmentComposerMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [appointmentComposerDate, setAppointmentComposerDate] = useState("");
+  const [appointmentComposerDatePicked, setAppointmentComposerDatePicked] = useState(false);
+  const [appointmentComposerDoctorId, setAppointmentComposerDoctorId] = useState("");
+  const [appointmentComposerDoctorMenuOpen, setAppointmentComposerDoctorMenuOpen] = useState(false);
+  const [appointmentComposerSelectedSlot, setAppointmentComposerSelectedSlot] = useState("");
+  const [appointmentComposerSlotsRefreshing, setAppointmentComposerSlotsRefreshing] = useState(false);
+  const [appointmentComposerLiveSlots, setAppointmentComposerLiveSlots] = useState([]);
+  const [appointmentComposerReason, setAppointmentComposerReason] = useState("");
+  const [appointmentComposerErrors, setAppointmentComposerErrors] = useState({});
+  const [appointmentComposerSuccess, setAppointmentComposerSuccess] = useState(null);
+  const [localAppointments, setLocalAppointments] = useState([]);
+  const [requestStep, setRequestStep] = useState(1);
+  const [requestStepAnimatingOut, setRequestStepAnimatingOut] = useState(false);
+  const [profileTab, setProfileTab] = useState("user");
+  const [selectedCareType, setSelectedCareType] = useState("");
+  const [requestForm, setRequestForm] = useState({
+    name: "",
+    age: "",
+    gender: "",
+    address: "",
+    emergencyContact: "",
+    mobilityStatus: "",
+    conditions: "",
+    allergies: "",
+    currentMedication: ""
+  });
+  const [requestStep2Errors, setRequestStep2Errors] = useState({});
+  const [careDetails, setCareDetails] = useState({
+    visitType: "",
+    preferredDate: "",
+    preferredTime: "",
+    duration: "",
+    careShift: "",
+    liveInCareRequired: "",
+    wheelchairAssistanceNeeded: "",
+    medicalEquipmentPresent: "",
+    requiresLiftingAssistance: "",
+    infectiousDisease: ""
+  });
+  const [requestStep3Errors, setRequestStep3Errors] = useState({});
+  const [clinicalRequirements, setClinicalRequirements] = useState([]);
+  const [uploadedMedicalFiles, setUploadedMedicalFiles] = useState({});
+  const uploadInputRefs = useRef({});
+  const requestStep2ErrorTimeoutRef = useRef(null);
+  const requestStep3ErrorTimeoutRef = useRef(null);
+  const [requestSubmitted, setRequestSubmitted] = useState(false);
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
+  const [requestSubmitError, setRequestSubmitError] = useState("");
+  const [requestSubmitLoadingState, setRequestSubmitLoadingState] = useState(false);
+  const [latestSubmittedRequest, setLatestSubmittedRequest] = useState(null);
+  const [nurseRequests, setNurseRequests] = useState([]);
+  const [bookCalendarReason, setBookCalendarReason] = useState("");
+  const [calendarDay, setCalendarDay] = useState(7);
+  const [calendarTime, setCalendarTime] = useState("09:41");
+  const searchInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!["appointment", "request"].includes(page)) {
+      setAppointmentTab("all");
+      setRequestStep(1);
+      setRequestSubmitted(false);
+      setRequestSubmitting(false);
+      setRequestSubmitLoadingState(false);
+      setRequestSubmitError("");
+      setLatestSubmittedRequest(null);
+      setAppointmentComposerOpen(false);
+      setAppointmentComposerLoading(false);
+      setAppointmentComposerDate("");
+      setAppointmentComposerDatePicked(false);
+      setAppointmentComposerDoctorMenuOpen(false);
+      setAppointmentComposerSelectedSlot("");
+      setAppointmentComposerReason("");
+      setAppointmentComposerErrors({});
+      setAppointmentComposerSuccess(null);
+      setRequestStep2Errors({});
+      setRequestStep3Errors({});
+    }
+  }, [page]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(CUSTOMER_NURSE_REQUESTS_KEY) || "[]");
+      if (Array.isArray(stored)) setNurseRequests(stored);
+    } catch {
+      setNurseRequests([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CUSTOMER_NURSE_REQUESTS_KEY, JSON.stringify(nurseRequests));
+  }, [nurseRequests]);
+
+  useEffect(() => {
+    if (!Object.keys(requestStep2Errors).length) return;
+    if (requestStep2ErrorTimeoutRef.current) {
+      window.clearTimeout(requestStep2ErrorTimeoutRef.current);
+    }
+    requestStep2ErrorTimeoutRef.current = window.setTimeout(() => {
+      setRequestStep2Errors({});
+      requestStep2ErrorTimeoutRef.current = null;
+    }, 8000);
+    return () => {
+      if (requestStep2ErrorTimeoutRef.current) {
+        window.clearTimeout(requestStep2ErrorTimeoutRef.current);
+        requestStep2ErrorTimeoutRef.current = null;
+      }
+    };
+  }, [requestStep2Errors]);
+
+  useEffect(() => {
+    if (!Object.keys(requestStep3Errors).length) return;
+    if (requestStep3ErrorTimeoutRef.current) {
+      window.clearTimeout(requestStep3ErrorTimeoutRef.current);
+    }
+    requestStep3ErrorTimeoutRef.current = window.setTimeout(() => {
+      setRequestStep3Errors({});
+      requestStep3ErrorTimeoutRef.current = null;
+    }, 8000);
+    return () => {
+      if (requestStep3ErrorTimeoutRef.current) {
+        window.clearTimeout(requestStep3ErrorTimeoutRef.current);
+        requestStep3ErrorTimeoutRef.current = null;
+      }
+    };
+  }, [requestStep3Errors]);
+
+  useEffect(() => {
+    if (journey.mode === "hub") {
+      return;
+    }
+    setDrawerOpen(false);
+  }, [journey.mode]);
+
+  useEffect(() => {
+    if (appointmentTab !== "request") {
+      setRequestStep2Errors({});
+      setRequestStep3Errors({});
+    }
+  }, [appointmentTab]);
+
+  useEffect(() => {
+    if (!["appointment", "request"].includes(page)) {
+      setJourney(createJourneyState());
+    }
+  }, [createJourneyState, page, setJourney]);
+
+  useEffect(() => {
+    if (page === "search") {
+      window.requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select?.();
+      });
+    }
+  }, [page]);
+  const pageTransitionClass = page === "search" ? "customer-mobile-page-enter-search" : "customer-mobile-page-enter";
+  const showNurseRequestFlow = page === "request";
+
+  const composerDoctors = useMemo(() => {
+    if (visibleDoctors.length) {
+      return visibleDoctors.map((doctor, index) => ({
+        id: String(doctor.user_id || doctor.id || `doc-${index}`),
+        initials: initials(doctor.display_name || "DR"),
+        name: doctor.display_name || `Doctor ${index + 1}`,
+        specialty: doctor.specialties?.[0] || "General Physician"
+      }));
+    }
+    return [
+      { id: "HA", initials: "HA", name: "Dr. Hazidat Ahmed", specialty: "General Physician" },
+      { id: "DS", initials: "DS", name: "Dr. Daniel Smith", specialty: "Cardiologist" },
+      { id: "MP", initials: "MP", name: "Dr. Maria Peters", specialty: "Pediatrician" },
+      { id: "NO", initials: "NO", name: "Dr. Nora Okafor", specialty: "Dermatologist" }
+    ];
+  }, [visibleDoctors]);
+
+  const selectedComposerDoctor = useMemo(
+    () => composerDoctors.find((doctor) => doctor.id === appointmentComposerDoctorId) || composerDoctors[0] || null,
+    [appointmentComposerDoctorId, composerDoctors]
+  );
+
+  useEffect(() => {
+    if (!appointmentComposerDoctorId && composerDoctors.length) {
+      setAppointmentComposerDoctorId(composerDoctors[0].id);
+    }
+  }, [appointmentComposerDoctorId, composerDoctors]);
+
+  const appointmentComposerSlots = useMemo(() => {
+    if (!appointmentComposerDate || !selectedComposerDoctor?.id) return [];
+    const fallbackPool = ["08:00", "08:30", "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30", "18:00"];
+    const pool = appointmentComposerLiveSlots.length ? appointmentComposerLiveSlots : fallbackPool;
+    const todayKey = localDateInputValue(new Date());
+    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+    return pool.map((time) => {
+      const [hours = "0", minutes = "0"] = time.split(":");
+      const minutesValue = Number(hours) * 60 + Number(minutes);
+      const disabledByToday = appointmentComposerDate === todayKey && minutesValue <= nowMinutes;
+      return { value: time, disabled: disabledByToday };
+    });
+  }, [appointmentComposerDate, selectedComposerDoctor]);
+
+  const appointmentComposerHasAvailableSlots = appointmentComposerSlots.some((slot) => !slot.disabled);
+
+  useEffect(() => {
+    if (!appointmentComposerOpen || !appointmentComposerDatePicked || !appointmentComposerDate || !selectedComposerDoctor?.id) {
+      setAppointmentComposerLiveSlots([]);
+      return;
+    }
+    let ignore = false;
+    setAppointmentComposerSlotsRefreshing(true);
+    const activeSession = hydrateStoredSession("patient");
+    apiRequest(activeSession, `/doctors/${selectedComposerDoctor.id}/availability`, {
+      params: { date: appointmentComposerDate },
+      suppressHttpError: true
+    })
+      .then((payload) => {
+        if (ignore) return;
+        const slots = Array.isArray(payload?.slots) ? payload.slots : [];
+        const normalized = [...new Set(slots
+          .map((slot) => {
+            const startAt = slot?.start_at || slot?.start || slot?.time || "";
+            if (!startAt) return "";
+            const date = new Date(startAt);
+            if (!Number.isNaN(date.getTime())) {
+              return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+            }
+            const match = String(startAt).match(/(\d{2}):(\d{2})/);
+            return match ? `${match[1]}:${match[2]}` : "";
+          })
+          .filter(Boolean))];
+        setAppointmentComposerLiveSlots(normalized);
+      })
+      .catch(() => {
+        if (!ignore) setAppointmentComposerLiveSlots([]);
+      })
+      .finally(() => {
+        if (!ignore) setAppointmentComposerSlotsRefreshing(false);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [appointmentComposerDate, appointmentComposerDatePicked, appointmentComposerOpen, selectedComposerDoctor]);
+
+  useEffect(() => {
+    if (!appointmentComposerOpen || appointmentComposerDate) return;
+    const today = localDateInputValue(new Date());
+    setAppointmentComposerDate(today);
+    setAppointmentComposerDatePicked(false);
+  }, [appointmentComposerDate, appointmentComposerOpen]);
+
+  const mergedAppointments = useMemo(
+    () => [...localAppointments, ...upcomingAppointments, ...pastAppointments]
+      .sort((a, b) => dateTimeValue(b, ["start_at", "created_at", "updated_at"]) - dateTimeValue(a, ["start_at", "created_at", "updated_at"])),
+    [localAppointments, pastAppointments, upcomingAppointments]
+  );
+  const visibleAppointments = useMemo(() => {
+    if (appointmentTab === "upcoming") {
+      return mergedAppointments.filter((item) => new Date(item.start_at || 0).getTime() >= Date.now());
+    }
+    if (appointmentTab === "previous") {
+      return mergedAppointments.filter((item) => new Date(item.start_at || 0).getTime() < Date.now());
+    }
+    return mergedAppointments;
+  }, [appointmentTab, mergedAppointments]);
+
+  const recentAppointments = useMemo(
+    () => sortByDateDesc([...upcomingAppointments, ...pastAppointments], ["start_at", "created_at", "updated_at"]).slice(0, 4),
+    [pastAppointments, upcomingAppointments]
+  );
+  const orderedCustomerOrders = useMemo(
+    () => sortByDateDesc(state.orders, ["created_at", "date_created", "updated_at", "date_modified", "date"]),
+    [state.orders]
+  );
+  const showAppointmentPagePlus = appointmentsLoading || visibleAppointments.length > 0;
+  const searchResults = useMemo(() => {
+    const term = searchQuery.trim().toLowerCase();
+    if (term.length < 3) {
+      return [];
+    }
+
+    const orderMatches = state.orders
+      .filter((order) => [
+        order.number,
+        order.id,
+        order.order_number,
+        order.reference
+      ].some((value) => String(value || "").toLowerCase().includes(term)))
+      .slice(0, 5)
+      .map((order) => ({
+        key: `order-${order.id}`,
+        area: "Orders",
+        label: `Order #${order.number || order.id}`,
+        meta: `${money(order.total, storeCurrency)} · ${titleCase(order.status)}`,
+        onSelect: () => {
+          setExpandedOrderId(order.id);
+          setSelectedOrder(order);
+          goToPage("orders");
+        }
+      }));
+
+    const appointmentMatches = state.appointments
+      .filter((appointment) => {
+        const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
+        return [
+          appointment.id,
+          appointment.status,
+          doctor?.display_name,
+          doctor?.specialties?.join(" "),
+          shortDate(appointment.start_at, true, storeTimeZone)
+        ].some((value) => String(value || "").toLowerCase().includes(term));
+      })
+      .slice(0, 5)
+      .map((appointment) => {
+        const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
+        return {
+          key: `appointment-${appointment.id}`,
+          area: "Appointments",
+          label: `Appointment #${appointment.id}`,
+          meta: `${shortDate(appointment.start_at, true, storeTimeZone)} · ${doctor?.display_name || "Doctor"}`,
+          onSelect: () => {
+            setSelectedAppointment(appointment);
+            goToPage("appointment");
+          }
+        };
+      });
+
+    const doctorMatches = visibleDoctors
+      .filter((doctor) => [
+        doctor.display_name,
+        doctor.specialties?.join(" "),
+        doctor.email
+      ].some((value) => String(value || "").toLowerCase().includes(term)))
+      .slice(0, 5)
+      .map((doctor) => ({
+        key: `doctor-${doctor.user_id || doctor.id}`,
+        area: "Doctors",
+        label: doctor.display_name || "Doctor",
+        meta: doctor.specialties?.join(", ") || "Available doctor",
+        onSelect: () => onOpenAvailability(doctor)
+      }));
+
+    return [...orderMatches, ...appointmentMatches, ...doctorMatches].slice(0, 10);
+  }, [goToPage, onOpenAvailability, searchQuery, setExpandedOrderId, setSelectedOrder, state.appointments, state.orders, storeTimeZone, storeCurrency, visibleDoctors]);
+
+  const orderStats = [
+    { label: "Total Orders", value: orderCounts.total },
+    { label: "Pending/In-Progress", value: orderCounts.pending + orderCounts.processing },
+    { label: "Completed Orders", value: orderCounts.completed },
+    { label: "Total Spent", value: money(spentThisMonth, storeCurrency), accent: true }
+  ];
+  function goToPage(nextPage) {
+    setPage(nextPage);
+    setDrawerOpen(false);
+    setRequestStep2Errors({});
+    setRequestStep3Errors({});
+    if (nextPage !== "appointment") {
+      setJourney(createJourneyState());
+    }
+  }
+
+  function openSearchPage() {
+    if (page !== "search") {
+      setPreviousPage(page);
+    }
+    setPage("search");
+  }
+
+  function exitSearchPage() {
+    setPage(previousPage || "overview");
+  }
+
+  function openRequestFlow() {
+    setAppointmentComposerOpen(false);
+    setAppointmentTab("upcoming");
+    setRequestSubmitted(false);
+    setRequestStep(1);
+    goToPage("request");
+  }
+
+  function transitionToRequestStep(nextStep) {
+    setRequestSubmitError("");
+    setRequestStep2Errors({});
+    setRequestStep3Errors({});
+    setRequestStepAnimatingOut(true);
+    window.setTimeout(() => {
+      setRequestStep(nextStep);
+      setRequestStepAnimatingOut(false);
+    }, 140);
+  }
+
+  function validateAppointmentComposer() {
+    const errors = {};
+    if (!selectedComposerDoctor) errors.doctor = "Select a doctor.";
+    if (!appointmentComposerDate) errors.date = "Select a date.";
+    if (!appointmentComposerSelectedSlot) errors.time = "Select a time slot.";
+    if (!sanitizeClientText(appointmentComposerReason, { max: 500 }).trim()) errors.reason = "Reason for appointment is required.";
+    setAppointmentComposerErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
+  async function handleAppointmentComposerBooking() {
+    if (!validateAppointmentComposer()) return;
+    setAppointmentComposerLoading(true);
+    setAppointmentComposerErrors({});
+    setAppointmentComposerSuccess(null);
+
+    try {
+      const payload = {
+        doctorId: selectedComposerDoctor?.id || "",
+        doctorName: selectedComposerDoctor?.name || "",
+        doctorSpecialty: selectedComposerDoctor?.specialty || "",
+        date: appointmentComposerDate,
+        time: appointmentComposerSelectedSlot,
+        reason: sanitizeClientText(appointmentComposerReason, { max: 500 }).trim(),
+        selectedEpochMs: new Date(`${appointmentComposerDate}T${appointmentComposerSelectedSlot}:00`).getTime(),
+        clientNowMs: Date.now(),
+        customerEmail: profile.email || settings.email || "",
+        customerName: settings.displayName || profile.display_name || "",
+        baseUrl: nurseRequestAuth?.baseUrl || "",
+        adminEmail: nurseRequestAuth?.adminEmail || "",
+        appOrigin: typeof window !== "undefined" ? window.location.origin : ""
+      };
+
+      const response = await fetch("/api/customer/appointments/book", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result?.ok) {
+        setAppointmentComposerErrors({ submit: result?.error?.message || "Unable to book appointment right now." });
+        return;
+      }
+
+      const createdAppointment = result?.appointment || {
+        id: `local-${Date.now()}`,
+        doctor_user_id: selectedComposerDoctor?.id || 0,
+        start_at: `${appointmentComposerDate}T${appointmentComposerSelectedSlot}:00`,
+        end_at: `${appointmentComposerDate}T${appointmentComposerSelectedSlot}:00`,
+        title: "Doctor Consultation",
+        reason: sanitizeClientText(appointmentComposerReason, { max: 500 }).trim(),
+        status: "confirmed",
+        meeting_url: result?.meeting?.url || ""
+      };
+
+      setLocalAppointments((current) => [createdAppointment, ...current]);
+      setAppointmentTab("upcoming");
+      setAppointmentComposerSuccess({
+        title: result?.degraded ? "Appointment Saved Pending Sync" : "Appointment Booked Successfully",
+        subtitle: result?.degraded
+          ? `Your appointment with ${selectedComposerDoctor?.name || "the doctor"} was saved locally for ${friendlyDateFromDateKey(appointmentComposerDate, storeTimeZone)} at ${formatSlotTime(appointmentComposerSelectedSlot)}. It will need to sync once the appointment server is available.`
+          : `Your appointment with ${selectedComposerDoctor?.name || "the doctor"} has been booked for ${friendlyDateFromDateKey(appointmentComposerDate, storeTimeZone)} at ${formatSlotTime(appointmentComposerSelectedSlot)}.`,
+        appointment: createdAppointment
+      });
+    } catch {
+      setAppointmentComposerErrors({ submit: "Unable to book appointment right now." });
+    } finally {
+      setAppointmentComposerLoading(false);
+    }
+  }
+
+  function validateRequestStep2() {
+    const requiredFields = [
+      ["name", "Name is required."],
+      ["age", "Age is required."],
+      ["gender", "Gender is required."],
+      ["address", "Address is required."],
+      ["emergencyContact", "Emergency contact is required."],
+      ["mobilityStatus", "Mobility status is required."]
+    ];
+    const errors = {};
+    requiredFields.forEach(([key, message]) => {
+      if (!String(requestForm[key] || "").trim()) errors[key] = message;
+    });
+    if (!errors.name && !/^[a-zA-Z\s'.-]{2,120}$/.test(String(requestForm.name || "").trim())) {
+      errors.name = "Enter a valid name (letters only).";
+    }
+    if (!errors.age && !/^\d{1,3}$/.test(String(requestForm.age || "").trim())) {
+      errors.age = "Age must be numbers only (max 3 digits).";
+    }
+    if (!errors.gender && !["Male", "Female"].includes(String(requestForm.gender || "").trim())) {
+      errors.gender = "Select Male or Female.";
+    }
+    if (!errors.emergencyContact && !/^[0-9+\-()\s]{7,20}$/.test(String(requestForm.emergencyContact || "").trim())) {
+      errors.emergencyContact = "Enter a valid phone number.";
+    }
+    if (!errors.address && String(requestForm.address || "").trim().length < 5) {
+      errors.address = "Enter a valid address.";
+    }
+    if (!errors.mobilityStatus && !/^[a-zA-Z\s'.-]{2,120}$/.test(String(requestForm.mobilityStatus || "").trim())) {
+      errors.mobilityStatus = "Enter a valid mobility status.";
+    }
+    setRequestStep2Errors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
+  function validateRequestStep3() {
+    const requiredFields = [
+      ["visitType", "Select visit type."],
+      ["preferredDate", "Preferred visit date is required."],
+      ["preferredTime", "Preferred time is required."],
+      ["duration", "Duration is required."],
+      ["careShift", "Select day or night care."],
+      ["liveInCareRequired", "Select yes or no."],
+      ["wheelchairAssistanceNeeded", "Select yes or no."],
+      ["medicalEquipmentPresent", "Select yes or no."],
+      ["requiresLiftingAssistance", "Select yes or no."],
+      ["infectiousDisease", "Select yes or no."]
+    ];
+    const errors = {};
+    requiredFields.forEach(([key, message]) => {
+      if (!String(careDetails[key] || "").trim()) errors[key] = message;
+    });
+    const today = localDateInputValue(new Date());
+    if (!errors.preferredDate && careDetails.preferredDate < today) {
+      errors.preferredDate = "Past dates are not allowed.";
+    }
+    if (!errors.preferredDate && !errors.preferredTime && careDetails.preferredDate === today) {
+      const [hh = "0", mm = "0"] = String(careDetails.preferredTime || "").split(":");
+      const selected = new Date();
+      selected.setHours(Number(hh), Number(mm), 0, 0);
+      if (selected.getTime() < Date.now()) {
+        errors.preferredTime = "Past time is not allowed.";
+      }
+    }
+    setRequestStep3Errors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
+  async function handleRequestContinue() {
+    if (requestStep === 1) {
+      if (!selectedCareType) return;
+      transitionToRequestStep(2);
+      return;
+    }
+    if (requestStep === 2) {
+      if (!validateRequestStep2()) return;
+      transitionToRequestStep(3);
+      return;
+    }
+    if (requestStep === 3) {
+      if (!validateRequestStep3()) return;
+      transitionToRequestStep(4);
+      return;
+    }
+    if (requestStep === 4) {
+      transitionToRequestStep(5);
+      return;
+    }
+    if (requestSubmitting) return;
+    setRequestSubmitError("");
+    setRequestSubmitting(true);
+    setRequestSubmitLoadingState(true);
+    try {
+      const response = await fetch("/api/customer/nurse-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          careType: selectedCareType,
+          patient: requestForm,
+          careDetails,
+          clinicalRequirements,
+          uploadedMedicalFiles: Object.fromEntries(Object.entries(uploadedMedicalFiles).map(([key, value]) => [key, value?.name || ""])),
+          customerEmail: profile.email || settings.email || "",
+          customerName: requestForm.name || settings.displayName || profile.display_name || "",
+          customerPhone: settings.phone || requestForm.emergencyContact || "",
+          appOrigin: typeof window !== "undefined" ? window.location.origin : "",
+          baseUrl: nurseRequestAuth?.baseUrl || "",
+          accessToken: nurseRequestAuth?.accessToken || "",
+          adminEmail: nurseRequestAuth?.adminEmail || ""
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setRequestSubmitError(result?.error?.message || "Unable to submit nurse request.");
+        return;
+      }
+      const created = result?.request || {
+        id: `nurse-${Date.now()}`,
+        status: "pending_review",
+        title: `Nurse Visit Request - ${selectedCareType}`,
+        careType: selectedCareType,
+        preferredDate: careDetails.preferredDate,
+        preferredTime: careDetails.preferredTime,
+        visitType: careDetails.visitType
+      };
+      setNurseRequests((current) => [created, ...current]);
+      setLatestSubmittedRequest(created);
+      setRequestSubmitted(true);
+    } catch {
+      setRequestSubmitError("Unable to submit nurse request.");
+    } finally {
+      window.setTimeout(() => setRequestSubmitLoadingState(false), 320);
+      setRequestSubmitting(false);
+    }
+  }
+
+  function renderHeader(title, showBack = false, onBack = onResetJourney, headerAction = null) {
+    const greetingName = firstName(settings.displayName || profile.display_name || "Tee");
+    const isOverviewHeader = page === "overview";
+    const searchbar = page === "search" ? <div className="customer-mobile-searchbar is-search-page">
+      <MobileIcon name="search" />
+      <input
+        ref={searchInputRef}
+        value={searchQuery}
+        onChange={(event) => setSearchQuery(sanitizeClientText(event.target.value, { max: 120 }))}
+        placeholder="Search here for orders, appointments etc"
+        aria-label="Search here for orders, appointments etc"
+      />
+    </div> : <button className="customer-mobile-searchbar customer-mobile-searchbar-button" type="button" onClick={openSearchPage} aria-label="Search here for orders, appointments etc">
+      <MobileIcon name="search" />
+      <span>Search here for orders, appointments etc</span>
+    </button>;
+
+    return <>
+      <header className={`customer-mobile-header ${isOverviewHeader ? "is-overview" : "is-compact"}`}>
+        {searchbar}
+        {isOverviewHeader ? <div className="customer-mobile-greeting-row">
+          <button className="customer-mobile-icon-button" type="button" aria-label="Open menu" onClick={() => setDrawerOpen(true)}>
+            <MobileIcon name="menu" />
+          </button>
+          <div className="customer-mobile-greeting-copy">
+            <span>Welcome back, {greetingName}</span>
+          </div>
+        </div> : <div className="customer-mobile-pagehead-row">
+          <button className="customer-mobile-icon-button" type="button" aria-label="Open menu" onClick={() => setDrawerOpen(true)}>
+            <MobileIcon name="menu" />
+          </button>
+          <h1>{title}</h1>
+          {headerAction}
+        </div>}
+        {isOverviewHeader ? <div className="customer-mobile-title-row">
+          {showBack ? <button className="customer-mobile-back-link" type="button" onClick={onBack}>
+            <MobileIcon name="arrow-left" />
+            <span>Go back</span>
+          </button> : null}
+          <h1>{title}</h1>
+        </div> : null}
+      </header>
+      <div className={`customer-mobile-header-spacer ${isOverviewHeader ? "is-overview" : "is-compact"}`} aria-hidden="true" />
+    </>;
+  }
+
+  function renderDrawer() {
+    return <div className={`customer-mobile-drawer-layer ${drawerOpen ? "open" : ""}`}>
+      <button className="customer-mobile-drawer-backdrop" type="button" aria-label="Close drawer" onClick={() => setDrawerOpen(false)} />
+      <aside className="customer-mobile-drawer">
+        <div className="customer-mobile-drawer-brand" aria-label="Nevari logo">
+          <img src="/ne.webp" alt="Nevari" width="32" height="32" />
+        </div>
+        <nav className="customer-mobile-drawer-nav" aria-label="Customer menu">
+          {[
+            { id: "overview", label: "Overview", icon: "home" },
+            { id: "orders", label: "Orders", icon: "orders" },
+            { id: "pharmacy", label: "Pharmacy", icon: "pharmacy" },
+            { id: "appointment", label: "Appointments", icon: "calendar" },
+            { id: "request", label: "Request a Nurse", icon: "nurse" },
+            { id: "therapy", label: "Medical Therapy Management", icon: "cross" },
+            { id: "profile", label: "Profile", icon: "profile" }
+          ].map((item) => (
+            <button
+              key={item.id}
+              className={`customer-mobile-drawer-item ${page === item.id ? "active" : ""}`}
+              type="button"
+              onClick={() => {
+                if (item.id === "request") {
+                  openRequestFlow();
+                  return;
+                }
+                if (item.id === "pharmacy") {
+                  goToPage("orders");
+                  return;
+                }
+                if (item.id === "therapy") {
+                  goToPage("therapy");
+                  return;
+                }
+                goToPage(item.id);
+              }}
+            >
+              <MobileIcon name={item.icon} />
+              <span>{item.label}</span>
+            </button>
+          ))}
+          <button className="customer-mobile-drawer-item logout" type="button" onClick={onLogout}>
+            <MobileIcon name="logout" />
+            <span>Log Out</span>
+          </button>
+        </nav>
+        <div className="customer-mobile-drawer-footer">
+          <div className="customer-mobile-drawer-profile">
+            <div className="customer-mobile-avatar">{initials(settings.displayName || profile.display_name || "Customer")}</div>
+            <div>
+              <strong>{settings.displayName || profile.display_name || "Tee Godwin"}</strong>
+              <span>{profile.email || settings.email || "tee@example.com"}</span>
+            </div>
+            <button className="customer-mobile-more" type="button" aria-label="More options">
+              <MobileIcon name="more" />
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>;
+  }
+
+  if (showSkeleton) {
+    return <CustomerMobileSkeleton page={page} />;
+  }
+
+  if (journey.mode === "slots") {
+    return <CustomerMobileBookCalendar
+      doctor={selectedDoctor}
+      journey={journey}
+      storeTimeZone={storeTimeZone}
+      onBack={onResetJourney}
+      onUpdateAvailabilityDate={onUpdateAvailabilityDate}
+      onSelectSlot={onSelectSlot}
+      onDurationChange={onDurationChange}
+      onReasonChange={onReasonChange}
+      onCreateAppointmentCheckout={onCreateAppointmentCheckout}
+      minimumBookingMinutes={minimumBookingMinutes}
+      bookCalendarReason={bookCalendarReason}
+      setBookCalendarReason={setBookCalendarReason}
+      calendarDay={calendarDay}
+      setCalendarDay={setCalendarDay}
+      calendarTime={calendarTime}
+      setCalendarTime={setCalendarTime}
+    />;
+  }
+
+  if (journey.mode === "checkout") {
+    return <CheckoutPage
+      journey={journey}
+      doctor={selectedDoctor}
+      onBack={onResetJourney}
+      onRefreshConfirmation={onRefreshConfirmation}
+      onCancelCheckoutAppointment={onCancelCheckoutAppointment}
+      storeCurrency={storeCurrency}
+      storeTimeZone={storeTimeZone}
+      livePaymentsEnabled={storefrontSettings.livePaymentsEnabled}
+    />;
+  }
+
+  if (journey.mode === "confirmation") {
+    return <ConfirmationPage
+      journey={journey}
+      doctor={selectedDoctor}
+      onBack={onResetJourney}
+      calendarDownloadUrl={journey.appointment?.mock ? "" : (journey.appointment?.id ? buildUrl(hydrateStoredSession("patient"), `/appointments/${journey.appointment.id}/calendar`) : "")}
+      storeTimeZone={storeTimeZone}
+    />;
+  }
+
+  if (journey.mode === "reviews") {
+    return <PatientReviewsPage
+      doctor={selectedDoctor}
+      journey={journey}
+      pastAppointments={pastAppointments}
+      onBack={onResetJourney}
+      onReviewDraftChange={onReviewDraftChange}
+      onSubmitReview={onSubmitReview}
+    />;
+  }
+
+  if (page === "search") {
+    return <div className="customer-mobile-app">
+      {renderDrawer()}
+      <main className={`customer-mobile-frame customer-mobile-search-frame ${pageTransitionClass}`}>
+        <header className="customer-mobile-search-header-row">
+          <button className="customer-mobile-back-link customer-mobile-search-back-inline" type="button" onClick={exitSearchPage}>
+            <MobileIcon name="arrow-left" />
+          </button>
+          <div className="customer-mobile-searchbar is-search-page">
+            <MobileIcon name="search" />
+            <input
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(sanitizeClientText(event.target.value, { max: 120 }))}
+              placeholder="Search here for orders, appointments etc"
+              aria-label="Search here for orders, appointments etc"
+            />
+          </div>
+        </header>
+        <section className="customer-mobile-search-results">
+          {searchQuery.trim().length < 3 ? <div className="customer-mobile-search-empty">
+            <strong className="customer-mobile-search-empty-hint">start typing to see results</strong>
+          </div> : searchResults.length ? searchResults.map((result) => <button className="customer-mobile-search-result" key={result.key} type="button" onClick={result.onSelect}>
+            <div>
+              <span className="customer-mobile-search-result-area">{result.area}</span>
+              <strong>{result.label}</strong>
+              <small>{result.meta}</small>
+            </div>
+            <MobileIcon name="arrow-right" />
+          </button>) : <div className="customer-mobile-search-empty">
+            <strong>no results found</strong>
+          </div>}
+        </section>
+      </main>
+    </div>;
+  }
+
+  if (page === "orders") {
+    return <div className="customer-mobile-app">
+      {renderDrawer()}
+      <main className={`customer-mobile-frame ${pageTransitionClass}`}>
+        {renderHeader("Orders")}
+        {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
+        <section className="customer-mobile-stat-grid">
+          {orderStats.map((item) => <article key={item.label} className={`customer-mobile-stat-card ${item.accent ? "accent" : ""}`}>
+            <MobileIcon name="orders" />
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </article>)}
+        </section>
+        <section className="customer-mobile-section">
+          <h2>Recent Purchases</h2>
+          {ordersLoading ? <div className="customer-mobile-order-list">
+            {Array.from({ length: 3 }, (_, index) => <article className="customer-mobile-order-row skeleton-panel" key={`customer-mobile-order-skeleton-${index}`}>
+              <div className="customer-mobile-order-thumb-wrap skeleton" aria-hidden="true" />
+              <div className="customer-mobile-order-copy">
+                <SkeletonBox className="skeleton-line skeleton-line-md" />
+                <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                <SkeletonBox className="skeleton-line skeleton-line-sm" />
+              </div>
+              <div className="customer-mobile-pill skeleton" aria-hidden="true" />
+            </article>)}
+          </div> : orderedCustomerOrders.length ? <div className="customer-mobile-order-list">
+            {orderedCustomerOrders.slice(0, 3).map((order, index) => {
+              const item = order.items?.[0] || {};
+              const title = `Order #${order.number || order.id || "0000"}`;
+              const quantity = order.totals?.items_quantity || item.quantity || 1;
+              const thumbnail = item.image || item.thumbnail || item.product_image || "/ne.webp";
+              const statusLabel = titleCase(order.status || "Pending");
+              const amount = Number(order.total);
+              return <article className="customer-mobile-order-row" key={order.id || index}>
+                <div className="customer-mobile-order-thumb-wrap">
+                  <img alt="" src={thumbnail} />
+                </div>
+                <div className="customer-mobile-order-copy">
+                  <strong>{title}</strong>
+                  <span>{money(Number.isFinite(amount) ? amount : 0, storeCurrency)}</span>
+                  <small>{statusLabel}</small>
+                </div>
+                <div className="customer-mobile-pill">{quantity}</div>
+                <button className="customer-mobile-row-overlay" type="button" aria-label="Open order details" onClick={() => setSelectedOrder(order)} />
+              </article>;
+            })}
+          </div> : <CustomerMobileEmptyState
+            message="No orders found"
+            ctaLabel="Shop Medicines"
+            onCta={() => window.open(storeUrl, "_blank", "noreferrer")}
+            icon="orders"
+            illustrationSrc="/group-3.png"
+            ctaStyle="shop"
+          />}
+        </section>
+      </main>
+    </div>;
+  }
+
+  if (page === "therapy") {
+    return <div className="customer-mobile-app">
+      {renderDrawer()}
+      <main className={`customer-mobile-frame ${pageTransitionClass}`}>
+        <SubscriptionGate
+          allowed={subscriptionState.canAccessTherapyManagement}
+          loading={subscriptionState.isLoading}
+          showSuccess={subscriptionState.showSuccess}
+          error={subscriptionState.actionError}
+          busy={subscriptionState.isActionBusy}
+          onOpenMenu={() => setDrawerOpen(true)}
+          onSubscribe={() => subscriptionState.launchCheckout()}
+          onContinue={async () => {
+            await subscriptionState.refresh();
+            subscriptionState.dismissSuccess();
+          }}
+        >
+          <section className="therapy-content-shell">
+            <header className="therapy-page-head">
+              <button className="customer-mobile-icon-button" type="button" aria-label="Open menu" onClick={() => setDrawerOpen(true)}>
+                <MobileIcon name="menu" />
+              </button>
+              <div>
+                <h1>Medical Therapy Management</h1>
+                <p>Premium care planning and medication support for Nevari Access Pro members.</p>
+              </div>
+            </header>
+            <div className="therapy-feature-grid">
+              <ProtectedFeature allowed={subscriptionState.canAccessTherapyManagement}>
+                <article className="therapy-feature-card">
+                  <strong>Medication review</strong>
+                  <p>Review current prescriptions, track side effects, and keep your therapy plan aligned with care guidance.</p>
+                </article>
+                <article className="therapy-feature-card">
+                  <strong>Follow-up scheduling</strong>
+                  <p>Coordinate follow-up care and keep specialist consultations flowing without losing context.</p>
+                </article>
+                <article className="therapy-feature-card">
+                  <strong>Refill continuity</strong>
+                  <p>Stay on track with premium refill and delivery support designed for ongoing treatment.</p>
+                </article>
+              </ProtectedFeature>
+            </div>
+          </section>
+        </SubscriptionGate>
+      </main>
+    </div>;
+  }
+
+  if (page === "profile" || page === "settings") {
+    return <div className="customer-mobile-app">
+      {renderDrawer()}
+      <main className={`customer-mobile-frame ${pageTransitionClass}`}>
+        {renderHeader("Profile")}
+        {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
+        <div className="customer-mobile-profile-tabs" role="tablist" aria-label="Profile tabs">
+          {[
+            { id: "user", label: "User" },
+            { id: "notifications", label: "Notification Settings" }
+          ].map((item) => (
+            <button
+              key={item.id}
+              className={`customer-mobile-pill-tab ${profileTab === item.id ? "active" : ""}`}
+              type="button"
+              onClick={() => setProfileTab(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        {profileTab === "user" ? <section className="customer-mobile-panel">
+          <ManageSubscription
+            subscription={subscriptionState.subscription}
+            loading={subscriptionState.isLoading}
+            busy={subscriptionState.isActionBusy}
+            error={subscriptionState.actionError}
+            onUpgrade={() => subscriptionState.launchCheckout()}
+            onCancel={async () => {
+              await subscriptionState.cancelCurrentSubscription();
+            }}
+          />
+          <label className="customer-mobile-field">
+            <span>Display Name:</span>
+            <input value={settings.displayName} placeholder={profile.display_name || "Tee Godwin"} onChange={(event) => setSettings((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />
+          </label>
+          <label className="customer-mobile-field">
+            <span>Email:</span>
+            <input value={profile.email || settings.email || ""} readOnly />
+          </label>
+          <label className="customer-mobile-field">
+            <span>Phone Number:</span>
+            <input value={settings.phone} placeholder="+234 000 000 0000" onChange={(event) => setSettings((current) => ({ ...current, phone: sanitizeClientText(event.target.value, { max: 24 }) }))} />
+          </label>
+          <label className="customer-mobile-field">
+            <span>Address:</span>
+            <input value={settings.address} placeholder="No. 1, Example Street" onChange={(event) => setSettings((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
+          </label>
+          <label className="customer-mobile-field">
+            <span>Address:</span>
+            <input value={settings.address} placeholder="example@domain.com" onChange={(event) => setSettings((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
+          </label>
+          <div className="customer-mobile-upload-group">
+            <div>
+              <strong>Your photo</strong>
+              <p>This will be displayed on your profile.</p>
+            </div>
+            <div className="customer-mobile-upload-row">
+              <div className="customer-mobile-avatar large">{initials(settings.displayName || profile.display_name || "Customer")}</div>
+              <button className="customer-mobile-dropzone" type="button">
+                <div className="customer-mobile-upload-icon"><MobileIcon name="upload" /></div>
+                <span><strong>Click to upload</strong> or drag and drop</span>
+                <small>SVG, PNG, JPG or GIF (max. 800x400px)</small>
+              </button>
+            </div>
+          </div>
+          <button className="customer-mobile-primary-button" type="button">Continue</button>
+        </section> : <section className="customer-mobile-panel customer-mobile-toggle-panel">
+          {[
+            ["Email Reminders", settings.emailReminders],
+            ["Appointment Reminders", settings.appointmentReminders],
+            ["Prescription Reminders", settings.prescriptionAlerts],
+            ["Payment Receipts", settings.paymentReceipts],
+            ["Two-factor Authentication", settings.twoFactorEnabled]
+          ].map(([label, checked]) => (
+            <label className="customer-mobile-toggle-row" key={label}>
+              <span>{label}</span>
+              <input
+                type="checkbox"
+                checked={Boolean(checked)}
+                onChange={(event) => {
+                  const next = event.target.checked;
+                  setSettings((current) => {
+                    if (label === "Email Reminders") return { ...current, emailReminders: next };
+                    if (label === "Appointment Reminders") return { ...current, appointmentReminders: next };
+                    if (label === "Prescription Reminders") return { ...current, prescriptionAlerts: next };
+                    if (label === "Payment Receipts") return { ...current, paymentReceipts: next };
+                    return { ...current, twoFactorEnabled: next };
+                  });
+                }}
+              />
+            </label>
+          ))}
+          <button className="customer-mobile-primary-button" type="button">Continue</button>
+        </section>}
+      </main>
+    </div>;
+  }
+
+  if (page === "appointment" || page === "request") {
+    const monthLabel = appointmentComposerMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    const monthStart = new Date(appointmentComposerMonth.getFullYear(), appointmentComposerMonth.getMonth(), 1);
+    const monthEnd = new Date(appointmentComposerMonth.getFullYear(), appointmentComposerMonth.getMonth() + 1, 0);
+    const leadingDays = monthStart.getDay();
+    const daysInMonth = monthEnd.getDate();
+    const calendarCells = Array.from({ length: leadingDays + daysInMonth }, (_, index) => {
+      const dayNumber = index - leadingDays + 1;
+      return dayNumber > 0 ? dayNumber : null;
+    });
+    return <div className="customer-mobile-app">
+      {renderDrawer()}
+      <main className={`customer-mobile-frame ${pageTransitionClass}`}>
+        {renderHeader(
+          showNurseRequestFlow ? "Request a Nurse" : "Appointments",
+          false,
+          onResetJourney,
+          (!showNurseRequestFlow && !appointmentComposerOpen && showAppointmentPagePlus)
+            ? <button className="pill-button customer-mobile-appointment-booknow-btn" type="button" aria-label="Book now" title="Book now" onClick={() => setAppointmentComposerOpen(true)}>Book Now</button>
+            : null
+        )}
+        {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
+        {!showNurseRequestFlow && !appointmentComposerOpen ? <div className="customer-mobile-pill-tabs" role="tablist" aria-label="Appointment tabs">
+          {[
+            ["all", "All"],
+            ["upcoming", "Upcoming"],
+            ["previous", "Previous"]
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              className={`customer-mobile-pill-tab ${appointmentTab === id ? "active" : ""}`}
+              type="button"
+              onClick={() => setAppointmentTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div> : null}
+
+        {showNurseRequestFlow ? <section className="customer-mobile-flow">
+          {!requestSubmitted ? <>
+            <div className="customer-mobile-step-title">Step {requestStep} of 5 - {requestStep === 1 ? "Care Type" : requestStep === 2 ? "Patient Details" : requestStep === 3 ? "Care Details" : requestStep === 4 ? "Clinical Requirements" : "Upload Medical Information"}</div>
+            <p className="customer-mobile-step-copy">{requestStep === 1 ? "Please select as appropriate:" : requestStep === 2 ? "Please fill out the form" : requestStep === 3 ? "Set the care schedule details." : requestStep === 4 ? "Select required clinical services." : "You can upload any of these, if available:"}</p>
+            <div className={`customer-mobile-step-panel ${requestStepAnimatingOut ? "is-out" : "is-in"}`}>
+              {requestStep === 1 ? <div className="customer-mobile-flow-stack">
+                {["Elderly Care", "Post Surgery Recovery", "Medication Assistance", "Wound Dressing", "Injection Administration", "Chronic Disease Monitoring", "Palliative Care"].map((label) => (
+                  <button key={label} type="button" className={`customer-mobile-option-row ${selectedCareType === label ? "active" : ""}`} onClick={() => setSelectedCareType(label)}>
+                    <span>{label}</span>
+                    <span className={`customer-mobile-radio ${selectedCareType === label ? "selected" : ""}`} aria-hidden="true" />
+                  </button>
+                ))}
+              </div> : null}
+              {requestStep === 2 ? <div className="customer-mobile-form-stack">
+                {[
+                  { label: "Name:", key: "name", placeholder: "Enter patient full name", required: true },
+                  { label: "Age:", key: "age", placeholder: "Enter age", required: true },
+                  { label: "Gender:", key: "gender", placeholder: "Select gender", required: true },
+                  { label: "Address:", key: "address", placeholder: "Enter home address", required: true },
+                  { label: "Emergency Contact:", key: "emergencyContact", placeholder: "Enter emergency contact number", required: true },
+                  { label: "Mobility Status:", key: "mobilityStatus", placeholder: "Enter mobility status", required: true }
+                ].map(({ label, key, placeholder, required }) => <label className="customer-mobile-field" key={label}>
+                  <span>{label}</span>
+                  {key === "gender" ? <select
+                    value={requestForm[key]}
+                    className={requestStep2Errors[key] ? "has-error" : ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setRequestForm((current) => ({ ...current, [key]: value }));
+                      if (requestStep2Errors[key] && value.trim()) {
+                        setRequestStep2Errors((current) => {
+                          const next = { ...current };
+                          delete next[key];
+                          return next;
+                        });
+                      }
+                    }}
+                  >
+                    <option value="">Select gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                  </select> : <input
+                    type={key === "emergencyContact" ? "tel" : "text"}
+                    inputMode={key === "age" ? "numeric" : undefined}
+                    maxLength={key === "age" ? 3 : undefined}
+                    value={requestForm[key]}
+                    placeholder={placeholder}
+                    className={requestStep2Errors[key] ? "has-error" : ""}
+                    onChange={(event) => {
+                      let value = event.target.value;
+                      if (key === "age") value = value.replace(/\D/g, "").slice(0, 3);
+                      if (key === "name" || key === "mobilityStatus") value = value.replace(/[^a-zA-Z\s'.-]/g, "");
+                      if (key === "emergencyContact") value = value.replace(/[^0-9+\-()\s]/g, "");
+                      setRequestForm((current) => ({ ...current, [key]: value }));
+                      if (requestStep2Errors[key] && value.trim()) {
+                        setRequestStep2Errors((current) => {
+                          const next = { ...current };
+                          delete next[key];
+                          return next;
+                        });
+                      }
+                    }}
+                  />}
+                  {required && requestStep2Errors[key] ? <small className="customer-mobile-field-error">{requestStep2Errors[key]}</small> : null}
+                </label>)}
+                {[
+                  ["Existing Conditions (If any):", "conditions", "Enter existing conditions"],
+                  ["Allergies (If any):", "allergies", "Enter known allergies"],
+                  ["Current Medication:", "currentMedication", "Enter current medications"]
+                ].map(([label, key, placeholder]) => <label className="customer-mobile-field" key={label}>
+                  <span>{label}</span>
+                  <textarea rows={4} value={requestForm[key]} placeholder={placeholder} onChange={(event) => setRequestForm((current) => ({ ...current, [key]: sanitizeClientText(event.target.value, { max: 500 }) }))} />
+                </label>)}
+              </div> : null}
+              {requestStep === 3 ? <div className="customer-mobile-form-stack">
+                <div className="customer-mobile-radio-group">
+                  <span>Is this a recurring visit or one time care?</span>
+                  <div className="customer-mobile-inline-radios">
+                    {["Recurring", "One Time"].map((label) => <label key={label}>
+                      <input
+                        type="radio"
+                        name="visitType"
+                        checked={careDetails.visitType === label}
+                        onChange={() => {
+                          setCareDetails((current) => ({ ...current, visitType: label }));
+                          if (requestStep3Errors.visitType) {
+                            setRequestStep3Errors((current) => {
+                              const next = { ...current };
+                              delete next.visitType;
+                              return next;
+                            });
+                          }
+                        }}
+                      />
+                      <span className="customer-mobile-radio" aria-hidden="true" />
+                      {label}
+                    </label>)}
+                  </div>
+                  {requestStep3Errors.visitType ? <small className="customer-mobile-field-error">{requestStep3Errors.visitType}</small> : null}
+                </div>
+
+                <label className="customer-mobile-field">
+                  <span>Preferred Visit Date:</span>
+                  <input type="date" min={localDateInputValue(new Date())} value={careDetails.preferredDate} className={requestStep3Errors.preferredDate ? "has-error" : ""} onChange={(event) => {
+                    const value = event.target.value;
+                    setCareDetails((current) => ({ ...current, preferredDate: value }));
+                    if (requestStep3Errors.preferredDate && value.trim()) {
+                      setRequestStep3Errors((current) => {
+                        const next = { ...current };
+                        delete next.preferredDate;
+                        return next;
+                      });
+                    }
+                  }} />
+                  {requestStep3Errors.preferredDate ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredDate}</small> : null}
+                </label>
+                <label className="customer-mobile-field">
+                  <span>Preferred Time:</span>
+                  <input type="time" min={careDetails.preferredDate === localDateInputValue(new Date()) ? new Date(Date.now() + 60000).toTimeString().slice(0, 5) : undefined} value={careDetails.preferredTime} className={requestStep3Errors.preferredTime ? "has-error" : ""} onChange={(event) => {
+                    const value = event.target.value;
+                    setCareDetails((current) => ({ ...current, preferredTime: value }));
+                    if (requestStep3Errors.preferredTime && value.trim()) {
+                      setRequestStep3Errors((current) => {
+                        const next = { ...current };
+                        delete next.preferredTime;
+                        return next;
+                      });
+                    }
+                  }} />
+                  {requestStep3Errors.preferredTime ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredTime}</small> : null}
+                </label>
+                <label className="customer-mobile-field">
+                  <span>Duration needed:</span>
+                  <select value={careDetails.duration} className={requestStep3Errors.duration ? "has-error" : ""} onChange={(event) => {
+                    const value = event.target.value;
+                    setCareDetails((current) => ({ ...current, duration: value }));
+                    if (requestStep3Errors.duration && value.trim()) {
+                      setRequestStep3Errors((current) => {
+                        const next = { ...current };
+                        delete next.duration;
+                        return next;
+                      });
+                    }
+                  }}>
+                    <option value="">Select duration</option>
+                    <option value="30 mins">30 mins</option>
+                    <option value="1 hour">1 hour</option>
+                    <option value="2 hours">2 hours</option>
+                    <option value="4 hours">4 hours</option>
+                    <option value="8 hours">8 hours</option>
+                    <option value="12 hours">12 hours</option>
+                  </select>
+                  {requestStep3Errors.duration ? <small className="customer-mobile-field-error">{requestStep3Errors.duration}</small> : null}
+                </label>
+
+                <div className="customer-mobile-radio-group">
+                  <span>Day/Night Care?</span>
+                  <div className="customer-mobile-inline-radios">
+                    {["Day", "Night"].map((choice) => <label key={choice}>
+                      <input type="radio" name="careShift" checked={careDetails.careShift === choice} onChange={() => {
+                        setCareDetails((current) => ({ ...current, careShift: choice }));
+                        if (requestStep3Errors.careShift) {
+                          setRequestStep3Errors((current) => {
+                            const next = { ...current };
+                            delete next.careShift;
+                            return next;
+                          });
+                        }
+                      }} />
+                      <span className="customer-mobile-radio" aria-hidden="true" />
+                      {choice}
+                    </label>)}
+                  </div>
+                  {requestStep3Errors.careShift ? <small className="customer-mobile-field-error">{requestStep3Errors.careShift}</small> : null}
+                </div>
+
+                {[
+                  ["Live-In Care Required?", "liveInCareRequired"],
+                  ["Wheelchair Assistance Needed?", "wheelchairAssistanceNeeded"],
+                  ["Medical Equipment Present?", "medicalEquipmentPresent"],
+                  ["Requires Lifting Assistance?", "requiresLiftingAssistance"],
+                  ["Any Infectious Disease?", "infectiousDisease"]
+                ].map(([label, key]) => (
+                  <div className="customer-mobile-radio-group" key={label}>
+                    <span>{label}</span>
+                    <div className="customer-mobile-inline-radios">
+                      {["Yes", "No"].map((choice) => <label key={choice}>
+                        <input type="radio" name={key} checked={careDetails[key] === choice} onChange={() => {
+                          setCareDetails((current) => ({ ...current, [key]: choice }));
+                          if (requestStep3Errors[key]) {
+                            setRequestStep3Errors((current) => {
+                              const next = { ...current };
+                              delete next[key];
+                              return next;
+                            });
+                          }
+                        }} />
+                        <span className="customer-mobile-radio" aria-hidden="true" />
+                        {choice}
+                      </label>)}
+                    </div>
+                    {requestStep3Errors[key] ? <small className="customer-mobile-field-error">{requestStep3Errors[key]}</small> : null}
+                  </div>
+                ))}
+              </div> : null}
+              {requestStep === 4 ? <div className="customer-mobile-flow-stack">
+                {["Medication Administration", "Catheter Care", "Blood Pressure Monitoring", "Diabetes Monitoring", "IV Therapy", "Feeding Tube Support"].map((label) => {
+                  const selected = clinicalRequirements.includes(label);
+                  return <button key={label} type="button" className={`customer-mobile-option-row ${selected ? "active" : ""}`} onClick={() => setClinicalRequirements((current) => selected ? current.filter((item) => item !== label) : [...current, label])}><span>{label}</span><span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "✓" : ""}</span></button>;
+                })}
+              </div> : null}
+              {requestStep === 5 ? <div className="customer-mobile-flow-stack">
+                {["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"].map((label) => {
+                  const uploaded = uploadedMedicalFiles[label];
+                  return <div key={label} className="customer-mobile-upload-row-wrap">
+                    <button type="button" className={`customer-mobile-upload-row-button ${uploaded ? "uploaded" : ""}`} onClick={() => uploadInputRefs.current[label]?.click()}>
+                      <span>{label}</span>
+                      {uploaded ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
+                    </button>
+                    <input ref={(node) => { uploadInputRefs.current[label] = node; }} type="file" className="customer-mobile-hidden-file" onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) return;
+                      if (!isAllowedMedicalFile(file)) {
+                        setRequestSubmitError("Upload PDF, DOC, DOCX, PNG, JPG, or WEBP files up to 5MB.");
+                        event.target.value = "";
+                        return;
+                      }
+                      setRequestSubmitError("");
+                      setUploadedMedicalFiles((current) => ({ ...current, [label]: { name: sanitizeClientText(file.name, { max: 180 }) } }));
+                    }} />
+                    {uploaded ? <div className="customer-mobile-upload-meta">
+                      <small className="customer-mobile-upload-filename" title={uploaded.name}>{uploaded.name}</small>
+                      <button type="button" onClick={() => {
+                        setUploadedMedicalFiles((current) => {
+                          const next = { ...current };
+                          delete next[label];
+                          return next;
+                        });
+                        if (uploadInputRefs.current[label]) uploadInputRefs.current[label].value = "";
+                      }}>Remove</button>
+                      <button type="button" onClick={() => uploadInputRefs.current[label]?.click()}>Replace</button>
+                    </div> : null}
+                  </div>;
+                })}
+              </div> : null}
+            </div>
+            <button className="customer-mobile-primary-button" type="button" disabled={(requestStep === 1 && !selectedCareType) || requestSubmitting} onClick={handleRequestContinue}>{requestSubmitting ? "Submitting..." : "Continue"}</button>
+            {requestSubmitError ? <small className="customer-mobile-field-error">{requestSubmitError}</small> : null}
+            {requestStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToRequestStep(Math.max(1, requestStep - 1))}>Go Back</button> : null}
+          </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="nurse-request-confirmation-title">
+            <section className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell">
+              <div className="customer-confirmation-icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#22A06B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#22A06B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </div>
+              <h2 id="nurse-request-confirmation-title">{requestSubmitLoadingState ? "Submitting request..." : "Request Received!"}</h2>
+              {!requestSubmitLoadingState ? <p>Your nurse request has been received. Our care team will review your details and assign a suitable nurse. You’ll be notified once the visit is confirmed.</p> : null}
+              {!requestSubmitLoadingState ? <div className="customer-confirmation-next">
+                <h3>What happens next?</h3>
+                <div className="customer-confirmation-next-row"><span>Status</span><strong className="badge">Pending Review</strong></div>
+                <div className="customer-confirmation-next-row"><span>Next step</span><strong>Nurse assignment</strong></div>
+                <div className="customer-confirmation-next-row"><span>Notification</span><strong>Email sent</strong></div>
+              </div> : null}
+              {!requestSubmitLoadingState ? <button className="customer-mobile-primary-button" type="button" onClick={() => goToPage("appointment")}>View Request Status</button> : null}
+              {!requestSubmitLoadingState ? <button className="customer-mobile-secondary-button" type="button" onClick={() => goToPage("appointment")}>Back to Appointments</button> : null}
+            </section>
+          </div>}
+        </section> : null}
+
+        {appointmentComposerOpen ? <section className="customer-mobile-appointment-pane customer-mobile-book-pane">
+          <div className="customer-mobile-title-row">
+            <button className="customer-mobile-back-link" type="button" onClick={() => {
+              setAppointmentComposerOpen(false);
+              setAppointmentComposerDatePicked(false);
+            }}>
+              <MobileIcon name="arrow-left" />
+              <span>Go back</span>
+            </button>
+          </div>
+          <section className="customer-mobile-panel customer-mobile-doctor-select-panel">
+            <span className="customer-mobile-field-label">Select Doctor</span>
+            <div className="customer-mobile-doctor-picker-wrap">
+              <button className="customer-mobile-doctor-picker" type="button" onClick={() => setAppointmentComposerDoctorMenuOpen((current) => !current)}>
+                <div className="customer-mobile-doctor-pill">
+                  <span className="customer-mobile-doctor-avatar">{selectedComposerDoctor?.initials || "DR"}</span>
+                  <span className="customer-mobile-doctor-copy">
+                    <strong>{selectedComposerDoctor?.name || "Select doctor"}</strong>
+                    <small>{selectedComposerDoctor?.specialty || "General Physician"}</small>
+                  </span>
+                </div>
+                <MobileIcon name="arrow-right" />
+              </button>
+              {appointmentComposerDoctorMenuOpen ? <div className="customer-mobile-doctor-menu">
+                {composerDoctors.map((doctor) => <button key={doctor.id} type="button" className={`customer-mobile-doctor-menu-item ${appointmentComposerDoctorId === doctor.id ? "active" : ""}`} onClick={() => {
+                  setAppointmentComposerDoctorId(doctor.id);
+                  setAppointmentComposerDoctorMenuOpen(false);
+                  setAppointmentComposerSelectedSlot("");
+                  if (appointmentComposerErrors.doctor) {
+                    setAppointmentComposerErrors((current) => {
+                      const next = { ...current };
+                      delete next.doctor;
+                      return next;
+                    });
+                  }
+                  setAppointmentComposerSlotsRefreshing(true);
+                  window.setTimeout(() => setAppointmentComposerSlotsRefreshing(false), 180);
+                }}>
+                  <span className="customer-mobile-doctor-avatar">{doctor.initials}</span>
+                  <span className="customer-mobile-doctor-copy">
+                    <strong>{doctor.name}</strong>
+                    <small>{doctor.specialty}</small>
+                  </span>
+                </button>)}
+              </div> : null}
+            </div>
+            {appointmentComposerErrors.doctor ? <small className="customer-mobile-field-error">{appointmentComposerErrors.doctor}</small> : null}
+          </section>
+          <section className="customer-mobile-panel customer-mobile-calendar-card">
+            <div className="customer-mobile-book-month">
+              <strong>{monthLabel}</strong>
+              <div className="customer-mobile-book-arrows">
+                <button type="button" aria-label="Previous month" onClick={() => setAppointmentComposerMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}><MobileIcon name="arrow-left" /></button>
+                <button type="button" aria-label="Next month" onClick={() => setAppointmentComposerMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}><MobileIcon name="arrow-right" /></button>
+              </div>
+            </div>
+            <div className="customer-mobile-calendar-head">
+              {["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((label) => <span key={label}>{label}</span>)}
+            </div>
+            <div className="customer-mobile-calendar-grid">
+              {calendarCells.map((day, index) => {
+                if (!day) return <span key={`blank-${index}`} />;
+                const dateValue = `${appointmentComposerMonth.getFullYear()}-${String(appointmentComposerMonth.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                const isSelected = appointmentComposerDate === dateValue;
+                const isPast = new Date(`${dateValue}T00:00:00`).getTime() < new Date(`${localDateInputValue(new Date())}T00:00:00`).getTime();
+                return <button key={dateValue} type="button" className={`customer-mobile-calendar-day ${isSelected ? "active" : ""} ${isPast ? "is-past" : ""}`} disabled={isPast} onClick={() => {
+                  setAppointmentComposerDate(dateValue);
+                  setAppointmentComposerDatePicked(true);
+                  setAppointmentComposerSelectedSlot("");
+                  if (appointmentComposerErrors.date || appointmentComposerErrors.time) {
+                    setAppointmentComposerErrors((current) => {
+                      const next = { ...current };
+                      delete next.date;
+                      delete next.time;
+                      return next;
+                    });
+                  }
+                  setAppointmentComposerSlotsRefreshing(true);
+                  window.setTimeout(() => setAppointmentComposerSlotsRefreshing(false), 180);
+                }}>{day}</button>;
+              })}
+            </div>
+            <div className={`customer-mobile-slot-row ${appointmentComposerSlotsRefreshing ? "is-refreshing" : ""}`}>
+              <strong>Available Times</strong>
+              <div className="customer-mobile-slot-pills">
+                {appointmentComposerSlots.map((slot) => <button
+                  key={slot.value}
+                  type="button"
+                  className={`customer-mobile-slot-pill ${appointmentComposerSelectedSlot === slot.value ? "active" : ""}`}
+                  disabled={slot.disabled || !appointmentComposerDate}
+                  onClick={() => {
+                    setAppointmentComposerSelectedSlot(slot.value);
+                    if (appointmentComposerErrors.time) {
+                      setAppointmentComposerErrors((current) => {
+                        const next = { ...current };
+                        delete next.time;
+                        return next;
+                      });
+                    }
+                  }}
+                >
+                  {formatSlotTime(slot.value)}
+                </button>)}
+              </div>
+              {appointmentComposerDate && !appointmentComposerHasAvailableSlots ? <small className="customer-mobile-slot-empty">No available times for this date. Please choose another date.</small> : null}
+              {appointmentComposerErrors.time ? <small className="customer-mobile-field-error">{appointmentComposerErrors.time}</small> : null}
+            </div>
+          </section>
+          <label className="customer-mobile-field">
+            <span>Reason for Appointment:</span>
+            <textarea rows={4} value={appointmentComposerReason} placeholder="Briefly state the reason for your appointment" onChange={(event) => {
+              const value = sanitizeClientText(event.target.value, { max: 500 });
+              setAppointmentComposerReason(value);
+              if (appointmentComposerErrors.reason && value.trim()) {
+                setAppointmentComposerErrors((current) => {
+                  const next = { ...current };
+                  delete next.reason;
+                  return next;
+                });
+              }
+            }} />
+            {appointmentComposerErrors.reason ? <small className="customer-mobile-field-error">{appointmentComposerErrors.reason}</small> : null}
+          </label>
+          {!appointmentComposerSuccess ? <>
+            <button
+              className="customer-mobile-primary-button"
+              type="button"
+              disabled={!selectedComposerDoctor || !appointmentComposerDate || !appointmentComposerSelectedSlot || !appointmentComposerReason.trim() || appointmentComposerLoading}
+              onClick={handleAppointmentComposerBooking}
+            >
+              {appointmentComposerLoading ? "Booking..." : "Book Appointment"}
+            </button>
+            {appointmentComposerErrors.submit ? <small className="customer-mobile-field-error">{appointmentComposerErrors.submit}</small> : null}
+          </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="appointment-confirmation-title">
+            <section className="customer-mobile-panel customer-mobile-submit-state appointment-booking-success customer-confirmation-shell">
+              <div className="customer-confirmation-icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#22A06B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#22A06B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </div>
+              <h2 id="appointment-confirmation-title">{appointmentComposerSuccess.title || "Appointment Booked!"}</h2>
+              <p>{appointmentComposerSuccess.subtitle}</p>
+              <div className="customer-confirmation-next">
+                <h3>What happens next?</h3>
+                <div className="customer-confirmation-next-row"><span>Status</span><strong className="badge">{appointmentComposerSuccess.appointment?.pending_sync ? "Pending Sync" : "Confirmed"}</strong></div>
+                <div className="customer-confirmation-next-row"><span>Next step</span><strong>{appointmentComposerSuccess.appointment?.pending_sync ? "Server sync" : "Calendar + reminders"}</strong></div>
+                <div className="customer-confirmation-next-row"><span>Notification</span><strong>{appointmentComposerSuccess.appointment?.pending_sync ? "Pending" : "Email sent"}</strong></div>
+              </div>
+              <button className="customer-mobile-primary-button" type="button" onClick={() => {
+                setSelectedAppointment(appointmentComposerSuccess.appointment);
+                setAppointmentComposerOpen(false);
+                setAppointmentComposerDatePicked(false);
+                setAppointmentComposerSuccess(null);
+              }}>View Appointment Details</button>
+              <button className="customer-mobile-secondary-button" type="button" onClick={() => {
+                setAppointmentComposerOpen(false);
+                setAppointmentComposerSuccess(null);
+                setAppointmentComposerDate(localDateInputValue(new Date()));
+                setAppointmentComposerDatePicked(false);
+                setAppointmentComposerSelectedSlot("");
+                setAppointmentComposerReason("");
+              }}>Back to Appointments</button>
+            </section>
+          </div>}
+        </section> : null}
+
+        {false && appointmentTab === "request" ? <section className="customer-mobile-flow">
+          {!requestSubmitted ? <>
+            <div className="customer-mobile-step-title">Step {requestStep} of 5 - {requestStep === 1 ? "Care Type" : requestStep === 2 ? "Patient Details" : requestStep === 3 ? "Care Details" : requestStep === 4 ? "Clinical Requirements" : "Upload Medical Information"}</div>
+            <p className="customer-mobile-step-copy">{requestStep === 1 ? "Please select as appropriate:" : requestStep === 2 ? "Please fill out the form" : requestStep === 3 ? "Set the care schedule details." : requestStep === 4 ? "Select required clinical services." : "You can upload any of these, if available:"}</p>
+            <div className={`customer-mobile-step-panel ${requestStepAnimatingOut ? "is-out" : "is-in"}`}>
+              {requestStep === 1 ? <div className="customer-mobile-flow-stack">
+                {["Elderly Care", "Post Surgery Recovery", "Medication Assistance", "Wound Dressing", "Injection Administration", "Chronic Disease Monitoring", "Palliative Care"].map((label) => (
+                  <button key={label} type="button" className={`customer-mobile-option-row ${selectedCareType === label ? "active" : ""}`} onClick={() => setSelectedCareType(label)}>
+                    <span>{label}</span>
+                    <span className={`customer-mobile-radio ${selectedCareType === label ? "selected" : ""}`} aria-hidden="true" />
+                  </button>
+                ))}
+              </div> : null}
+
+              {requestStep === 2 ? <div className="customer-mobile-form-stack">
+                {[
+                  { label: "Name:", key: "name", placeholder: "Enter patient full name", required: true },
+                  { label: "Age:", key: "age", placeholder: "Enter age", required: true },
+                  { label: "Gender:", key: "gender", placeholder: "Select gender", required: true },
+                  { label: "Address:", key: "address", placeholder: "Enter home address", required: true },
+                  { label: "Emergency Contact:", key: "emergencyContact", placeholder: "Enter emergency contact number", required: true },
+                  { label: "Mobility Status:", key: "mobilityStatus", placeholder: "Enter mobility status", required: true }
+                ].map(({ label, key, placeholder, required }) => <label className="customer-mobile-field" key={label}>
+                  <span>{label}</span>
+                  {key === "gender" ? <select
+                    value={requestForm[key]}
+                    className={requestStep2Errors[key] ? "has-error" : ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setRequestForm((current) => ({ ...current, [key]: value }));
+                      if (requestStep2Errors[key] && value.trim()) {
+                        setRequestStep2Errors((current) => {
+                          const next = { ...current };
+                          delete next[key];
+                          return next;
+                        });
+                      }
+                    }}
+                  >
+                    <option value="">Select gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                  </select> : <input
+                    type={key === "emergencyContact" ? "tel" : "text"}
+                    inputMode={key === "age" ? "numeric" : undefined}
+                    maxLength={key === "age" ? 3 : undefined}
+                    value={requestForm[key]}
+                    placeholder={placeholder}
+                    className={requestStep2Errors[key] ? "has-error" : ""}
+                    onChange={(event) => {
+                      let value = event.target.value;
+                      if (key === "age") value = value.replace(/\D/g, "").slice(0, 3);
+                      if (key === "name" || key === "mobilityStatus") value = value.replace(/[^a-zA-Z\s'.-]/g, "");
+                      if (key === "emergencyContact") value = value.replace(/[^0-9+\-()\s]/g, "");
+                      setRequestForm((current) => ({ ...current, [key]: value }));
+                      if (requestStep2Errors[key] && value.trim()) {
+                        setRequestStep2Errors((current) => {
+                          const next = { ...current };
+                          delete next[key];
+                          return next;
+                        });
+                      }
+                    }}
+                  />}
+                  {required && requestStep2Errors[key] ? <small className="customer-mobile-field-error">{requestStep2Errors[key]}</small> : null}
+                </label>)}
+                {[
+                  ["Existing Conditions (If any):", "conditions", "Enter existing conditions"],
+                  ["Allergies (If any):", "allergies", "Enter known allergies"],
+                  ["Current Medication:", "currentMedication", "Enter current medications"]
+                ].map(([label, key, placeholder]) => <label className="customer-mobile-field" key={label}>
+                  <span>{label}</span>
+                  <textarea
+                    rows={4}
+                    value={requestForm[key]}
+                    placeholder={placeholder}
+                    onChange={(event) => setRequestForm((current) => ({ ...current, [key]: sanitizeClientText(event.target.value, { max: 500 }) }))}
+                  />
+                </label>)}
+              </div> : null}
+
+              {requestStep === 3 ? <div className="customer-mobile-form-stack">
+                <div className="customer-mobile-radio-group">
+                  <span>Is this a recurring visit or one time care?</span>
+                  <div className="customer-mobile-inline-radios">
+                    {["Recurring", "One Time"].map((label) => <label key={label}>
+                      <input
+                        type="radio"
+                        name="visitType"
+                        checked={careDetails.visitType === label}
+                        onChange={() => {
+                          setCareDetails((current) => ({ ...current, visitType: label }));
+                          if (requestStep3Errors.visitType) {
+                            setRequestStep3Errors((current) => {
+                              const next = { ...current };
+                              delete next.visitType;
+                              return next;
+                            });
+                          }
+                        }}
+                      />
+                      <span className="customer-mobile-radio" aria-hidden="true" />
+                      {label}
+                    </label>)}
+                  </div>
+                  {requestStep3Errors.visitType ? <small className="customer-mobile-field-error">{requestStep3Errors.visitType}</small> : null}
+                </div>
+
+                <label className="customer-mobile-field">
+                  <span>Preferred Visit Date:</span>
+                  <input type="date" min={localDateInputValue(new Date())} value={careDetails.preferredDate} className={requestStep3Errors.preferredDate ? "has-error" : ""} onChange={(event) => {
+                    const value = event.target.value;
+                    setCareDetails((current) => ({ ...current, preferredDate: value }));
+                    if (requestStep3Errors.preferredDate && value.trim()) {
+                      setRequestStep3Errors((current) => {
+                        const next = { ...current };
+                        delete next.preferredDate;
+                        return next;
+                      });
+                    }
+                  }} />
+                  {requestStep3Errors.preferredDate ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredDate}</small> : null}
+                </label>
+                <label className="customer-mobile-field">
+                  <span>Preferred Time:</span>
+                  <input type="time" min={careDetails.preferredDate === localDateInputValue(new Date()) ? new Date(Date.now() + 60000).toTimeString().slice(0, 5) : undefined} value={careDetails.preferredTime} className={requestStep3Errors.preferredTime ? "has-error" : ""} onChange={(event) => {
+                    const value = event.target.value;
+                    setCareDetails((current) => ({ ...current, preferredTime: value }));
+                    if (requestStep3Errors.preferredTime && value.trim()) {
+                      setRequestStep3Errors((current) => {
+                        const next = { ...current };
+                        delete next.preferredTime;
+                        return next;
+                      });
+                    }
+                  }} />
+                  {requestStep3Errors.preferredTime ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredTime}</small> : null}
+                </label>
+                <label className="customer-mobile-field">
+                  <span>Duration needed:</span>
+                  <select value={careDetails.duration} className={requestStep3Errors.duration ? "has-error" : ""} onChange={(event) => {
+                    const value = event.target.value;
+                    setCareDetails((current) => ({ ...current, duration: value }));
+                    if (requestStep3Errors.duration && value.trim()) {
+                      setRequestStep3Errors((current) => {
+                        const next = { ...current };
+                        delete next.duration;
+                        return next;
+                      });
+                    }
+                  }}>
+                    <option value="">Select duration</option>
+                    <option value="30 mins">30 mins</option>
+                    <option value="1 hour">1 hour</option>
+                    <option value="2 hours">2 hours</option>
+                    <option value="4 hours">4 hours</option>
+                    <option value="8 hours">8 hours</option>
+                    <option value="12 hours">12 hours</option>
+                  </select>
+                  {requestStep3Errors.duration ? <small className="customer-mobile-field-error">{requestStep3Errors.duration}</small> : null}
+                </label>
+
+                <div className="customer-mobile-radio-group">
+                  <span>Day/Night Care?</span>
+                  <div className="customer-mobile-inline-radios">
+                    {["Day", "Night"].map((choice) => <label key={choice}>
+                      <input type="radio" name="careShift" checked={careDetails.careShift === choice} onChange={() => {
+                        setCareDetails((current) => ({ ...current, careShift: choice }));
+                        if (requestStep3Errors.careShift) {
+                          setRequestStep3Errors((current) => {
+                            const next = { ...current };
+                            delete next.careShift;
+                            return next;
+                          });
+                        }
+                      }} />
+                      <span className="customer-mobile-radio" aria-hidden="true" />
+                      {choice}
+                    </label>)}
+                  </div>
+                  {requestStep3Errors.careShift ? <small className="customer-mobile-field-error">{requestStep3Errors.careShift}</small> : null}
+                </div>
+
+                {[
+                  ["Live-In Care Required?", "liveInCareRequired"],
+                  ["Wheelchair Assistance Needed?", "wheelchairAssistanceNeeded"],
+                  ["Medical Equipment Present?", "medicalEquipmentPresent"],
+                  ["Requires Lifting Assistance?", "requiresLiftingAssistance"],
+                  ["Any Infectious Disease?", "infectiousDisease"]
+                ].map(([label, key]) => (
+                  <div className="customer-mobile-radio-group" key={label}>
+                    <span>{label}</span>
+                    <div className="customer-mobile-inline-radios">
+                      {["Yes", "No"].map((choice) => <label key={choice}>
+                        <input type="radio" name={key} checked={careDetails[key] === choice} onChange={() => {
+                          setCareDetails((current) => ({ ...current, [key]: choice }));
+                          if (requestStep3Errors[key]) {
+                            setRequestStep3Errors((current) => {
+                              const next = { ...current };
+                              delete next[key];
+                              return next;
+                            });
+                          }
+                        }} />
+                        <span className="customer-mobile-radio" aria-hidden="true" />
+                        {choice}
+                      </label>)}
+                    </div>
+                    {requestStep3Errors[key] ? <small className="customer-mobile-field-error">{requestStep3Errors[key]}</small> : null}
+                  </div>
+                ))}
+              </div> : null}
+
+              {requestStep === 4 ? <div className="customer-mobile-flow-stack">
+                {["Medication Administration", "Catheter Care", "Blood Pressure Monitoring", "Diabetes Monitoring", "IV Therapy", "Feeding Tube Support"].map((label) => {
+                  const selected = clinicalRequirements.includes(label);
+                  return <button
+                    key={label}
+                    type="button"
+                    className={`customer-mobile-option-row ${selected ? "active" : ""}`}
+                    onClick={() => {
+                      setClinicalRequirements((current) => selected ? current.filter((item) => item !== label) : [...current, label]);
+                    }}
+                  >
+                    <span>{label}</span>
+                    <span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "✓" : ""}</span>
+                  </button>;
+                })}
+              </div> : null}
+
+              {requestStep === 5 ? <div className="customer-mobile-flow-stack">
+                {["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"].map((label) => {
+                  const uploaded = uploadedMedicalFiles[label];
+                  return <div key={label} className="customer-mobile-upload-row-wrap">
+                    <button type="button" className={`customer-mobile-upload-row-button ${uploaded ? "uploaded" : ""}`} onClick={() => uploadInputRefs.current[label]?.click()}>
+                      <span>{label}</span>
+                      {uploaded ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
+                    </button>
+                    <input
+                      ref={(node) => { uploadInputRefs.current[label] = node; }}
+                      type="file"
+                      className="customer-mobile-hidden-file"
+                      onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) return;
+                      if (!isAllowedMedicalFile(file)) {
+                        setRequestSubmitError("Upload PDF, DOC, DOCX, PNG, JPG, or WEBP files up to 5MB.");
+                        event.target.value = "";
+                        return;
+                      }
+                      setRequestSubmitError("");
+                      setUploadedMedicalFiles((current) => ({ ...current, [label]: { name: sanitizeClientText(file.name, { max: 180 }) } }));
+                    }}
+                    />
+                    {uploaded ? <div className="customer-mobile-upload-meta">
+                      <small className="customer-mobile-upload-filename" title={uploaded.name}>{uploaded.name}</small>
+                      <button type="button" onClick={() => {
+                        setUploadedMedicalFiles((current) => {
+                          const next = { ...current };
+                          delete next[label];
+                          return next;
+                        });
+                        if (uploadInputRefs.current[label]) uploadInputRefs.current[label].value = "";
+                      }}>Remove</button>
+                      <button type="button" onClick={() => uploadInputRefs.current[label]?.click()}>Replace</button>
+                    </div> : null}
+                  </div>;
+                })}
+              </div> : null}
+            </div>
+
+            <button className="customer-mobile-primary-button" type="button" disabled={(requestStep === 1 && !selectedCareType) || requestSubmitting} onClick={handleRequestContinue}>{requestSubmitting ? "Submitting..." : "Continue"}</button>
+            {requestSubmitError ? <small className="customer-mobile-field-error">{requestSubmitError}</small> : null}
+            {requestStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToRequestStep(Math.max(1, requestStep - 1))}>Go Back</button> : null}
+          </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="nurse-request-confirmation-title-secondary">
+            <section className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell">
+            <div className="customer-mobile-empty-icon"><MobileIcon name="appointments" /></div>
+            <h2>{requestSubmitLoadingState ? "Submitting request..." : "Nurse Request Submitted"}</h2>
+            {!requestSubmitLoadingState ? <p>Your nurse request has been received. Our care team will review your details and assign a suitable nurse. You’ll be notified once the visit is confirmed.</p> : null}
+            {!requestSubmitLoadingState ? <div className="detail-card info-list">
+              <div className="info-row"><span className="info-label">Care Type</span><span className="info-value">{latestSubmittedRequest?.careType || selectedCareType || "Not set"}</span></div>
+              <div className="info-row"><span className="info-label">Preferred Date</span><span className="info-value">{latestSubmittedRequest?.preferredDate || careDetails.preferredDate || "Not set"}</span></div>
+              <div className="info-row"><span className="info-label">Preferred Time</span><span className="info-value">{latestSubmittedRequest?.preferredTime || careDetails.preferredTime || "Not set"}</span></div>
+              <div className="info-row"><span className="info-label">Visit Type</span><span className="info-value">{latestSubmittedRequest?.visitType || careDetails.visitType || "Not set"}</span></div>
+              <div className="info-row"><span className="info-label">Status</span><span className="info-value">Pending Review</span></div>
+            </div> : null}
+            {!requestSubmitLoadingState ? <button className="customer-mobile-primary-button" type="button" onClick={() => goToPage("appointment")}>View Request Status</button> : null}
+            {!requestSubmitLoadingState ? <button className="customer-mobile-secondary-button" type="button" onClick={() => goToPage("overview")}>Back to Home</button> : null}
+            </section>
+          </div>}
+        </section> : null}
+
+        {!showNurseRequestFlow && !appointmentComposerOpen && (appointmentTab === "all" || appointmentTab === "upcoming" || appointmentTab === "previous") ? <section className="customer-mobile-list-section customer-mobile-appointment-pane">
+          {appointmentsLoading ? Array.from({ length: 4 }, (_, index) => <article className="customer-mobile-visit-row skeleton-panel" key={`customer-mobile-visit-skeleton-${index}`}>
+            <div className="customer-mobile-clock skeleton-circle skeleton-circle-sm" />
+            <div className="customer-mobile-visit-copy">
+              <SkeletonBox className="skeleton-line skeleton-line-md" />
+              <SkeletonBox className="skeleton-line skeleton-line-sm" />
+              <SkeletonBox className="skeleton-line skeleton-line-sm" />
+            </div>
+            <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+          </article>) : visibleAppointments.length ? visibleAppointments.map((appointment) => {
+            const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
+            const appointmentTitle = appointmentDisplayTitle(appointment, doctor);
+            const doctorLabel = appointmentDoctorLabel(appointment, doctor);
+            const appointmentStatusTone = appointmentChipTone(appointment);
+            const appointmentStatusLabel = appointmentChipLabel(appointment);
+            return <article className="customer-mobile-visit-row" key={appointment.id}>
+              <div className="customer-mobile-clock">
+                <MobileIcon name="clock" />
+              </div>
+              <div className="customer-mobile-visit-copy">
+                <strong>{appointmentTitle}</strong>
+                <span>{formatAppointmentListDateTime(appointment.start_at, storeTimeZone)}</span>
+                <small>{doctorLabel}</small>
+              </div>
+              <div className="customer-mobile-appointment-status">
+                <div className="appointment-status-stack">
+                  <span className={`chip ${appointmentStatusTone}`}><span className="chip-dot" />{appointmentStatusLabel}</span>
+                  {appointmentHasPrescription(appointment) ? <span className="appointment-prescription-availability">Prescription Available</span> : null}
+                </div>
+              </div>
+              <button className="customer-mobile-row-overlay" type="button" aria-label="Open appointment details" onClick={() => onOpenAppointment(appointment)} />
+            </article>;
+          }) : <CustomerMobileEmptyState
+            message="You have no appointments"
+            ctaLabel="Book an appointment"
+            onCta={() => {
+              setAppointmentComposerDatePicked(false);
+              setAppointmentComposerOpen(true);
+            }}
+            icon="appointments"
+            illustrationSrc="/group-3.png"
+            ctaStyle="appointment"
+          />}
+        </section> : null}
+      </main>
+    </div>;
+  }
+
+  return <div className="customer-mobile-app">
+    {renderDrawer()}
+    <main className={`customer-mobile-frame ${pageTransitionClass}`}>
+      {renderHeader("Overview")}
+      {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
+      <CustomerOverviewActions
+        spentThisMonth={money(spentThisMonth, storeCurrency)}
+        upcomingAppointments={upcomingAppointments.length}
+        orderTotal={orderCounts.total}
+        availableDoctors={visibleDoctors.length}
+      />
+      <section className="customer-mobile-section">
+        <h2>Appointments</h2>
+        {appointmentsLoading ? Array.from({ length: 3 }, (_, index) => <article className="customer-mobile-appointment-row skeleton-panel" key={`customer-mobile-recent-appointment-skeleton-${index}`}>
+          <div className="customer-mobile-clock skeleton-circle skeleton-circle-sm" />
+          <div className="customer-mobile-appointment-copy">
+            <SkeletonBox className="skeleton-line skeleton-line-md" />
+            <SkeletonBox className="skeleton-line skeleton-line-sm" />
+            <SkeletonBox className="skeleton-line skeleton-line-sm" />
+          </div>
+          <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+        </article>) : recentAppointments.length ? recentAppointments.map((appointment) => {
+          const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
+          const appointmentTitle = appointmentDisplayTitle(appointment, doctor);
+          const doctorLabel = appointmentDoctorLabel(appointment, doctor);
+          const appointmentStatusTone = appointmentChipTone(appointment);
+          const appointmentStatusLabel = appointmentChipLabel(appointment);
+          return <article className="customer-mobile-appointment-row" key={appointment.id}>
+            <div className="customer-mobile-clock">
+              <MobileIcon name="clock" />
+            </div>
+            <div className="customer-mobile-appointment-copy">
+              <strong>{appointmentTitle}</strong>
+              <span>{formatAppointmentListDateTime(appointment.start_at, storeTimeZone)}</span>
+              <small>{doctorLabel}</small>
+            </div>
+            <div className="customer-mobile-appointment-status">
+              <div className="appointment-status-stack">
+                <span className={`chip ${appointmentStatusTone}`}><span className="chip-dot" />{appointmentStatusLabel}</span>
+                {appointmentHasPrescription(appointment) ? <span className="appointment-prescription-availability">Prescription Available</span> : null}
+              </div>
+            </div>
+            <button className="customer-mobile-row-overlay" type="button" aria-label="Open appointment details" onClick={() => onOpenAppointment(appointment)} />
+          </article>;
+          }) : <CustomerMobileEmptyState
+            message="You have no recent appointment"
+            illustrationSrc="/group-3.png"
+          />}
+      </section>
+    </main>
+  </div>;
+}
+
+function CustomerOverviewActions({ spentThisMonth, upcomingAppointments, orderTotal, availableDoctors }) {
+  const valueRefs = useRef([]);
+  const cards = [
+    { key: "spent-this-month", label: "Spent this month", value: spentThisMonth, icon: "wallet" },
+    { key: "appointments-upcoming", label: "Appointments", value: upcomingAppointments, icon: "appointments" },
+    { key: "orders", label: "Orders", value: orderTotal, icon: "shopping-basket" },
+    { key: "available-doctors", label: "Available Doctors", value: availableDoctors, icon: "doctor" }
+  ];
+
+  useEffect(() => {
+    const fit = () => cards.forEach((card, index) => {
+      fitTextToContainer(valueRefs.current[index], { minFontSize: 14 });
+    });
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [spentThisMonth, upcomingAppointments, orderTotal, availableDoctors]);
+
+  return <section className="overview-actions" aria-label="Overview metrics">
+    {cards.map((card, index) => <article className="overview-action-card" key={card.key}>
+      <div className="overview-action-icon">
+        <MobileIcon name={card.icon} />
+      </div>
+      <div className="overview-action-info">
+        <p>{card.label}</p>
+        <strong ref={(node) => { valueRefs.current[index] = node; }} className="overview-action-value">{card.value}</strong>
+      </div>
+    </article>)}
+  </section>;
+}
+
+function CustomerMobileBookCalendar({
+  doctor,
+  journey,
+  onBack,
+  onReasonChange,
+  onCreateAppointmentCheckout,
+  bookCalendarReason,
+  setBookCalendarReason,
+  calendarDay,
+  setCalendarDay,
+  calendarTime,
+  setCalendarTime
+}) {
+  const calendarDays = Array.from({ length: 30 }, (_, index) => index + 1);
+  return <section className="customer-mobile-book-screen">
+    <header className="customer-mobile-book-header">
+      <button className="customer-mobile-back-link" type="button" onClick={onBack}>
+        <MobileIcon name="arrow-left" />
+        <span>Go back</span>
+      </button>
+      <h1>Appointments</h1>
+      <p>{doctor?.display_name || "Selected doctor"}</p>
+    </header>
+    <section className="customer-mobile-book-card">
+      <div className="customer-mobile-book-month">
+        <strong>June 2021</strong>
+        <div className="customer-mobile-book-arrows">
+          <button type="button" aria-label="Previous month"><MobileIcon name="arrow-left" /></button>
+          <button type="button" aria-label="Next month"><MobileIcon name="arrow-right" /></button>
+        </div>
+      </div>
+      <div className="customer-mobile-calendar-head">
+        {["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((label) => <span key={label}>{label}</span>)}
+      </div>
+      <div className="customer-mobile-calendar-grid">
+        {calendarDays.map((day) => (
+          <button key={day} type="button" className={`customer-mobile-calendar-day ${day === calendarDay ? "active" : ""}`} onClick={() => setCalendarDay(day)}>
+            {day}
+          </button>
+        ))}
+      </div>
+      <div className="customer-mobile-time-row">
+        <strong>Time</strong>
+        <div className="customer-mobile-time-box">
+          <input value={calendarTime} onChange={(event) => setCalendarTime(event.target.value)} />
+          <input className="small" value="" readOnly />
+        </div>
+      </div>
+    </section>
+    <label className="customer-mobile-field">
+      <span>Reason for Appointment:</span>
+      <textarea
+        rows={4}
+        value={bookCalendarReason}
+        placeholder="Briefly state the reason for your appointment"
+        onChange={(event) => {
+          setBookCalendarReason(event.target.value);
+          onReasonChange(event.target.value);
+        }}
+      />
+    </label>
+    <button className="customer-mobile-primary-button" type="button" onClick={onCreateAppointmentCheckout}>Book Appointment</button>
+  </section>;
+}
+
+function CustomerMobileEmptyState({ message, ctaLabel, onCta, icon = "appointments", illustrationSrc = "", ctaStyle = "" }) {
+  const isAppointmentCta = ctaStyle === "appointment";
+  return <div className="customer-mobile-empty-state">
+    {illustrationSrc ? <img className="customer-mobile-empty-illustration" src={illustrationSrc} alt="" aria-hidden="true" /> : <div className="customer-mobile-empty-icon"><MobileIcon name={icon} /></div>}
+    <p>{message}</p>
+    {ctaLabel && onCta ? <button className={`${ctaStyle === "shop" ? "shop-medicine-btn" : `customer-mobile-empty-button ${ctaStyle ? `is-${ctaStyle}` : ""}`}`.trim()} type="button" onClick={onCta}>
+      <span>{ctaLabel}</span>
+      <span className={ctaStyle === "shop" ? "shop-medicine-icon" : "customer-mobile-empty-button-icon"}>
+        {isAppointmentCta ? <svg className="customer-mobile-empty-phone-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M22 16.92V20A2 2 0 0 1 19.82 22C10.95 21.36 3.64 14.05 3 5.18A2 2 0 0 1 5 3H8.09A2 2 0 0 1 10.04 4.63L10.7 7.86A2 2 0 0 1 10.13 9.81L8.91 11.03A16 16 0 0 0 12.97 15.09L14.19 13.87A2 2 0 0 1 16.14 13.3L19.37 13.96A2 2 0 0 1 21 15.91V16.92Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg> : <MobileIcon name={ctaStyle === "shop" ? "arrow-up-right" : (icon === "orders" ? "arrow-right" : "phone")} />}
+      </span>
+    </button> : null}
+  </div>;
+}
+
+function CustomerMobileSkeleton({ page }) {
+  return <div className="customer-mobile-app">
+    <main className="customer-mobile-frame">
+      <div className="customer-mobile-skeleton-block customer-mobile-skeleton-search" />
+      <div className="customer-mobile-skeleton-line" />
+      <div className="customer-mobile-skeleton-grid">
+        {Array.from({ length: page === "orders" ? 4 : 4 }, (_, index) => <div className="customer-mobile-skeleton-card" key={index} />)}
+      </div>
+    </main>
+  </div>;
+}
+
+function MobileIcon({ name }) {
+  const iconMap = {
+    search: Search01Icon,
+    menu: Menu01Icon,
+    home: Home01Icon,
+    orders: ShoppingCart01Icon,
+    pharmacy: MedicalMaskIcon,
+    calendar: Calendar03Icon,
+    appointments: Calendar03Icon,
+    "shopping-basket": ShoppingBasket01Icon,
+    wallet: Wallet01Icon,
+    nurse: Doctor01Icon,
+    cross: Medicine01Icon,
+    profile: UserIcon,
+    logout: Logout01Icon,
+    clock: Clock01Icon,
+    upload: Upload01Icon,
+    "upload-file": FileUploadIcon,
+    "arrow-left": ArrowLeft01Icon,
+    "arrow-right": ArrowRight01Icon,
+    "arrow-up-right": ArrowUpRight01Icon,
+    wifi: Wifi01Icon,
+    battery: BatteryFullIcon,
+    signal: SignalFull01Icon,
+    doctor: Doctor01Icon,
+    more: MoreHorizontalIcon
+  };
+  return <HugeiconsIcon icon={iconMap[name] || UserIcon} size={20} strokeWidth={1.7} />;
 }

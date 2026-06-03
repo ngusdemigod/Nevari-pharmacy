@@ -51,7 +51,7 @@ export function defaultSession(config) {
     frontendType: config.type,
     frontendOrigin: origin,
     frontendUrl: origin === "null" ? "null" : href,
-    paired: false,
+    paired: true,
     siteName: "",
     siteLogo: "",
     accessToken: "",
@@ -88,10 +88,11 @@ export function loadSession(config) {
 
     if (isSharedFrontend) {
       nextSession.baseUrl = sharedConnection.baseUrl;
-      nextSession.paired = sharedConnection.paired;
+      nextSession.paired = true;
       nextSession.siteName = sharedConnection.siteName;
       nextSession.siteLogo = sharedConnection.siteLogo;
     }
+    nextSession.paired = true;
 
     // Origin is request context, not persisted connection data.
     nextSession.frontendOrigin = currentOriginValue();
@@ -108,9 +109,7 @@ export function loadSession(config) {
 }
 
 export function isPairingRequiredPayload(payload) {
-  const code = String(payload?.code || payload?.error?.code || "");
-  const message = String(payload?.error?.message || payload?.message || "");
-  return code === "untrusted_frontend" || /not paired with the pharmacy installation/i.test(message);
+  return false;
 }
 
 export function createPairingRequiredError(message = "This frontend is not paired with the pharmacy installation.") {
@@ -120,7 +119,7 @@ export function createPairingRequiredError(message = "This frontend is not paire
 }
 
 export function isPairingRequiredError(error) {
-  return error?.code === PAIRING_REQUIRED_ERROR_CODE || /not paired with the pharmacy installation/i.test(String(error?.message || ""));
+  return error?.code === PAIRING_REQUIRED_ERROR_CODE;
 }
 
 export function clearStoredSessions() {
@@ -138,7 +137,7 @@ export function resetToPairingState() {
   clearStoredSessions();
 
   if (typeof window !== "undefined") {
-    window.location.replace(FRONTENDS.admin.setupPath);
+    window.location.replace(FRONTENDS.admin.loginPath);
   }
 }
 

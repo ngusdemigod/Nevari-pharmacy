@@ -1,6 +1,5 @@
-import RoleSetupPage from "../../../components/RoleSetupPage";
-import { FRONTENDS } from "../../../components/frontend-config";
+import { redirect } from "next/navigation";
 
 export default function AdminSetupPage() {
-  return <RoleSetupPage config={FRONTENDS.admin} />;
+  redirect("/admin/storefront/login");
 }

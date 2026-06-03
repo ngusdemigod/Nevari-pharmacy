@@ -28,6 +28,12 @@ final class Nevari_Auth {
             'permission_callback' => '__return_true',
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/request-verification-code', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'request_verification_code'],
+            'permission_callback' => [__CLASS__, 'api_session_required'],
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/refresh', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'refresh'],
@@ -593,6 +599,42 @@ final class Nevari_Auth {
             'actor_user_id' => (int) $user->ID,
             'related_user_id' => (int) $user->ID,
             'message' => 'Login verification code resent.',
+            'metadata' => [
+                'frontend_type' => $frontend['frontend_type'],
+                'frontend_origin' => $frontend['frontend_origin'],
+            ],
+        ]);
+
+        return Nevari_Helpers::success([
+            'verification_required' => true,
+            'challenge_id' => $challenge['challenge_id'],
+            'masked_email' => self::mask_email((string) $user->user_email),
+            'expires_in' => $challenge['expires_in'],
+        ]);
+    }
+
+    public static function request_verification_code(WP_REST_Request $request): WP_REST_Response {
+        $params = Nevari_Helpers::get_json_params($request);
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend) {
+            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+        }
+
+        $user_id = self::api_session_user_id();
+        $user = $user_id ? get_user_by('id', $user_id) : null;
+        if (!$user || !self::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
+            return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
+        }
+
+        $challenge = self::issue_login_challenge($user, $frontend);
+        if (is_wp_error($challenge)) {
+            return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
+        }
+
+        Nevari_Audit::log('security', 'nevari', 'auth.verification_code_requested', 'success', [
+            'actor_user_id' => (int) $user->ID,
+            'related_user_id' => (int) $user->ID,
+            'message' => 'Verification code requested for protected storefront action.',
             'metadata' => [
                 'frontend_type' => $frontend['frontend_type'],
                 'frontend_origin' => $frontend['frontend_origin'],

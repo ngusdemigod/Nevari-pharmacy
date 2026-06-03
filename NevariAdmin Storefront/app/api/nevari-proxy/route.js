@@ -1,4 +1,9 @@
 import { createHmac, randomBytes } from "node:crypto";
+import {
+  isAllowedUrl,
+  isValidPath,
+  sanitizeText
+} from "../../lib/inputValidation";
 
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
@@ -21,11 +26,7 @@ function allowedOrigins() {
 }
 
 function proxySigningSecret() {
-  const secret = String(process.env.NEVARI_PROXY_SIGNING_SECRET || "").trim();
-  if (!secret) {
-    throw new Error("Proxy signing secret is not configured.");
-  }
-  return secret;
+  return String(process.env.NEVARI_PROXY_SIGNING_SECRET || "").trim();
 }
 
 function cookieName(kind, frontendType) {
@@ -93,14 +94,19 @@ function signedFrontendHeaders(request) {
     return {};
   }
   const frontendOrigin = new URL(request.url).origin;
+  const headers = {
+    "x-nevari-frontend-type": frontendType,
+    "x-nevari-frontend-origin": frontendOrigin
+  };
+  const secret = proxySigningSecret();
+  if (!secret) {
+    return headers;
+  }
   const timestamp = String(Math.floor(Date.now() / 1000));
   const message = `${timestamp}\n${frontendType}\n${frontendOrigin}`;
-  return {
-    "x-nevari-frontend-type": frontendType,
-    "x-nevari-frontend-origin": frontendOrigin,
-    "x-nevari-proxy-timestamp": timestamp,
-    "x-nevari-proxy-signature": createHmac("sha256", proxySigningSecret()).update(message).digest("hex")
-  };
+  headers["x-nevari-proxy-timestamp"] = timestamp;
+  headers["x-nevari-proxy-signature"] = createHmac("sha256", secret).update(message).digest("hex");
+  return headers;
 }
 
 function isPrivateHostname(hostname) {
@@ -137,22 +143,25 @@ function assertAllowedTarget(target) {
 function buildTargetUrl(requestUrl) {
   const url = new URL(requestUrl);
   const baseUrl = normalizeBaseUrl(url.searchParams.get("baseUrl"));
-  const path = String(url.searchParams.get("path") || "").trim();
+  const path = sanitizeText(url.searchParams.get("path"), { max: 240 });
 
-  if (!baseUrl) {
+  if (!baseUrl || !isAllowedUrl(baseUrl, allowedOrigins())) {
     throw new Error("Missing baseUrl.");
   }
-  if (!path) {
+  if (!path || !isValidPath(path)) {
     throw new Error("Missing path.");
   }
 
   const target = new URL(`${baseUrl}/wp-json/${API_NAMESPACE}${path}`);
   assertAllowedTarget(target);
   url.searchParams.forEach((value, key) => {
+    if (!/^[a-zA-Z0-9_.-]{1,40}$/.test(key) || String(value).length > 500 || /[<>{}`]/.test(String(value))) {
+      throw new Error("Invalid query parameter.");
+    }
     if (key === "baseUrl" || key === "path" || key === "softFail") {
       return;
     }
-    target.searchParams.set(key, value);
+    target.searchParams.set(key, sanitizeText(value, { max: 500 }));
   });
 
   return target;

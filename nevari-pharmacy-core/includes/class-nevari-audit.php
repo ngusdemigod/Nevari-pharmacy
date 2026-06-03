@@ -104,6 +104,27 @@ final class Nevari_Audit {
             }
         }
 
+        foreach (['categories', 'sources', 'actions', 'severities'] as $list_field) {
+            if (!empty($args[$list_field]) && is_array($args[$list_field])) {
+                $values = array_values(array_filter(array_map(static fn($value) => sanitize_text_field((string) $value), $args[$list_field]), static fn($value) => $value !== ''));
+                if ($values) {
+                    $placeholders = implode(', ', array_fill(0, count($values), '%s'));
+                    $column_map = [
+                        'categories' => 'category',
+                        'sources' => 'source',
+                        'actions' => 'action',
+                        'severities' => 'severity',
+                    ];
+                    $column = $column_map[$list_field] ?? '';
+                    if ($column === '') {
+                        continue;
+                    }
+                    $where[] = "{$column} IN ({$placeholders})";
+                    array_push($params, ...$values);
+                }
+            }
+        }
+
         foreach (['actor_user_id', 'order_id', 'appointment_id', 'prescription_id', 'email_log_id'] as $field) {
             if (!empty($args[$field])) {
                 $where[] = "{$field} = %d";
@@ -133,6 +154,11 @@ final class Nevari_Audit {
             $params[] = $like;
             $params[] = $like;
             $params[] = $like;
+        }
+
+        if (!empty($args['action_prefix'])) {
+            $where[] = 'action LIKE %s';
+            $params[] = $wpdb->esc_like(sanitize_text_field((string) $args['action_prefix'])) . '%';
         }
 
         $where_sql = implode(' AND ', $where);
