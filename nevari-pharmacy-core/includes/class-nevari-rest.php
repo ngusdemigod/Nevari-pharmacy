@@ -3948,12 +3948,13 @@ final class Nevari_Rest {
             return Nevari_Helpers::error($checkout_order->get_error_code(), $checkout_order->get_error_message(), (int) $checkout_order->get_error_data('status') ?: 500);
         }
         $wpdb->update($table, ['order_id' => (int) $checkout_order->get_id(), 'updated_at' => Nevari_Helpers::now()], ['id' => $appointment_id], ['%d', '%s'], ['%d']);
+        $auto_paid_by_quota = self::maybe_auto_pay_appointment_from_quota($checkout_order, $appointment_id, $patient_id);
         $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock_name));
         Nevari_Plugin::instance()->schedule_appointment_reservation_expiry($appointment_id, $reserved_until);
         $patient = get_user_by('id', $patient_id);
         $doctor = get_user_by('id', $doctor_id);
         $payment_link = self::branded_invoice_payment_url($checkout_order);
-        if ($patient && is_email($patient->user_email) && $payment_link) {
+        if (!$auto_paid_by_quota && $patient && is_email($patient->user_email) && $payment_link && $checkout_order->needs_payment()) {
             $appointment_start = Nevari_Helpers::iso_datetime($start);
             $payment_link_html = sprintf('<a href="%1$s" target="_blank" rel="noopener noreferrer">Proceed to payment</a>', esc_url($payment_link));
             Nevari_Emails::queue_or_send([
@@ -4091,6 +4092,9 @@ final class Nevari_Rest {
         }
 
         $wpdb->update(Nevari_Helpers::table('appointments'), $data, ['id' => (int) $appointment->id]);
+        if ($action === 'appointment.cancelled') {
+            self::sync_cancelled_appointment_order($appointment);
+        }
         $updated = self::get_appointment_row((int) $appointment->id);
         if ($updated && $updated->status === 'confirmed' && $updated->payment_status === 'paid') {
             Nevari_Plugin::instance()->schedule_appointment_reminder((int) $updated->id, (string) $updated->start_at);
@@ -4117,14 +4121,15 @@ final class Nevari_Rest {
         if (!$order) {
             return Nevari_Helpers::error('order_not_found', 'Associated order not found.', 404);
         }
+        $payment_status = Nevari_Helpers::appointment_payment_status($appointment, $order);
         return Nevari_Helpers::success([
             'appointment' => Nevari_Helpers::format_appointment($appointment),
             'order_id' => (int) $order->get_id(),
             'order_number' => $order->get_order_number(),
             'invoice_number' => self::invoice_number_for_order($order),
-            'payment_token' => self::invoice_payment_token($order),
-            'payment_url' => self::branded_invoice_payment_url($order),
-            'payment_status' => Nevari_Helpers::appointment_payment_status($appointment, $order),
+            'payment_token' => $order->needs_payment() ? self::invoice_payment_token($order) : null,
+            'payment_url' => $order->needs_payment() ? self::branded_invoice_payment_url($order) : null,
+            'payment_status' => $payment_status,
             'total' => (float) $order->get_total(),
             'currency' => $order->get_currency(),
         ]);
@@ -4264,6 +4269,53 @@ final class Nevari_Rest {
         $order->calculate_totals();
         $order->save();
         return $order;
+    }
+
+    private static function maybe_auto_pay_appointment_from_quota($order, int $appointment_id, int $patient_id): bool {
+        if (!$order || !class_exists('Nevari_Subscriptions')) {
+            return false;
+        }
+
+        $quota = Nevari_Subscriptions::consultation_quota_snapshot_for_user($patient_id, true);
+        $remaining = (int) ($quota['free_consultations_remaining'] ?? 0);
+        if (empty($quota['is_paid']) || $remaining <= 0) {
+            return false;
+        }
+
+        if ($order->is_paid()) {
+            return true;
+        }
+
+        $order->update_meta_data('_nevari_paid_via_quota', 'yes');
+        $order->update_meta_data('_nevari_quota_snapshot_remaining_before_payment', $remaining);
+        $order->update_meta_data('_nevari_booking_status', 'confirmed');
+        $order->add_order_note(sprintf('Appointment #%d was automatically settled using the patient consultation quota.', $appointment_id));
+        $order->save();
+        $order->payment_complete('nevari_quota_' . $appointment_id . '_' . time());
+
+        return true;
+    }
+
+    private static function sync_cancelled_appointment_order($appointment): void {
+        if (!$appointment || empty($appointment->order_id) || !function_exists('wc_get_order')) {
+            return;
+        }
+
+        $order = wc_get_order((int) $appointment->order_id);
+        if (!$order) {
+            return;
+        }
+
+        $order->update_meta_data('_nevari_booking_status', 'cancelled');
+        $order->update_meta_data('_nevari_appointment_cancelled_at', Nevari_Helpers::now());
+
+        if ($order->needs_payment()) {
+            $order->update_status('cancelled', __('Appointment cancelled from Nevari dashboard.', 'nevari-pharmacy-core'));
+            return;
+        }
+
+        $order->add_order_note(sprintf('Appointment #%d was cancelled after payment/quota settlement.', (int) $appointment->id));
+        $order->save();
     }
 
     private static function queue_appointment_staff_notifications($appointment, WP_User $doctor, ?WP_User $patient, array $calendar, array $ics): void {

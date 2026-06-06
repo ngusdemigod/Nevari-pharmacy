@@ -240,9 +240,9 @@
 
 .appointment-primary-cta,
 .appointment-link-cta {
-  width: 100%;
+  min-width: 100%;
   border: 0;
-  border-radius: 18px;
+  border-radius: 999px;
   background: #16356d;
   color: #ffffff;
   padding: 18px 20px;
@@ -250,12 +250,29 @@
   text-decoration: none;
   font-weight: 700;
   cursor: pointer;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .appointment-primary-cta:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.appointment-cta-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  border-radius: 999px;
+  animation: appointmentCtaSpin 780ms linear infinite;
+}
+
+@keyframes appointmentCtaSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .appointment-secondary-cta {
@@ -12267,7 +12284,7 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 }
 
 .customer-mobile-title-row h1,
-.customer-mobile-book-header h1 {
+.customer-mobile-book-header h1, .appointment {
   margin: 0;
   color: #0b326d;
   font-size: 24px;
@@ -12947,10 +12964,43 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 }
 
 .customer-appointment-desktop-shell {
-  width: min(980px, 100%);
+  width: min(1180px, 100%);
   margin: 0 auto;
   display: grid;
   gap: 24px;
+}
+
+.customer-appointment-page-header {
+  margin-bottom: 6px;
+}
+
+.customer-appointment-layout {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+  margin-top: 120px;
+  padding: 16px;
+}
+
+.customer-appointment-list-panel,
+.customer-appointment-book-panel {
+  min-width: 0;
+}
+
+.customer-appointment-desktop-shell.is-booking-open .customer-appointment-layout {
+  grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
+}
+
+.customer-appointment-desktop-shell.is-booking-standalone .customer-appointment-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.customer-appointment-desktop-shell:not(.is-booking-open) .customer-appointment-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.customer-appointment-desktop-shell:not(.is-booking-open) .customer-appointment-book-panel {
+  display: none;
 }
 
 .customer-appointment-desktop-shell .customer-list-shell {
@@ -13027,15 +13077,32 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   font-size: 12px;
 }
 
+.customer-appointment-desktop-shell .customer-mobile-empty-state {
+  margin-top: 24px;
+}
+
+.customer-appointment-desktop-shell .customer-mobile-empty-illustration {
+  width: 84px;
+  
+}
+
 .customer-appointment-desktop-shell .customer-appointment-book-shell {
   gap: 18px;
 }
 
+.customer-appointment-desktop-shell .customer-appointment-book-panel {
+  position: relative;
+}
+
+.customer-appointment-desktop-shell .customer-appointment-list-panel {
+  position: relative;
+}
+
 .customer-appointment-desktop-shell .customer-mobile-book-card-shot {
-  margin-top: 0;
+  margin-top: 20px;
   padding: 24px;
   border-radius: 24px;
-  box-shadow: 0 18px 40px rgba(34, 49, 77, 0.08);
+
 }
 
 .customer-appointment-desktop-shell .customer-mobile-book-card-shot .customer-mobile-book-month strong {
@@ -13069,6 +13136,24 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 
 .customer-appointment-desktop-shell .appointment-primary-cta.customer-mobile-appointment-cta {
   max-width: 280px;
+}
+
+@media (max-width: 899px) {
+  .customer-appointment-desktop-shell.is-booking-open .customer-appointment-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .customer-appointment-desktop-shell.is-booking-open .customer-appointment-list-panel {
+    display: none;
+  }
+
+  .customer-appointment-desktop-shell .customer-appointment-book-panel {
+    max-width: none;
+  }
+
+  .customer-appointment-desktop-shell .customer-mobile-empty-state {
+    margin-top: 38px;
+  }
 }
 
 .customer-mobile-appointment-screen {
@@ -13689,7 +13774,7 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 }
 
 .customer-mobile-time-box {
-  min-width: 152px;
+  
   display: flex;
   align-items: center;
   gap: 8px;
@@ -14374,9 +14459,353 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   font-size: 14px;
 }
 
+.customer-quota-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 82;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.customer-quota-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(2, 31, 78, 0.28);
+  backdrop-filter: blur(4px);
+}
+
+.customer-quota-modal-card {
+  position: relative;
+  z-index: 1;
+  width: min(380px, 100%);
+  border: 1px solid #dfe4ec;
+  border-radius: 20px;
+  background: #ffffff;
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+  box-shadow: 0 24px 60px rgba(2, 31, 78, 0.18);
+}
+
+.customer-quota-modal-card .customer-panel-head {
+  margin: 0;
+}
+
+.customer-quota-modal-card h2 {
+  margin: 4px 0 0;
+  color: #0b326d;
+  font-size: 20px;
+}
+
+.customer-quota-modal-card p {
+  margin: 0;
+  color: #526078;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.customer-appointment-confirmation-page {
+  min-height: 100dvh;
+  padding: 24px 16px;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(34, 160, 107, 0.1), transparent 34%),
+    #f8fbff;
+}
+
+.customer-appointment-checkout-page {
+  min-height: 100dvh;
+  padding: 24px 16px;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(34, 160, 107, 0.1), transparent 34%),
+    #f8fbff;
+}
+
+.customer-appointment-confirmation-shell {
+  width: min(460px, 100%);
+  padding: 22px 18px 18px;
+  gap: 16px;
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 20px 48px rgba(11, 50, 109, 0.12);
+}
+
+.customer-appointment-checkout-shell {
+  position: relative;
+  width: min(460px, 100%);
+  padding: 22px 18px 18px;
+  gap: 16px;
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 20px 48px rgba(11, 50, 109, 0.12);
+}
+
+.customer-appointment-checkout-back {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: #f4f7fb;
+  color: #0b326d;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.customer-appointment-checkout-icon {
+  width: 68px;
+  height: 68px;
+  background: #e8f5ee;
+  color: #22a06b;
+}
+
+.customer-appointment-checkout-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.customer-appointment-checkout-icon.is-warning {
+  background: #fff4d6;
+  color: #b7791f;
+}
+
+.customer-appointment-checkout-icon.is-error {
+  background: #fee7e7;
+  color: #c53030;
+}
+
+.customer-appointment-confirmation-shell h2 {
+  max-width: 320px;
+  margin: 0 auto;
+  color: #0b326d;
+  font-size: 26px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.customer-appointment-checkout-shell h2 {
+  max-width: 320px;
+  margin: 0 auto;
+  color: #0b326d;
+  font-size: 26px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.customer-appointment-confirmation-shell > p {
+  max-width: 320px;
+  margin: 0 auto;
+  color: #526078;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.customer-appointment-checkout-shell > p {
+  max-width: 320px;
+  margin: 0 auto;
+  color: #526078;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.customer-appointment-confirmation-summary {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.customer-appointment-checkout-summary {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.customer-appointment-checkout-summary-head {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  text-align: left;
+}
+
+.customer-appointment-checkout-row-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  background: #e8f5ee;
+  color: #2f9461;
+  display: grid;
+  place-items: center;
+}
+
+.customer-appointment-checkout-summary-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.customer-appointment-checkout-summary-copy span,
+.customer-appointment-checkout-meta span {
+  color: #526078;
+  font-size: 12px;
+}
+
+.customer-appointment-checkout-summary-copy strong,
+.customer-appointment-checkout-meta strong {
+  color: #0b326d;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.customer-appointment-checkout-summary-head em,
+.customer-appointment-confirmation-head .badge {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #e8f5ee;
+  color: #2f9461;
+  font-weight: 600;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.customer-appointment-checkout-summary-head em.is-warning {
+  background: #fff4d6;
+  color: #b7791f;
+}
+
+.customer-appointment-checkout-summary-head em.is-error {
+  background: #fee7e7;
+  color: #c53030;
+}
+
+.customer-appointment-checkout-meta {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.customer-appointment-checkout-meta div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 8px;
+  border-top: 1px solid #dfe4ec;
+}
+
+.customer-appointment-checkout-note {
+  max-width: 320px;
+  color: #526078;
+  font-size: 13px;
+}
+
+.customer-appointment-checkout-error {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: 14px;
+  background: #fee7e7;
+  color: #9f1c1c;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.customer-appointment-confirmation-actions {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  display: grid;
+  gap: 10px;
+}
+
+.customer-appointment-confirmation-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.customer-appointment-confirmation-secure {
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 14px 0 0;
+  border-top: 1px solid #dfe4ec;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+}
+
+.customer-appointment-confirmation-secure span {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 999px;
+  border: 2px solid #38a169;
+  position: relative;
+}
+
+.customer-appointment-confirmation-secure span::before {
+  content: "";
+  position: absolute;
+  inset: 9px 10px 8px;
+  border: 2px solid #38a169;
+  border-top: 0;
+  border-left: 0;
+  transform: rotate(45deg);
+}
+
+.customer-appointment-confirmation-secure p {
+  margin: 0;
+  color: #526078;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.customer-appointment-confirmation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #526078;
+  font-size: 12px;
+}
+
+.customer-appointment-confirmation-summary .customer-confirmation-next-row {
+  padding-top: 10px;
+  font-size: 12px;
+}
+
+.customer-appointment-confirmation-summary .customer-confirmation-next-row strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .customer-mobile-primary-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+@media (max-width: 540px) {
+  .customer-appointment-checkout-shell {
+    padding: 20px 16px 16px;
+    border-radius: 22px;
+  }
+
+  .customer-appointment-checkout-back {
+    top: 14px;
+    left: 14px;
+  }
 }
 
 @keyframes customerMobileFadeIn {

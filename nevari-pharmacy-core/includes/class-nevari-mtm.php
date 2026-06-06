@@ -106,7 +106,7 @@ final class Nevari_Mtm {
     }
 
     public static function customer_permission(): bool {
-        return Nevari_Auth::api_session_required() && self::customer_has_access();
+        return Nevari_Auth::api_session_required();
     }
 
     public static function pharmacist_permission(): bool {
@@ -116,6 +116,17 @@ final class Nevari_Mtm {
     private static function customer_has_access(): bool {
         $user_id = Nevari_Auth::api_session_user_id();
         return $user_id > 0 && class_exists('Nevari_Subscriptions') && Nevari_Subscriptions::user_has_paid_access($user_id);
+    }
+
+    private static function guard_customer_submission_access() {
+        if (self::customer_has_access()) {
+            return null;
+        }
+        return Nevari_Helpers::error(
+            'subscription_required',
+            'An active therapy management subscription is required to submit an MTM request.',
+            403
+        );
     }
 
     private static function table(): string {
@@ -365,6 +376,10 @@ final class Nevari_Mtm {
     public static function customer_create(WP_REST_Request $request): WP_REST_Response {
         if (!self::table_ready()) {
             return Nevari_Helpers::error('mtm_unavailable', 'MTM requests are temporarily unavailable. Please contact support.', 503);
+        }
+        $access_error = self::guard_customer_submission_access();
+        if ($access_error instanceof WP_REST_Response) {
+            return $access_error;
         }
         $user_id = Nevari_Auth::api_session_user_id();
         $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];

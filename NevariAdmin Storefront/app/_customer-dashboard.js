@@ -31,12 +31,12 @@ const NURSE_REQUEST_YES_NO_FIELDS = ["liveInCareRequired", "wheelchairAssistance
 const NURSE_REQUEST_YES_NO_OPTIONS = ["Yes", "No"];
 const NURSE_REQUEST_CLINICAL_REQUIREMENTS = ["Medication Administration", "Catheter Care", "Blood Pressure Monitoring", "Diabetes Monitoring", "IV Therapy", "Feeding Tube Support"];
 const NURSE_REQUEST_UPLOAD_LABELS = ["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"];
-const pages = ["overview", "orders", "appointment", "request", "settings", "profile", "therapy"];
+const pages = ["overview", "appointment", "orders", "request", "settings", "profile", "therapy"];
 const CUSTOMER_DASHBOARD_REFRESH_MS = 60_000;
 const pageLabels = {
   overview: "Overview",
+  appointment: "Appointments",
   orders: "Orders",
-  appointment: "Appointment",
   request: "Request a Nurse",
   settings: "Settings",
   profile: "My Profile",
@@ -550,7 +550,7 @@ export default function CustomerDashboard() {
   const customerAppointmentsKey = session && ["overview", "appointment", "settings", "profile"].includes(page)
     ? swrKeys.proxy.path("/appointments", withBaseUrl(session, { per_page: 40, page: 1 }))
     : null;
-  const customerDoctorsKey = session && ["appointment", "settings", "profile"].includes(page)
+  const customerDoctorsKey = session && ["settings", "profile"].includes(page)
     ? swrKeys.proxy.path("/doctors", withBaseUrl(session, { per_page: 24, page: 1 }))
     : null;
   const { data: summaryState = emptyCustomerState, mutate: mutateSummary, isLoading } = useSWR(
@@ -594,9 +594,6 @@ export default function CustomerDashboard() {
     await mutateSummary(updater, options);
     if (page === "orders") {
       await ordersQuery.mutate();
-    }
-    if (page === "appointment") {
-      await appointmentsQuery.mutate();
     }
   };
 
@@ -693,7 +690,6 @@ export default function CustomerDashboard() {
   const selectedDoctor = visibleDoctors.find((doctor) => String(doctor.user_id || doctor.id) === String(journey.doctorId)) || null;
   const pageQueryLoading = (
     (page === "orders" && ordersQuery.isLoading && !ordersQuery.data) ||
-    (page === "appointment" && ((appointmentsQuery.isLoading && !appointmentsQuery.data) || (doctorsQuery.isLoading && !doctorsQuery.data))) ||
     (["settings", "profile"].includes(page) && ((ordersQuery.isLoading && !ordersQuery.data) || (appointmentsQuery.isLoading && !appointmentsQuery.data)))
   );
   const ordersLoading = Boolean(customerOrdersKey) && ordersQuery.isLoading && !Array.isArray(ordersQuery.data);
@@ -782,7 +778,8 @@ export default function CustomerDashboard() {
   async function openDoctorAvailability(doctor) {
     const doctorId = doctor.user_id || doctor.id;
     const nextDate = journey.doctorId === doctorId ? journey.selectedDate : localDateKey(new Date());
-    setPage("appointment");
+    goToPage("overview");
+    return;
     setJourney({
       ...createJourneyState(),
       mode: "slots",
@@ -851,16 +848,22 @@ export default function CustomerDashboard() {
     const activeReason = sanitizeClientText(override?.reason ?? journey.reason, { max: 500 }).trim() || "Doctor consultation booking";
     const activeDoctorId = override?.doctorId ?? journey.doctorId;
     if (!activeSlot) {
-      return;
+      return { ok: false, error: "Select an appointment time before continuing." };
     }
     const session = hydrateStoredSession("patient");
     let createdAppointment = null;
     setJourney((current) => ({ ...current, loading: true, error: "" }));
     try {
+      const activeStartDate = new Date(activeSlot.start_at);
+      if (Number.isNaN(activeStartDate.getTime())) {
+        throw new Error("Select a valid appointment date and time.");
+      }
+      const normalizedStartAt = activeStartDate.toISOString();
+      const normalizedEndAt = new Date(activeStartDate.getTime() + (normalizeBookingMinutes(activeDuration) * 60_000)).toISOString();
       const body = {
         type: settings.preferredConsultationType,
-        start_at: activeSlot.start_at,
-        end_at: appointmentEndForSelection(activeSlot, activeDuration),
+        start_at: normalizedStartAt,
+        end_at: normalizedEndAt,
         duration_minutes: activeDuration,
         reason: activeReason,
         timezone: settings.timezone || storeTimeZone
@@ -874,69 +877,66 @@ export default function CustomerDashboard() {
       });
       createdAppointment = appointment;
       const checkout = await apiRequest(session, `/appointments/${appointment.id}/checkout`);
+      const resolvedAppointment = checkout?.appointment || appointment;
+      const checkoutPaid = String(checkout?.payment_status || resolvedAppointment?.payment_status || "").toLowerCase() === "paid";
+      if (checkoutPaid && String(resolvedAppointment?.status || "").toLowerCase() === "confirmed") {
+        const confirmation = await apiRequest(session, `/appointments/${appointment.id}/confirmation`);
+        setJourney((current) => ({
+          ...current,
+          mode: "confirmation",
+          appointment: confirmation?.appointment || resolvedAppointment,
+          checkout,
+          confirmation,
+          loading: false,
+          error: ""
+        }));
+        patchCustomerAppointmentCache(confirmation?.appointment || resolvedAppointment);
+        await mutateSummary((current) => current ? { ...current, appointments: upsertById(current.appointments || [], confirmation?.appointment || resolvedAppointment) } : current, { revalidate: false });
+        await appointmentsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, confirmation?.appointment || resolvedAppointment) : current, { revalidate: false });
+        revalidateCustomerGroups(isProxyAppointmentsKey, isProxyOrdersKey);
+        return { ok: true, mode: "confirmation", appointment: confirmation?.appointment || resolvedAppointment };
+      }
       setJourney((current) => ({
         ...current,
         mode: "checkout",
-        appointment,
+        appointment: resolvedAppointment,
         checkout,
         loading: false,
         error: ""
       }));
-      patchCustomerAppointmentCache(appointment);
-      await mutateSummary((current) => current ? { ...current, appointments: upsertById(current.appointments || [], appointment) } : current, { revalidate: false });
-      await appointmentsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, appointment) : current, { revalidate: false });
+      patchCustomerAppointmentCache(resolvedAppointment);
+      await mutateSummary((current) => current ? { ...current, appointments: upsertById(current.appointments || [], resolvedAppointment) } : current, { revalidate: false });
+      await appointmentsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, resolvedAppointment) : current, { revalidate: false });
       revalidateCustomerGroups(isProxyAppointmentsKey);
+      return { ok: true, mode: "checkout", appointment: resolvedAppointment, checkout };
     } catch (error) {
-      if (!storefrontSettings.demoCheckoutFallbackEnabled) {
+      const nextError = error?.message || "Live checkout could not be created.";
+      if (!createdAppointment?.id) {
         setJourney((current) => ({
           ...current,
-          mode: "checkout",
-          appointment: createdAppointment || current.appointment,
-          checkout: createdAppointment ? null : current.checkout,
           loading: false,
-          error: error?.message || "Live checkout could not be created."
+          error: nextError
         }));
-        return;
+        return { ok: false, error: nextError };
       }
-      const appointment = buildMockAppointment({
-        ...journey,
-        doctorId: activeDoctorId,
-        selectedSlot: activeSlot,
-        durationMinutes: activeDuration,
-        reason: activeReason
-      }, selectedDoctor, settings, storeCurrency);
       setJourney((current) => ({
         ...current,
         mode: "checkout",
-        appointment,
-        checkout: {
-          appointment,
-          total: Number(selectedDoctor?.consultation_fee || 0),
-          currency: storeCurrency,
-          payment_status: "pending",
-          payment_url: "#demo-payment",
-          mock: true
-        },
+        appointment: createdAppointment,
+        checkout: null,
         loading: false,
-        error: "The live appointment service is unavailable. A frontend checkout preview has been generated for testing."
+        error: nextError
       }));
+      patchCustomerAppointmentCache(createdAppointment);
+      await mutateSummary((current) => current ? { ...current, appointments: upsertById(current.appointments || [], createdAppointment) } : current, { revalidate: false });
+      await appointmentsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, createdAppointment) : current, { revalidate: false });
+      revalidateCustomerGroups(isProxyAppointmentsKey);
+      return { ok: false, error: nextError, mode: "checkout", appointment: createdAppointment };
     }
   }
 
   async function refreshConfirmation() {
     if (!journey.appointment?.id) {
-      return;
-    }
-    if (storefrontSettings.demoCheckoutFallbackEnabled && (journey.checkout?.mock || journey.appointment?.mock)) {
-      const confirmation = buildMockConfirmation(journey.appointment, selectedDoctor, storeCurrency);
-      setJourney((current) => ({
-        ...current,
-        mode: "confirmation",
-        appointment: confirmation.appointment,
-        confirmation,
-        loading: false,
-        error: ""
-      }));
       return;
     }
     const session = hydrateStoredSession("patient");
@@ -975,7 +975,8 @@ export default function CustomerDashboard() {
 
   async function openDoctorReviews(doctor) {
     const session = hydrateStoredSession("patient");
-    setPage("appointment");
+    goToPage("overview");
+    return;
     setJourney({
       ...createJourneyState(),
       mode: "reviews",
@@ -1067,9 +1068,9 @@ export default function CustomerDashboard() {
     setAppointmentActionBusy(true);
     try {
       const activeSession = hydrateStoredSession("patient");
-      const response = await apiRequest(activeSession, `/appointments/${appointmentId}`, {
-        method: "PATCH",
-        body: { status: "cancelled" }
+      const response = await apiRequest(activeSession, `/appointments/${appointmentId}/cancel`, {
+        method: "POST",
+        body: {}
       });
       const updated = response?.appointment || response?.data?.appointment || response?.data || response;
       if (updated?.id) {
@@ -1210,9 +1211,6 @@ function buildCustomerBootstrapState(session, settings, fallbackState = emptyCus
 function CustomerDashboardSkeleton({ page }) {
   if (page === "orders") {
     return <CustomerOrdersSkeleton />;
-  }
-  if (page === "appointment") {
-    return <CustomerAppointmentSkeleton />;
   }
   if (page === "settings") {
     return <CustomerSettingsSkeleton />;
@@ -1404,7 +1402,8 @@ function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, o
         key: `appointment-${appointment.id}`,
         label: `Appointment ${appointment.id}`,
         meta: shortDate(appointment.start_at, true, storeTimeZone),
-        page: "appointment"
+        page: "overview",
+        appointment
       }));
     const doctorMatches = doctors
       .filter((doctor) => String(doctor.display_name || "").toLowerCase().includes(term))
@@ -1413,7 +1412,7 @@ function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, o
         key: `doctor-${doctor.user_id || doctor.id}`,
         label: doctor.display_name || "Doctor",
         meta: doctor.specialties?.join(", ") || "Available doctor",
-        page: "appointment",
+        page: "overview",
         doctor
       }));
     return [...orderMatches, ...appointmentMatches, ...doctorMatches].slice(0, 8);
@@ -1439,6 +1438,10 @@ function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, o
         setQuery(result.label);
         if (result.doctor) {
           onOpenAvailability(result.doctor);
+          return;
+        }
+        if (result.appointment) {
+          onOpenAppointment(result.appointment);
           return;
         }
         onOpenPage(result.page);
@@ -1716,6 +1719,8 @@ function OrdersPage({ orders, counts, expandedOrderId, loading = false, onToggle
 }
 
 function AppointmentPage({
+  profile,
+  settings,
   doctors,
   doctorsUnavailable,
   doctorsLoading = false,
@@ -1736,38 +1741,36 @@ function AppointmentPage({
   onResetJourney,
   onReviewDraftChange,
   onSubmitReview,
+  onOpenSearch = null,
+  onOpenMenu = null,
   calendarDownloadUrl,
   storeCurrency,
   storeTimeZone,
   storefrontSettings,
   minimumBookingMinutes,
+  subscriptionState = null,
 }) {
-  const subscriptionState = arguments[0]?.subscriptionState || null;
-  const subscription = subscriptionState?.subscription || {};
   const [filter, setFilter] = useState("all");
   const [bookingOpen, setBookingOpen] = useState(false);
   const [bookingDate, setBookingDate] = useState(() => localDateInputValue(new Date()));
-  const [bookingTime, setBookingTime] = useState(BOOKING_SLOT_TIMES[0] || "09:00");
+  const [bookingTime, setBookingTime] = useState("");
   const [bookingReason, setBookingReason] = useState("");
   const [bookingError, setBookingError] = useState("");
-  const [consultationQuotaDismissed, setConsultationQuotaDismissed] = useState(false);
   const [bookingMonth, setBookingMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const bookingSectionRef = useRef(null);
+  const greetingName = firstName(settings?.displayName || profile?.display_name || "Tee");
   const filters = useMemo(() => buildAppointmentFilters(upcoming, past), [past, upcoming]);
   const allAppointments = useMemo(() => [...upcoming, ...past], [past, upcoming]);
   const visibleAppointments = useMemo(() => filterAppointmentsList(allAppointments, filter), [allAppointments, filter]);
-  const showBookAppointmentPlus = true;
-  const consultationQuotaTotal = Number(subscription.free_consultations_total || 0);
-  const consultationQuotaUsed = Number(subscription.free_consultations_used || 0);
-  const consultationQuotaRemaining = Number(subscription.free_consultations_remaining || 0);
-  const consultationQuotaResetLabel = String(subscription.free_consultations_reset_label || "").trim();
-  const isProSubscription = String(subscription.plan_key || "").toLowerCase() === "nevari_access_pro" || Boolean(subscription.is_paid);
-  const showConsultationQuotaNotice = isProSubscription && !consultationQuotaDismissed;
-  const consultationQuotaTitle = consultationQuotaRemaining <= 0 ? "Free Monthly Consultation Allowance Used" : "Free Consultation Allowance";
-  const consultationQuotaBody = consultationQuotaRemaining <= 0
-    ? `You have used all 5 free consultation bookings included with your Pro membership for this month.`
-    : `You have ${consultationQuotaRemaining} of ${consultationQuotaTotal || 5} free consultation bookings remaining in your Pro membership for this cycle.`;
-  const consultationQuotaResetText = consultationQuotaResetLabel ? `Next reset: ${consultationQuotaResetLabel}` : "";
+  const replaceListWithBooking = bookingOpen && visibleAppointments.length === 0;
+  const showBookAppointmentPlus = !bookingOpen && visibleAppointments.length > 0;
+  const todayBookingDate = localDateInputValue(new Date());
+  const currentBookingTime = localTimeInputValue(new Date());
+  const availableBookingTimes = useMemo(() => BOOKING_SLOT_TIMES.map((slot) => ({
+    value: slot,
+    disabled: bookingDate === todayBookingDate && slot <= currentBookingTime
+  })), [bookingDate, currentBookingTime, todayBookingDate]);
+  const hasAvailableBookingTimes = availableBookingTimes.some((slot) => !slot.disabled);
 
   if (journey.mode === "slots") {
     return <AvailableTimePage
@@ -1817,12 +1820,13 @@ function AppointmentPage({
 
   async function handleAutoAssignBooking() {
     const nextReason = sanitizeClientText(bookingReason, { max: 500 }).trim();
-    if (!bookingDate || !bookingTime || !nextReason) {
+    const selectedTimeInvalid = !bookingTime || availableBookingTimes.some((slot) => slot.value === bookingTime && slot.disabled);
+    if (!bookingDate || selectedTimeInvalid || !nextReason) {
       setBookingError("Select a date, time, and reason for the appointment.");
       return;
     }
     setBookingError("");
-    await onCreateAppointmentCheckout({
+    const result = await onCreateAppointmentCheckout({
       doctorId: null,
       durationMinutes: 30,
       reason: nextReason,
@@ -1830,6 +1834,9 @@ function AppointmentPage({
         start_at: `${bookingDate}T${bookingTime}:00`,
       },
     });
+    if (result && result.ok === false && result.error) {
+      setBookingError(result.error);
+    }
   }
 
   const bookingMonthLabel = bookingMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -1842,88 +1849,121 @@ function AppointmentPage({
     return dayNumber > 0 ? dayNumber : null;
   });
 
-  return <div className="customer-dashboard-stack customer-appointment-desktop-shell">
-    {showConsultationQuotaNotice ? <div className="detail-card appointment-quota-popup" role="dialog" aria-modal="false" aria-label="Consultation quota notice">
-      <div className="customer-panel-head">
-        <div>
-          <span className="customer-section-kicker">Consultation quota</span>
-          <h2>{consultationQuotaTitle}</h2>
-        </div>
-        <button className="icon-btn" type="button" aria-label="Dismiss consultation quota notice" onClick={() => setConsultationQuotaDismissed(true)}>x</button>
-      </div>
-      <p>{consultationQuotaBody}</p>
-      {consultationQuotaResetText ? <p>{consultationQuotaResetText}</p> : null}
-      {!consultationQuotaRemaining && consultationQuotaUsed >= consultationQuotaTotal ? null : <p>{consultationQuotaTotal ? `${consultationQuotaUsed} of ${consultationQuotaTotal} used.` : ""}</p>}
-      </div> : null}
-    {!bookingOpen ? <section className="customer-list-shell book-doctor-shell customer-appointment-history-shell">
-      
-      <div className="customer-mobile-pill-tabs" role="tablist" aria-label="Appointment filters">
-        {filters.map((item) => <button className={`customer-mobile-pill-tab ${filter === item.id ? "active" : ""}`} key={item.id} type="button" role="tab" aria-selected={filter === item.id} onClick={() => setFilter(item.id)}>
-          {item.label}
-        </button>)}
-      </div>
-      <AppointmentSection title="Appointments" items={visibleAppointments} doctors={doctors} storeTimeZone={storeTimeZone} loading={appointmentsLoading} emptyCtaLabel="Book Appointment" onEmptyCta={() => setBookingOpen(true)} />
-    </section> : <section className="customer-list-shell customer-appointment-book-shell" ref={bookingSectionRef}>
-      <div className="customer-mobile-title-row customer-mobile-appointment-book-title">
-        <button className="customer-mobile-back-link" type="button" onClick={() => setBookingOpen(false)}>
-          <MobileIcon name="arrow-left" />
-          <span>Go back</span>
+  useEffect(() => {
+    const selectedSlot = availableBookingTimes.find((slot) => slot.value === bookingTime);
+    if (selectedSlot && !selectedSlot.disabled) {
+      return;
+    }
+    const nextAvailable = availableBookingTimes.find((slot) => !slot.disabled)?.value || "";
+    if (bookingTime !== nextAvailable) {
+      setBookingTime(nextAvailable);
+    }
+    if (bookingDate === todayBookingDate && bookingTime && selectedSlot?.disabled) {
+      setBookingError("Select a future time for today.");
+    }
+  }, [availableBookingTimes, bookingDate, bookingTime, todayBookingDate]);
+
+  return <div className={`customer-dashboard-stack customer-appointment-desktop-shell ${bookingOpen ? "is-booking-open" : ""} ${replaceListWithBooking ? "is-booking-standalone" : ""}`.trim()}>
+    <header className="customer-mobile-header is-overview customer-appointment-page-header">
+      <button className="customer-mobile-searchbar customer-mobile-searchbar-button" type="button" onClick={onOpenSearch || (() => {})} aria-label="Search here for orders, appointments etc">
+        <MobileIcon name="search" />
+        <span>Search here for orders, appointments etc</span>
+      </button>
+      <div className="customer-mobile-greeting-row">
+        <button className="customer-mobile-icon-button" type="button" aria-label="Open menu" onClick={onOpenMenu || (() => {})}>
+          <MobileIcon name="menu" />
         </button>
-        <h1>Appointments</h1>
+        <div className="customer-mobile-title-row appointment">
+          <h1>Appointments</h1>
+        </div>
       </div>
-      <div className="customer-mobile-book-card customer-mobile-book-card-shot customer-appointment-book-card">
-        <div className="customer-mobile-book-month">
-          <strong>{bookingMonthLabel}</strong>
-          <div className="customer-mobile-book-arrows">
-            <button type="button" aria-label="Previous month" onClick={() => setBookingMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}><MobileIcon name="arrow-left" /></button>
-            <button type="button" aria-label="Next month" onClick={() => setBookingMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}><MobileIcon name="arrow-right" /></button>
+      
+    </header>
+
+    <div className="customer-appointment-layout">
+      {!replaceListWithBooking ? <section className="customer-list-shell book-doctor-shell customer-appointment-history-shell customer-appointment-list-panel">
+        <div className="customer-mobile-pill-tabs" role="tablist" aria-label="Appointment filters">
+          {filters.map((item) => <button className={`customer-mobile-pill-tab ${filter === item.id ? "active" : ""}`} key={item.id} type="button" role="tab" aria-selected={filter === item.id} onClick={() => setFilter(item.id)}>
+            {item.label}
+          </button>)}
+        </div>
+        <AppointmentSection
+          title="Appointments"
+          items={visibleAppointments}
+          doctors={doctors}
+          storeTimeZone={storeTimeZone}
+          loading={appointmentsLoading}
+          emptyCtaLabel="Book an appointment"
+          onEmptyCta={handleNewAppointmentClick}
+        />
+      </section> : null}
+
+      {bookingOpen ? <section className="customer-list-shell customer-appointment-book-shell customer-appointment-book-panel" ref={bookingSectionRef}>
+        <div className="customer-mobile-title-row customer-mobile-appointment-book-title">
+          <button className="customer-mobile-back-link" type="button" onClick={() => setBookingOpen(false)}>
+            <MobileIcon name="arrow-left" />
+            <span>Go back</span>
+          </button>
+          
+        </div>
+        <div className="customer-mobile-book-card customer-mobile-book-card-shot customer-appointment-book-card">
+          <div className="customer-mobile-book-month">
+            <strong>{bookingMonthLabel}</strong>
+            <div className="customer-mobile-book-arrows">
+              <button type="button" aria-label="Previous month" onClick={() => setBookingMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}><MobileIcon name="arrow-left" /></button>
+              <button type="button" aria-label="Next month" onClick={() => setBookingMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}><MobileIcon name="arrow-right" /></button>
+            </div>
           </div>
-        </div>
-        <div className="customer-mobile-calendar-head">
-          {["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((label) => <span key={label}>{label}</span>)}
-        </div>
-        <div className="customer-mobile-calendar-grid">
-          {bookingCalendarCells.map((day, index) => {
-            if (!day) return <span key={`booking-blank-${index}`} />;
-            const dateValue = `${bookingMonth.getFullYear()}-${String(bookingMonth.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-            const isSelected = bookingDate === dateValue;
-            const isPast = new Date(`${dateValue}T00:00:00`).getTime() < new Date(`${localDateInputValue(new Date())}T00:00:00`).getTime();
-            return <button
-              key={dateValue}
-              type="button"
-              className={`customer-mobile-calendar-day ${isSelected ? "active" : ""} ${isPast ? "is-past" : ""}`}
-              disabled={isPast}
-              onClick={() => {
-                setBookingDate(dateValue);
-                if (bookingError) setBookingError("");
-              }}
-            >
-              {day}
-            </button>;
-          })}
-        </div>
-        <div className="customer-mobile-time-row customer-mobile-time-row-shot">
+          <div className="customer-mobile-calendar-head">
+            {["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((label) => <span key={label}>{label}</span>)}
+          </div>
+          <div className="customer-mobile-calendar-grid">
+            {bookingCalendarCells.map((day, index) => {
+              if (!day) return <span key={`booking-blank-${index}`} />;
+              const dateValue = `${bookingMonth.getFullYear()}-${String(bookingMonth.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              const isSelected = bookingDate === dateValue;
+              const isPast = new Date(`${dateValue}T00:00:00`).getTime() < new Date(`${localDateInputValue(new Date())}T00:00:00`).getTime();
+              return <button
+                key={dateValue}
+                type="button"
+                className={`customer-mobile-calendar-day ${isSelected ? "active" : ""} ${isPast ? "is-past" : ""}`}
+                disabled={isPast}
+                onClick={() => {
+                  setBookingDate(dateValue);
+                  setBookingTime("");
+                  if (bookingError) setBookingError("");
+                }}
+              >
+                {day}
+              </button>;
+            })}
+          </div>
+          <div className="customer-mobile-time-row customer-mobile-time-row-shot">
             <strong>Time</strong>
             <div className="customer-mobile-time-box customer-mobile-time-box-shot">
               <select value={bookingTime} onChange={(event) => setBookingTime(event.target.value)}>
-                {BOOKING_SLOT_TIMES.map((slot) => <option key={slot} value={slot}>{formatSlotTime(slot)}</option>)}
+                <option value="" disabled>{hasAvailableBookingTimes ? "Select a time" : "No time available"}</option>
+                {availableBookingTimes.map((slot) => <option key={slot.value} value={slot.value} disabled={slot.disabled}>{formatSlotTime(slot.value)}</option>)}
               </select>
-              <input className="small" value="" readOnly aria-hidden="true" />
+              
             </div>
           </div>
-        {bookingError ? <p className="customer-mobile-field-error">{bookingError}</p> : null}
-      </div>
-      <label className="customer-mobile-field customer-mobile-appointment-reason-field">
-        <span>Reason for Appointment:</span>
-        <textarea rows={4} value={bookingReason} placeholder="Briefly state the reason for your appointment" onChange={(event) => {
-          setBookingReason(event.target.value);
-          if (bookingError) setBookingError("");
-        }} />
-      </label>
-      <button className="appointment-primary-cta customer-mobile-appointment-cta" type="button" onClick={handleAutoAssignBooking} disabled={journey.loading || !bookingDate || !bookingTime || !bookingReason.trim()}>
-        {journey.loading ? "Booking..." : "Book Appointment"}
-      </button>
-    </section>}
+          {bookingError ? <p className="customer-mobile-field-error">{bookingError}</p> : null}
+        </div>
+        <label className="customer-mobile-field customer-mobile-appointment-reason-field">
+          <span>Reason for Appointment:</span>
+          <textarea rows={4} value={bookingReason} placeholder="Briefly state the reason for your appointment" onChange={(event) => {
+            setBookingReason(event.target.value);
+            if (bookingError) setBookingError("");
+          }} />
+        </label>
+        <button className="appointment-primary-cta customer-mobile-appointment-cta" type="button" onClick={handleAutoAssignBooking} disabled={journey.loading || !bookingDate || !bookingTime || !bookingReason.trim() || !hasAvailableBookingTimes}>
+          {journey.loading ? <span className="appointment-cta-spinner" aria-label="Booking appointment" /> : "Book Appointment"}
+        </button>
+      </section> : null}
+    </div>
+
+    {showBookAppointmentPlus ? <button className="customer-mobile-appointment-booknow-btn" type="button" aria-label="Book appointment" onClick={handleNewAppointmentClick}>+</button> : null}
   </div>;
 }
 
@@ -2074,65 +2114,110 @@ function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, 
 function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancelCheckoutAppointment, storeCurrency, storeTimeZone, livePaymentsEnabled = false }) {
   const appointment = journey.checkout?.appointment || journey.appointment;
   const paymentUrl = resolveAppointmentCheckoutUrl(journey.checkout);
+  const paymentStatusValue = String(journey.checkout?.payment_status || appointment?.payment_status || "pending").toLowerCase();
+  const appointmentStatusValue = String(appointment?.status || "").toLowerCase();
+  const hasAppointment = Boolean(appointment?.id);
+  const paymentPending = hasAppointment && paymentStatusValue !== "paid";
+  const pendingRefreshMessage = journey.error === "Payment has not been confirmed yet. Complete checkout, then refresh.";
+  const hasError = Boolean(journey.error) && !pendingRefreshMessage;
+  const statusTone = hasError ? "error" : paymentPending ? "warning" : "success";
+  const paymentStatus = hasError ? "Failed" : paymentPending ? "Pending" : titleCase(paymentStatusValue || "paid");
+  const doctorName = doctor?.display_name || appointment?.doctor?.display_name || (appointment ? appointmentDoctorLabel(appointment, doctor) : "Assigned doctor");
+  const appointmentDate = appointment?.start_at ? friendlyDate(appointment.start_at, storeTimeZone) : "Not scheduled";
+  const appointmentTime = appointment?.start_at ? formatTime(appointment.start_at, storeTimeZone) : "Not scheduled";
+  const appointmentAmount = money(journey.checkout?.total || 0, storeCurrency);
+  const canRefreshPayment = hasAppointment && paymentPending && !hasError;
+  const canCancelAppointment = hasAppointment && !journey.loading;
+  const canProceedToPayment = canRefreshPayment && Boolean(paymentUrl);
+  const heading = hasError ? "Appointment unavailable" : paymentPending ? "Appointment reserved" : "Appointment ready";
+  const subtitle = hasError ? "We could not complete this booking step. Review the error below and try again." : paymentPending ? "Complete payment to confirm your consultation." : "Your booking details are ready.";
   useEffect(() => {
-    if (!paymentUrl || paymentUrl === "#demo-payment" || journey.loading) {
+    if (!paymentPending || !paymentUrl || paymentUrl === "#demo-payment" || journey.loading) {
       return;
     }
     const intervalId = window.setInterval(() => {
       onRefreshConfirmation();
     }, 15000);
     return () => window.clearInterval(intervalId);
-  }, [journey.loading, onRefreshConfirmation, paymentUrl]);
-  return <section className="appointment-mobile-sheet">
-    <div className="appointment-mobile-header">
-      <button className="appointment-circle-button" type="button" aria-label="Go back" onClick={onBack}>{"←"}</button>
-      <div className="appointment-circle-button appointment-circle-button-static" aria-hidden="true" />
-    </div>
-    <div className="appointment-surface-card">
-      <div className="checkout-summary-grid">
-        <div><span>Doctor</span><strong>{doctor?.display_name || appointment?.doctor?.display_name || "Doctor"}</strong></div>
-        <div><span>Date</span><strong>{friendlyDate(appointment?.start_at, storeTimeZone)}</strong></div>
-        <div><span>Time</span><strong>{formatTime(appointment?.start_at, storeTimeZone)}</strong></div>
-        <div><span>Amount</span><strong>{money(journey.checkout?.total || 0, storeCurrency)}</strong></div>
+  }, [journey.loading, onRefreshConfirmation, paymentPending, paymentUrl]);
+  return <section className="customer-appointment-checkout-page">
+    <div className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell customer-appointment-checkout-shell">
+      <button className="customer-appointment-checkout-back" type="button" aria-label="Go back" onClick={onBack}>
+        <MobileIcon name="arrow-left" />
+      </button>
+      <div className={`customer-confirmation-icon customer-appointment-checkout-icon is-${statusTone}`} aria-hidden="true">
+        {statusTone === "error" ? <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" /><path d="M18 18L30 30" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /><path d="M30 18L18 30" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /></svg> : null}
+        {statusTone === "warning" ? <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" /><path d="M24 14V25" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /><circle cx="24" cy="31.5" r="1.8" fill="currentColor" /></svg> : null}
+        {statusTone === "success" ? <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg> : null}
       </div>
-      <div className="checkout-status-banner">
-        <strong>{titleCase(journey.checkout?.payment_status || appointment?.payment_status || "pending")}</strong>
-        <span>Your booking is pending payment and will expire after 10 minutes if unpaid.</span>
+      <h2>{heading}</h2>
+      <p>{subtitle}</p>
+      <div className="customer-confirmation-next customer-appointment-checkout-summary">
+        <div className="customer-appointment-checkout-summary-head">
+          <div className="customer-appointment-checkout-row-icon" aria-hidden="true">
+            <MobileIcon name="calendar" />
+          </div>
+          <div className="customer-appointment-checkout-summary-copy">
+            <span>Status</span>
+            <strong>{paymentStatus}</strong>
+          </div>
+          <em className={`is-${statusTone}`}>{hasError ? "Failed" : paymentPending ? "Pending" : appointmentStatusValue === "confirmed" ? "Confirmed" : "Paid"}</em>
+        </div>
+        <div className="customer-appointment-checkout-meta">
+          <div><span>Doctor</span><strong>{doctorName}</strong></div>
+          <div><span>Date</span><strong>{appointmentDate}</strong></div>
+          <div><span>Time</span><strong>{appointmentTime}</strong></div>
+          <div><span>Amount</span><strong>{appointmentAmount}</strong></div>
+        </div>
       </div>
-      {journey.error ? <p className="receipt-feedback">{journey.error}</p> : null}
-      <div className="calendar-action-stack">
-        {paymentUrl ? <a className="appointment-primary-cta appointment-link-cta" href={paymentUrl} target="_blank" rel="noreferrer">{!livePaymentsEnabled && paymentUrl === "#demo-payment" ? "Open demo payment" : "Proceed to payment"}</a> : null}
-        <button className="appointment-secondary-cta" type="button" onClick={onCancelCheckoutAppointment}>Cancel appointment</button>
+      {paymentPending && !hasError ? <p className="customer-appointment-checkout-note">This booking expires after 10 minutes if payment is not completed.</p> : null}
+      {pendingRefreshMessage ? <p className="customer-appointment-checkout-note">{journey.error}</p> : null}
+      {hasError ? <p className="customer-appointment-checkout-error">{journey.error}</p> : null}
+      <div className="customer-appointment-confirmation-actions">
+        {canProceedToPayment ? <a className="customer-mobile-primary-button customer-appointment-confirmation-link" href={paymentUrl} target="_blank" rel="noreferrer">{!livePaymentsEnabled && paymentUrl === "#demo-payment" ? "Open demo payment" : "Proceed to payment"}</a> : null}
+        {canRefreshPayment ? <button className="customer-mobile-primary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? "Checking..." : "Check payment status"}</button> : null}
+        {!paymentPending && hasAppointment ? <button className="customer-mobile-primary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? "Loading..." : "View confirmation"}</button> : null}
+        {canCancelAppointment ? <button className="customer-mobile-secondary-button" type="button" onClick={onCancelCheckoutAppointment} disabled={journey.loading}>Cancel appointment</button> : null}
+      </div>
+      <div className="customer-appointment-confirmation-secure">
+        <span aria-hidden="true" />
+        <p>Your appointment information is secure and only used for your consultation.</p>
       </div>
     </div>
   </section>;
+  
 }
 
 function ConfirmationPage({ journey, doctor, onBack, calendarDownloadUrl, storeTimeZone }) {
   const confirmation = journey.confirmation;
   const appointment = confirmation?.appointment || journey.appointment;
-  return <section className="appointment-mobile-sheet">
-    <div className="appointment-mobile-header">
-      <button className="appointment-circle-button" type="button" onClick={onBack}>{"<"}</button>
-      <h2>Confirmation</h2>
-      <div className="appointment-circle-button appointment-circle-button-static">OK</div>
-    </div>
-    <div className="appointment-surface-card">
-      <div className="confirmation-hero">
-        <div className="confirmation-badge">08</div>
-        <h3>Appointment confirmed</h3>
-        <p>Your payment was received and your calendar invite is ready.</p>
+  const joinUrl = getAppointmentJoinUrl(appointment, confirmation);
+  const doctorName = doctor?.display_name || appointment?.doctor?.display_name || "Assigned doctor";
+  return <section className="customer-appointment-confirmation-page">
+    <div className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell customer-appointment-confirmation-shell">
+      <div className="customer-confirmation-icon" aria-hidden="true">
+        <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#22A06B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#22A06B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </div>
-      <div className="checkout-summary-grid">
-        <div><span>Doctor</span><strong>{doctor?.display_name || appointment?.doctor?.display_name || "Doctor"}</strong></div>
-        <div><span>Date</span><strong>{friendlyDate(appointment?.start_at, storeTimeZone)}</strong></div>
-        <div><span>Time</span><strong>{formatTime(appointment?.start_at, storeTimeZone)}</strong></div>
-        <div><span>Order</span><strong>{confirmation?.order_number || "Paid"}</strong></div>
+      <h2>Appointment confirmed</h2>
+      <p>Your consultation is booked and the appointment details are ready.</p>
+      <div className="customer-confirmation-next customer-appointment-confirmation-summary">
+        <div className="customer-appointment-confirmation-head">
+          <span>Status</span>
+          <strong className="badge">Confirmed</strong>
+        </div>
+        <div className="customer-confirmation-next-row"><span>Doctor</span><strong>{doctorName}</strong></div>
+        <div className="customer-confirmation-next-row"><span>Date</span><strong>{friendlyDate(appointment?.start_at, storeTimeZone)}</strong></div>
+        <div className="customer-confirmation-next-row"><span>Time</span><strong>{formatTime(appointment?.start_at, storeTimeZone)}</strong></div>
+        <div className="customer-confirmation-next-row"><span>Order</span><strong>{confirmation?.order_number || "Paid"}</strong></div>
       </div>
-      <div className="calendar-action-stack">
-        {getAppointmentJoinUrl(appointment, confirmation) ? <a className="appointment-primary-cta appointment-link-cta" href={getAppointmentJoinUrl(appointment, confirmation)} target="_blank" rel="noreferrer">Join meeting</a> : null}
-        {calendarDownloadUrl ? <a className="appointment-primary-cta appointment-link-cta" href={calendarDownloadUrl} target="_blank" rel="noreferrer">Add to Apple Calendar</a> : null}
-        {confirmation?.calendar?.outlook_url ? <a className="appointment-secondary-cta appointment-link-cta" href={confirmation.calendar.outlook_url} target="_blank" rel="noreferrer">Add to Outlook</a> : null}
+      <div className="customer-appointment-confirmation-actions">
+        {joinUrl ? <a className="customer-mobile-primary-button customer-appointment-confirmation-link" href={joinUrl} target="_blank" rel="noreferrer">Join meeting</a> : <button className="customer-mobile-primary-button" type="button" onClick={onBack}>View appointments</button>}
+        {calendarDownloadUrl ? <a className="customer-mobile-secondary-button customer-appointment-confirmation-link" href={calendarDownloadUrl} target="_blank" rel="noreferrer">Add to Apple Calendar</a> : null}
+        {confirmation?.calendar?.outlook_url ? <a className="customer-mobile-secondary-button customer-appointment-confirmation-link" href={confirmation.calendar.outlook_url} target="_blank" rel="noreferrer">Add to Outlook</a> : null}
+      </div>
+      <div className="customer-appointment-confirmation-secure">
+        <span aria-hidden="true" />
+        <p>Your appointment information is secure and only used for your consultation.</p>
       </div>
     </div>
   </section>;
@@ -2207,12 +2292,13 @@ function AppointmentSection({ title, items, doctors, storeTimeZone, loading = fa
     </div>;
   }
   if (!items.length) {
-    return <div className="customer-mobile-appointment-history-list">
-      <div className="empty-card compact-empty">
-        <div className="card-title">You have no appointments.</div>
-        {emptyCtaLabel && onEmptyCta ? <button className="pill-button" type="button" onClick={onEmptyCta}>{emptyCtaLabel}</button> : null}
-      </div>
-    </div>;
+    return <CustomerMobileEmptyState
+      message="You have no appointments"
+      ctaLabel={emptyCtaLabel || ""}
+      onCta={onEmptyCta}
+      illustrationSrc="/group-3.png"
+      ctaStyle="appointment"
+    />;
   }
 
   return <div className="customer-mobile-appointment-history-list" role="region" aria-label={`${title} appointments`}>
@@ -2986,6 +3072,10 @@ function localDateInputValue(date = new Date()) {
   return d.toISOString().slice(0, 10);
 }
 
+function localTimeInputValue(date = new Date()) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 function CustomerMobileDashboard({
   session,
   page,
@@ -3057,6 +3147,7 @@ function CustomerMobileDashboard({
   const [appointmentComposerErrors, setAppointmentComposerErrors] = useState({});
   const [appointmentComposerSuccess, setAppointmentComposerSuccess] = useState(null);
   const [localAppointments, setLocalAppointments] = useState([]);
+  const [consultationQuotaDismissed, setConsultationQuotaDismissed] = useState(false);
   const [requestStep, setRequestStep] = useState(1);
   const [requestStepAnimatingOut, setRequestStepAnimatingOut] = useState(false);
   const [profileTab, setProfileTab] = useState("user");
@@ -3242,7 +3333,7 @@ function CustomerMobileDashboard({
   }, [profile.display_name, session?.user?.display_name, session?.user?.name, settings.displayName]);
 
   useEffect(() => {
-    if (page === "appointment" && !["all", "upcoming", "previous"].includes(appointmentTab)) {
+    if (!["all", "upcoming", "previous"].includes(appointmentTab)) {
       setAppointmentTab("all");
     }
   }, [appointmentTab, page]);
@@ -3311,7 +3402,7 @@ function CustomerMobileDashboard({
   }, [appointmentTab]);
 
   useEffect(() => {
-    if (!["appointment", "request"].includes(page)) {
+    if (page !== "request") {
       setJourney(createJourneyState());
     }
   }, [createJourneyState, page, setJourney]);
@@ -3419,7 +3510,7 @@ function CustomerMobileDashboard({
   }, [appointmentComposerDate, appointmentComposerOpen]);
 
   useEffect(() => {
-    if (page !== "appointment" || !appointmentComposerOpen || appointmentComposerSelectedSlot) return;
+    if (!appointmentComposerOpen || appointmentComposerSelectedSlot) return;
     if (BOOKING_SLOT_TIMES[0]) {
       setAppointmentComposerSelectedSlot(BOOKING_SLOT_TIMES[0]);
     }
@@ -3499,7 +3590,7 @@ function CustomerMobileDashboard({
           meta: `${shortDate(appointment.start_at, true, storeTimeZone)} · ${doctor?.display_name || "Doctor"}`,
           onSelect: () => {
             setSelectedAppointment(appointment);
-            goToPage("appointment");
+            goToPage("overview");
           }
         };
       });
@@ -3528,6 +3619,18 @@ function CustomerMobileDashboard({
     { label: "Completed Orders", value: orderCounts.completed },
     { label: "Total Spent", value: money(spentThisMonth, storeCurrency), accent: true }
   ];
+  const subscription = subscriptionState?.subscription || {};
+  const consultationQuotaTotal = Number(subscription.free_consultations_total || 0);
+  const consultationQuotaUsed = Number(subscription.free_consultations_used || 0);
+  const consultationQuotaRemaining = Number(subscription.free_consultations_remaining || 0);
+  const consultationQuotaResetLabel = String(subscription.free_consultations_reset_label || "").trim();
+  const isProSubscription = String(subscription.plan_key || "").toLowerCase() === "nevari_access_pro" || Boolean(subscription.is_paid);
+  const showConsultationQuotaNotice = page === "therapy" && isProSubscription && !consultationQuotaDismissed;
+  const consultationQuotaTitle = consultationQuotaRemaining <= 0 ? "Free Monthly Consultation Allowance Used" : "Free Consultation Allowance";
+  const consultationQuotaBody = consultationQuotaRemaining <= 0
+    ? "You have used all 5 free consultation bookings included with your Pro membership for this month."
+    : `You have ${consultationQuotaRemaining} of ${consultationQuotaTotal || 5} free consultation bookings remaining in your Pro membership for this cycle.`;
+  const consultationQuotaResetText = consultationQuotaResetLabel ? `Next reset: ${consultationQuotaResetLabel}` : "";
   function goToPage(nextPage) {
     setPage(nextPage);
     setDrawerOpen(false);
@@ -3646,19 +3749,11 @@ function CustomerMobileDashboard({
         setAppointmentComposerErrors({ submit: result?.error?.message || "Unable to book appointment right now." });
         return;
       }
-
-      const createdAppointment = result?.appointment || {
-        id: `local-${Date.now()}`,
-        doctor_user_id: 0,
-        doctor_name: "Assigned doctor pending",
-        start_at: `${appointmentComposerDate}T${appointmentComposerSelectedSlot}:00`,
-        end_at: `${appointmentComposerDate}T${appointmentComposerSelectedSlot}:00`,
-        title: "Doctor Consultation",
-        reason: sanitizeClientText(appointmentComposerReason, { max: 500 }).trim(),
-        status: "confirmed",
-        meeting_url: result?.meeting?.url || ""
-      };
-
+      const createdAppointment = result?.appointment;
+      if (!createdAppointment) {
+        setAppointmentComposerErrors({ submit: "Unable to book appointment right now." });
+        return;
+      }
       setLocalAppointments((current) => [createdAppointment, ...current]);
       setAppointmentTab("upcoming");
       const assignedDoctorName = result?.appointment?.doctor?.display_name
@@ -4218,6 +4313,46 @@ function CustomerMobileDashboard({
     />;
   }
 
+  if (page === "appointment") {
+    return <div className="customer-mobile-app">
+      {renderDrawer()}
+      <main className={`customer-mobile-frame ${pageTransitionClass}`}>
+        <AppointmentPage
+          profile={profile}
+          settings={settings}
+          doctors={visibleDoctors}
+          doctorsUnavailable={state.doctorsUnavailable}
+          doctorsLoading={doctorsLoading}
+          appointmentsLoading={appointmentsLoading}
+          journey={journey}
+          selectedDoctor={selectedDoctor}
+          upcoming={upcomingAppointments}
+          past={pastAppointments}
+          onOpenAvailability={onOpenAvailability}
+          onOpenReviews={onOpenReviews}
+          onUpdateAvailabilityDate={onUpdateAvailabilityDate}
+          onSelectSlot={onSelectSlot}
+          onDurationChange={onDurationChange}
+          onReasonChange={onReasonChange}
+          onCreateAppointmentCheckout={onCreateAppointmentCheckout}
+          onRefreshConfirmation={onRefreshConfirmation}
+          onCancelCheckoutAppointment={onCancelCheckoutAppointment}
+          onResetJourney={onResetJourney}
+          onReviewDraftChange={onReviewDraftChange}
+          onSubmitReview={onSubmitReview}
+          onOpenSearch={openSearchPage}
+          onOpenMenu={() => setDrawerOpen(true)}
+          calendarDownloadUrl={journey.appointment?.mock ? "" : (journey.appointment?.id ? buildUrl(hydrateStoredSession("patient"), `/appointments/${journey.appointment.id}/calendar`) : "")}
+          storeCurrency={storeCurrency}
+          storeTimeZone={storeTimeZone}
+          storefrontSettings={storefrontSettings}
+          minimumBookingMinutes={minimumBookingMinutes}
+          subscriptionState={subscriptionState}
+        />
+      </main>
+    </div>;
+  }
+
   if (page === "search") {
     return <div className="customer-mobile-app">
       {renderDrawer()}
@@ -4327,42 +4462,6 @@ function CustomerMobileDashboard({
     </div>;
   }
 
-  if (page === "appointment") {
-    return <div className="customer-mobile-app">
-      {renderDrawer()}
-      <main className={`customer-mobile-frame ${pageTransitionClass}`}>
-        {renderHeader("Appointments")}
-        {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
-        <AppointmentPage
-          doctors={visibleDoctors}
-          doctorsUnavailable={state.doctorsUnavailable}
-          doctorsLoading={doctorsLoading}
-          appointmentsLoading={appointmentsLoading}
-          journey={journey}
-          selectedDoctor={selectedDoctor}
-          upcoming={upcomingAppointments}
-          past={pastAppointments}
-          onOpenAvailability={onOpenAvailability}
-          onOpenReviews={onOpenReviews}
-          onUpdateAvailabilityDate={onUpdateAvailabilityDate}
-          onSelectSlot={onSelectSlot}
-          onDurationChange={onDurationChange}
-          onReasonChange={onReasonChange}
-          onCreateAppointmentCheckout={onCreateAppointmentCheckout}
-          onRefreshConfirmation={onRefreshConfirmation}
-          onCancelCheckoutAppointment={onCancelCheckoutAppointment}
-          onResetJourney={onResetJourney}
-          onReviewDraftChange={onReviewDraftChange}
-          onSubmitReview={onSubmitReview}
-          storeCurrency={storeCurrency}
-          storeTimeZone={storeTimeZone}
-          storefrontSettings={storefrontSettings}
-          minimumBookingMinutes={minimumBookingMinutes}
-        />
-      </main>
-    </div>;
-  }
-
   if (page === "therapy") {
     const activeMtm = activeMtmRequest;
     const activeMtmStatus = String(activeMtm?.status || "").toLowerCase();
@@ -4386,6 +4485,21 @@ function CustomerMobileDashboard({
           }}
         >
           <section className="therapy-content-shell">
+            {showConsultationQuotaNotice ? <div className="customer-quota-modal" role="dialog" aria-modal="true" aria-label="Consultation quota notice">
+              <button className="customer-quota-modal-backdrop" type="button" aria-label="Dismiss consultation quota notice" onClick={() => setConsultationQuotaDismissed(true)} />
+              <section className="customer-quota-modal-card">
+                <div className="customer-panel-head">
+                  <div>
+                    <span className="customer-section-kicker">Consultation quota</span>
+                    <h2>{consultationQuotaTitle}</h2>
+                  </div>
+                  <button className="icon-btn" type="button" aria-label="Dismiss consultation quota notice" onClick={() => setConsultationQuotaDismissed(true)}>x</button>
+                </div>
+                <p>{consultationQuotaBody}</p>
+                {consultationQuotaResetText ? <p>{consultationQuotaResetText}</p> : null}
+                {!consultationQuotaRemaining && consultationQuotaUsed >= consultationQuotaTotal ? null : <p>{consultationQuotaTotal ? `${consultationQuotaUsed} of ${consultationQuotaTotal} used.` : ""}</p>}
+              </section>
+            </div> : null}
             <header className="therapy-page-head">
               <button className="customer-mobile-icon-button" type="button" aria-label="Open menu" onClick={() => setDrawerOpen(true)}>
                 <MobileIcon name="menu" />
@@ -4888,7 +5002,7 @@ function CustomerMobileDashboard({
     </div>;
   }
 
-  if (page === "appointment" || page === "request") {
+  if (page === "request") {
     const monthLabel = appointmentComposerMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
     const monthStart = new Date(appointmentComposerMonth.getFullYear(), appointmentComposerMonth.getMonth(), 1);
     const monthEnd = new Date(appointmentComposerMonth.getFullYear(), appointmentComposerMonth.getMonth() + 1, 0);
@@ -4898,85 +5012,6 @@ function CustomerMobileDashboard({
       const dayNumber = index - leadingDays + 1;
       return dayNumber > 0 ? dayNumber : null;
     });
-
-    if (page === "appointment") {
-      const greetingName = firstName(settings.displayName || profile.display_name || "Tee");
-      const selectedTimeValue = appointmentComposerSelectedSlot || BOOKING_SLOT_TIMES[0] || "09:00";
-
-      return <div className="customer-mobile-app">
-        {renderDrawer()}
-        <main className={`customer-mobile-frame ${pageTransitionClass} customer-mobile-appointment-screen`}>
-            <header className="customer-mobile-header is-overview customer-mobile-appointment-header">
-              <button className="customer-mobile-searchbar customer-mobile-searchbar-button" type="button" onClick={openSearchPage} aria-label="Search here for orders, appointments etc">
-                <MobileIcon name="search" />
-                <span>Search here for orders, appointments etc</span>
-              </button>
-              <div className="customer-mobile-greeting-row">
-                <button className="customer-mobile-icon-button" type="button" aria-label="Open menu" onClick={() => setDrawerOpen(true)}>
-                  <MobileIcon name="menu" />
-                </button>
-                <div className="customer-mobile-greeting-copy">
-                  <span>Welcome back, {greetingName}</span>
-                </div>
-              </div>
-              <div className="customer-mobile-title-row customer-mobile-appointment-title-row">
-                <h1>Appointments</h1>
-              </div>
-            </header>
-            <div className="customer-mobile-header-spacer is-overview customer-mobile-header-spacer-appointments" aria-hidden="true" />
-            {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
-            <div className="customer-mobile-pill-tabs customer-mobile-appointment-tabs" role="tablist" aria-label="Appointment tabs">
-              {[
-                ["all", "All"],
-                ["upcoming", "Upcoming"],
-                ["previous", "Previous"]
-              ].map(([id, label]) => (
-                <button
-                  key={id}
-                  className={`customer-mobile-pill-tab ${appointmentTab === id ? "active" : ""}`}
-                  type="button"
-                  onClick={() => setAppointmentTab(id)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <section className="customer-mobile-list-section customer-mobile-appointment-pane customer-mobile-appointment-history-list">
-              {appointmentsLoading ? Array.from({ length: 4 }, (_, index) => <article className="customer-mobile-visit-row customer-mobile-visit-row-shot skeleton-panel" key={`customer-mobile-visit-skeleton-${index}`}>
-                <div className="customer-mobile-clock skeleton-circle skeleton-circle-sm" />
-                <div className="customer-mobile-visit-copy">
-                  <SkeletonBox className="skeleton-line skeleton-line-md" />
-                  <SkeletonBox className="skeleton-line skeleton-line-sm" />
-                  <SkeletonBox className="skeleton-line skeleton-line-sm" />
-                </div>
-              </article>) : visibleAppointments.length ? visibleAppointments.map((appointment) => {
-                const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
-                const appointmentTitle = appointmentDisplayTitle(appointment, doctor);
-                const appointmentTime = formatTime(appointment.start_at, storeTimeZone);
-                return <article className="customer-mobile-visit-row customer-mobile-visit-row-shot" key={appointment.id}>
-                  <button className="customer-mobile-row-overlay" type="button" aria-label="Open appointment details" onClick={() => setSelectedAppointment(appointment)} />
-                  <div className="customer-mobile-clock">
-                    <MobileIcon name="clock" />
-                  </div>
-                  <div className="customer-mobile-visit-copy customer-mobile-visit-copy-shot">
-                    <strong>{appointmentTitle}</strong>
-                    <span>{appointmentTime}</span>
-                    <small>{doctorLabel}</small>
-                  </div>
-                </article>;
-              }) : <CustomerMobileEmptyState
-                message="You have no appointments"
-                ctaLabel="Book an appointment"
-                onCta={handleNewAppointmentClick}
-                icon="appointments"
-                illustrationSrc="/group-3.png"
-                ctaStyle="appointment"
-              />}
-            </section>
-            {showAppointmentPagePlus ? <button className="pill-button customer-mobile-appointment-booknow-btn" type="button" aria-label="Book appointment" title="Book appointment" onClick={handleNewAppointmentClick}><span aria-hidden="true">+</span></button> : null}
-        </main>
-      </div>;
-    }
 
     return <div className="customer-mobile-app">
       {renderDrawer()}
@@ -5243,8 +5278,8 @@ function CustomerMobileDashboard({
                 <div className="customer-confirmation-next-row"><span>Next step</span><strong>Nurse assignment</strong></div>
                 <div className="customer-confirmation-next-row"><span>Notification</span><strong>Email sent</strong></div>
               </div> : null}
-              {!requestSubmitLoadingState ? <button className="customer-mobile-primary-button" type="button" onClick={() => goToPage("appointment")}>View Request Status</button> : null}
-              {!requestSubmitLoadingState ? <button className="customer-mobile-secondary-button" type="button" onClick={() => goToPage("appointment")}>Back to Appointments</button> : null}
+              {!requestSubmitLoadingState ? <button className="customer-mobile-primary-button" type="button" onClick={() => goToPage("overview")}>View Request Status</button> : null}
+              {!requestSubmitLoadingState ? <button className="customer-mobile-secondary-button" type="button" onClick={() => goToPage("overview")}>Back to Home</button> : null}
             </section>
           </div>}
         </section> : null}
@@ -5528,7 +5563,7 @@ function CustomerMobileDashboard({
               <div className="info-row"><span className="info-label">Visit Type</span><span className="info-value">{latestSubmittedRequest?.visitType || careDetails.visitType || "Not set"}</span></div>
               <div className="info-row"><span className="info-label">Status</span><span className="info-value">Pending Review</span></div>
             </div> : null}
-            {!requestSubmitLoadingState ? <button className="customer-mobile-primary-button" type="button" onClick={() => goToPage("appointment")}>View Request Status</button> : null}
+            {!requestSubmitLoadingState ? <button className="customer-mobile-primary-button" type="button" onClick={() => goToPage("overview")}>View Request Status</button> : null}
             {!requestSubmitLoadingState ? <button className="customer-mobile-secondary-button" type="button" onClick={() => goToPage("overview")}>Back to Home</button> : null}
             </section>
           </div>}

@@ -2465,6 +2465,18 @@ final class Nevari_Subscriptions {
         return $claims;
     }
 
+    public static function consultation_quota_snapshot_for_user(int $user_id, bool $force = false): array {
+        $user_id = max(0, $user_id);
+        $claims = self::subscription_claims_for_user($user_id, $force);
+        $quota = self::consultation_quota_payload($user_id, $claims);
+
+        return array_merge($quota, [
+            'is_paid' => !empty($claims['is_paid']),
+            'plan_key' => sanitize_key((string) ($claims['plan_key'] ?? self::FREE_PLAN_KEY)),
+            'status' => sanitize_key((string) ($claims['status'] ?? 'none')),
+        ]);
+    }
+
     public static function require_paid_access(int $user_id = 0) {
         $user_id = $user_id > 0 ? $user_id : Nevari_Auth::api_session_user_id();
         $claims = self::subscription_claims_for_user($user_id);

@@ -1031,11 +1031,36 @@ final class Nevari_Plugin {
         ];
     }
 
+    private function appointment_effective_meet_end_at($appointment): string {
+        $end_at = isset($appointment->end_at) ? (string) $appointment->end_at : '';
+        if (!$appointment || (string) ($appointment->type ?? '') !== 'video') {
+            return $end_at;
+        }
+
+        $start_ts = strtotime((string) ($appointment->start_at ?? '') . ' UTC');
+        $end_ts = strtotime($end_at . ' UTC');
+        if (!$start_ts || !$end_ts || $end_ts <= $start_ts) {
+            return $end_at;
+        }
+
+        return gmdate('Y-m-d H:i:s', min($end_ts, $start_ts + (30 * MINUTE_IN_SECONDS)));
+    }
+
+    private function appointment_effective_meet_end_timestamp($appointment): int {
+        $effective_end_at = $this->appointment_effective_meet_end_at($appointment);
+        if ($effective_end_at === '') {
+            return 0;
+        }
+
+        return (int) strtotime($effective_end_at . ' UTC');
+    }
+
     private function appointment_email_context($appointment, $order = null): array {
         $doctor = get_user_by('id', (int) $appointment->doctor_user_id);
         $patient = get_user_by('id', (int) $appointment->patient_user_id);
         $calendar = Nevari_Helpers::appointment_calendar_links($appointment);
         $meet_link = Nevari_Helpers::appointment_meeting_link($appointment, $order);
+        $effective_meet_end_at = $this->appointment_effective_meet_end_at($appointment);
         $amount = $order && is_object($order) && method_exists($order, 'get_formatted_order_total')
             ? html_entity_decode(wp_strip_all_tags($order->get_formatted_order_total()))
             : '';
@@ -1064,10 +1089,10 @@ final class Nevari_Plugin {
                 'customer_phone' => $patient ? (string) get_user_meta((int) $patient->ID, 'billing_phone', true) : '',
                 'consultation_type' => ucwords(str_replace('_', ' ', (string) ($appointment->type ?: 'video'))),
                 'appointment_start' => Nevari_Helpers::iso_datetime($appointment->start_at),
-                'appointment_end' => Nevari_Helpers::iso_datetime($appointment->end_at),
+                'appointment_end' => Nevari_Helpers::iso_datetime($effective_meet_end_at),
                 'appointment_date' => gmdate('F j, Y', strtotime((string) $appointment->start_at . ' UTC')),
                 'appointment_time' => gmdate('g:i A', strtotime((string) $appointment->start_at . ' UTC')),
-                'appointment_end_time' => gmdate('g:i A', strtotime((string) $appointment->end_at . ' UTC')),
+                'appointment_end_time' => gmdate('g:i A', strtotime($effective_meet_end_at . ' UTC')),
                 'appointment_duration' => (string) ((int) ($appointment->duration_minutes ?? 30)) . ' minutes',
                 'appointment_status' => ucwords(str_replace('_', ' ', (string) $appointment->status)),
                 'appointment_amount' => $amount,
@@ -1203,10 +1228,11 @@ final class Nevari_Plugin {
         $wpdb->update($appointments_table, [
             'status' => 'confirmed',
             'payment_status' => 'paid',
+            'payment_required' => 0,
             'reserved_until' => null,
             'payment_completed_at' => Nevari_Helpers::now(),
             'updated_at' => Nevari_Helpers::now(),
-        ], ['id' => $appointment_id], ['%s', '%s', '%s', '%s', '%s'], ['%d']);
+        ], ['id' => $appointment_id], ['%s', '%s', '%d', '%s', '%s', '%s'], ['%d']);
         $order->update_meta_data('_nevari_booking_status', 'confirmed');
         $order->save();
 
@@ -1389,7 +1415,7 @@ final class Nevari_Plugin {
         $order = $appointment->order_id && function_exists('wc_get_order') ? wc_get_order((int) $appointment->order_id) : null;
         $context = $this->appointment_email_context($appointment, $order);
         if (!empty($context['meet_link'])) {
-            $this->schedule_end_appointment_meet_conference((int) $appointment->id, (string) $appointment->end_at);
+            $this->schedule_end_appointment_meet_conference($appointment);
         }
 
         $this->send_guarded_appointment_email($appointment, 'customer_confirmation_sent_at', [
@@ -1463,8 +1489,9 @@ final class Nevari_Plugin {
             || str_contains($message, 'resource exhausted');
     }
 
-    private function schedule_end_appointment_meet_conference(int $appointment_id, string $end_at): void {
-        $timestamp = strtotime($end_at . ' UTC');
+    private function schedule_end_appointment_meet_conference($appointment): void {
+        $appointment_id = (int) ($appointment->id ?? 0);
+        $timestamp = $this->appointment_effective_meet_end_timestamp($appointment);
         if (!$timestamp || $timestamp <= time()) {
             return;
         }
@@ -1538,9 +1565,11 @@ final class Nevari_Plugin {
         }
         global $wpdb;
         $appointments_table = Nevari_Helpers::table('appointments');
+        $appointment = $wpdb->get_row($wpdb->prepare("SELECT status, payment_status FROM {$appointments_table} WHERE id = %d", $appointment_id));
+        $preserve_cancelled = $appointment && (string) $appointment->status === 'cancelled';
         $wpdb->update($appointments_table, [
-            'payment_status' => 'failed',
-            'status' => 'failed',
+            'payment_status' => $preserve_cancelled ? ((string) $order->get_meta('_nevari_paid_via_quota') === 'yes' ? 'paid' : 'cancelled') : 'failed',
+            'status' => $preserve_cancelled ? 'cancelled' : 'failed',
             'reserved_until' => null,
             'updated_at' => Nevari_Helpers::now(),
         ], ['id' => $appointment_id], ['%s', '%s', '%s', '%s'], ['%d']);
@@ -1565,12 +1594,15 @@ final class Nevari_Plugin {
         $this->schedule_single_appointment_action('nevari_send_doctor_appointment_reminder_1h', $start_ts - HOUR_IN_SECONDS, $appointment_id, $start_at);
 
         global $wpdb;
-        $appointment = $wpdb->get_row($wpdb->prepare("SELECT end_at FROM " . Nevari_Helpers::table('appointments') . " WHERE id = %d", $appointment_id));
-        $end_ts = $appointment ? strtotime((string) $appointment->end_at . ' UTC') : 0;
-        if ($end_ts) {
-            $this->schedule_single_appointment_action('nevari_send_customer_appointment_ending_soon', $end_ts - MINUTE_IN_SECONDS, $appointment_id, $start_at);
-            $this->schedule_single_appointment_action('nevari_send_doctor_appointment_ending_soon', $end_ts - MINUTE_IN_SECONDS, $appointment_id, $start_at);
-            $this->schedule_single_appointment_action('nevari_send_customer_appointment_followup', $end_ts + HOUR_IN_SECONDS, $appointment_id, $start_at);
+        $appointment = $wpdb->get_row($wpdb->prepare("SELECT start_at, end_at, type FROM " . Nevari_Helpers::table('appointments') . " WHERE id = %d", $appointment_id));
+        $effective_end_ts = $appointment ? $this->appointment_effective_meet_end_timestamp($appointment) : 0;
+        $raw_end_ts = $appointment ? strtotime((string) $appointment->end_at . ' UTC') : 0;
+        if ($effective_end_ts) {
+            $this->schedule_single_appointment_action('nevari_send_customer_appointment_ending_soon', $effective_end_ts - MINUTE_IN_SECONDS, $appointment_id, $start_at);
+            $this->schedule_single_appointment_action('nevari_send_doctor_appointment_ending_soon', $effective_end_ts - MINUTE_IN_SECONDS, $appointment_id, $start_at);
+        }
+        if ($raw_end_ts) {
+            $this->schedule_single_appointment_action('nevari_send_customer_appointment_followup', $raw_end_ts + HOUR_IN_SECONDS, $appointment_id, $start_at);
         }
     }
 
@@ -1719,7 +1751,7 @@ final class Nevari_Plugin {
         if ($appointment->status === 'confirmed' && $appointment->payment_status === 'paid') {
             $this->schedule_appointment_reminder((int) $appointment->id, (string) $appointment->start_at);
             if (!empty($context['meet_link'])) {
-                $this->schedule_end_appointment_meet_conference((int) $appointment->id, (string) $appointment->end_at);
+                $this->schedule_end_appointment_meet_conference($appointment);
             }
         }
     }
