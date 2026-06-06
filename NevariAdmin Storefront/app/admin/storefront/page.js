@@ -70,12 +70,12 @@ const DEFAULT_EMAIL_TEMPLATES = [
   { id: "order-invoice-email", name: "Order Invoice Email", category: "Orders", status: "active", subject: "Invoice for order #{order_number}", html: "<h1>{document_title}</h1><p>Hello {customer_firstname},</p><p>Your invoice for order #{order_number} is attached.</p><p>{payment_link_html}</p><p>Total due: {invoice_total}</p>" },
   { id: "order-receipt-email", name: "Order Receipt Email", category: "Orders", status: "active", subject: "Receipt for order #{order_number}", html: "<h1>{document_title}</h1><p>Hello {customer_firstname},</p><p>Your receipt for order #{order_number} is attached.</p><p>Thank you for shopping with {site_name}.</p>" },
   { id: "doctor_order_assigned", name: "Doctor Order Assigned", category: "Orders", status: "active", subject: "A pharmacy order needs your review", html: "<p>Hello {doctor_name},</p><p>Order {order_number} has been assigned to you for {patient_name}.</p><p>Product/service: {product_service_assigned}</p><p>You can open your dashboard to create a prescription or schedule an appointment.</p>" },
-  { id: "appointment_customer_confirmation", name: "Appointment Customer Confirmation", category: "Consultations", status: "active", subject: "Appointment confirmed with {doctor_name}", html: "<h1>Appointment confirmed</h1><p>Hello {patient_name},</p><p>Your {consultation_type} appointment is confirmed for {appointment_date} at {appointment_time}.</p><p><strong>Doctor:</strong> {doctor_name}<br /><strong>Amount paid:</strong> {amount_paid}<br /><strong>Booking ID:</strong> {booking_id}<br /><strong>Order ID:</strong> {order_id}</p><p>{google_meet_link_html}</p><p><a href=\"{cancel_link}\">Cancel appointment</a> | <a href=\"{reschedule_link}\">Reschedule appointment</a></p><p>Please join 5 minutes before the appointment starts.</p>" },
-  { id: "appointment_doctor_notification", name: "Appointment Doctor Notification", category: "Consultations", status: "active", subject: "New appointment with {patient_name}", html: "<h1>New appointment</h1><p>Hello {doctor_name},</p><p>A new {consultation_type} appointment has been confirmed.</p><p><strong>Patient:</strong> {patient_name}<br /><strong>Email:</strong> {customer_email}<br /><strong>Phone:</strong> {customer_phone}<br /><strong>Date:</strong> {appointment_date}<br /><strong>Time:</strong> {appointment_time}</p><p><strong>Patient note:</strong> {patient_note}</p><p>{google_meet_link_html}</p><p><a href=\"{dashboard_link}\">Open dashboard</a></p>" },
-  { id: "appointment_customer_reminder_24h", name: "Customer Reminder 24h", category: "Consultations", status: "active", subject: "Reminder: appointment with {doctor_name} tomorrow", html: "<h1>Appointment reminder</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} is scheduled for {appointment_date} at {appointment_time}.</p><p>{google_meet_link_html}</p><p><a href=\"{cancel_link}\">Cancel</a> | <a href=\"{reschedule_link}\">Reschedule</a></p>" },
-  { id: "appointment_customer_reminder_1h", name: "Customer Reminder 1h", category: "Consultations", status: "active", subject: "Your appointment starts in 1 hour", html: "<h1>Your appointment starts in 1 hour</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} starts at {appointment_time}.</p><p>{google_meet_link_html}</p>" },
-  { id: "appointment_doctor_reminder_24h", name: "Doctor Reminder 24h", category: "Consultations", status: "active", subject: "Reminder: appointment with {patient_name} tomorrow", html: "<h1>Appointment reminder</h1><p>Hello {doctor_name},</p><p>Your appointment with {patient_name} is scheduled for {appointment_date} at {appointment_time}.</p><p><strong>Patient note:</strong> {patient_note}</p><p>{google_meet_link_html}</p>" },
-  { id: "appointment_doctor_reminder_1h", name: "Doctor Reminder 1h", category: "Consultations", status: "active", subject: "Your appointment starts in 1 hour", html: "<h1>Your appointment starts in 1 hour</h1><p>Hello {doctor_name},</p><p>Your appointment with {patient_name} starts at {appointment_time}.</p><p>{google_meet_link_html}</p>" },
+  { id: "appointment_customer_confirmation", name: "Appointment Customer Confirmation", category: "Consultations", status: "active", subject: "Appointment confirmed with {doctor_name}", html: "<h1>Appointment confirmed</h1><p>Hello {patient_name},</p><p>Your {consultation_type} appointment is confirmed for {appointment_date} at {appointment_time}.</p><p><strong>Doctor:</strong> {doctor_name}<br /><strong>Duration:</strong> {appointment_duration}<br /><strong>Booking ID:</strong> {booking_id}<br /><strong>Reference:</strong> {appointment_reference}<br /><strong>Order ID:</strong> {order_id}<br /><strong>Amount paid:</strong> {amount_paid}</p><p>{google_meet_link_html}</p><p><a href=\"{cancel_link}\">Cancel appointment</a> | <a href=\"{reschedule_link}\">Reschedule appointment</a></p><p>Please join 5 minutes before the appointment starts.</p>" },
+  { id: "appointment_doctor_notification", name: "Appointment Doctor Notification", category: "Consultations", status: "active", subject: "New appointment with {patient_name}", html: "<h1>New appointment</h1><p>Hello {doctor_name},</p><p>A new {consultation_type} appointment has been confirmed.</p><p><strong>Patient:</strong> {patient_name}<br /><strong>Email:</strong> {customer_email}<br /><strong>Phone:</strong> {customer_phone}<br /><strong>Date:</strong> {appointment_date}<br /><strong>Time:</strong> {appointment_time}<br /><strong>Duration:</strong> {appointment_duration}<br /><strong>Booking ID:</strong> {booking_id}<br /><strong>Reference:</strong> {appointment_reference}</p><p><strong>Patient note:</strong> {patient_note}</p><p>{google_meet_link_html}</p><p><a href=\"{dashboard_link}\">Open dashboard</a></p>" },
+  { id: "appointment_customer_reminder_24h", name: "Customer Reminder 24h", category: "Consultations", status: "active", subject: "Reminder: appointment with {doctor_name} tomorrow", html: "<h1>Appointment reminder</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} is scheduled for {appointment_date} at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}</p><p>{google_meet_link_html}</p><p><a href=\"{cancel_link}\">Cancel</a> | <a href=\"{reschedule_link}\">Reschedule</a></p>" },
+  { id: "appointment_customer_reminder_1h", name: "Customer Reminder 1h", category: "Consultations", status: "active", subject: "Your appointment starts in 1 hour", html: "<h1>Your appointment starts in 1 hour</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} starts at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}</p><p>{google_meet_link_html}</p>" },
+  { id: "appointment_doctor_reminder_24h", name: "Doctor Reminder 24h", category: "Consultations", status: "active", subject: "Reminder: appointment with {patient_name} tomorrow", html: "<h1>Appointment reminder</h1><p>Hello {doctor_name},</p><p>Your appointment with {patient_name} is scheduled for {appointment_date} at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}<br /><strong>Patient note:</strong> {patient_note}</p><p>{google_meet_link_html}</p>" },
+  { id: "appointment_doctor_reminder_1h", name: "Doctor Reminder 1h", category: "Consultations", status: "active", subject: "Your appointment starts in 1 hour", html: "<h1>Your appointment starts in 1 hour</h1><p>Hello {doctor_name},</p><p>Your appointment with {patient_name} starts at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}</p><p>{google_meet_link_html}</p>" },
   { id: "appointment_customer_followup", name: "Customer Follow Up", category: "Consultations", status: "active", subject: "How was your appointment with {doctor_name}?", html: "<h1>How was your appointment?</h1><p>Hello {patient_name},</p><p>Thank you for choosing Nevari. Please review your appointment with {doctor_name}.</p><p><a href=\"{review_link}\">Leave a doctor review</a></p><p><a href=\"{dashboard_link}\">Book another appointment</a></p>" },
   { id: "appointment_cancelled", name: "Appointment Cancelled", category: "Consultations", status: "active", subject: "Appointment cancelled", html: "<h1>Appointment cancelled</h1><p>Hello {recipient_name},</p><p>The appointment between {patient_name} and {doctor_name} for {appointment_start} has been cancelled.</p>" },
   { id: "appointment_rescheduled", name: "Appointment Rescheduled", category: "Consultations", status: "active", subject: "Appointment rescheduled", html: "<h1>Appointment rescheduled</h1><p>Hello {recipient_name},</p><p>The appointment has been rescheduled to {appointment_start}.</p><p>{google_meet_link_html}</p>" },
@@ -215,6 +215,9 @@ const EMPTY_DOCTOR_FORM = {
   location: "",
   status: "active",
   bio: "",
+  position: "specialist",
+  isAvailable: true,
+  maxWorkloadPerWeek: 40,
   pricingTier: "specialist",
   productCategoryIds: []
 };
@@ -341,20 +344,26 @@ const SUBSCRIPTION_SETTINGS_KEY = "nevari_admin_subscription_settings";
 
 function defaultSubscriptionSettings() {
   return {
+    planKey: "nevari_access_pro",
     planName: "",
-    amount: "",
+    amount: "0",
     currency: "NGN",
     interval: "",
+    checkoutType: "auto_generated",
+    status: "active",
     publicKey: "",
     manageBillingUrl: "",
     notificationsEnabled: false,
     autoRenew: false,
-    cancellationWindowDays: ""
+    cancellationWindowDays: "",
+    description: "",
+    features: "",
+    checkoutLink: ""
   };
 }
 
 function normalizeNairaAmount(value) {
-  const raw = String(value || "").replace(/[^0-9.]/g, "").trim();
+  const raw = String(value ?? "").replace(/,/g, "").trim();
   if (!raw) {
     return 0;
   }
@@ -362,12 +371,126 @@ function normalizeNairaAmount(value) {
   return Number.isFinite(amount) && amount >= 0 ? amount : 0;
 }
 
+function isValidNairaAmountInput(value) {
+  const raw = String(value ?? "").replace(/,/g, "").trim();
+  if (!raw) {
+    return false;
+  }
+  const amount = Number(raw);
+  return Number.isFinite(amount) && amount >= 0;
+}
+
 function formatNairaAmount(value, currency = "NGN") {
   return `${currency} ${formatNumber(normalizeNairaAmount(value))}`;
 }
 
-function toPaystackAmount(value) {
-  return Math.round(normalizeNairaAmount(value) * 100);
+const SUBSCRIPTION_CURRENCY_OPTIONS = ["NGN", "USD"];
+const SUBSCRIPTION_INTERVAL_OPTIONS = ["monthly", "quarterly", "yearly", "manual"];
+const SUBSCRIPTION_CHECKOUT_TYPE_OPTIONS = ["auto_generated", "manual"];
+const SUBSCRIPTION_STATUS_OPTIONS = ["active", "draft", "archived"];
+const SUBSCRIPTION_TABLE_PAGE_SIZE = 10;
+const SYSTEM_SUBSCRIPTION_PLANS = {
+  free: { key: "free", name: "Free" },
+  nevari_access_pro: { key: "nevari_access_pro", name: "Nevari Access Pro" }
+};
+
+function sanitizeInput(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value
+    .replace(/<script.*?>.*?<\/script>/gi, "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function generateSlug(title) {
+  return sanitizeInput(title)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function normalizeReservedPlanIdentifier(value) {
+  return generateSlug(String(value || "").replace(/_/g, " ")).replace(/-/g, "");
+}
+
+function reservedSubscriptionPlanForValue(value) {
+  const normalized = normalizeReservedPlanIdentifier(value);
+  if (!normalized) {
+    return null;
+  }
+  return Object.values(SYSTEM_SUBSCRIPTION_PLANS).find((plan) => {
+    const candidates = [plan.key, plan.name];
+    return candidates.some((candidate) => normalizeReservedPlanIdentifier(candidate) === normalized);
+  }) || null;
+}
+
+function isSystemSubscriptionPlan(plan) {
+  const planKey = String(plan?.plan_key || plan?.planKey || plan?.slug || "").trim();
+  return Boolean(plan?.system_plan || plan?.reserved_name || reservedSubscriptionPlanForValue(planKey));
+}
+
+function isFreeSubscriptionPlan(planOrKey) {
+  if (typeof planOrKey === "string") {
+    return planOrKey.trim().toLowerCase() === "free";
+  }
+  if (!planOrKey || typeof planOrKey !== "object") {
+    return false;
+  }
+  return [planOrKey.plan_key, planOrKey.planKey, planOrKey.slug]
+    .some((value) => String(value || "").trim().toLowerCase() === "free");
+}
+
+function generateInitials(title) {
+  const parts = sanitizeInput(title).split(/\s+/).filter(Boolean);
+  if (!parts.length) {
+    return "?";
+  }
+  if (parts.length === 1) {
+    return (parts[0][0] || "?").toUpperCase();
+  }
+  return parts.slice(0, 2).map((part) => (part[0] || "")).join("").toUpperCase() || "?";
+}
+
+function sanitizeFeatureList(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => sanitizeInput(line))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function splitFeatureList(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => sanitizeInput(line))
+    .filter(Boolean);
+}
+
+function normalizeAllowedValue(value, allowedValues, fallback) {
+  const normalized = sanitizeInput(value);
+  return allowedValues.includes(normalized) ? normalized : fallback;
+}
+
+function buildSubscriptionCheckoutLink(planKey, interval) {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const url = new URL("/subscription", window.location.origin);
+  const normalizedPlanKey = String(planKey || "").trim();
+  const normalizedInterval = String(interval || "").trim();
+  if (normalizedPlanKey) {
+    url.searchParams.set("plan", normalizedPlanKey);
+  }
+  if (normalizedInterval) {
+    url.searchParams.set("interval", normalizedInterval);
+  }
+  return url.toString();
 }
 
 function loadSubscriptionSettings() {
@@ -379,7 +502,16 @@ function loadSubscriptionSettings() {
       ...defaultSubscriptionSettings(),
       ...JSON.parse(window.localStorage.getItem(SUBSCRIPTION_SETTINGS_KEY) || "{}")
     };
-    settings.amount = String(normalizeNairaAmount(settings.amount) || "");
+    settings.planName = sanitizeInput(settings.planName);
+    settings.planKey = generateSlug(settings.planName) || sanitizeInput(settings.planKey) || "nevari_access_pro";
+    settings.amount = String(normalizeNairaAmount(settings.amount));
+    settings.currency = normalizeAllowedValue(settings.currency, SUBSCRIPTION_CURRENCY_OPTIONS, "NGN");
+    settings.interval = normalizeAllowedValue(settings.interval, SUBSCRIPTION_INTERVAL_OPTIONS, "monthly");
+    settings.checkoutType = normalizeAllowedValue(settings.checkoutType, SUBSCRIPTION_CHECKOUT_TYPE_OPTIONS, "auto_generated");
+    settings.status = normalizeAllowedValue(settings.status, SUBSCRIPTION_STATUS_OPTIONS, "active");
+    settings.description = sanitizeInput(settings.description);
+    settings.features = sanitizeFeatureList(settings.features);
+    settings.checkoutLink = buildSubscriptionCheckoutLink(settings.planKey, settings.interval);
     return settings;
   } catch {
     return defaultSubscriptionSettings();
@@ -391,6 +523,20 @@ function persistSubscriptionSettings(settings) {
     return;
   }
   window.localStorage.setItem(SUBSCRIPTION_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function formatPlanStatusTone(status) {
+  const normalized = normalizeText(String(status || ""));
+  if (normalized === "active") {
+    return "confirmed";
+  }
+  if (normalized === "draft") {
+    return "draft";
+  }
+  if (normalized === "archived") {
+    return "cancelled";
+  }
+  return "processing";
 }
 
 function normalizeBaseUrl(value) {
@@ -1897,8 +2043,14 @@ export default function Page() {
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false);
   const [subscriptionProtectionOpen, setSubscriptionProtectionOpen] = useState(false);
   const [subscriptionOtp, setSubscriptionOtp] = useState({ code: "", status: "", challengeId: "", maskedEmail: "" });
+  const subscriptionOtpInputRef = useRef(null);
   const [subscriptionModalMode, setSubscriptionModalMode] = useState("create");
+  const [selectedSubscriptionPlanKey, setSelectedSubscriptionPlanKey] = useState("");
+  const [selectedSubscriptionPlanId, setSelectedSubscriptionPlanId] = useState("");
+  const [subscriptionTablePage, setSubscriptionTablePage] = useState(1);
+  const [subscriptionModalPlan, setSubscriptionModalPlan] = useState(null);
   const [subscriptionCreateLoading, setSubscriptionCreateLoading] = useState(false);
+  const [subscriptionDeleteLoading, setSubscriptionDeleteLoading] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [resetUsername, setResetUsername] = useState("");
@@ -2024,6 +2176,80 @@ export default function Page() {
   const updateProductMutation = useUpdateProduct(session);
   const deleteProductMutation = useDeleteProduct(session);
   const updateOrderStatusMutation = useUpdateOrderStatus(session);
+  const subscriptionPlanName = sanitizeInput(subscriptionSettings.planName);
+  const subscriptionPlanSlug = generateSlug(subscriptionPlanName) || sanitizeInput(subscriptionSettings.planKey) || "nevari_access_pro";
+  const subscriptionRequestPlanKey = subscriptionModalMode === "edit"
+    ? String(subscriptionModalPlan?.plan_key || subscriptionModalPlan?.planKey || subscriptionModalPlan?.slug || subscriptionSettings.planKey || subscriptionPlanSlug).trim()
+    : subscriptionPlanSlug;
+  const editingSystemSubscriptionPlan = subscriptionModalMode === "edit" && isSystemSubscriptionPlan(subscriptionModalPlan);
+  const editingSystemSubscriptionPlanKey = String(subscriptionModalPlan?.plan_key || subscriptionModalPlan?.planKey || subscriptionModalPlan?.slug || "").trim();
+  const editingFreeSubscriptionPlan = subscriptionModalMode === "edit" && (isFreeSubscriptionPlan(subscriptionModalPlan) || isFreeSubscriptionPlan(subscriptionRequestPlanKey));
+  const reservedSubscriptionPlanRequest = reservedSubscriptionPlanForValue(subscriptionPlanName) || reservedSubscriptionPlanForValue(subscriptionPlanSlug);
+  const subscriptionAmountValue = editingFreeSubscriptionPlan ? 0 : normalizeNairaAmount(subscriptionSettings.amount);
+  const subscriptionCurrencyValue = normalizeAllowedValue(subscriptionSettings.currency, SUBSCRIPTION_CURRENCY_OPTIONS, "");
+  const subscriptionIntervalValue = normalizeAllowedValue(subscriptionSettings.interval, SUBSCRIPTION_INTERVAL_OPTIONS, "");
+  const subscriptionCheckoutTypeValue = normalizeAllowedValue(subscriptionSettings.checkoutType, SUBSCRIPTION_CHECKOUT_TYPE_OPTIONS, "");
+  const subscriptionDescriptionValue = sanitizeInput(subscriptionSettings.description);
+  const subscriptionFeatureRows = useMemo(() => splitFeatureList(subscriptionSettings.features), [subscriptionSettings.features]);
+  const subscriptionFeaturesValue = subscriptionFeatureRows.join("\n");
+  const subscriptionCheckoutLinkValue = buildSubscriptionCheckoutLink(subscriptionPlanSlug, subscriptionIntervalValue || subscriptionSettings.interval || "monthly");
+  const subscriptionValidationErrors = {};
+  if (!subscriptionPlanName) {
+    subscriptionValidationErrors.planName = "*Required";
+  } else if (reservedSubscriptionPlanRequest && (!editingSystemSubscriptionPlan || reservedSubscriptionPlanRequest.key !== editingSystemSubscriptionPlanKey)) {
+    subscriptionValidationErrors.planName = `${reservedSubscriptionPlanRequest.name} is reserved by the system.`;
+  }
+  if (!editingFreeSubscriptionPlan && !isValidNairaAmountInput(subscriptionSettings.amount)) {
+    subscriptionValidationErrors.amount = "Enter 0 or a positive amount.";
+  }
+  if (!SUBSCRIPTION_CURRENCY_OPTIONS.includes(subscriptionCurrencyValue)) {
+    subscriptionValidationErrors.currency = "Invalid currency.";
+  }
+  if (!SUBSCRIPTION_INTERVAL_OPTIONS.includes(subscriptionIntervalValue)) {
+    subscriptionValidationErrors.interval = "*Required";
+ 
+ 
+  }
+  if (!editingSystemSubscriptionPlan && !subscriptionDescriptionValue) {
+    subscriptionValidationErrors.description = "*Required";
+  }
+  if (!editingSystemSubscriptionPlan && !subscriptionFeatureRows.length) {
+    subscriptionValidationErrors.features = "*Required";
+  }
+  const subscriptionCreateReady = Object.keys(subscriptionValidationErrors).length === 0;
+  const subscriptionCreateBlockerMessage = subscriptionCreateReady
+    ? ""
+    : "Complete the required fields before creating the subscription plan.";
+
+  function updateSubscriptionFeatureRow(index, value) {
+    setSubscriptionSettings((current) => {
+      const nextRows = splitFeatureList(current.features);
+      while (nextRows.length <= index) {
+        nextRows.push("");
+      }
+      nextRows[index] = sanitizeInput(value);
+      return {
+        ...current,
+        features: nextRows.join("\n")
+      };
+    });
+  }
+
+  function addSubscriptionFeatureRow() {
+    setSubscriptionSettings((current) => {
+      const nextRows = splitFeatureList(current.features);
+      nextRows.push(`Feature ${nextRows.length + 1}`);
+      return {
+        ...current,
+        features: nextRows.join("\n")
+      };
+    });
+  }
+
+  const subscriptionSummaryName = subscriptionPlanName || subscriptionModalPlan?.name || "New subscription plan";
+  const subscriptionSummaryDescription = subscriptionDescriptionValue || "No description added.";
+  const subscriptionSummaryPrice = formatNairaAmount(subscriptionAmountValue, subscriptionCurrencyValue || "NGN");
+  const subscriptionSummaryFrequency = formatStatusLabel(subscriptionIntervalValue || subscriptionSettings.interval || "manual");
 
   function forcePairingReset(message = "Frontend access was revoked. Pair this dashboard again to continue.") {
     const nextSession = defaultSession();
@@ -2059,14 +2285,134 @@ export default function Page() {
     persistSubscriptionSettings(subscriptionSettings);
   }, [subscriptionSettings]);
 
-  function openSubscriptionModal(mode = "create", planName = "") {
+  const subscriptionPlans = Array.isArray(subscriptionState.data?.plans) ? subscriptionState.data.plans : [];
+  const subscriptionTablePageCount = Math.max(1, Math.ceil(subscriptionPlans.length / SUBSCRIPTION_TABLE_PAGE_SIZE));
+  const currentSubscriptionTablePage = Math.min(subscriptionTablePage, subscriptionTablePageCount);
+  const subscriptionTablePlans = useMemo(() => {
+    const start = (currentSubscriptionTablePage - 1) * SUBSCRIPTION_TABLE_PAGE_SIZE;
+    return subscriptionPlans.slice(start, start + SUBSCRIPTION_TABLE_PAGE_SIZE);
+  }, [currentSubscriptionTablePage, subscriptionPlans]);
+  const selectedSubscriptionPlan = subscriptionPlans.find((plan) => String(plan?.id ?? plan?.plan_key ?? plan?.slug ?? "") === String(selectedSubscriptionPlanId))
+    || subscriptionPlans.find((plan) => normalizeText(String(plan?.plan_key || plan?.slug || plan?.planKey || "")) === normalizeText(selectedSubscriptionPlanKey))
+    || subscriptionPlans.find((plan) => Boolean(plan?.featured))
+    || subscriptionPlans.find((plan) => normalizeText(String(plan?.plan_key || plan?.slug || plan?.planKey || "")) !== "free")
+    || subscriptionPlans[0]
+    || null;
+  const subscriptionPlanSelectionKey = normalizeText(String(selectedSubscriptionPlanKey || selectedSubscriptionPlan?.plan_key || selectedSubscriptionPlan?.slug || ""));
+  const visibleSubscriptionUsers = useMemo(() => {
+    const users = Array.isArray(subscriptionState.data?.users) ? subscriptionState.data.users : [];
+    const activePlanKey = normalizeText("nevari_access_pro");
+    const getSubscription = (row) => row?.subscription && typeof row.subscription === "object" ? row.subscription : null;
+    const isActiveProUser = (row) => {
+      const subscription = getSubscription(row);
+      const planKey = normalizeText(String(subscription?.plan_key || row?.plan_key || row?.planKey || row?.plan_slug || row?.planSlug || row?.plan || row?.plan_name || ""));
+      const status = normalizeText(String(subscription?.status || row?.status || row?.subscription_status || ""));
+      return planKey === activePlanKey && ["active", "trialing"].includes(status);
+    };
+    const isFreeUser = (row) => {
+      const subscription = getSubscription(row);
+      const planKey = normalizeText(String(subscription?.plan_key || row?.plan_key || row?.planKey || row?.plan_slug || row?.planSlug || row?.plan || row?.plan_name || ""));
+      const status = normalizeText(String(subscription?.status || row?.status || row?.subscription_status || ""));
+      if (!subscription && !planKey && !status) {
+        return true;
+      }
+      if (!planKey || planKey !== activePlanKey) {
+        return true;
+      }
+      return !["active", "trialing"].includes(status);
+    };
+
+    if (subscriptionPlanSelectionKey === "free") {
+      return users.filter(isFreeUser);
+    }
+    if (subscriptionPlanSelectionKey === activePlanKey || normalizeText(String(selectedSubscriptionPlan?.name || "")) === normalizeText("Nevari Access Pro")) {
+      return users.filter(isActiveProUser);
+    }
+
+    return users.filter((row) => {
+      const subscription = getSubscription(row);
+      const rowPlanKey = normalizeText(String(subscription?.plan_key || row?.plan_key || row?.planKey || row?.plan_slug || row?.planSlug || row?.plan || row?.plan_name || ""));
+      return rowPlanKey === subscriptionPlanSelectionKey;
+    });
+  }, [selectedSubscriptionPlan?.name, subscriptionPlanSelectionKey, subscriptionState.data?.users]);
+
+  useEffect(() => {
+    if (!subscriptionPlans.length) {
+      if (selectedSubscriptionPlanKey) {
+        setSelectedSubscriptionPlanKey("");
+      }
+      if (selectedSubscriptionPlanId) {
+        setSelectedSubscriptionPlanId("");
+      }
+      return;
+    }
+    const hasSelection = subscriptionPlans.some((plan) => String(plan?.id ?? plan?.plan_key ?? plan?.slug ?? "") === String(selectedSubscriptionPlanId))
+      || subscriptionPlans.some((plan) => normalizeText(String(plan?.slug || plan?.plan_key || plan?.planKey || "")) === normalizeText(selectedSubscriptionPlanKey));
+    if (!hasSelection) {
+      const featuredPlan = subscriptionPlans.find((plan) => Boolean(plan?.featured))
+        || subscriptionPlans.find((plan) => normalizeText(String(plan?.plan_key || plan?.slug || plan?.planKey || "")) !== "free")
+        || subscriptionPlans[0];
+      setSelectedSubscriptionPlanKey(String(featuredPlan?.plan_key || featuredPlan?.slug || featuredPlan?.planKey || "").trim());
+      setSelectedSubscriptionPlanId(String(featuredPlan?.id ?? featuredPlan?.plan_key ?? featuredPlan?.slug ?? "").trim());
+    }
+  }, [selectedSubscriptionPlanId, selectedSubscriptionPlanKey, subscriptionPlans]);
+
+  useEffect(() => {
+    setSubscriptionTablePage((current) => Math.min(current, subscriptionTablePageCount));
+  }, [subscriptionTablePageCount]);
+
+  function openSubscriptionModal(mode = "create", planData = "") {
     setSubscriptionModalMode(mode);
     setSubscriptionProtectionOpen(false);
     setSubscriptionOtp({ code: "", status: "", challengeId: "", maskedEmail: "" });
-    setSubscriptionSettings((current) => ({
-      ...current,
-      planName: planName || current.planName || ""
-    }));
+    setSubscriptionModalPlan(mode === "edit" && planData && typeof planData === "object" ? planData : null);
+    setSubscriptionSettings((current) => {
+      if (mode === "edit" && planData && typeof planData === "object") {
+        const planKey = String(planData.plan_key || planData.planKey || current.planKey || "nevari_access_pro").trim();
+        const isFreePlan = isFreeSubscriptionPlan(planData) || isFreeSubscriptionPlan(planKey);
+        const amountValue = planData.amount_kobo != null
+          ? normalizeNairaAmount(Number(planData.amount_kobo))
+          : normalizeNairaAmount(planData.amount || current.amount || "");
+        const interval = String(planData.interval || planData.interval_unit || current.interval || "").trim();
+        return {
+          ...defaultSubscriptionSettings(),
+          ...current,
+          planKey,
+          planName: sanitizeInput(planData.name || planData.plan_name || current.planName || ""),
+          amount: isFreePlan ? "0" : String(amountValue),
+          currency: normalizeAllowedValue(planData.currency || current.currency || "NGN", SUBSCRIPTION_CURRENCY_OPTIONS, "NGN"),
+          interval,
+          checkoutType: normalizeAllowedValue(planData.checkout_type || current.checkoutType || "auto_generated", SUBSCRIPTION_CHECKOUT_TYPE_OPTIONS, "auto_generated"),
+          status: normalizeAllowedValue(planData.status || current.status || "active", SUBSCRIPTION_STATUS_OPTIONS, "active"),
+          description: sanitizeInput(planData.description || current.description || ""),
+          features: sanitizeFeatureList(planData.features || current.features || ""),
+          checkoutLink: buildSubscriptionCheckoutLink(planKey, interval) || current.checkoutLink || ""
+        };
+      }
+
+      const planKey = String(current.planKey || "nevari_access_pro").trim();
+      const interval = String(current.interval || "monthly").trim();
+      return {
+        ...defaultSubscriptionSettings(),
+        planKey,
+        interval,
+        checkoutType: normalizeAllowedValue(current.checkoutType || "auto_generated", SUBSCRIPTION_CHECKOUT_TYPE_OPTIONS, "auto_generated"),
+        status: normalizeAllowedValue(current.status || "active", SUBSCRIPTION_STATUS_OPTIONS, "active"),
+        checkoutLink: buildSubscriptionCheckoutLink(planKey, interval) || "",
+        publicKey: current.publicKey || "",
+        manageBillingUrl: current.manageBillingUrl || ""
+      };
+    });
+    if (mode === "edit" && planData && typeof planData === "object") {
+      const selectedId = String(planData.id ?? planData.plan_id ?? planData.plan_key ?? planData.slug ?? "").trim();
+      if (selectedId) {
+        setSelectedSubscriptionPlanId(selectedId);
+      }
+      const selectedKey = String(planData.plan_key || planData.slug || planData.planKey || "").trim();
+      if (selectedKey) {
+        setSelectedSubscriptionPlanKey(selectedKey);
+      }
+    }
     setSubscriptionModalOpen(true);
   }
 
@@ -2074,10 +2420,16 @@ export default function Page() {
     setSubscriptionProtectionOpen(false);
     setSubscriptionOtp({ code: "", status: "", challengeId: "", maskedEmail: "" });
     setSubscriptionCreateLoading(false);
+    setSubscriptionDeleteLoading(false);
+    setSubscriptionModalPlan(null);
     setSubscriptionModalOpen(false);
   }
 
   async function openSubscriptionProtectionModal() {
+    if (!subscriptionCreateReady) {
+      showSnackbar(subscriptionCreateBlockerMessage || "Complete all required fields before creating the subscription plan.", "warning");
+      return;
+    }
     setSubscriptionProtectionOpen(true);
     setSubscriptionOtp({ code: "", status: "Sending OTP to your email...", challengeId: "", maskedEmail: "" });
     try {
@@ -2118,27 +2470,34 @@ export default function Page() {
         method: "POST",
         body: {
           ...frontendContext(session),
-          plan_name: subscriptionSettings.planName,
-          plan_key: subscriptionSettings.planName ? normalizeCategoryKey(subscriptionSettings.planName).replace(/_/g, "-") : "nevari_access_pro",
-          amount: normalizeNairaAmount(subscriptionSettings.amount),
-          amount_kobo: toPaystackAmount(subscriptionSettings.amount),
-          currency: subscriptionSettings.currency || "NGN",
-          interval: subscriptionSettings.interval || "monthly",
+          plan_id: subscriptionModalPlan?.id || subscriptionModalPlan?.plan_id || "",
+          plan_name: subscriptionPlanName,
+          plan_key: subscriptionRequestPlanKey,
+          plan_slug: subscriptionPlanSlug,
+          amount: editingFreeSubscriptionPlan ? 0 : subscriptionAmountValue,
+          currency: subscriptionCurrencyValue || "NGN",
+          interval: subscriptionIntervalValue || "monthly",
+          checkout_type: subscriptionCheckoutTypeValue || "auto_generated",
+          status: normalizeAllowedValue(subscriptionSettings.status, SUBSCRIPTION_STATUS_OPTIONS, "active"),
           public_key: subscriptionSettings.publicKey || "",
           manage_billing_url: subscriptionSettings.manageBillingUrl || "",
           notifications_enabled: Boolean(subscriptionSettings.notificationsEnabled),
           auto_renew: Boolean(subscriptionSettings.autoRenew),
           cancellation_window_days: subscriptionSettings.cancellationWindowDays || "",
+          description: subscriptionDescriptionValue,
+          features: subscriptionFeaturesValue,
+          checkout_link: subscriptionCheckoutLinkValue,
           challenge_id: subscriptionOtp.challengeId,
           code: subscriptionOtp.code
         }
       });
 
-      setSubscriptionState((current) => ({
-        ...current,
-        data: payload.data || current.data,
-        error: ""
-      }));
+      if (payload?.data?.plan) {
+        setSubscriptionState((current) => ({
+          ...current,
+          error: ""
+        }));
+      }
       setSubscriptionOtp((current) => ({
         ...current,
         status: "Subscription plan created."
@@ -2152,6 +2511,54 @@ export default function Page() {
       showSnackbar(message, "error");
     } finally {
       setSubscriptionCreateLoading(false);
+    }
+  }
+
+  async function deleteSubscriptionPlan() {
+    const planId = String(subscriptionModalPlan?.id ?? subscriptionModalPlan?.plan_id ?? selectedSubscriptionPlanId ?? selectedSubscriptionPlanKey ?? "").trim();
+    if (!planId) {
+      showSnackbar("Select a subscription plan first.", "warning");
+      return;
+    }
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(`Delete ${subscriptionModalPlan?.name || selectedSubscriptionPlan?.name || "this subscription plan"}? This action cannot be undone.`);
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setSubscriptionDeleteLoading(true);
+    try {
+      await apiRequest(`/subscriptions/admin/${encodeURIComponent(planId)}`, {
+        method: "DELETE",
+        body: {
+          ...frontendContext(session)
+        }
+      }, session);
+      setSubscriptionState((current) => {
+        const currentPlans = Array.isArray(current.data?.plans) ? current.data.plans : [];
+        return {
+          ...current,
+          data: {
+            ...(current.data || {}),
+            plans: currentPlans.filter((plan) => String(plan?.id ?? plan?.plan_key ?? plan?.slug ?? "") !== planId)
+          }
+        };
+      });
+      if (String(selectedSubscriptionPlanId) === planId) {
+        setSelectedSubscriptionPlanId("");
+      }
+      if (String(selectedSubscriptionPlanKey) === String(subscriptionModalPlan?.plan_key || subscriptionModalPlan?.slug || "")) {
+        setSelectedSubscriptionPlanKey("");
+      }
+      closeSubscriptionModal();
+      await refreshSubscriptionStatus();
+      showSnackbar("Subscription plan deleted.", "success");
+    } catch (error) {
+      showSnackbar(describeRequestError(error), "error");
+      await refreshSubscriptionStatus();
+    } finally {
+      setSubscriptionDeleteLoading(false);
     }
   }
 
@@ -2174,15 +2581,22 @@ export default function Page() {
       return undefined;
     }
 
-    let cancelled = false;
     setSubscriptionState((current) => ({ ...current, loading: true, error: "" }));
-    refreshSubscriptionStatus().finally(() => {
-      if (cancelled) {
-        return;
+
+    const eventSource = new EventSource("/api/subscriptions/events");
+    const handleSubscriptionEvent = () => {
+      const activeSession = latestSessionRef.current;
+      if (activeSession?.accessToken) {
+        refreshSubscriptionStatus().catch(() => {});
       }
-    });
+    };
+    eventSource.addEventListener("ready", handleSubscriptionEvent);
+    eventSource.addEventListener("subscription", handleSubscriptionEvent);
+
     return () => {
-      cancelled = true;
+      eventSource.removeEventListener("ready", handleSubscriptionEvent);
+      eventSource.removeEventListener("subscription", handleSubscriptionEvent);
+      eventSource.close();
     };
   }, [currentPage, session.accessToken]);
 
@@ -3209,6 +3623,9 @@ export default function Page() {
             location: doctorCreateForm.location,
             status: doctorCreateForm.status,
             bio: doctorCreateForm.bio,
+            position: doctorCreateForm.position,
+            is_available: doctorCreateForm.isAvailable,
+            max_workload_per_week: Number(doctorCreateForm.maxWorkloadPerWeek || 40),
             pricing_tier: normalizeDoctorTierOption(doctorCreateForm.pricingTier),
             consultation_fee: consultationFeeForTier(doctorCreateForm.pricingTier),
             product_category_ids: doctorCreateForm.productCategoryIds.map(Number)
@@ -3289,6 +3706,7 @@ export default function Page() {
       const payload = await apiRequest(`/doctors/${doctorId}`, {
         method: "POST",
         body: {
+          position: normalizeDoctorTierOption(pricingTier),
           pricing_tier: normalizeDoctorTierOption(pricingTier),
           consultation_fee: consultationFee
         }
@@ -3307,6 +3725,40 @@ export default function Page() {
       showSnackbar(`${nextDoctor.display_name || doctor.display_name || "Doctor"} moved to the ${formatPricingTierLabel(pricingTier)} tier.`, "success");
     } catch (error) {
       const message = extractApiErrorMessage(error) || "Doctor tier could not be updated.";
+      showSnackbar(message, "error");
+    } finally {
+      setDoctorDetailTierLoading(false);
+    }
+  }
+
+  async function updateDoctorRoutingSettings(doctor, updates) {
+    if (!doctor) {
+      return;
+    }
+    const doctorId = doctor.user_id || doctor.id;
+    if (!doctorId) {
+      return;
+    }
+    setDoctorDetailTierLoading(true);
+    try {
+      const payload = await apiRequest(`/doctors/${doctorId}`, {
+        method: "PATCH",
+        body: updates
+      }, session);
+      const nextDoctor = payload?.data || { ...doctor, ...updates };
+      setData((prev) => ({
+        ...prev,
+        doctors: (prev.doctors || []).map((item) => (
+          String(item.user_id || item.id) === String(doctorId)
+            ? { ...item, ...nextDoctor }
+            : item
+        ))
+      }));
+      patchDoctorCache(nextDoctor);
+      revalidateCacheGroups(isDoctorListKey);
+      showSnackbar(`${nextDoctor.display_name || doctor.display_name || "Doctor"} updated.`, "success");
+    } catch (error) {
+      const message = extractApiErrorMessage(error) || "Doctor routing settings could not be updated.";
       showSnackbar(message, "error");
     } finally {
       setDoctorDetailTierLoading(false);
@@ -6822,7 +7274,7 @@ export default function Page() {
                 </div>
                 <div className="hero-actions-inline">
                   <button className="btn btn-primary" type="button" onClick={() => openSubscriptionModal("create")}>Create</button>
-                  <button className="btn btn-outline" type="button" onClick={refreshSubscriptionStatus}>Sync billing</button>
+                  
                 </div>
               </section>
 
@@ -6831,49 +7283,104 @@ export default function Page() {
               {subscriptionState.error ? <section className="panel subscription-alert"><p className="muted">{subscriptionState.error}</p></section> : null}
 
               <section className="subscription-layout">
-                <article className="panel subscription-plans-panel">
+                <article className="subscription-plans-panel">
                   <div className="panel-header">
                     <div>
                       <h2>Subscription plans</h2>
                       <p>Create, modify, activate or retire plan configurations.</p>
                     </div>
-                    <button className="btn btn-primary" type="button" onClick={() => openSubscriptionModal("create")}>Create</button>
-                  </div>
-                  <div className="plans-stack">
-                    {(Array.isArray(subscriptionState.data?.plans) ? subscriptionState.data.plans : []).map((plan) => (
-                      <article className={`plan-card ${plan.featured ? "featured" : ""}`} key={plan.name}>
-                        <div className="plan-head">
-                          <div className="plan-title">
-                            <div className="plan-mark">{plan.slug}</div>
-                            <div>
-                              <h3>{plan.name}</h3>
-                              <p>Users {formatNumber(plan.users)}</p>
-                            </div>
-                          </div>
-                          
-                          <div className="plan-price">
-                            <strong>{plan.price}</strong>
-                            <span>{plan.billing}</span>
-                          </div>
-                          <div className="plan-actions">
-                            <button className="btn btn-outline plan-edit-btn" type="button" onClick={() => openSubscriptionModal("edit", plan.name)}>Edit</button>
-                          </div>
-                        </div>
-                        <div className="entitlement-list">
-                          {(Array.isArray(plan.entitlements) ? plan.entitlements : []).map((entitlement) => (
-                            <span className={`chip ${String(entitlement.statusTone || entitlement.tone || "draft")}`} key={String(entitlement.label || entitlement)}>
-                              {String(entitlement.label || entitlement)}
-                            </span>
-                          ))}
-                        </div>
-                       
-                      </article>
-                    ))}
                     
                   </div>
+                  <div className="table-wrap users-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Plan name</th>
+                          <th>Price</th>
+                          <th>Billing cycle</th>
+                          <th>Users</th>
+                          <th>Status</th>
+                          <th>Gateway/source</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {subscriptionTablePlans.map((plan) => {
+                          const planId = String(plan?.id ?? plan?.plan_key ?? plan?.slug ?? "").trim();
+                          const planKey = String(plan?.plan_key || plan?.slug || plan?.planKey || generateSlug(plan?.name || "") || "free").trim();
+                          const isSelected = Boolean(String(selectedSubscriptionPlanId || selectedSubscriptionPlan?.id || selectedSubscriptionPlan?.plan_key || "") === planId);
+                          const planIsSystem = isSystemSubscriptionPlan(plan);
+                          const planSource = planIsSystem ? "System" : (plan.plan_key === "free" ? "Manual" : (plan.checkout_type === "manual" ? "Manual" : "Paystack"));
+                          return (
+                            <tr
+                              key={planId || planKey}
+                              className={isSelected ? "active-row" : ""}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => {
+                                setSelectedSubscriptionPlanKey(planKey);
+                                setSelectedSubscriptionPlanId(planId);
+                                openSubscriptionModal("edit", plan);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  setSelectedSubscriptionPlanKey(planKey);
+                                  setSelectedSubscriptionPlanId(planId);
+                                  openSubscriptionModal("edit", plan);
+                                }
+                              }}
+                            >
+                              <td>
+                                <div className="user-cell">
+                                  <div className="avatar-initial" data-tone={plan.featured ? "primary" : (plan.plan_key === "free" ? "soft" : "accent")}>{generateInitials(plan.name)}</div>
+                                  <div>
+                                    <strong>{plan.name} {planIsSystem ? <span className="chip draft">System</span> : null}</strong>
+                                    <span>{splitFeatureList(plan.features || "").slice(0, 2).join(" • ") || plan.note || "Managed subscription plan"}</span>
+                                  </div>
+                                </div>
+                              </td>
+                              <td>{plan.price || "NGN 0"}</td>
+                              <td>{formatStatusLabel(plan.billing || plan.interval || "manual")}</td>
+                              <td>{formatNumber(plan.users)}</td>
+                              <td><span className={`chip ${formatPlanStatusTone(plan.status)}`}>{formatStatusLabel(plan.status || "active")}</span></td>
+                              <td><span className={`chip ${planSource === "Paystack" ? "processing" : "draft"}`}>{planSource}</span></td>
+                              <td>
+                                <div className="user-actions">
+                                  <button className="btn btn-soft" type="button" onClick={(event) => { event.stopPropagation(); setSelectedSubscriptionPlanKey(planKey); setSelectedSubscriptionPlanId(planId); openSubscriptionModal("edit", plan); }}>View</button>
+                                  <button className="btn btn-outline" type="button" onClick={(event) => { event.stopPropagation(); setSelectedSubscriptionPlanKey(planKey); setSelectedSubscriptionPlanId(planId); openSubscriptionModal("edit", plan); }}>Edit</button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {subscriptionTablePageCount > 1 ? (
+                    <div className="users-pagination" aria-label="Subscription plans pagination">
+                      <div className="pagination-copy">Showing {subscriptionPlans.length ? `${formatNumber(((currentSubscriptionTablePage - 1) * SUBSCRIPTION_TABLE_PAGE_SIZE) + 1)}-${formatNumber(Math.min(currentSubscriptionTablePage * SUBSCRIPTION_TABLE_PAGE_SIZE, subscriptionPlans.length))}` : "0"} of {formatNumber(subscriptionPlans.length)} plans</div>
+                      <div className="pagination-controls">
+                        <button className={`page-btn ${currentSubscriptionTablePage === 1 ? "disabled" : ""}`} type="button" onClick={() => setSubscriptionTablePage((current) => Math.max(1, current - 1))}>Previous</button>
+                        {Array.from({ length: subscriptionTablePageCount }, (_, index) => index + 1).map((pageNumber) => (
+                          <button
+                            className={`page-btn ${pageNumber === currentSubscriptionTablePage ? "active" : ""}`}
+                            type="button"
+                            key={`subscription-page-${pageNumber}`}
+                            aria-current={pageNumber === currentSubscriptionTablePage ? "page" : undefined}
+                            onClick={() => setSubscriptionTablePage(pageNumber)}
+                          >
+                            {pageNumber}
+                          </button>
+                        ))}
+                        <button className={`page-btn ${currentSubscriptionTablePage === subscriptionTablePageCount ? "disabled" : ""}`} type="button" onClick={() => setSubscriptionTablePage((current) => Math.min(subscriptionTablePageCount, current + 1))}>Next</button>
+                      </div>
+                    </div>
+                  ) : null}
                 </article>
 
-                <article className="panel users-panel">
+                {false && (<article className="panel users-panel">
                   <div className="panel-header">
                     <div>
                       <h2>List of users</h2>
@@ -6898,7 +7405,7 @@ export default function Page() {
                       ))}
                     </div>
                     <div className="filter-row">
-                      <span className="filter-select-clean">Plan: {subscriptionState.data?.plans?.[0]?.name || "—"}</span>
+                      <span className="filter-select-clean">Plan: {selectedSubscriptionPlan?.name || "—"}</span>
                       <span className="filter-select-clean">Renewal: {subscriptionState.data?.renewals_this_month != null ? "This month" : "—"}</span>
                     </div>
                   </div>
@@ -6917,7 +7424,7 @@ export default function Page() {
                         </tr>
                       </thead>
                       <tbody>
-                        {(Array.isArray(subscriptionState.data?.users) ? subscriptionState.data.users : []).map((row, index) => (
+                        {visibleSubscriptionUsers.map((row, index) => (
                           <tr key={row.id || row.ref || `${row.name || row.full_name || row.display_name || "subscriber"}-${index}`}>
                             <td>
                               <div className="user-cell">
@@ -6928,7 +7435,7 @@ export default function Page() {
                                 </div>
                               </div>
                             </td>
-                            <td>{row.plan || row.plan_name || subscriptionSettings.planName || "—"}</td>
+                            <td>{row.plan || row.plan_name || selectedSubscriptionPlan?.name || subscriptionSettings.planName || "—"}</td>
                             <td><span className={`chip ${row.statusTone || "draft"}`}>{row.status || row.subscription_status || "—"}</span></td>
                             <td>{row.renewal || row.renewal_date || "—"}</td>
                             <td>{row.amount || row.amount_label || "—"}</td>
@@ -6946,7 +7453,7 @@ export default function Page() {
                   </div>
 
                   <div className="users-pagination" aria-label="Users pagination">
-                    <div className="pagination-copy">{Array.isArray(subscriptionState.data?.users) && subscriptionState.data.users.length ? `Showing ${subscriptionState.data.users.length} subscribed users` : "No subscribed users loaded."}</div>
+                    <div className="pagination-copy">{visibleSubscriptionUsers.length ? `Showing ${visibleSubscriptionUsers.length} subscribed users for ${selectedSubscriptionPlan?.name || "the selected plan"}` : "No subscribed users loaded."}</div>
                     <div className="pagination-controls">
                       <button className="page-btn disabled" type="button">Previous</button>
                       <button className="page-btn active" type="button" aria-current="page">1</button>
@@ -6957,118 +7464,187 @@ export default function Page() {
                       <button className="page-btn" type="button">Next</button>
                     </div>
                   </div>
-                </article>
+                  </article>)}
               </section>
             </div>
           </section>
 
-          <div className={`subscription-modal-backdrop ${subscriptionModalOpen ? "open" : ""}`} aria-hidden={!subscriptionModalOpen}>
-            <article className="subscription-modal-frame" role="dialog" aria-modal="true" aria-labelledby="subscriptionModalTitle">
+          <div className={`subscription-modal-backdrop rx-live-modal ${subscriptionModalOpen ? "open visible" : ""}`} aria-hidden={!subscriptionModalOpen} onClick={closeSubscriptionModal}>
+            <article className="modal-frame creation-frame subscription-create-frame" role="dialog" aria-modal="true" aria-labelledby="subscriptionModalTitle" aria-describedby="subscriptionModalText" onClick={(event) => event.stopPropagation()}>
               <div className="modal-head">
                 <div>
-                  <span className="subscription-modal-eyebrow">{subscriptionModalMode === "edit" ? "Protected update" : "Plan builder"}</span>
                   <h3 id="subscriptionModalTitle">{subscriptionModalMode === "edit" ? "Update subscription plan" : "Create subscription plan"}</h3>
-                  <p>{subscriptionModalMode === "edit" ? "Modify plan details with protected step-up authentication before the update is applied." : "Create a subscription plan, define billing settings and choose the entitlements users receive after payment."}</p>
-                </div>
-                <div className="subscription-modal-head-meta">
-                  <span className={`chip ${subscriptionModalMode === "edit" ? "processing" : "draft"}`}>{subscriptionModalMode === "edit" ? "Edit mode" : "Create mode"}</span>
-                  <button className="btn btn-outline btn-icon" type="button" onClick={closeSubscriptionModal} aria-label="Close">
-                    <InlineIcon id="i-x" />
-                  </button>
+                  <p id="subscriptionModalText">Set the plan price, name, billing frequency, description, and features.</p>
                 </div>
               </div>
               <div className="modal-body">
-                <div className="subscription-modal-grid">
-                  <div className="subscription-modal-main">
-                    <h4 className="creation-section-title"><InlineIcon id="i-credit-card" /> Plan details</h4>
+                <div className="creation-popup-layout">
+                  <section className="creation-main" aria-label="Subscription form fields">
+                    <h4 className="creation-section-title"><InlineIcon id="i-card" /> Subscription details</h4>
                     <div className="creation-field-grid">
-                      <div className="creation-field"><label>Plan name</label><input className="form-control" value={subscriptionSettings.planName} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, planName: event.target.value }))} /></div>
-                      <div className="creation-field"><label>Plan slug</label><input className="form-control" value={subscriptionSettings.planName ? normalizeCategoryKey(subscriptionSettings.planName).replace(/_/g, "-") : ""} readOnly /></div>
                       <div className="creation-field">
-                        <label>Amount</label>
+                        <label htmlFor="subscriptionPlanPrice">PRICE</label>
                         <input
+                          id="subscriptionPlanPrice"
                           className="form-control"
+                          type="number"
                           inputMode="decimal"
-                          value={subscriptionSettings.amount}
-                          onChange={(event) => setSubscriptionSettings((current) => ({ ...current, amount: event.target.value }))}
+                          min="0"
+                          step="1"
+                          value={editingFreeSubscriptionPlan ? "0" : subscriptionSettings.amount}
+                          onChange={(event) => setSubscriptionSettings((current) => ({ ...current, amount: editingFreeSubscriptionPlan ? "0" : event.target.value.replace(/[^\d.]/g, "") }))}
+                          aria-invalid={Boolean(subscriptionValidationErrors.amount)}
+                          disabled={editingFreeSubscriptionPlan}
                         />
+                        {subscriptionValidationErrors.amount ? <small className="field-error">{subscriptionValidationErrors.amount}</small> : null}
                       </div>
-                      <div className="creation-field"><label>Currency</label><select className="form-control" value={subscriptionSettings.currency} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, currency: event.target.value }))}><option value="">Select currency</option><option>NGN</option><option>USD</option></select></div>
-                      <div className="creation-field"><label>Billing interval</label><select className="form-control" value={subscriptionSettings.interval} onChange={(event) => setSubscriptionSettings((current) => ({ ...current, interval: event.target.value }))}><option value="">Select interval</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option><option value="manual">Manual</option></select></div>
+                      <div className="creation-field">
+                        <label htmlFor="subscriptionPlanName">PLAN NAME</label>
+                        <input
+                          id="subscriptionPlanName"
+                          className="form-control"
+                          value={subscriptionSettings.planName}
+                          onChange={(event) => setSubscriptionSettings((current) => ({ ...current, planName: sanitizeInput(event.target.value) }))}
+                          aria-invalid={Boolean(subscriptionValidationErrors.planName)}
+                          disabled={editingSystemSubscriptionPlan}
+                        />
+                        {editingSystemSubscriptionPlan ? <small className="field-hint">Reserved system plan name.</small> : null}
+                        {subscriptionValidationErrors.planName ? <small className="field-error">{subscriptionValidationErrors.planName}</small> : null}
+                      </div>
+                      <div className="creation-field">
+                        <label htmlFor="subscriptionPlanFrequency">Plan frequency</label>
+                        <select
+                          id="subscriptionPlanFrequency"
+                          className="form-control"
+                          value={subscriptionSettings.interval}
+                          onChange={(event) => setSubscriptionSettings((current) => ({ ...current, interval: event.target.value }))}
+                          aria-invalid={Boolean(subscriptionValidationErrors.interval)}
+                        >
+                          <option value="monthly">Monthly</option>
+                          <option value="quarterly">Quarterly</option>
+                          <option value="yearly">Yearly</option>
+                          <option value="manual">One-time</option>
+                        </select>
+                        {subscriptionValidationErrors.interval ? <small className="field-error">{subscriptionValidationErrors.interval}</small> : null}
+                      </div>
+                      <div className="creation-field full">
+                        <label htmlFor="subscriptionPlanDescription">Description</label>
+                        <textarea
+                          id="subscriptionPlanDescription"
+                          className="form-control"
+                          rows={4}
+                          value={subscriptionSettings.description}
+                          onChange={(event) => setSubscriptionSettings((current) => ({ ...current, description: sanitizeInput(event.target.value) }))}
+                          aria-invalid={Boolean(subscriptionValidationErrors.description)}
+                        />
+                        {subscriptionValidationErrors.description ? <small className="field-error">{subscriptionValidationErrors.description}</small> : null}
+                      </div>
                     </div>
-                  </div>
-                  <aside className="creation-side subscription-side">
-                    <div className="subscription-preview-card">
-                      <div className="subscription-preview-badge">{subscriptionSettings.interval ? subscriptionSettings.interval.toUpperCase() : "MONTHLY"}</div>
-                      <div className="subscription-preview-value">{formatNairaAmount(subscriptionSettings.amount || 0)}</div>
-                      
+                    <h4 className="creation-section-title features-section-title"><InlineIcon id="i-menu" /> Features table</h4>
+                    <div className="features-table-wrap">
+                      <table className="features-table" aria-label="Subscription features">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Feature</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(subscriptionFeatureRows.length ? subscriptionFeatureRows : [""]).map((feature, index) => (
+                            <tr key={`subscription-feature-${index}`}>
+                              <td><span className="feature-index">{index + 1}</span></td>
+                              <td>
+                                <input
+                                  className="feature-row-input"
+                                  value={feature}
+                                  onChange={(event) => updateSubscriptionFeatureRow(index, event.target.value)}
+                                  placeholder="Enter feature"
+                                  aria-label={`Feature ${index + 1}`}
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
+                    <div className="features-actions">
+                      <button className="btn btn-outline" type="button" onClick={addSubscriptionFeatureRow}>
+                        <InlineIcon id="i-plus" />
+                        Add feature
+                      </button>
+                    </div>
+                    {subscriptionValidationErrors.features ? <small className="field-error">{subscriptionValidationErrors.features}</small> : null}
+                  </section>
+                  <aside className="creation-side" aria-label="Subscription preview">
+                    <h4>{subscriptionSummaryName}</h4>
+                    <p>{subscriptionSummaryDescription}</p>
                     <div className="creation-summary-list">
-                      <div><span>Plan </span><strong>{subscriptionSettings.planName || "Nevari Access Pro"}</strong></div>
-                      <div><span>Currency </span><strong>{subscriptionSettings.currency || "NGN"}</strong></div>
-                      <div><span>Billing </span><strong>{subscriptionSettings.interval || "monthly"}</strong></div>
+                      <div><span>PRICE</span><strong>{subscriptionSummaryPrice}</strong></div>
+                      <div><span>PLAN NAME</span><strong>{subscriptionSummaryName}</strong></div>
+                      <div><span>Plan frequency</span><strong>{subscriptionSummaryFrequency}</strong></div>
+                      <div><span>Description</span><strong>{subscriptionSummaryDescription.length > 32 ? `${subscriptionSummaryDescription.slice(0, 32)}...` : subscriptionSummaryDescription}</strong></div>
                     </div>
-                    <div className="creation-popup-note">
-                      New Subscription plan preview
+                    <div>
+                      <h4>Features table</h4>
+                      <ul className="preview-features">
+                        {subscriptionFeatureRows.length ? (
+                          subscriptionFeatureRows.map((feature, index) => <li key={`subscription-preview-feature-${index}`}>{feature}</li>)
+                        ) : (
+                          <li className="empty-preview">No features added.</li>
+                        )}
+                      </ul>
                     </div>
                   </aside>
                 </div>
               </div>
-              <div className="modal-actions sticky-modal-actions">
-                <button className="btn btn-outline" type="button" onClick={closeSubscriptionModal}>Cancel</button>
-                <button className="btn btn-soft" type="button">Save draft</button>
-                <button className="btn btn-primary" type="button" onClick={openSubscriptionProtectionModal}>Create</button>
+              <div className="modal-actions">
+                <button className="btn btn-primary" type="button" onClick={openSubscriptionProtectionModal} disabled={!subscriptionCreateReady} title={subscriptionCreateReady ? (subscriptionModalMode === "edit" ? "Update plan" : "Create plan") : subscriptionCreateBlockerMessage}>{subscriptionModalMode === "edit" ? "Update plan" : "Create plan"}</button>
               </div>
             </article>
           </div>
 
           <div className={`subscription-modal-backdrop subscription-protection-backdrop ${subscriptionProtectionOpen ? "open" : ""}`} aria-hidden={!subscriptionProtectionOpen}>
-            <article className="subscription-modal-frame subscription-protection-frame" role="dialog" aria-modal="true" aria-labelledby="subscriptionProtectionTitle">
-              <div className="modal-head">
-                <div>
-                  <span className="subscription-modal-eyebrow">Step-up verification</span>
-                  <h3 id="subscriptionProtectionTitle">Verify to continue</h3>
-                  <p>Verify the change before the subscription is created.</p>
-                </div>
-                <button className="btn btn-outline btn-icon" type="button" onClick={closeSubscriptionProtectionModal} aria-label="Close protection popup">
+            <article className="subscription-modal-frame subscription-protection-frame subscription-otp-card-frame" role="dialog" aria-modal="true" aria-labelledby="subscriptionProtectionTitle">
+              <div className="subscription-otp-topbar">
+                <button className="btn btn-outline btn-icon subscription-otp-close" type="button" onClick={closeSubscriptionProtectionModal} aria-label="Close subscription verification popup">
                   <InlineIcon id="i-x" />
                 </button>
               </div>
               <div className="modal-body">
-                <div className="subscription-protection-grid">
-                  <div className="subscription-protection-summary">
-                    <div className="subscription-preview-card subscription-preview-card-light">
-                      <div className="subscription-preview-badge">OTP</div>
-                      <div className="subscription-preview-value">{subscriptionSettings.planName || "Nevari Access Pro"}</div>
-                      <div className="subscription-preview-note">{formatNairaAmount(subscriptionSettings.amount || 0)} monthly billing</div>
-                    </div>
-                    <div className="creation-summary-list">
-                      <div><span>Recipient</span><strong>{subscriptionOtp.maskedEmail || "Waiting for OTP"}</strong></div>
-                      <div><span>Challenge</span><strong>{subscriptionOtp.challengeId ? "Issued" : "Pending"}</strong></div>
-                    </div>
+                <div className="subscription-otp-card">
+                  <h3 id="subscriptionProtectionTitle">Verify to Continue</h3>
+                  
+                  <input
+                    ref={subscriptionOtpInputRef}
+                    className="subscription-otp-hidden-input"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    autoFocus
+                    value={subscriptionOtp.code}
+                    onChange={(event) => setSubscriptionOtp((current) => ({ ...current, code: event.target.value.replace(/\D+/g, "").slice(0, 6) }))}
+                    aria-label="One time password"
+                  />
+                  <div className="subscription-otp-boxes" role="group" aria-label="One time password digits">
+                    {Array.from({ length: 6 }).map((_, index) => (
+                      <button
+                        className={`subscription-otp-box ${subscriptionOtp.code[index] ? "filled" : ""}`}
+                        key={`subscription-otp-box-${index}`}
+                        type="button"
+                        onClick={() => subscriptionOtpInputRef.current?.focus()}
+                        aria-label={`Digit ${index + 1}`}
+                      >
+                        {subscriptionOtp.code[index] || ""}
+                      </button>
+                    ))}
                   </div>
-                  <label className="creation-field full-width">
-                    <span>One Time Password</span>
-                    <input
-                      className="form-control subscription-otp-input"
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      maxLength={6}
-                      autoFocus
-                      placeholder="6-digit code"
-                      value={subscriptionOtp.code}
-                      onChange={(event) => setSubscriptionOtp((current) => ({ ...current, code: event.target.value.replace(/\D+/g, "").slice(0, 6) }))}
-                    />
-                  </label>
                   {subscriptionOtp.status ? <p className="subscription-otp-status">{subscriptionOtp.status}</p> : null}
                 </div>
               </div>
-              <div className="modal-actions sticky-modal-actions">
-                <button className="btn btn-outline" type="button" onClick={closeSubscriptionProtectionModal}>Back</button>
-                <button className="btn btn-primary" type="button" disabled={subscriptionCreateLoading || subscriptionOtp.code.length !== 6} onClick={createSubscriptionPlanAfterOtp}>
-                  <InlineIcon id="i-lock" />
-                  {subscriptionCreateLoading ? "Creating..." : "Create subscription"}
+              <div className="modal-actions sticky-modal-actions subscription-otp-actions">
+                <button className="btn btn-primary subscription-otp-submit" type="button" disabled={subscriptionCreateLoading || subscriptionOtp.code.length !== 6} onClick={createSubscriptionPlanAfterOtp}>
+                  {subscriptionCreateLoading ? "Creating..." : "Create Subscription"}
                 </button>
               </div>
             </article>
@@ -10025,12 +10601,35 @@ export default function Page() {
                             </div>
                           </label>
                           <label className="detail-field">
+                            <span>Position</span>
+                            <div className="select-wrap">
+                              <select value={doctorCreateForm.position} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, position: event.target.value, pricingTier: event.target.value }))}>
+                                {DOCTOR_PRICING_TIER_OPTIONS.map((tier) => (
+                                  <option key={`position-${tier.value}`} value={tier.value}>{tier.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </label>
+                          <label className="detail-field">
                             <span>Specialty</span>
                             <input value={doctorCreateForm.specialty} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, specialty: event.target.value }))} />
                           </label>
                           <label className="detail-field">
                             <span>Location</span>
                             <input value={doctorCreateForm.location} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, location: event.target.value }))} />
+                          </label>
+                          <label className="detail-field">
+                            <span>Weekly capacity</span>
+                            <input type="number" min="1" value={doctorCreateForm.maxWorkloadPerWeek} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, maxWorkloadPerWeek: event.target.value }))} />
+                          </label>
+                          <label className="detail-field">
+                            <span>Available for assignment</span>
+                            <div className="select-wrap">
+                              <select value={doctorCreateForm.isAvailable ? "yes" : "no"} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, isAvailable: event.target.value === "yes" }))}>
+                                <option value="yes">Yes</option>
+                                <option value="no">No</option>
+                              </select>
+                            </div>
                           </label>
                           <label className="detail-field detail-field-wide">
                             <span>Product categories</span>
@@ -10083,7 +10682,6 @@ export default function Page() {
                             <span>Address</span>
                             <textarea rows={4} value={customerCreateForm.address} onChange={(event) => setCustomerCreateForm((prev) => ({ ...prev, address: event.target.value }))} />
                           </label>
-                          <p className="muted popup-support-copy detail-field-wide">Customer creation is submitted to the customer endpoint using the paired WordPress API session.</p>
                         </div>
                       )}
                     </div>
@@ -10195,6 +10793,43 @@ export default function Page() {
                     <div className="detail-block"><span>Specialty</span><strong>{selectedDoctorProfile.specialty || "General practice"}</strong></div>
                     <div className="detail-block"><span>Location</span><strong>{selectedDoctorProfile.location || "Nevari network"}</strong></div>
                     <div className="detail-block"><span>Status</span><strong>{formatStatusLabel(getDoctorStatus(selectedDoctorProfile))}</strong></div>
+                    <div className="detail-block">
+                      <span>Position</span>
+                      <div className="select-wrap doctor-tier-select">
+                        <select
+                          value={selectedDoctorProfile.position || "specialist"}
+                          onChange={(event) => updateDoctorRoutingSettings(selectedDoctorProfile, { position: event.target.value })}
+                          disabled={doctorDetailTierLoading}
+                        >
+                          {DOCTOR_PRICING_TIER_OPTIONS.map((tier) => (
+                            <option key={`detail-position-${tier.value}`} value={tier.value}>{tier.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="detail-block">
+                      <span>Assignable</span>
+                      <div className="select-wrap doctor-tier-select">
+                        <select
+                          value={selectedDoctorProfile.is_available === false ? "no" : "yes"}
+                          onChange={(event) => updateDoctorRoutingSettings(selectedDoctorProfile, { is_available: event.target.value === "yes" })}
+                          disabled={doctorDetailTierLoading}
+                        >
+                          <option value="yes">Yes</option>
+                          <option value="no">No</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="detail-block">
+                      <span>Weekly capacity</span>
+                      <input
+                        type="number"
+                        min="1"
+                        defaultValue={selectedDoctorProfile.max_workload_per_week || 40}
+                        onBlur={(event) => updateDoctorRoutingSettings(selectedDoctorProfile, { max_workload_per_week: Number(event.target.value || 40) })}
+                        disabled={doctorDetailTierLoading}
+                      />
+                    </div>
                     <div className="detail-block">
                       <span>Pricing tier</span>
                       <div className="select-wrap doctor-tier-select">

@@ -5,6 +5,7 @@ if (!defined('ABSPATH')) {
 
 final class Nevari_Plugin {
     private const DOCTOR_PROFILE_POST_TYPE = 'nevari_doctor_prof';
+    private const SUBSCRIPTION_PLAN_POST_TYPE = 'nevari_subscription';
 
     private static $instance = null;
 
@@ -21,6 +22,7 @@ final class Nevari_Plugin {
         add_action('init', [$this, 'register_post_types']);
         add_action('init', [$this, 'register_taxonomies']);
         add_action('init', [$this, 'register_product_meta']);
+        add_action('init', [$this, 'register_subscription_plan_meta']);
         add_action('init', [$this, 'register_order_statuses']);
         add_filter('rest_post_dispatch', [$this, 'append_rest_cors_headers'], 10, 3);
         add_filter('rest_pre_serve_request', [$this, 'send_rest_cors_headers'], 10, 4);
@@ -30,12 +32,17 @@ final class Nevari_Plugin {
         add_action('nevari_send_customer_appointment_reminder_1h', [$this, 'send_customer_appointment_reminder_1h'], 10, 2);
         add_action('nevari_send_doctor_appointment_reminder_24h', [$this, 'send_doctor_appointment_reminder_24h'], 10, 2);
         add_action('nevari_send_doctor_appointment_reminder_1h', [$this, 'send_doctor_appointment_reminder_1h'], 10, 2);
+        add_action('nevari_send_customer_appointment_ending_soon', [$this, 'send_customer_appointment_ending_soon'], 10, 2);
+        add_action('nevari_send_doctor_appointment_ending_soon', [$this, 'send_doctor_appointment_ending_soon'], 10, 2);
         add_action('nevari_send_customer_appointment_followup', [$this, 'send_customer_appointment_followup'], 10, 2);
         add_action('nevari_expire_appointment_reservation', [$this, 'expire_appointment_reservation'], 10, 1);
+        add_action('nevari_process_appointment_meet_creation', [$this, 'process_appointment_meet_creation'], 10, 1);
+        add_action('nevari_end_appointment_meet_conference', [$this, 'end_appointment_meet_conference'], 10, 1);
 
         Nevari_Audit::init();
         Nevari_Auth::init();
         Nevari_Connections::init();
+        Nevari_Mtm::init();
         Nevari_Rest::init();
         Nevari_Subscriptions::init();
         Nevari_Admin::init();
@@ -43,7 +50,144 @@ final class Nevari_Plugin {
 
         $this->ensure_required_email_templates();
         $this->ensure_appointment_lifecycle_columns();
+        $this->ensure_doctor_routing_columns();
+        $this->ensure_round_robin_tracker_table();
+        $this->ensure_mtm_workflow_columns();
+        $this->ensure_pharmacist_role();
         $this->register_woocommerce_hooks();
+    }
+
+    private function ensure_doctor_routing_columns(): void {
+        global $wpdb;
+
+        if (!class_exists('Nevari_Helpers')) {
+            return;
+        }
+
+        $table = Nevari_Helpers::table('doctor_settings');
+        if (!$this->table_exists($table)) {
+            if (class_exists('Nevari_Activator')) {
+                Nevari_Activator::ensure_tables();
+            }
+            if (!$this->table_exists($table)) {
+                return;
+            }
+        }
+
+        $columns = [
+            'position' => "ALTER TABLE {$table} ADD position VARCHAR(30) NOT NULL DEFAULT 'specialist'",
+            'is_available' => "ALTER TABLE {$table} ADD is_available TINYINT(1) NOT NULL DEFAULT 1",
+            'max_workload_per_week' => "ALTER TABLE {$table} ADD max_workload_per_week INT UNSIGNED NOT NULL DEFAULT 40",
+        ];
+
+        foreach ($columns as $column => $sql) {
+            $exists = $wpdb->get_var($wpdb->prepare("SHOW COLUMNS FROM {$table} LIKE %s", $column));
+            if (!$exists) {
+                $wpdb->query($sql);
+            }
+        }
+    }
+
+    private function ensure_round_robin_tracker_table(): void {
+        global $wpdb;
+
+        if (!class_exists('Nevari_Helpers')) {
+            return;
+        }
+
+        $table = Nevari_Helpers::table('round_robin_tracker');
+        if ($this->table_exists($table)) {
+            return;
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        $charset = $wpdb->get_charset_collate();
+        dbDelta("CREATE TABLE {$table} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            doctor_level VARCHAR(30) NOT NULL,
+            last_doctor_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY doctor_level (doctor_level)
+        ) {$charset};");
+    }
+
+    private function ensure_pharmacist_role(): void {
+        $caps = [
+            'read',
+            'upload_files',
+            'nevari_view_mtm_requests',
+            'nevari_review_mtm_requests',
+            'nevari_schedule_mtm_appointments',
+            'nevari_create_medication_action_plan',
+            'nevari_attach_pharmacy_products',
+            'nevari_create_mtm_product_order',
+            'nevari_schedule_follow_up',
+            'nevari_track_mtm_outcomes',
+            'nevari_complete_mtm_case',
+        ];
+        if (!get_role('pharmacist')) {
+            add_role('pharmacist', __('Pharmacist', 'nevari-pharmacy-core'), array_fill_keys($caps, true));
+        }
+        $role = get_role('pharmacist');
+        if ($role) {
+            foreach ($caps as $cap) {
+                $role->add_cap($cap);
+            }
+        }
+        foreach (['administrator', 'shop_manager', 'store_admin'] as $role_name) {
+            $admin_role = get_role($role_name);
+            if (!$admin_role) {
+                continue;
+            }
+            foreach ($caps as $cap) {
+                $admin_role->add_cap($cap);
+            }
+        }
+    }
+
+    private function ensure_mtm_workflow_columns(): void {
+        global $wpdb;
+
+        if (!class_exists('Nevari_Helpers')) {
+            return;
+        }
+
+        $table = Nevari_Helpers::table('mtm_requests');
+        if (!$this->table_exists($table)) {
+            if (class_exists('Nevari_Activator')) {
+                Nevari_Activator::ensure_tables();
+            }
+            if (!$this->table_exists($table)) {
+                return;
+            }
+        }
+
+        $columns = [
+            'assigned_pharmacist_user_id' => "ALTER TABLE {$table} ADD assigned_pharmacist_user_id BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            'reviewed_by_pharmacist_user_id' => "ALTER TABLE {$table} ADD reviewed_by_pharmacist_user_id BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            'attached_products_json' => "ALTER TABLE {$table} ADD attached_products_json LONGTEXT NULL",
+            'consultation_notes_json' => "ALTER TABLE {$table} ADD consultation_notes_json LONGTEXT NULL",
+            'follow_up_json' => "ALTER TABLE {$table} ADD follow_up_json LONGTEXT NULL",
+            'outcome_tracking_json' => "ALTER TABLE {$table} ADD outcome_tracking_json LONGTEXT NULL",
+            'order_id' => "ALTER TABLE {$table} ADD order_id BIGINT UNSIGNED NULL",
+            'timezone' => "ALTER TABLE {$table} ADD timezone VARCHAR(100) NOT NULL DEFAULT 'UTC'",
+            'consultation_method' => "ALTER TABLE {$table} ADD consultation_method VARCHAR(80) NOT NULL DEFAULT 'Google Meet'",
+            'google_calendar_event_id' => "ALTER TABLE {$table} ADD google_calendar_event_id VARCHAR(255) NULL",
+            'google_meet_space_name' => "ALTER TABLE {$table} ADD google_meet_space_name VARCHAR(255) NULL",
+            'google_meet_code' => "ALTER TABLE {$table} ADD google_meet_code VARCHAR(64) NULL",
+            'google_meet_link' => "ALTER TABLE {$table} ADD google_meet_link VARCHAR(255) NULL",
+            'google_meet_error' => "ALTER TABLE {$table} ADD google_meet_error TEXT NULL",
+            'google_meet_created_at' => "ALTER TABLE {$table} ADD google_meet_created_at DATETIME NULL",
+            'google_meet_ended_at' => "ALTER TABLE {$table} ADD google_meet_ended_at DATETIME NULL",
+        ];
+
+        foreach ($columns as $column => $sql) {
+            $exists = $wpdb->get_var($wpdb->prepare("SHOW COLUMNS FROM {$table} LIKE %s", $column));
+            if (!$exists) {
+                $wpdb->query($sql);
+            }
+        }
     }
 
     private function ensure_appointment_lifecycle_columns(): void {
@@ -58,11 +202,19 @@ final class Nevari_Plugin {
             'reserved_until' => "ALTER TABLE {$table} ADD reserved_until DATETIME NULL",
             'customer_confirmation_sent_at' => "ALTER TABLE {$table} ADD customer_confirmation_sent_at DATETIME NULL",
             'doctor_confirmation_sent_at' => "ALTER TABLE {$table} ADD doctor_confirmation_sent_at DATETIME NULL",
+            'google_calendar_event_id' => "ALTER TABLE {$table} ADD google_calendar_event_id VARCHAR(255) NULL",
+            'google_meet_space_name' => "ALTER TABLE {$table} ADD google_meet_space_name VARCHAR(255) NULL",
+            'google_meet_status' => "ALTER TABLE {$table} ADD google_meet_status VARCHAR(30) NOT NULL DEFAULT 'pending'",
+            'google_meet_retry_count' => "ALTER TABLE {$table} ADD google_meet_retry_count INT UNSIGNED NOT NULL DEFAULT 0",
+            'google_meet_next_retry_at' => "ALTER TABLE {$table} ADD google_meet_next_retry_at DATETIME NULL",
             'customer_reminder_24h_sent_at' => "ALTER TABLE {$table} ADD customer_reminder_24h_sent_at DATETIME NULL",
             'customer_reminder_1h_sent_at' => "ALTER TABLE {$table} ADD customer_reminder_1h_sent_at DATETIME NULL",
             'doctor_reminder_24h_sent_at' => "ALTER TABLE {$table} ADD doctor_reminder_24h_sent_at DATETIME NULL",
             'doctor_reminder_1h_sent_at' => "ALTER TABLE {$table} ADD doctor_reminder_1h_sent_at DATETIME NULL",
+            'customer_ending_soon_sent_at' => "ALTER TABLE {$table} ADD customer_ending_soon_sent_at DATETIME NULL",
+            'doctor_ending_soon_sent_at' => "ALTER TABLE {$table} ADD doctor_ending_soon_sent_at DATETIME NULL",
             'customer_followup_sent_at' => "ALTER TABLE {$table} ADD customer_followup_sent_at DATETIME NULL",
+            'google_meet_ready_notified_at' => "ALTER TABLE {$table} ADD google_meet_ready_notified_at DATETIME NULL",
             'cancelled_at' => "ALTER TABLE {$table} ADD cancelled_at DATETIME NULL",
             'rescheduled_at' => "ALTER TABLE {$table} ADD rescheduled_at DATETIME NULL",
             'title' => "ALTER TABLE {$table} ADD title VARCHAR(191) NULL",
@@ -100,49 +252,49 @@ final class Nevari_Plugin {
                 'template_key' => 'appointment_customer_confirmation',
                 'name' => 'Appointment Customer Confirmation',
                 'subject' => 'Appointment confirmed with {{doctor_name}}',
-                'body_html' => '<p>Hello {{patient_name}},</p><p>Your {{consultation_type}} appointment is confirmed for {{appointment_date}} at {{appointment_time}}.</p><p>Doctor: {{doctor_name}}</p><p>Amount paid: {{amount_paid}}</p><p>Booking ID: {{booking_id}}<br />Order ID: {{order_id}}</p><p>{{google_meet_link_html}}</p><p><a href="{{cancel_link}}">Cancel appointment</a> | <a href="{{reschedule_link}}">Reschedule appointment</a></p><p>Please join 5 minutes before the appointment starts.</p>',
-                'body_text' => 'Hello {{patient_name}}, your appointment with {{doctor_name}} is confirmed for {{appointment_date}} at {{appointment_time}}. Join: {{google_meet_link}} Booking ID: {{booking_id}} Order ID: {{order_id}}',
-                'variables' => ['patient_name', 'doctor_name', 'consultation_type', 'appointment_date', 'appointment_time', 'amount_paid', 'booking_id', 'order_id', 'google_meet_link', 'google_meet_link_html', 'cancel_link', 'reschedule_link'],
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your {{consultation_type}} appointment is confirmed for {{appointment_date}} at {{appointment_time}}.</p><p><strong>Doctor:</strong> {{doctor_name}}<br /><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Booking ID:</strong> {{booking_id}}<br /><strong>Reference:</strong> {{appointment_reference}}<br /><strong>Order ID:</strong> {{order_id}}<br /><strong>Amount paid:</strong> {{amount_paid}}</p><p>{{google_meet_link_html}}</p><p><a href="{{cancel_link}}">Cancel appointment</a> | <a href="{{reschedule_link}}">Reschedule appointment</a></p><p>Please join 5 minutes before the appointment starts.</p>',
+                'body_text' => 'Hello {{patient_name}}, your appointment with {{doctor_name}} is confirmed for {{appointment_date}} at {{appointment_time}}. Duration: {{appointment_duration}}. Join: {{google_meet_link}} Booking ID: {{booking_id}} Reference: {{appointment_reference}} Order ID: {{order_id}}',
+                'variables' => ['patient_name', 'doctor_name', 'consultation_type', 'appointment_date', 'appointment_time', 'appointment_duration', 'appointment_reference', 'amount_paid', 'booking_id', 'order_id', 'google_meet_link', 'google_meet_link_html', 'cancel_link', 'reschedule_link'],
             ],
             [
                 'template_key' => 'appointment_doctor_notification',
                 'name' => 'Appointment Doctor Notification',
                 'subject' => 'New appointment with {{patient_name}}',
-                'body_html' => '<p>Hello {{doctor_name}},</p><p>A new {{consultation_type}} appointment has been confirmed.</p><p>Patient: {{patient_name}}<br />Email: {{customer_email}}<br />Phone: {{customer_phone}}</p><p>Date: {{appointment_date}}<br />Time: {{appointment_time}}</p><p>Patient note: {{patient_note}}</p><p>{{google_meet_link_html}}</p><p><a href="{{dashboard_link}}">Open dashboard</a></p>',
-                'body_text' => 'Hello {{doctor_name}}, {{patient_name}} booked {{appointment_date}} at {{appointment_time}}. Note: {{patient_note}} Join: {{google_meet_link}}',
-                'variables' => ['doctor_name', 'patient_name', 'customer_email', 'customer_phone', 'consultation_type', 'appointment_date', 'appointment_time', 'patient_note', 'google_meet_link', 'google_meet_link_html', 'dashboard_link'],
+                'body_html' => '<p>Hello {{doctor_name}},</p><p>A new {{consultation_type}} appointment has been confirmed.</p><p><strong>Patient:</strong> {{patient_name}}<br /><strong>Email:</strong> {{customer_email}}<br /><strong>Phone:</strong> {{customer_phone}}<br /><strong>Date:</strong> {{appointment_date}}<br /><strong>Time:</strong> {{appointment_time}}<br /><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Booking ID:</strong> {{booking_id}}<br /><strong>Reference:</strong> {{appointment_reference}}</p><p><strong>Patient note:</strong> {{patient_note}}</p><p>{{google_meet_link_html}}</p><p><a href="{{dashboard_link}}">Open dashboard</a></p>',
+                'body_text' => 'Hello {{doctor_name}}, {{patient_name}} booked {{appointment_date}} at {{appointment_time}}. Duration: {{appointment_duration}}. Reference: {{appointment_reference}}. Note: {{patient_note}} Join: {{google_meet_link}}',
+                'variables' => ['doctor_name', 'patient_name', 'customer_email', 'customer_phone', 'consultation_type', 'appointment_date', 'appointment_time', 'appointment_duration', 'appointment_reference', 'booking_id', 'patient_note', 'google_meet_link', 'google_meet_link_html', 'dashboard_link'],
             ],
             [
                 'template_key' => 'appointment_customer_reminder_24h',
                 'name' => 'Appointment Customer Reminder 24h',
                 'subject' => 'Reminder: appointment with {{doctor_name}} tomorrow',
-                'body_html' => '<p>Hello {{patient_name}},</p><p>Your appointment with {{doctor_name}} is scheduled for {{appointment_date}} at {{appointment_time}}.</p><p>{{google_meet_link_html}}</p><p><a href="{{cancel_link}}">Cancel</a> | <a href="{{reschedule_link}}">Reschedule</a></p>',
-                'body_text' => 'Your appointment with {{doctor_name}} is scheduled for {{appointment_date}} at {{appointment_time}}. Join: {{google_meet_link}}',
-                'variables' => ['patient_name', 'doctor_name', 'appointment_date', 'appointment_time', 'google_meet_link', 'google_meet_link_html', 'cancel_link', 'reschedule_link'],
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your appointment with {{doctor_name}} is scheduled for {{appointment_date}} at {{appointment_time}}.</p><p><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Booking ID:</strong> {{booking_id}}<br /><strong>Reference:</strong> {{appointment_reference}}<br /><strong>Ends:</strong> {{appointment_end_time}}</p><p>{{google_meet_link_html}}</p><p><a href="{{cancel_link}}">Cancel</a> | <a href="{{reschedule_link}}">Reschedule</a></p>',
+                'body_text' => 'Your appointment with {{doctor_name}} is scheduled for {{appointment_date}} at {{appointment_time}}. Duration: {{appointment_duration}}. Booking ID: {{booking_id}}. Reference: {{appointment_reference}}. Ends: {{appointment_end_time}}. Join: {{google_meet_link}}',
+                'variables' => ['patient_name', 'doctor_name', 'appointment_date', 'appointment_time', 'appointment_duration', 'appointment_reference', 'appointment_end_time', 'booking_id', 'google_meet_link', 'google_meet_link_html', 'cancel_link', 'reschedule_link'],
             ],
             [
                 'template_key' => 'appointment_customer_reminder_1h',
                 'name' => 'Appointment Customer Reminder 1h',
                 'subject' => 'Your appointment starts in 1 hour',
-                'body_html' => '<p>Hello {{patient_name}},</p><p>Your appointment with {{doctor_name}} starts at {{appointment_time}}.</p><p>{{google_meet_link_html}}</p>',
-                'body_text' => 'Your appointment starts in 1 hour. Doctor: {{doctor_name}} Time: {{appointment_time}} Join: {{google_meet_link}}',
-                'variables' => ['patient_name', 'doctor_name', 'appointment_time', 'google_meet_link', 'google_meet_link_html'],
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your appointment with {{doctor_name}} starts at {{appointment_time}} on {{appointment_date}}.</p><p><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Booking ID:</strong> {{booking_id}}<br /><strong>Reference:</strong> {{appointment_reference}}<br /><strong>Ends:</strong> {{appointment_end_time}}</p><p>{{google_meet_link_html}}</p>',
+                'body_text' => 'Your appointment starts in 1 hour. Doctor: {{doctor_name}}. Date: {{appointment_date}}. Time: {{appointment_time}}. Duration: {{appointment_duration}}. Booking ID: {{booking_id}}. Reference: {{appointment_reference}}. Ends: {{appointment_end_time}}. Join: {{google_meet_link}}',
+                'variables' => ['patient_name', 'doctor_name', 'appointment_date', 'appointment_time', 'appointment_duration', 'appointment_reference', 'appointment_end_time', 'booking_id', 'google_meet_link', 'google_meet_link_html'],
             ],
             [
                 'template_key' => 'appointment_doctor_reminder_24h',
                 'name' => 'Appointment Doctor Reminder 24h',
                 'subject' => 'Reminder: appointment with {{patient_name}} tomorrow',
-                'body_html' => '<p>Hello {{doctor_name}},</p><p>Your appointment with {{patient_name}} is scheduled for {{appointment_date}} at {{appointment_time}}.</p><p>Patient note: {{patient_note}}</p><p>{{google_meet_link_html}}</p>',
-                'body_text' => 'Appointment with {{patient_name}} at {{appointment_time}}. Note: {{patient_note}} Join: {{google_meet_link}}',
-                'variables' => ['doctor_name', 'patient_name', 'appointment_date', 'appointment_time', 'patient_note', 'google_meet_link', 'google_meet_link_html'],
+                'body_html' => '<p>Hello {{doctor_name}},</p><p>Your appointment with {{patient_name}} is scheduled for {{appointment_date}} at {{appointment_time}}.</p><p><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Booking ID:</strong> {{booking_id}}<br /><strong>Reference:</strong> {{appointment_reference}}<br /><strong>Ends:</strong> {{appointment_end_time}}</p><p><strong>Patient note:</strong> {{patient_note}}</p><p>{{google_meet_link_html}}</p>',
+                'body_text' => 'Appointment with {{patient_name}} on {{appointment_date}} at {{appointment_time}}. Duration: {{appointment_duration}}. Booking ID: {{booking_id}}. Reference: {{appointment_reference}}. Ends: {{appointment_end_time}}. Note: {{patient_note}}. Join: {{google_meet_link}}',
+                'variables' => ['doctor_name', 'patient_name', 'appointment_date', 'appointment_time', 'appointment_duration', 'appointment_reference', 'appointment_end_time', 'booking_id', 'patient_note', 'google_meet_link', 'google_meet_link_html'],
             ],
             [
                 'template_key' => 'appointment_doctor_reminder_1h',
                 'name' => 'Appointment Doctor Reminder 1h',
                 'subject' => 'Your appointment starts in 1 hour',
-                'body_html' => '<p>Hello {{doctor_name}},</p><p>Your appointment with {{patient_name}} starts at {{appointment_time}}.</p><p>{{google_meet_link_html}}</p>',
-                'body_text' => 'Your appointment starts in 1 hour. Patient: {{patient_name}} Time: {{appointment_time}} Join: {{google_meet_link}}',
-                'variables' => ['doctor_name', 'patient_name', 'appointment_time', 'google_meet_link', 'google_meet_link_html'],
+                'body_html' => '<p>Hello {{doctor_name}},</p><p>Your appointment with {{patient_name}} starts at {{appointment_time}} on {{appointment_date}}.</p><p><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Booking ID:</strong> {{booking_id}}<br /><strong>Reference:</strong> {{appointment_reference}}<br /><strong>Ends:</strong> {{appointment_end_time}}</p><p>{{google_meet_link_html}}</p>',
+                'body_text' => 'Your appointment starts in 1 hour. Patient: {{patient_name}}. Date: {{appointment_date}}. Time: {{appointment_time}}. Duration: {{appointment_duration}}. Booking ID: {{booking_id}}. Reference: {{appointment_reference}}. Ends: {{appointment_end_time}}. Join: {{google_meet_link}}',
+                'variables' => ['doctor_name', 'patient_name', 'appointment_date', 'appointment_time', 'appointment_duration', 'appointment_reference', 'appointment_end_time', 'booking_id', 'google_meet_link', 'google_meet_link_html'],
             ],
             [
                 'template_key' => 'appointment_customer_followup',
@@ -153,20 +305,116 @@ final class Nevari_Plugin {
                 'variables' => ['patient_name', 'doctor_name', 'review_link', 'dashboard_link'],
             ],
             [
+                'template_key' => 'appointment_customer_ending_soon',
+                'name' => 'Appointment Customer Ending Soon',
+                'subject' => 'Your appointment with {{doctor_name}} ends in 1 minute',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your appointment with {{doctor_name}} ends at {{appointment_end_time}}.</p><p><strong>Date:</strong> {{appointment_date}}<br /><strong>Started:</strong> {{appointment_time}}<br /><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Booking ID:</strong> {{booking_id}}<br /><strong>Reference:</strong> {{appointment_reference}}</p><p>{{google_meet_link_html}}</p><p><a href="{{dashboard_link}}">Open dashboard</a></p>',
+                'body_text' => 'Your appointment with {{doctor_name}} ends in 1 minute at {{appointment_end_time}}. Date: {{appointment_date}}. Started: {{appointment_time}}. Duration: {{appointment_duration}}. Booking ID: {{booking_id}}. Reference: {{appointment_reference}}. Join: {{google_meet_link}}. Dashboard: {{dashboard_link}}',
+                'variables' => ['patient_name', 'doctor_name', 'appointment_date', 'appointment_time', 'appointment_duration', 'appointment_reference', 'appointment_end_time', 'booking_id', 'google_meet_link', 'google_meet_link_html', 'dashboard_link'],
+            ],
+            [
+                'template_key' => 'appointment_doctor_ending_soon',
+                'name' => 'Appointment Doctor Ending Soon',
+                'subject' => 'Your appointment with {{patient_name}} ends in 1 minute',
+                'body_html' => '<p>Hello {{doctor_name}},</p><p>Your appointment with {{patient_name}} ends at {{appointment_end_time}}.</p><p><strong>Date:</strong> {{appointment_date}}<br /><strong>Started:</strong> {{appointment_time}}<br /><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Booking ID:</strong> {{booking_id}}<br /><strong>Reference:</strong> {{appointment_reference}}</p><p>{{google_meet_link_html}}</p><p><a href="{{dashboard_link}}">Open dashboard</a></p>',
+                'body_text' => 'Your appointment with {{patient_name}} ends in 1 minute at {{appointment_end_time}}. Date: {{appointment_date}}. Started: {{appointment_time}}. Duration: {{appointment_duration}}. Booking ID: {{booking_id}}. Reference: {{appointment_reference}}. Join: {{google_meet_link}}. Dashboard: {{dashboard_link}}',
+                'variables' => ['doctor_name', 'patient_name', 'appointment_date', 'appointment_time', 'appointment_duration', 'appointment_reference', 'appointment_end_time', 'booking_id', 'google_meet_link', 'google_meet_link_html', 'dashboard_link'],
+            ],
+            [
                 'template_key' => 'appointment_cancelled',
                 'name' => 'Appointment Cancelled',
                 'subject' => 'Appointment cancelled',
-                'body_html' => '<p>Hello {{recipient_name}},</p><p>The appointment between {{patient_name}} and {{doctor_name}} for {{appointment_start}} has been cancelled.</p>',
-                'body_text' => 'The appointment between {{patient_name}} and {{doctor_name}} for {{appointment_start}} has been cancelled.',
-                'variables' => ['recipient_name', 'patient_name', 'doctor_name', 'appointment_start'],
+                'body_html' => '<p>Hello {{recipient_name}},</p><p>The appointment between {{patient_name}} and {{doctor_name}} for {{appointment_start}} has been cancelled.</p><p><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Booking ID:</strong> {{booking_id}}<br /><strong>Reference:</strong> {{appointment_reference}}</p>',
+                'body_text' => 'The appointment between {{patient_name}} and {{doctor_name}} for {{appointment_start}} has been cancelled. Duration: {{appointment_duration}}. Booking ID: {{booking_id}}. Reference: {{appointment_reference}}.',
+                'variables' => ['recipient_name', 'patient_name', 'doctor_name', 'appointment_start', 'appointment_duration', 'booking_id', 'appointment_reference'],
             ],
             [
                 'template_key' => 'appointment_rescheduled',
                 'name' => 'Appointment Rescheduled',
                 'subject' => 'Appointment rescheduled',
-                'body_html' => '<p>Hello {{recipient_name}},</p><p>The appointment has been rescheduled to {{appointment_start}}.</p><p>{{google_meet_link_html}}</p>',
-                'body_text' => 'The appointment has been rescheduled to {{appointment_start}}. Join: {{google_meet_link}}',
-                'variables' => ['recipient_name', 'appointment_start', 'google_meet_link', 'google_meet_link_html'],
+                'body_html' => '<p>Hello {{recipient_name}},</p><p>The appointment has been rescheduled to {{appointment_start}}.</p><p><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Booking ID:</strong> {{booking_id}}<br /><strong>Reference:</strong> {{appointment_reference}}<br /><strong>Ends:</strong> {{appointment_end_time}}</p><p>{{google_meet_link_html}}</p>',
+                'body_text' => 'The appointment has been rescheduled to {{appointment_start}}. Duration: {{appointment_duration}}. Booking ID: {{booking_id}}. Reference: {{appointment_reference}}. Ends: {{appointment_end_time}}. Join: {{google_meet_link}}',
+                'variables' => ['recipient_name', 'appointment_start', 'appointment_duration', 'appointment_reference', 'appointment_end_time', 'booking_id', 'google_meet_link', 'google_meet_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_submitted_customer',
+                'name' => 'MTM Request Submitted Customer',
+                'subject' => 'We received your MTM request #{{mtm_request_id}}',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your MTM request {{request_reference}} has been received and assigned for review.</p><p>Current status: {{current_status}}</p><p>{{mtm_request_link_html}}</p>',
+                'body_text' => 'Hello {{patient_name}}, your MTM request {{request_reference}} has been received. Current status: {{current_status}}. View request: {{mtm_request_link}}',
+                'variables' => ['patient_name', 'request_reference', 'mtm_request_id', 'current_status', 'mtm_request_link', 'mtm_request_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_submitted_pharmacist',
+                'name' => 'MTM Request Submitted Pharmacist',
+                'subject' => 'New MTM request assigned: {{request_reference}}',
+                'body_html' => '<p>Hello {{pharmacist_name}},</p><p>A new MTM request has been assigned to you.</p><p>Patient: {{patient_name}}<br />Current status: {{current_status}}</p><p>{{pharmacist_dashboard_link_html}}</p>',
+                'body_text' => 'Hello {{pharmacist_name}}, a new MTM request {{request_reference}} has been assigned to you for {{patient_name}}. Status: {{current_status}}. Open queue: {{pharmacist_dashboard_link}}',
+                'variables' => ['pharmacist_name', 'patient_name', 'request_reference', 'current_status', 'pharmacist_dashboard_link', 'pharmacist_dashboard_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_status_changed_customer',
+                'name' => 'MTM Status Changed Customer',
+                'subject' => 'MTM request {{request_reference}} updated to {{current_status}}',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your MTM request status changed from {{previous_status}} to {{current_status}}.</p><p>{{mtm_request_link_html}}</p>',
+                'body_text' => 'Hello {{patient_name}}, your MTM request {{request_reference}} changed from {{previous_status}} to {{current_status}}. View request: {{mtm_request_link}}',
+                'variables' => ['patient_name', 'request_reference', 'previous_status', 'current_status', 'mtm_request_link', 'mtm_request_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_status_changed_pharmacist',
+                'name' => 'MTM Status Changed Pharmacist',
+                'subject' => 'MTM request {{request_reference}} is now {{current_status}}',
+                'body_html' => '<p>Hello {{pharmacist_name}},</p><p>MTM request {{request_reference}} for {{patient_name}} changed from {{previous_status}} to {{current_status}}.</p><p>{{pharmacist_dashboard_link_html}}</p>',
+                'body_text' => 'Hello {{pharmacist_name}}, MTM request {{request_reference}} for {{patient_name}} changed from {{previous_status}} to {{current_status}}. Open queue: {{pharmacist_dashboard_link}}',
+                'variables' => ['pharmacist_name', 'patient_name', 'request_reference', 'previous_status', 'current_status', 'pharmacist_dashboard_link', 'pharmacist_dashboard_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_approved_customer',
+                'name' => 'MTM Request Approved Customer',
+                'subject' => 'Your MTM request {{request_reference}} has been approved',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your MTM request has been approved by {{pharmacist_name}}.</p><p>{{mtm_request_link_html}}</p>',
+                'body_text' => 'Hello {{patient_name}}, your MTM request {{request_reference}} has been approved by {{pharmacist_name}}. View request: {{mtm_request_link}}',
+                'variables' => ['patient_name', 'pharmacist_name', 'request_reference', 'mtm_request_link', 'mtm_request_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_scheduled_customer',
+                'name' => 'MTM Request Scheduled Customer',
+                'subject' => 'Your MTM consultation is scheduled for {{appointment_date}} at {{appointment_time}}',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your MTM consultation has been scheduled for {{appointment_date}} at {{appointment_time}} ({{timezone}}).</p><p>{{google_meet_link_html}}</p><p>{{mtm_request_link_html}}</p>',
+                'body_text' => 'Hello {{patient_name}}, your MTM consultation is scheduled for {{appointment_date}} at {{appointment_time}} ({{timezone}}). Join: {{google_meet_link}} View request: {{mtm_request_link}}',
+                'variables' => ['patient_name', 'appointment_date', 'appointment_time', 'timezone', 'google_meet_link', 'google_meet_link_html', 'mtm_request_link', 'mtm_request_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_documentation_added_customer',
+                'name' => 'MTM Documentation Added Customer',
+                'subject' => '{{update_label}} for MTM request {{request_reference}}',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>{{update_description}}</p><p>Current status: {{current_status}}</p><p>{{mtm_request_link_html}}</p>',
+                'body_text' => 'Hello {{patient_name}}, {{update_description}} Current status: {{current_status}}. View request: {{mtm_request_link}}',
+                'variables' => ['patient_name', 'request_reference', 'update_label', 'update_description', 'current_status', 'mtm_request_link', 'mtm_request_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_documentation_added_pharmacist',
+                'name' => 'MTM Documentation Added Pharmacist',
+                'subject' => '{{update_label}} on {{request_reference}}',
+                'body_html' => '<p>Hello {{pharmacist_name}},</p><p>{{update_description}}</p><p>Patient: {{patient_name}}<br />Current status: {{current_status}}</p><p>{{pharmacist_dashboard_link_html}}</p>',
+                'body_text' => 'Hello {{pharmacist_name}}, {{update_description}} Patient: {{patient_name}}. Current status: {{current_status}}. Open queue: {{pharmacist_dashboard_link}}',
+                'variables' => ['pharmacist_name', 'patient_name', 'request_reference', 'update_label', 'update_description', 'current_status', 'pharmacist_dashboard_link', 'pharmacist_dashboard_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_order_created_customer',
+                'name' => 'MTM Product Order Created Customer',
+                'subject' => 'A product order was added to MTM request {{request_reference}}',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>A pharmacy product order (Order #{{order_id}}) was added to your MTM request.</p><p>{{mtm_request_link_html}}</p>',
+                'body_text' => 'Hello {{patient_name}}, Order #{{order_id}} was added to your MTM request {{request_reference}}. View request: {{mtm_request_link}}',
+                'variables' => ['patient_name', 'request_reference', 'order_id', 'mtm_request_link', 'mtm_request_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_order_created_pharmacist',
+                'name' => 'MTM Product Order Created Pharmacist',
+                'subject' => 'Product order created for {{request_reference}}',
+                'body_html' => '<p>Hello {{pharmacist_name}},</p><p>Order #{{order_id}} was created for {{patient_name}}\'s MTM request.</p><p>{{pharmacist_dashboard_link_html}}</p>',
+                'body_text' => 'Hello {{pharmacist_name}}, Order #{{order_id}} was created for {{patient_name}} on {{request_reference}}. Open queue: {{pharmacist_dashboard_link}}',
+                'variables' => ['pharmacist_name', 'patient_name', 'request_reference', 'order_id', 'pharmacist_dashboard_link', 'pharmacist_dashboard_link_html'],
             ],
         ];
 
@@ -210,7 +458,14 @@ final class Nevari_Plugin {
         $body_html = (string) ($existing->body_html ?? '');
         $version = (int) ($existing->version ?? 1);
         $stale_booking_keys = [
+            'appointment_customer_confirmation',
             'appointment_doctor_notification',
+            'appointment_customer_reminder_24h',
+            'appointment_customer_reminder_1h',
+            'appointment_doctor_reminder_24h',
+            'appointment_doctor_reminder_1h',
+            'appointment_customer_ending_soon',
+            'appointment_doctor_ending_soon',
             'appointment_cancelled',
             'appointment_rescheduled',
         ];
@@ -223,11 +478,35 @@ final class Nevari_Plugin {
             return false;
         }
 
-        if ($template_key === 'appointment_doctor_notification') {
-            return strpos($body_html, 'calendar_link') !== false || strpos($body_html, '{{patient_note}}') === false;
+        if ($template_key === 'appointment_customer_confirmation') {
+            return strpos($body_html, '{{appointment_duration}}') === false
+                || strpos($body_html, '{{appointment_reference}}') === false;
         }
 
-        return strpos($body_html, 'calendar_link') !== false || strpos($body_html, '{{recipient_name}}') === false;
+        if ($template_key === 'appointment_doctor_notification') {
+            return strpos($body_html, 'calendar_link') !== false
+                || strpos($body_html, '{{patient_note}}') === false
+                || strpos($body_html, '{{appointment_duration}}') === false
+                || strpos($body_html, '{{appointment_reference}}') === false;
+        }
+
+        if (in_array($template_key, [
+            'appointment_customer_reminder_24h',
+            'appointment_customer_reminder_1h',
+            'appointment_doctor_reminder_24h',
+            'appointment_doctor_reminder_1h',
+            'appointment_customer_ending_soon',
+            'appointment_doctor_ending_soon',
+        ], true)) {
+            return strpos($body_html, '{{appointment_duration}}') === false
+                || strpos($body_html, '{{appointment_reference}}') === false
+                || strpos($body_html, '{{booking_id}}') === false;
+        }
+
+        return strpos($body_html, 'calendar_link') !== false
+            || strpos($body_html, '{{recipient_name}}') === false
+            || strpos($body_html, '{{appointment_duration}}') === false
+            || strpos($body_html, '{{appointment_reference}}') === false;
     }
 
     public function register_post_types(): void {
@@ -242,6 +521,27 @@ final class Nevari_Plugin {
             'show_in_menu' => false,
             'show_in_rest' => false,
             'supports' => ['title', 'editor', 'thumbnail'],
+            'capability_type' => 'post',
+        ]);
+
+        register_post_type(self::SUBSCRIPTION_PLAN_POST_TYPE, [
+            'label' => __('Nevari subscriptions', 'nevari-pharmacy-core'),
+            'labels' => [
+                'name' => __('Nevari subscriptions', 'nevari-pharmacy-core'),
+                'singular_name' => __('Nevari subscription', 'nevari-pharmacy-core'),
+                'add_new_item' => __('Add New Subscription', 'nevari-pharmacy-core'),
+                'edit_item' => __('Edit Subscription', 'nevari-pharmacy-core'),
+                'new_item' => __('New Subscription', 'nevari-pharmacy-core'),
+                'view_item' => __('View Subscription', 'nevari-pharmacy-core'),
+                'search_items' => __('Search Subscriptions', 'nevari-pharmacy-core'),
+                'not_found' => __('No subscriptions found.', 'nevari-pharmacy-core'),
+            ],
+            'public' => false,
+            'show_ui' => true,
+            'show_in_menu' => true,
+            'menu_icon' => 'dashicons-yes-alt',
+            'show_in_rest' => false,
+            'supports' => ['title', 'editor', 'excerpt', 'custom-fields'],
             'capability_type' => 'post',
         ]);
     }
@@ -313,6 +613,30 @@ final class Nevari_Plugin {
                 'sanitize_callback' => 'sanitize_text_field',
                 'auth_callback' => static function () {
                     return current_user_can('edit_products') || current_user_can('nevari_manage_products');
+                },
+            ]);
+        }
+    }
+
+    public function register_subscription_plan_meta(): void {
+        if (!function_exists('register_post_meta')) {
+            return;
+        }
+
+        $string_meta = [
+            '_nevari_subscription_description' => 'sanitize_textarea_field',
+            '_nevari_subscription_features' => [Nevari_Subscriptions::class, 'normalize_multiline_text'],
+            '_nevari_subscription_checkout_link' => 'esc_url_raw',
+        ];
+
+        foreach ($string_meta as $key => $sanitize_callback) {
+            register_post_meta(self::SUBSCRIPTION_PLAN_POST_TYPE, $key, [
+                'single' => true,
+                'type' => 'string',
+                'show_in_rest' => true,
+                'sanitize_callback' => $sanitize_callback,
+                'auth_callback' => static function () {
+                    return current_user_can('edit_posts');
                 },
             ]);
         }
@@ -743,10 +1067,13 @@ final class Nevari_Plugin {
                 'appointment_end' => Nevari_Helpers::iso_datetime($appointment->end_at),
                 'appointment_date' => gmdate('F j, Y', strtotime((string) $appointment->start_at . ' UTC')),
                 'appointment_time' => gmdate('g:i A', strtotime((string) $appointment->start_at . ' UTC')),
+                'appointment_end_time' => gmdate('g:i A', strtotime((string) $appointment->end_at . ' UTC')),
+                'appointment_duration' => (string) ((int) ($appointment->duration_minutes ?? 30)) . ' minutes',
                 'appointment_status' => ucwords(str_replace('_', ' ', (string) $appointment->status)),
                 'appointment_amount' => $amount,
                 'amount_paid' => $amount,
                 'booking_id' => (string) $appointment->id,
+                'appointment_reference' => 'APT-' . str_pad((string) $appointment->id, 6, '0', STR_PAD_LEFT),
                 'order_id' => $appointment->order_id ? (string) $appointment->order_id : '',
                 'patient_note' => (string) ($appointment->reason ?: ''),
                 'reason' => (string) ($appointment->reason ?: ''),
@@ -825,7 +1152,11 @@ final class Nevari_Plugin {
             'nevari_send_customer_appointment_reminder_1h',
             'nevari_send_doctor_appointment_reminder_24h',
             'nevari_send_doctor_appointment_reminder_1h',
+            'nevari_send_customer_appointment_ending_soon',
+            'nevari_send_doctor_appointment_ending_soon',
             'nevari_send_customer_appointment_followup',
+            'nevari_process_appointment_meet_creation',
+            'nevari_end_appointment_meet_conference',
         ];
         foreach ($hooks as $hook) {
             if (function_exists('as_unschedule_all_actions')) {
@@ -880,44 +1211,12 @@ final class Nevari_Plugin {
         $order->save();
 
         $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
-        $doctor = get_user_by('id', (int) $appointment->doctor_user_id);
-        $patient = get_user_by('id', (int) $appointment->patient_user_id);
-        $this->ensure_appointment_google_meet($appointment, $order, $doctor instanceof WP_User ? $doctor : null, $patient instanceof WP_User ? $patient : null);
-        $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
-        $google_meet_link = Nevari_Helpers::appointment_meeting_link($appointment, $order);
-        if ((string) ($appointment->type ?? '') === 'video' && !$google_meet_link) {
-            Nevari_Audit::log('consultation', 'google', 'appointment.google_meet_missing_on_confirmation', 'error', [
-                'appointment_id' => $appointment_id,
-                'order_id' => $order_id,
-                'message' => 'Paid video appointment confirmed without a direct Google Meet link.',
-            ]);
+        if ((string) ($appointment->type ?? '') === 'video') {
+            $this->queue_appointment_meet_creation($appointment_id);
+            return;
         }
 
-        $context = $this->appointment_email_context($appointment, $order);
-        $this->send_guarded_appointment_email($appointment, 'customer_confirmation_sent_at', [
-            'recipient_user_id' => (int) $appointment->patient_user_id,
-            'related_object_type' => 'appointment',
-            'related_object_id' => $appointment_id,
-            'template_key' => 'appointment_customer_confirmation',
-            'variables' => $context['variables'],
-            'attachments' => [$context['ics']],
-        ], false);
-
-        if ($doctor && !empty($doctor->user_email) && is_email($doctor->user_email)) {
-            $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
-            $this->send_guarded_appointment_email($appointment, 'doctor_confirmation_sent_at', [
-                'recipient_user_id' => (int) $doctor->ID,
-                'related_object_type' => 'appointment',
-                'related_object_id' => $appointment_id,
-                'template_key' => 'appointment_doctor_notification',
-                'variables' => array_merge($context['variables'], [
-                    'dashboard_link' => $context['variables']['doctor_dashboard_link'],
-                ]),
-                'attachments' => [$context['ics']],
-            ], false);
-        }
-
-        $this->schedule_appointment_reminder($appointment_id, $appointment->start_at);
+        $this->send_confirmed_appointment_notifications($appointment_id);
     }
 
     private function ensure_appointment_google_meet($appointment, $order, ?WP_User $doctor, ?WP_User $patient): array {
@@ -937,15 +1236,21 @@ final class Nevari_Plugin {
         if (!empty($result['success'])) {
             $meet_link = esc_url_raw((string) $result['meet_link']);
             $event_id = sanitize_text_field((string) ($result['event_id'] ?? ''));
+            $space_name = sanitize_text_field((string) ($result['space_name'] ?? $event_id));
             $wpdb->update($appointments_table, [
                 'google_calendar_event_id' => $event_id ?: null,
+                'google_meet_space_name' => $space_name ?: null,
                 'google_meet_link' => $meet_link,
+                'google_meet_status' => 'ready',
+                'google_meet_retry_count' => 0,
+                'google_meet_next_retry_at' => null,
                 'google_meet_error' => null,
                 'google_meet_created_at' => Nevari_Helpers::now(),
                 'updated_at' => Nevari_Helpers::now(),
-            ], ['id' => $appointment_id], ['%s', '%s', '%s', '%s', '%s'], ['%d']);
+            ], ['id' => $appointment_id], ['%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s'], ['%d']);
             if ($order && is_object($order) && method_exists($order, 'update_meta_data')) {
                 $order->update_meta_data('_nevari_google_calendar_event_id', $event_id);
+                $order->update_meta_data('_nevari_google_meet_space_name', $space_name);
                 $order->update_meta_data('_nevari_google_meet_link', $meet_link);
                 $order->update_meta_data('_nevari_meet_link', $meet_link);
                 $order->save();
@@ -963,9 +1268,10 @@ final class Nevari_Plugin {
         $error_code = sanitize_key((string) ($result['code'] ?? 'google_meet_error'));
         $error_message = sanitize_textarea_field((string) ($result['message'] ?? 'Google Meet link could not be created.'));
         $wpdb->update($appointments_table, [
+            'google_meet_status' => 'failed',
             'google_meet_error' => $error_message,
             'updated_at' => Nevari_Helpers::now(),
-        ], ['id' => $appointment_id], ['%s', '%s'], ['%d']);
+        ], ['id' => $appointment_id], ['%s', '%s', '%s'], ['%d']);
         Nevari_Audit::log('consultation', 'google', 'appointment.google_meet_failed', 'error', [
             'appointment_id' => $appointment_id,
             'order_id' => $order && is_object($order) && method_exists($order, 'get_id') ? (int) $order->get_id() : null,
@@ -975,6 +1281,247 @@ final class Nevari_Plugin {
             'message' => 'Google Meet link could not be created.',
         ]);
         return $result;
+    }
+
+    private function queue_appointment_meet_creation(int $appointment_id, int $delay_seconds = 0): void {
+        global $wpdb;
+
+        $appointment = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, google_meet_status FROM " . Nevari_Helpers::table('appointments') . " WHERE id = %d",
+            $appointment_id
+        ));
+        if (!$appointment) {
+            return;
+        }
+
+        $now = Nevari_Helpers::now();
+        $status = $delay_seconds > 0 ? 'quota_wait' : 'pending';
+        $next_retry_at = $delay_seconds > 0 ? gmdate('Y-m-d H:i:s', time() + $delay_seconds) : null;
+        $wpdb->update(Nevari_Helpers::table('appointments'), [
+            'google_meet_status' => $status,
+            'google_meet_next_retry_at' => $next_retry_at,
+            'updated_at' => $now,
+        ], ['id' => $appointment_id], ['%s', '%s', '%s'], ['%d']);
+
+        $timestamp = time() + max(0, $delay_seconds);
+        if (function_exists('as_unschedule_all_actions')) {
+            as_unschedule_all_actions('nevari_process_appointment_meet_creation', [$appointment_id], 'nevari');
+        } else {
+            wp_clear_scheduled_hook('nevari_process_appointment_meet_creation', [$appointment_id]);
+        }
+        if (function_exists('as_schedule_single_action')) {
+            as_schedule_single_action($timestamp, 'nevari_process_appointment_meet_creation', [$appointment_id], 'nevari');
+        } else {
+            wp_schedule_single_event($timestamp, 'nevari_process_appointment_meet_creation', [$appointment_id]);
+        }
+    }
+
+    public function process_appointment_meet_creation(int $appointment_id): void {
+        global $wpdb;
+
+        $appointments_table = Nevari_Helpers::table('appointments');
+        $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
+        if (!$appointment || $appointment->status !== 'confirmed' || $appointment->payment_status !== 'paid') {
+            return;
+        }
+
+        $existing_link = Nevari_Helpers::appointment_meeting_link($appointment);
+        if ($existing_link && !empty($appointment->google_calendar_event_id)) {
+            $this->send_confirmed_appointment_notifications($appointment_id);
+            return;
+        }
+
+        $wait_seconds = $this->appointment_meet_creation_wait_seconds();
+        if ($wait_seconds > 0) {
+            $this->queue_appointment_meet_creation($appointment_id, $wait_seconds);
+            return;
+        }
+
+        $order = $appointment->order_id && function_exists('wc_get_order') ? wc_get_order((int) $appointment->order_id) : null;
+        $doctor = get_user_by('id', (int) $appointment->doctor_user_id);
+        $patient = get_user_by('id', (int) $appointment->patient_user_id);
+        $result = $this->ensure_appointment_google_meet($appointment, $order, $doctor instanceof WP_User ? $doctor : null, $patient instanceof WP_User ? $patient : null);
+        if (!empty($result['success'])) {
+            $this->record_google_meet_creation();
+            $this->send_confirmed_appointment_notifications($appointment_id);
+            return;
+        }
+
+        $retry_count = max(0, (int) $appointment->google_meet_retry_count) + 1;
+        $error_message = sanitize_textarea_field((string) ($result['message'] ?? 'Google Meet link could not be created.'));
+        $is_quota_error = $this->is_google_meet_quota_error($result);
+        if ($retry_count >= 8 || ($retry_count >= 5 && !$is_quota_error)) {
+            $wpdb->update($appointments_table, [
+                'google_meet_status' => 'failed',
+                'google_meet_retry_count' => $retry_count,
+                'google_meet_next_retry_at' => null,
+                'google_meet_error' => $error_message,
+                'updated_at' => Nevari_Helpers::now(),
+            ], ['id' => $appointment_id], ['%s', '%d', '%s', '%s', '%s'], ['%d']);
+            $this->notify_google_meet_failure($appointment, $error_message);
+            return;
+        }
+
+        $backoff = $is_quota_error
+            ? max(60, $this->appointment_meet_creation_wait_seconds(2))
+            : min(900, 60 * $retry_count);
+
+        $wpdb->update($appointments_table, [
+            'google_meet_status' => $is_quota_error ? 'quota_wait' : 'pending',
+            'google_meet_retry_count' => $retry_count,
+            'google_meet_next_retry_at' => gmdate('Y-m-d H:i:s', time() + $backoff),
+            'google_meet_error' => $error_message,
+            'updated_at' => Nevari_Helpers::now(),
+        ], ['id' => $appointment_id], ['%s', '%d', '%s', '%s', '%s'], ['%d']);
+
+        $this->queue_appointment_meet_creation($appointment_id, $backoff);
+    }
+
+    private function send_confirmed_appointment_notifications(int $appointment_id): void {
+        global $wpdb;
+
+        $appointments_table = Nevari_Helpers::table('appointments');
+        $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
+        if (!$appointment || $appointment->status !== 'confirmed' || $appointment->payment_status !== 'paid') {
+            return;
+        }
+
+        $order = $appointment->order_id && function_exists('wc_get_order') ? wc_get_order((int) $appointment->order_id) : null;
+        $context = $this->appointment_email_context($appointment, $order);
+        if (!empty($context['meet_link'])) {
+            $this->schedule_end_appointment_meet_conference((int) $appointment->id, (string) $appointment->end_at);
+        }
+
+        $this->send_guarded_appointment_email($appointment, 'customer_confirmation_sent_at', [
+            'recipient_user_id' => (int) $appointment->patient_user_id,
+            'recipient_email' => $context['patient'] instanceof WP_User ? $context['patient']->user_email : '',
+            'related_object_type' => 'appointment',
+            'related_object_id' => $appointment_id,
+            'template_key' => 'appointment_customer_confirmation',
+            'variables' => $context['variables'],
+            'attachments' => [$context['ics']],
+        ], false);
+
+        if ($context['doctor'] instanceof WP_User && !empty($context['doctor']->user_email) && is_email($context['doctor']->user_email)) {
+            $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
+            $this->send_guarded_appointment_email($appointment, 'doctor_confirmation_sent_at', [
+                'recipient_user_id' => (int) $context['doctor']->ID,
+                'recipient_email' => $context['doctor']->user_email,
+                'related_object_type' => 'appointment',
+                'related_object_id' => $appointment_id,
+                'template_key' => 'appointment_doctor_notification',
+                'variables' => array_merge($context['variables'], [
+                    'dashboard_link' => $context['variables']['doctor_dashboard_link'],
+                ]),
+                'attachments' => [$context['ics']],
+            ], false);
+        }
+
+        $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
+        if ($appointment && !empty($context['meet_link'])) {
+            $this->schedule_appointment_reminder($appointment_id, (string) $appointment->start_at);
+        }
+    }
+
+    private function appointment_meet_creation_limit(): int {
+        return max(1, (int) apply_filters('nevari_google_meet_creation_limit_per_ten_minutes', 8));
+    }
+
+    private function appointment_meet_creation_wait_seconds(int $minimum_seconds = 1): int {
+        $timestamps = $this->recent_google_meet_creations();
+        $limit = $this->appointment_meet_creation_limit();
+        if (count($timestamps) < $limit) {
+            return 0;
+        }
+        $oldest = min($timestamps);
+        $release_at = $oldest + (10 * MINUTE_IN_SECONDS);
+        return max($minimum_seconds, $release_at - time());
+    }
+
+    private function recent_google_meet_creations(): array {
+        $stored = get_option('nevari_google_meet_creation_window', []);
+        $values = is_array($stored) ? array_map('intval', $stored) : [];
+        $cutoff = time() - (10 * MINUTE_IN_SECONDS);
+        return array_values(array_filter($values, static fn($timestamp) => $timestamp >= $cutoff));
+    }
+
+    private function record_google_meet_creation(): void {
+        $timestamps = $this->recent_google_meet_creations();
+        $timestamps[] = time();
+        update_option('nevari_google_meet_creation_window', array_values($timestamps), false);
+    }
+
+    private function is_google_meet_quota_error(array $result): bool {
+        $status = (int) ($result['status'] ?? 0);
+        $code = strtolower((string) ($result['code'] ?? ''));
+        $message = strtolower((string) ($result['message'] ?? ''));
+        return $status === 429
+            || str_contains($code, 'quota')
+            || str_contains($code, 'rate')
+            || str_contains($message, 'quota')
+            || str_contains($message, 'rate limit')
+            || str_contains($message, 'resource exhausted');
+    }
+
+    private function schedule_end_appointment_meet_conference(int $appointment_id, string $end_at): void {
+        $timestamp = strtotime($end_at . ' UTC');
+        if (!$timestamp || $timestamp <= time()) {
+            return;
+        }
+        if (function_exists('as_unschedule_all_actions')) {
+            as_unschedule_all_actions('nevari_end_appointment_meet_conference', [$appointment_id], 'nevari');
+        } else {
+            wp_clear_scheduled_hook('nevari_end_appointment_meet_conference', [$appointment_id]);
+        }
+        if (function_exists('as_schedule_single_action')) {
+            as_schedule_single_action($timestamp, 'nevari_end_appointment_meet_conference', [$appointment_id], 'nevari');
+        } else {
+            wp_schedule_single_event($timestamp, 'nevari_end_appointment_meet_conference', [$appointment_id]);
+        }
+    }
+
+    public function end_appointment_meet_conference(int $appointment_id): void {
+        global $wpdb;
+
+        $appointments_table = Nevari_Helpers::table('appointments');
+        $appointment = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$appointments_table} WHERE id = %d", $appointment_id));
+        if (!$appointment || empty($appointment->google_meet_space_name)) {
+            return;
+        }
+
+        $result = Nevari_Helpers::google_meet_end_active_conference((string) $appointment->google_meet_space_name);
+        if (!empty($result['success'])) {
+            $wpdb->update($appointments_table, [
+                'updated_at' => Nevari_Helpers::now(),
+            ], ['id' => $appointment_id], ['%s'], ['%d']);
+            Nevari_Audit::log('consultation', 'google', 'appointment.google_meet_ended', 'success', [
+                'appointment_id' => $appointment_id,
+                'message' => 'Google Meet conference ended at scheduled appointment end.',
+            ]);
+            return;
+        }
+
+        Nevari_Audit::log('consultation', 'google', 'appointment.google_meet_end_failed', 'error', [
+            'appointment_id' => $appointment_id,
+            'error_code' => sanitize_key((string) ($result['code'] ?? 'google_meet_end_failed')),
+            'error_message' => sanitize_textarea_field((string) ($result['message'] ?? 'Google Meet active conference could not be ended.')),
+        ]);
+    }
+
+    private function notify_google_meet_failure($appointment, string $error_message): void {
+        $admin_email = get_option('admin_email');
+        if (!$admin_email || !is_email($admin_email)) {
+            return;
+        }
+
+        Nevari_Emails::queue_or_send([
+            'recipient_email' => $admin_email,
+            'subject' => 'Appointment Google Meet setup failed',
+            'body_html' => '<p>Google Meet setup failed for appointment #' . (int) $appointment->id . '.</p><p>' . esc_html($error_message) . '</p>',
+            'body_text' => 'Google Meet setup failed for appointment #' . (int) $appointment->id . '. ' . $error_message,
+            'related_object_type' => 'appointment',
+            'related_object_id' => (int) $appointment->id,
+        ], false);
     }
 
     public function handle_appointment_payment_failed(int $order_id): void {
@@ -1021,6 +1568,8 @@ final class Nevari_Plugin {
         $appointment = $wpdb->get_row($wpdb->prepare("SELECT end_at FROM " . Nevari_Helpers::table('appointments') . " WHERE id = %d", $appointment_id));
         $end_ts = $appointment ? strtotime((string) $appointment->end_at . ' UTC') : 0;
         if ($end_ts) {
+            $this->schedule_single_appointment_action('nevari_send_customer_appointment_ending_soon', $end_ts - MINUTE_IN_SECONDS, $appointment_id, $start_at);
+            $this->schedule_single_appointment_action('nevari_send_doctor_appointment_ending_soon', $end_ts - MINUTE_IN_SECONDS, $appointment_id, $start_at);
             $this->schedule_single_appointment_action('nevari_send_customer_appointment_followup', $end_ts + HOUR_IN_SECONDS, $appointment_id, $start_at);
         }
     }
@@ -1043,6 +1592,14 @@ final class Nevari_Plugin {
 
     public function send_doctor_appointment_reminder_1h(int $appointment_id, string $scheduled_start_at = ''): void {
         $this->send_role_appointment_message($appointment_id, $scheduled_start_at, 'doctor', 'doctor_reminder_1h_sent_at', 'appointment_doctor_reminder_1h');
+    }
+
+    public function send_customer_appointment_ending_soon(int $appointment_id, string $scheduled_start_at = ''): void {
+        $this->send_role_appointment_message($appointment_id, $scheduled_start_at, 'customer', 'customer_ending_soon_sent_at', 'appointment_customer_ending_soon');
+    }
+
+    public function send_doctor_appointment_ending_soon(int $appointment_id, string $scheduled_start_at = ''): void {
+        $this->send_role_appointment_message($appointment_id, $scheduled_start_at, 'doctor', 'doctor_ending_soon_sent_at', 'appointment_doctor_ending_soon');
     }
 
     public function send_customer_appointment_followup(int $appointment_id, string $scheduled_start_at = ''): void {
@@ -1161,6 +1718,9 @@ final class Nevari_Plugin {
         }
         if ($appointment->status === 'confirmed' && $appointment->payment_status === 'paid') {
             $this->schedule_appointment_reminder((int) $appointment->id, (string) $appointment->start_at);
+            if (!empty($context['meet_link'])) {
+                $this->schedule_end_appointment_meet_conference((int) $appointment->id, (string) $appointment->end_at);
+            }
         }
     }
 
@@ -1208,6 +1768,8 @@ final class Nevari_Plugin {
             'appointment_customer_reminder_1h',
             'appointment_doctor_reminder_24h',
             'appointment_doctor_reminder_1h',
+            'appointment_customer_ending_soon',
+            'appointment_doctor_ending_soon',
             'appointment_customer_followup',
         ];
         $log_ids = [];
@@ -1345,7 +1907,7 @@ final class Nevari_Plugin {
             return $normalized;
         }, is_array($allowed) ? $allowed : [])));
 
-        if (in_array($origin, $allowed, true)) {
+        if (in_array($origin, $allowed, true) || $this->is_default_local_development_origin($origin)) {
             return $origin;
         }
 
@@ -1423,6 +1985,33 @@ final class Nevari_Plugin {
         }
 
         return $normalized;
+    }
+
+    private function is_default_local_development_origin(string $origin): bool {
+        if ($origin === 'null') {
+            return true;
+        }
+
+        $parts = wp_parse_url($origin);
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return false;
+        }
+
+        $scheme = strtolower((string) $parts['scheme']);
+        $host = strtolower(trim((string) $parts['host'], '[]'));
+
+        if (!in_array($scheme, ['http', 'https'], true)) {
+            return false;
+        }
+
+        return in_array($host, ['localhost', '127.0.0.1', '::1'], true);
+    }
+
+    private function table_exists(string $table): bool {
+        global $wpdb;
+
+        $resolved = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
+        return is_string($resolved) && $resolved === $table;
     }
 
     private function rest_cors_headers(string $origin): array {

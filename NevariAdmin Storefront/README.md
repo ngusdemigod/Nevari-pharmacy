@@ -94,6 +94,9 @@ Default allowed origins:
 
 - the WordPress `home_url()`
 - the WordPress `site_url()`
+- `http://localhost` and `https://localhost` on any port
+- `http://127.0.0.1` and `https://127.0.0.1` on any port
+- `http://[::1]` and `https://[::1]` on any port
 - `null` for local `file://` usage
 
 If you host this storefront on a different domain, add that origin through the `nevari_allowed_origins` WordPress filter.

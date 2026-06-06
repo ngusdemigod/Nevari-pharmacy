@@ -30,6 +30,11 @@ final class Nevari_Rest {
         return $user_id > 0 && Nevari_Helpers::is_store_admin($user_id);
     }
 
+    public static function product_manager_required(): bool {
+        $user_id = Nevari_Auth::api_session_user_id();
+        return $user_id > 0 && (Nevari_Helpers::is_store_admin($user_id) || Nevari_Helpers::is_pharmacist($user_id));
+    }
+
     public static function doctor_or_admin_required(): bool {
         $user_id = Nevari_Auth::api_session_user_id();
         return $user_id > 0 && (Nevari_Helpers::is_doctor($user_id) || Nevari_Helpers::is_store_admin($user_id));
@@ -115,6 +120,12 @@ final class Nevari_Rest {
             'permission_callback' => [__CLASS__, 'auth_required'],
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/refill', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'orders_refill'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/send-receipt', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'orders_send_receipt'],
@@ -160,7 +171,7 @@ final class Nevari_Rest {
             [
                 'methods' => WP_REST_Server::CREATABLE,
                 'callback' => [__CLASS__, 'products_create'],
-                'permission_callback' => [__CLASS__, 'store_admin_required'],
+                'permission_callback' => [__CLASS__, 'product_manager_required'],
             ],
         ]);
 
@@ -173,31 +184,31 @@ final class Nevari_Rest {
             [
                 'methods' => WP_REST_Server::EDITABLE,
                 'callback' => [__CLASS__, 'products_update'],
-                'permission_callback' => [__CLASS__, 'store_admin_required'],
+                'permission_callback' => [__CLASS__, 'product_manager_required'],
             ],
             [
                 'methods' => WP_REST_Server::DELETABLE,
                 'callback' => [__CLASS__, 'products_delete'],
-                'permission_callback' => [__CLASS__, 'store_admin_required'],
+                'permission_callback' => [__CLASS__, 'product_manager_required'],
             ],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/(?P<id>\d+)/duplicate', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'products_duplicate'],
-            'permission_callback' => [__CLASS__, 'store_admin_required'],
+            'permission_callback' => [__CLASS__, 'product_manager_required'],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/media', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'products_upload_media'],
-            'permission_callback' => [__CLASS__, 'store_admin_required'],
+            'permission_callback' => [__CLASS__, 'product_manager_required'],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/(?P<id>\d+)/pharmacy-rules', [
             'methods' => WP_REST_Server::EDITABLE,
             'callback' => [__CLASS__, 'products_update_rules'],
-            'permission_callback' => [__CLASS__, 'store_admin_required'],
+            'permission_callback' => [__CLASS__, 'product_manager_required'],
         ]);
 
         foreach (['categories' => 'product_cat', 'tags' => 'product_tag'] as $path => $taxonomy) {
@@ -214,7 +225,7 @@ final class Nevari_Rest {
                     'callback' => static function (WP_REST_Request $request) use ($taxonomy) {
                         return self::terms_create($request, $taxonomy);
                     },
-                    'permission_callback' => [__CLASS__, 'store_admin_required'],
+                    'permission_callback' => [__CLASS__, 'product_manager_required'],
                 ],
             ]);
             register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/' . $path . '/(?P<id>\d+)', [
@@ -223,14 +234,14 @@ final class Nevari_Rest {
                     'callback' => static function (WP_REST_Request $request) use ($taxonomy) {
                         return self::terms_update($request, $taxonomy);
                     },
-                    'permission_callback' => [__CLASS__, 'store_admin_required'],
+                    'permission_callback' => [__CLASS__, 'product_manager_required'],
                 ],
                 [
                     'methods' => WP_REST_Server::DELETABLE,
                     'callback' => static function (WP_REST_Request $request) use ($taxonomy) {
                         return self::terms_delete($request, $taxonomy);
                     },
-                    'permission_callback' => [__CLASS__, 'store_admin_required'],
+                    'permission_callback' => [__CLASS__, 'product_manager_required'],
                 ],
             ]);
         }
@@ -1279,6 +1290,88 @@ final class Nevari_Rest {
         return Nevari_Helpers::success(self::format_order($order, true));
     }
 
+    public static function orders_refill(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_orders_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'refill'])) {
+            return $response;
+        }
+        if (!self::woo_available()) {
+            return Nevari_Helpers::error('woocommerce_missing', 'WooCommerce is required.', 503);
+        }
+
+        $user_id = Nevari_Auth::api_session_user_id();
+        $order = self::get_viewable_order((int) $request['id']);
+        if (is_wp_error($order)) {
+            return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) ($order->get_error_data()['status'] ?? 404));
+        }
+        if (!class_exists('Nevari_Subscriptions') || !Nevari_Subscriptions::user_has_paid_access($user_id)) {
+            return Nevari_Helpers::error('upgrade_required', 'Upgrade to Nevari Access Pro to request refills.', 403);
+        }
+
+        $items = self::refillable_order_items($order);
+        if (!$items) {
+            return Nevari_Helpers::error('refill_not_available', 'This order does not have any products available for refill.', 422);
+        }
+
+        $new_order = wc_create_order([
+            'customer_id' => (int) $order->get_user_id(),
+            'created_via' => 'nevari_refill',
+        ]);
+        if (is_wp_error($new_order)) {
+            return Nevari_Helpers::error('order_create_failed', $new_order->get_error_message(), 400);
+        }
+
+        foreach ($items as $item) {
+            $new_order->add_product($item['product'], $item['quantity']);
+        }
+
+        $billing = [
+            'first_name' => $order->get_billing_first_name(),
+            'last_name' => $order->get_billing_last_name(),
+            'company' => $order->get_billing_company(),
+            'email' => $order->get_billing_email(),
+            'phone' => $order->get_billing_phone(),
+            'address_1' => $order->get_billing_address_1(),
+            'address_2' => $order->get_billing_address_2(),
+            'city' => $order->get_billing_city(),
+            'state' => $order->get_billing_state(),
+            'postcode' => $order->get_billing_postcode(),
+            'country' => $order->get_billing_country(),
+        ];
+        $shipping = [
+            'first_name' => $order->get_shipping_first_name() ?: $order->get_billing_first_name(),
+            'last_name' => $order->get_shipping_last_name() ?: $order->get_billing_last_name(),
+            'company' => $order->get_shipping_company(),
+            'address_1' => $order->get_shipping_address_1() ?: $order->get_billing_address_1(),
+            'address_2' => $order->get_shipping_address_2() ?: $order->get_billing_address_2(),
+            'city' => $order->get_shipping_city() ?: $order->get_billing_city(),
+            'state' => $order->get_shipping_state() ?: $order->get_billing_state(),
+            'postcode' => $order->get_shipping_postcode() ?: $order->get_billing_postcode(),
+            'country' => $order->get_shipping_country() ?: $order->get_billing_country(),
+        ];
+        $new_order->set_address($billing, 'billing');
+        $new_order->set_address($shipping, 'shipping');
+        $new_order->set_customer_note(sprintf(
+            /* translators: %s: original order number */
+            __('Refill reorder from order %s.', 'nevari-pharmacy-core'),
+            (string) $order->get_order_number()
+        ));
+        $new_order->update_meta_data('_nevari_refill_source_order_id', (int) $order->get_id());
+        $new_order->set_status('pending');
+        $new_order->calculate_totals();
+        $new_order->save();
+
+        Nevari_Audit::log('orders', 'nevari', 'order.refill_created', 'success', [
+            'order_id' => (int) $new_order->get_id(),
+            'source_order_id' => (int) $order->get_id(),
+            'object_type' => 'shop_order',
+            'object_id' => (int) $new_order->get_id(),
+            'related_user_id' => $user_id,
+            'message' => 'Refill order created from customer dashboard.',
+        ]);
+
+        return Nevari_Helpers::success(self::format_order($new_order, true), ['created' => true], 201);
+    }
+
     public static function orders_send_receipt(WP_REST_Request $request): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('rest_orders_write', 10, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'send_receipt'])) {
             return $response;
@@ -1405,6 +1498,36 @@ final class Nevari_Rest {
         return new WP_Error('forbidden', 'You cannot view this order.', ['status' => 403]);
     }
 
+    private static function refillable_order_items($order): array {
+        $items = [];
+        if (!$order || !method_exists($order, 'get_items')) {
+            return $items;
+        }
+
+        foreach ($order->get_items() as $item) {
+            if (!is_object($item) || !method_exists($item, 'get_quantity')) {
+                continue;
+            }
+            $product = method_exists($item, 'get_product') ? $item->get_product() : null;
+            if (!$product && function_exists('wc_get_product')) {
+                $product_id = method_exists($item, 'get_variation_id') && (int) $item->get_variation_id() > 0
+                    ? (int) $item->get_variation_id()
+                    : (method_exists($item, 'get_product_id') ? (int) $item->get_product_id() : 0);
+                $product = $product_id > 0 ? wc_get_product($product_id) : null;
+            }
+            if (!$product || (method_exists($product, 'is_purchasable') && !$product->is_purchasable())) {
+                continue;
+            }
+            $quantity = max(1, (int) ceil((float) $item->get_quantity()));
+            $items[] = [
+                'product' => $product,
+                'quantity' => $quantity,
+            ];
+        }
+
+        return $items;
+    }
+
     private static function format_order($order, bool $include_items = false): array {
         $assigned_doctor_id = (int) $order->get_meta('_nevari_assigned_doctor_user_id');
         $assigned_doctor = $assigned_doctor_id ? get_user_by('id', $assigned_doctor_id) : null;
@@ -1417,6 +1540,7 @@ final class Nevari_Rest {
             $account_name = trim((string) $customer_user->display_name);
         }
         $items = $order->get_items();
+        $refillable_items = self::refillable_order_items($order);
         $billing_first = trim((string) $order->get_billing_first_name());
         $billing_last = trim((string) $order->get_billing_last_name());
         $shipping_first = trim((string) $order->get_shipping_first_name());
@@ -1487,6 +1611,8 @@ final class Nevari_Rest {
             'items_quantity' => array_reduce($items, static function ($carry, $item) {
                 return $carry + (float) $item->get_quantity();
             }, 0),
+            'can_refill' => !empty($refillable_items),
+            'refill_available' => !empty($refillable_items),
             'items_summary' => $items_summary,
             'created_at' => $order->get_date_created() ? $order->get_date_created()->date('c') : null,
             'updated_at' => $order->get_date_modified() ? $order->get_date_modified()->date('c') : null,
@@ -2987,6 +3113,9 @@ final class Nevari_Rest {
             'doctor_user_id' => (int) $user_id,
             'profile_post_id' => $profile_id,
             'license_number' => isset($params['license_number']) ? sanitize_text_field((string) $params['license_number']) : null,
+            'position' => self::normalize_doctor_position($params['position'] ?? ($params['pricing_tier'] ?? 'specialist')),
+            'is_available' => isset($params['is_available']) ? (int) Nevari_Helpers::bool_param($params['is_available']) : 1,
+            'max_workload_per_week' => isset($params['max_workload_per_week']) ? max(1, (int) $params['max_workload_per_week']) : 40,
             'default_appointment_duration' => isset($params['default_appointment_duration']) ? (int) $params['default_appointment_duration'] : 30,
             'timezone' => isset($params['timezone']) ? sanitize_text_field((string) $params['timezone']) : 'UTC',
             'accepts_new_patients' => isset($params['accepts_new_patients']) ? (int) Nevari_Helpers::bool_param($params['accepts_new_patients']) : 1,
@@ -3261,6 +3390,9 @@ final class Nevari_Rest {
             'doctor_user_id' => $doctor_id,
             'profile_post_id' => $profile ? (int) $profile[0] : null,
             'license_number' => isset($params['license_number']) ? sanitize_text_field((string) $params['license_number']) : null,
+            'position' => self::normalize_doctor_position($params['position'] ?? ($params['pricing_tier'] ?? 'specialist')),
+            'is_available' => isset($params['is_available']) ? (int) Nevari_Helpers::bool_param($params['is_available']) : 1,
+            'max_workload_per_week' => isset($params['max_workload_per_week']) ? max(1, (int) $params['max_workload_per_week']) : 40,
             'default_appointment_duration' => isset($params['default_appointment_duration']) ? (int) $params['default_appointment_duration'] : 30,
             'timezone' => isset($params['timezone']) ? sanitize_text_field((string) $params['timezone']) : 'UTC',
             'accepts_new_patients' => isset($params['accepts_new_patients']) ? (int) Nevari_Helpers::bool_param($params['accepts_new_patients']) : 1,
@@ -3296,6 +3428,10 @@ final class Nevari_Rest {
             'accepting_patients' => $settings ? (bool) $settings->accepts_new_patients : true,
             'telehealth_enabled' => $settings ? (bool) $settings->telehealth_enabled : true,
             'timezone' => $settings ? $settings->timezone : 'UTC',
+            'position' => $settings ? self::normalize_doctor_position($settings->position ?? 'specialist') : 'specialist',
+            'level_value' => self::doctor_position_level($settings ? (string) ($settings->position ?? 'specialist') : 'specialist'),
+            'is_available' => $settings ? (bool) $settings->is_available : true,
+            'max_workload_per_week' => $settings ? (int) $settings->max_workload_per_week : 40,
             'profile_image' => $profile_id ? get_the_post_thumbnail_url($profile_id, 'medium') : null,
             'disabled' => (bool) get_user_meta((int) $user->ID, '_nevari_doctor_disabled', true),
             'product_category_ids' => self::doctor_product_category_ids((int) $user->ID),
@@ -3395,6 +3531,187 @@ final class Nevari_Rest {
         global $wpdb;
         $settings = $wpdb->get_row($wpdb->prepare("SELECT default_appointment_duration FROM " . Nevari_Helpers::table('doctor_settings') . " WHERE doctor_user_id = %d", $doctor_id));
         return $settings ? max(5, (int) $settings->default_appointment_duration) : 30;
+    }
+
+    private static function normalize_doctor_position($value): string {
+        $position = sanitize_key((string) $value);
+        return in_array($position, ['junior', 'senior', 'specialist'], true) ? $position : 'specialist';
+    }
+
+    private static function doctor_position_level(string $position): int {
+        return match (self::normalize_doctor_position($position)) {
+            'junior' => 1,
+            'senior' => 2,
+            default => 3,
+        };
+    }
+
+    private static function appointment_week_bounds(string $start): array {
+        $timestamp = strtotime($start . ' UTC');
+        if (!$timestamp) {
+            return ['', ''];
+        }
+        $week_start = strtotime('monday this week', $timestamp);
+        if ((int) gmdate('N', $timestamp) === 1) {
+            $week_start = strtotime(gmdate('Y-m-d 00:00:00', $timestamp) . ' UTC');
+        }
+        $week_end = $week_start + (7 * DAY_IN_SECONDS);
+        return [gmdate('Y-m-d H:i:s', $week_start), gmdate('Y-m-d H:i:s', $week_end)];
+    }
+
+    private static function current_weekly_appointment_count(int $doctor_id, string $week_start, string $week_end): int {
+        global $wpdb;
+        if (!$doctor_id || !$week_start || !$week_end) {
+            return 0;
+        }
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*)
+             FROM " . Nevari_Helpers::table('appointments') . "
+             WHERE doctor_user_id = %d
+               AND start_at >= %s
+               AND start_at < %s
+               AND status IN ('awaiting_payment','requested','confirmed','completed')",
+            $doctor_id,
+            $week_start,
+            $week_end
+        ));
+    }
+
+    private static function eligible_doctors_for_auto_assignment(string $start, string $end): array {
+        global $wpdb;
+
+        $users = get_users([
+            'role' => 'doctor',
+            'orderby' => 'display_name',
+            'order' => 'ASC',
+        ]);
+        if (!$users) {
+            return [];
+        }
+
+        [$week_start, $week_end] = self::appointment_week_bounds($start);
+        $eligible = [];
+        foreach ($users as $user) {
+            if (!$user instanceof WP_User) {
+                continue;
+            }
+            if (get_user_meta((int) $user->ID, '_nevari_doctor_disabled', true)) {
+                continue;
+            }
+
+            $settings = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM " . Nevari_Helpers::table('doctor_settings') . " WHERE doctor_user_id = %d",
+                (int) $user->ID
+            ));
+            if ($settings && !(bool) $settings->is_available) {
+                continue;
+            }
+
+            $availability = get_user_meta((int) $user->ID, '_nevari_availability', true);
+            $availability = is_array($availability) ? $availability : [];
+            $minimum_duration = $settings ? max(5, (int) $settings->default_appointment_duration) : 30;
+            if (!self::appointment_duration_is_available((int) $user->ID, $start, $end, $availability, $minimum_duration)) {
+                continue;
+            }
+
+            $position = self::normalize_doctor_position($settings->position ?? 'specialist');
+            $weekly_count = self::current_weekly_appointment_count((int) $user->ID, $week_start, $week_end);
+            $max_workload = $settings ? max(1, (int) $settings->max_workload_per_week) : 40;
+            if ($weekly_count >= $max_workload) {
+                continue;
+            }
+
+            $eligible[] = [
+                'doctor' => $user,
+                'position' => $position,
+                'level_value' => self::doctor_position_level($position),
+                'weekly_count' => $weekly_count,
+                'max_workload_per_week' => $max_workload,
+            ];
+        }
+
+        return $eligible;
+    }
+
+    private static function round_robin_rank(string $position, int $doctor_id, array $group_doctor_ids): int {
+        global $wpdb;
+
+        $table = Nevari_Helpers::table('round_robin_tracker');
+        $last_doctor_id = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT last_doctor_id FROM {$table} WHERE doctor_level = %s LIMIT 1",
+            $position
+        ));
+        $ids = array_values(array_unique(array_map('intval', $group_doctor_ids)));
+        sort($ids);
+        if (!$ids) {
+            return 0;
+        }
+        $last_index = array_search($last_doctor_id, $ids, true);
+        if ($last_index === false) {
+            $last_index = -1;
+        }
+        $doctor_index = array_search($doctor_id, $ids, true);
+        if ($doctor_index === false) {
+            return count($ids);
+        }
+        return ($doctor_index - $last_index + count($ids)) % count($ids);
+    }
+
+    private static function select_auto_assigned_doctor(string $start, string $end): ?WP_User {
+        global $wpdb;
+
+        $eligible = self::eligible_doctors_for_auto_assignment($start, $end);
+        if (!$eligible) {
+            return null;
+        }
+
+        $by_level = [
+            'specialist' => [],
+            'senior' => [],
+            'junior' => [],
+        ];
+        foreach ($eligible as $row) {
+            $by_level[$row['position']][] = $row;
+        }
+
+        foreach (['specialist', 'senior', 'junior'] as $position) {
+            if (empty($by_level[$position])) {
+                continue;
+            }
+            $doctor_ids = array_map(static fn($row) => (int) $row['doctor']->ID, $by_level[$position]);
+            usort($by_level[$position], static function (array $left, array $right) use ($position, $doctor_ids) {
+                if ($left['weekly_count'] !== $right['weekly_count']) {
+                    return $left['weekly_count'] <=> $right['weekly_count'];
+                }
+                $leftRank = self::round_robin_rank($position, (int) $left['doctor']->ID, $doctor_ids);
+                $rightRank = self::round_robin_rank($position, (int) $right['doctor']->ID, $doctor_ids);
+                if ($leftRank !== $rightRank) {
+                    return $leftRank <=> $rightRank;
+                }
+                return strcasecmp((string) $left['doctor']->display_name, (string) $right['doctor']->display_name);
+            });
+            return $by_level[$position][0]['doctor'];
+        }
+
+        return null;
+    }
+
+    private static function touch_round_robin_tracker(string $position, int $doctor_id): void {
+        global $wpdb;
+
+        $position = self::normalize_doctor_position($position);
+        $table = Nevari_Helpers::table('round_robin_tracker');
+        $existing = (int) $wpdb->get_var($wpdb->prepare("SELECT id FROM {$table} WHERE doctor_level = %s", $position));
+        $data = [
+            'doctor_level' => $position,
+            'last_doctor_id' => $doctor_id,
+            'updated_at' => Nevari_Helpers::now(),
+        ];
+        if ($existing) {
+            $wpdb->update($table, $data, ['id' => $existing], ['%s', '%d', '%s'], ['%d']);
+            return;
+        }
+        $wpdb->insert($table, $data, ['%s', '%d', '%s']);
     }
 
     private static function appointment_duration_is_available(int $doctor_id, string $start, string $end, array $availability, int $minimum_duration): bool {
@@ -3516,10 +3833,24 @@ final class Nevari_Rest {
             }
         }
 
-        if (!$doctor_id || !$patient_id || !$start || !$end || strtotime($end) <= strtotime($start)) {
-            return Nevari_Helpers::error('validation_error', 'doctor_user_id and valid start_at/end_at are required.', 422);
+        if (!$patient_id || !$start || !$end || strtotime($end) <= strtotime($start)) {
+            return Nevari_Helpers::error('validation_error', 'Valid start_at/end_at are required.', 422);
         }
-        $doctor = get_user_by('id', $doctor_id);
+
+        $doctor = null;
+        if (!$doctor_id && Nevari_Helpers::is_patient() && !Nevari_Helpers::is_store_admin()) {
+            $doctor = self::select_auto_assigned_doctor($start, $end);
+            if (!$doctor instanceof WP_User) {
+                return Nevari_Helpers::error('doctor_unavailable', 'No doctor is available for the selected date and time.', 409);
+            }
+            $doctor_id = (int) $doctor->ID;
+        }
+
+        if (!$doctor_id) {
+            return Nevari_Helpers::error('validation_error', 'doctor_user_id is required for this booking flow.', 422);
+        }
+
+        $doctor = $doctor instanceof WP_User ? $doctor : get_user_by('id', $doctor_id);
         if (!$doctor || !in_array('doctor', (array) $doctor->roles, true) || get_user_meta($doctor_id, '_nevari_doctor_disabled', true)) {
             return Nevari_Helpers::error('doctor_not_found', 'Doctor not found or inactive.', 404);
         }
@@ -3604,6 +3935,11 @@ final class Nevari_Rest {
             $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock_name));
             return Nevari_Helpers::error('appointment_create_failed', 'Appointment could not be reserved.', 500);
         }
+        $settings_row = $wpdb->get_row($wpdb->prepare(
+            "SELECT position FROM " . Nevari_Helpers::table('doctor_settings') . " WHERE doctor_user_id = %d",
+            $doctor_id
+        ));
+        self::touch_round_robin_tracker((string) ($settings_row->position ?? 'specialist'), $doctor_id);
         Nevari_Helpers::ensure_doctor_patient_link($doctor_id, $patient_id, 'appointment');
         $checkout_order = self::create_appointment_checkout_order($appointment_id, $patient_id, $doctor_id, $fee, $reason);
         if (is_wp_error($checkout_order)) {
@@ -3744,6 +4080,8 @@ final class Nevari_Rest {
             $data['customer_reminder_1h_sent_at'] = null;
             $data['doctor_reminder_24h_sent_at'] = null;
             $data['doctor_reminder_1h_sent_at'] = null;
+            $data['customer_ending_soon_sent_at'] = null;
+            $data['doctor_ending_soon_sent_at'] = null;
             $data['customer_followup_sent_at'] = null;
             $action = 'appointment.rescheduled';
         } elseif (str_ends_with($route, '/notes')) {

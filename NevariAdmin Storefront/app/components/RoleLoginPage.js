@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { setDocumentMetadata } from "./page-metadata";
 import { buildUrl, defaultSession, frontendContext, isPairingRequiredPayload, loadSession, resetToPairingState, saveSession } from "./role-session";
@@ -32,6 +32,7 @@ export default function RoleLoginPage({ config }) {
   const [resetUsername, setResetUsername] = useState("");
   const [registration, setRegistration] = useState({ firstName: "", lastName: "", email: "", password: "" });
   const [verification, setVerification] = useState({ challengeId: "", maskedEmail: "", code: "" });
+  const verificationInputRef = useRef(null);
   const [view, setView] = useState("login");
   const [feedback, setFeedback] = useState(config.loginPrompt || `Sign in to ${config.label}.`);
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -279,12 +280,14 @@ export default function RoleLoginPage({ config }) {
   return (
     <div className="auth-gate">
       <div className="auth-gate-shell">
-        <section className="auth-card auth-screen-card">
-          <div className="auth-card-body">
-            <div className="auth-intro">
-              <img className="auth-logo" src="/ne.webp" alt="Nevari logo" />
-              <h1 className="auth-title">{config.label}</h1>
-            </div>
+        <section className={`auth-card auth-screen-card ${view === "verify" ? "auth-verify-screen-card" : ""}`}>
+          <div className={`auth-card-body ${view === "verify" ? "auth-verify-card-body" : ""}`}>
+            {view !== "verify" ? (
+              <div className="auth-intro">
+                <img className="auth-logo" src="/ne.webp" alt="Nevari logo" />
+                <h1 className="auth-title">{config.label}</h1>
+              </div>
+            ) : null}
             {view === "login" ? (
               <form className="auth-form auth-reference-form" onSubmit={signIn}>
                 <label className="form-group"><span>Username or email</span><div className="input-wrap"><input value={username} onChange={(event) => setUsername(event.target.value)} required /></div></label>
@@ -304,9 +307,39 @@ export default function RoleLoginPage({ config }) {
               </form>
             ) : null}
             {view === "verify" ? (
-              <form className="auth-form auth-reference-form" onSubmit={verifyCode}>
-                <label className="form-group"><span>Verification code</span><div className="input-wrap"><input inputMode="numeric" pattern="[0-9]*" maxLength={6} value={verification.code} onChange={(event) => setVerification((prev) => ({ ...prev, code: event.target.value.replace(/\D+/g, "").slice(0, 6) }))} required /></div></label>
-                <div className="auth-actions"><button className="auth-primary-button" type="submit" disabled={loadingAction === "verify"}><AuthButtonContent loading={loadingAction === "verify"} loadingText="Verifying..." idleText="Verify Code" /></button></div>
+              <form className="auth-form auth-reference-form auth-otp-form" onSubmit={verifyCode}>
+                <div className="auth-otp-card">
+                  <h2 className="auth-otp-title">Verify to Continue</h2>
+                  <p className="auth-otp-recipient">Recipient: {verification.maskedEmail || "Waiting for OTP"}</p>
+                  <input
+                    ref={verificationInputRef}
+                    className="auth-otp-hidden-input"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={verification.code}
+                    onChange={(event) => setVerification((prev) => ({ ...prev, code: event.target.value.replace(/\D+/g, "").slice(0, 6) }))}
+                    aria-label="Verification code"
+                  />
+                  <div className="auth-otp-boxes" role="group" aria-label="Verification code digits">
+                    {Array.from({ length: 6 }).map((_, index) => (
+                      <button
+                        className={`auth-otp-box ${verification.code[index] ? "filled" : ""}`}
+                        key={`auth-otp-box-${index}`}
+                        type="button"
+                        onClick={() => verificationInputRef.current?.focus()}
+                        aria-label={`Digit ${index + 1}`}
+                      >
+                        {verification.code[index] || ""}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="auth-actions auth-otp-actions">
+                    <button className="auth-primary-button auth-otp-submit" type="submit" disabled={loadingAction === "verify" || verification.code.length !== 6}>
+                      <AuthButtonContent loading={loadingAction === "verify"} loadingText="Verifying..." idleText="Verify Code" />
+                    </button>
+                  </div>
+                </div>
                 <div className="auth-inline-links">
                   <button className="auth-text-link" type="button" onClick={() => setView("login")}>Back to login</button>
                   <button className="auth-text-link" type="button" onClick={resendCode} disabled={resendLoading}>

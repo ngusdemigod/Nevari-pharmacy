@@ -226,6 +226,48 @@ final class Nevari_Helpers {
         return ['success' => false, 'code' => 'google_meet_link_missing', 'message' => 'Google Meet API created a space without a direct Meet link.'];
     }
 
+    public static function google_meet_end_active_conference(string $space_name): array {
+        $space_name = trim($space_name);
+        if ($space_name === '') {
+            return ['success' => false, 'code' => 'missing_space', 'message' => 'Google Meet space name is required.'];
+        }
+        if (!self::google_meet_oauth_configured()) {
+            return ['success' => false, 'code' => 'google_credentials_missing', 'message' => 'Google Meet OAuth credentials are not configured.'];
+        }
+        $token = self::google_oauth_access_token();
+        if ($token === '') {
+            return ['success' => false, 'code' => 'google_access_token_failed', 'message' => 'Google access token could not be refreshed.'];
+        }
+        $space_id = str_starts_with($space_name, 'spaces/') ? substr($space_name, strlen('spaces/')) : $space_name;
+        $space_path = 'spaces/' . rawurlencode($space_id);
+        $response = wp_remote_post(
+            'https://meet.googleapis.com/v2/' . $space_path . ':endActiveConference',
+            [
+                'timeout' => 20,
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $token,
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                ],
+                'body' => '{}',
+            ]
+        );
+        if (is_wp_error($response)) {
+            return ['success' => false, 'code' => $response->get_error_code(), 'message' => $response->get_error_message()];
+        }
+        $code = (int) wp_remote_retrieve_response_code($response);
+        if ($code >= 200 && $code < 300) {
+            return ['success' => true];
+        }
+        $body = json_decode((string) wp_remote_retrieve_body($response), true);
+        return [
+            'success' => false,
+            'code' => 'google_meet_end_failed',
+            'status' => $code,
+            'message' => is_array($body) ? (string) ($body['error']['message'] ?? 'Google Meet active conference could not be ended.') : 'Google Meet active conference could not be ended.',
+        ];
+    }
+
     private static function google_oauth_access_token(): string {
         $settings = self::google_meet_oauth_settings();
         if (empty($settings['client_id']) || empty($settings['client_secret']) || empty($settings['refresh_token'])) {
@@ -587,6 +629,10 @@ final class Nevari_Helpers {
         return in_array('doctor', self::current_user_roles($user_id), true);
     }
 
+    public static function is_pharmacist(?int $user_id = null): bool {
+        return in_array('pharmacist', self::current_user_roles($user_id), true);
+    }
+
     public static function is_patient(?int $user_id = null): bool {
         return in_array('patient', self::current_user_roles($user_id), true) || in_array('customer', self::current_user_roles($user_id), true);
     }
@@ -888,6 +934,10 @@ final class Nevari_Helpers {
             'google_meet_link' => self::appointment_meeting_link($row, $order),
             'meet_link' => self::appointment_meeting_link($row, $order),
             'google_calendar_event_id' => isset($row->google_calendar_event_id) && $row->google_calendar_event_id ? (string) $row->google_calendar_event_id : null,
+            'google_meet_space_name' => isset($row->google_meet_space_name) && $row->google_meet_space_name ? (string) $row->google_meet_space_name : null,
+            'google_meet_status' => isset($row->google_meet_status) && $row->google_meet_status ? (string) $row->google_meet_status : null,
+            'google_meet_retry_count' => isset($row->google_meet_retry_count) ? (int) $row->google_meet_retry_count : 0,
+            'google_meet_next_retry_at' => isset($row->google_meet_next_retry_at) ? self::iso_datetime($row->google_meet_next_retry_at) : null,
             'google_meet_error' => isset($row->google_meet_error) && $row->google_meet_error ? (string) $row->google_meet_error : null,
             'google_meet_created_at' => isset($row->google_meet_created_at) ? self::iso_datetime($row->google_meet_created_at) : null,
             'prescription' => $prescription_row ? [

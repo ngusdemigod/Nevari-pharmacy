@@ -105,6 +105,8 @@ final class Nevari_Emails {
                 'appointment_customer_reminder_1h',
                 'appointment_doctor_reminder_24h',
                 'appointment_doctor_reminder_1h',
+                'appointment_customer_ending_soon',
+                'appointment_doctor_ending_soon',
                 'appointment_rescheduled',
                 'appointment-approved',
             ];

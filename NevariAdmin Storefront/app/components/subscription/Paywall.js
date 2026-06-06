@@ -1,35 +1,27 @@
 "use client";
 
+import { SubscriptionProBadge, SubscriptionSealArt } from "./SubscriptionVisuals";
+
 const BENEFITS = [
   {
-    icon: "◔",
+    iconSrc: "/subscription-icon-consultations.png",
     tone: "lavender",
     title: "5x more Doctor Consultations.",
     description: "Access more doctor and care specialist consultations, giving you faster medical attention, consistent follow-ups, and better continuity of care whenever you need support.",
   },
   {
-    icon: "⌁",
+    iconSrc: "/subscription-icon-therapy.png",
     tone: "amber",
     title: "Medical Therapy Management",
     description: "Get professional medication reviews and guidance to help you understand your prescriptions, manage side effects, and stay on track with your treatment plan.",
   },
   {
-    icon: "⊞",
+    iconSrc: "/subscription-icon-refills.png",
     tone: "mint",
     title: "Free Prescription Refills and Deliveries",
     description: "Enjoy convenient prescription refill processing and doorstep medication delivery, helping you stay consistent with treatment.",
   },
 ];
-
-function Seal({ variant = "brand" }) {
-  return (
-    <div className={`subscription-seal subscription-seal-${variant}`} aria-hidden="true">
-      <div className="subscription-seal-inner">
-        {variant === "success" ? <span className="subscription-seal-check">✓</span> : <span className="subscription-seal-brand">ne</span>}
-      </div>
-    </div>
-  );
-}
 
 export default function Paywall({
   onOpenMenu,
@@ -48,11 +40,9 @@ export default function Paywall({
 
       <div className="subscription-copy-block">
         <h1 className="subscription-title">
-          {heading} <span className="subscription-pro-badge">Pro</span>
+          {heading} <SubscriptionProBadge />
         </h1>
-        <div className="subscription-seal-wrap">
-          <Seal variant="brand" />
-        </div>
+        <SubscriptionSealArt variant="paywall" />
         <p className="subscription-subtitle">
           Upgrade to Nevari Access Pro to enjoy smarter schedules and smarter schedules
         </p>
@@ -62,7 +52,7 @@ export default function Paywall({
         {BENEFITS.map((benefit) => (
           <article key={benefit.title} className="subscription-benefit">
             <div className={`subscription-benefit-icon is-${benefit.tone}`} aria-hidden="true">
-              {benefit.icon}
+              <img src={benefit.iconSrc} alt="" />
             </div>
             <div className="subscription-benefit-copy">
               <strong>{benefit.title}</strong>

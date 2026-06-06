@@ -368,7 +368,7 @@ final class Nevari_Connections {
         if (empty($payload['frontend_type'])) {
             return false;
         }
-        return in_array((string) $payload['frontend_type'], ['storefront', 'doctors_dashboard', 'patient_dashboard'], true);
+        return in_array((string) $payload['frontend_type'], ['storefront', 'doctors_dashboard', 'pharmacist_dashboard', 'patient_dashboard'], true);
     }
 
     private static function site_logo_url(): ?string {

@@ -16,6 +16,14 @@ export const FRONTENDS = {
     loginPath: "/admin/doctor/login",
     dashboardPath: "/admin/doctor"
   },
+  pharmacist: {
+    type: "pharmacist_dashboard",
+    label: "Nevari Pharmacist",
+    loginPrompt: "Signin to your Pharmacist Dashboard",
+    storageKey: "nevari_pharmacist_dashboard_session",
+    loginPath: "/admin/pharmacist/login",
+    dashboardPath: "/admin/pharmacist"
+  },
   admin: {
     type: "storefront",
     label: "Nevari Admin",

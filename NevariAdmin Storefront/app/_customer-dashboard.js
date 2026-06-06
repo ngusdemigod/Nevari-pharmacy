@@ -12,10 +12,10 @@ import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
 import { apiRequest, buildDashboardCacheKey, buildUrl, clearDashboardCacheForFrontend, DASHBOARD_CACHE_TTL_MS, fitTextToContainer, getOrderTypeMeta, hydrateStoredSession, isSessionUsable, money, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
 import { clearSessionAuth } from "./components/role-session";
-import ProtectedFeature from "./components/subscription/ProtectedFeature";
 import SubscriptionGate from "./components/subscription/SubscriptionGate";
 import { useSubscription } from "./hooks/use-subscription";
 import { SkeletonBox } from "./_doctor-dashboard";
+import { createMtmRequest, fetchCustomerMtmRequests, scheduleMtmRequest } from "./lib/nevari-api";
 
 const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
@@ -23,6 +23,14 @@ const CUSTOMER_NURSE_REQUESTS_KEY = "nevari_customer_nurse_requests";
 const CUSTOMER_DASHBOARD_CACHE_SCOPE = "customer-dashboard";
 const SSR_SAFE_STORE_CURRENCY = "USD";
 const SSR_SAFE_STORE_TIMEZONE = "UTC";
+const NURSE_REQUEST_CARE_TYPES = ["Elderly Care", "Post Surgery Recovery", "Medication Assistance", "Wound Dressing", "Injection Administration", "Chronic Disease Monitoring", "Palliative Care"];
+const NURSE_REQUEST_VISIT_TYPES = ["Recurring", "One Time"];
+const NURSE_REQUEST_DURATIONS = ["30 mins", "1 hour", "2 hours", "4 hours", "8 hours", "12 hours"];
+const NURSE_REQUEST_CARE_SHIFTS = ["Day", "Night"];
+const NURSE_REQUEST_YES_NO_FIELDS = ["liveInCareRequired", "wheelchairAssistanceNeeded", "medicalEquipmentPresent", "requiresLiftingAssistance", "infectiousDisease"];
+const NURSE_REQUEST_YES_NO_OPTIONS = ["Yes", "No"];
+const NURSE_REQUEST_CLINICAL_REQUIREMENTS = ["Medication Administration", "Catheter Care", "Blood Pressure Monitoring", "Diabetes Monitoring", "IV Therapy", "Feeding Tube Support"];
+const NURSE_REQUEST_UPLOAD_LABELS = ["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"];
 const pages = ["overview", "orders", "appointment", "request", "settings", "profile", "therapy"];
 const CUSTOMER_DASHBOARD_REFRESH_MS = 60_000;
 const pageLabels = {
@@ -34,6 +42,26 @@ const pageLabels = {
   profile: "My Profile",
   therapy: "Medical Therapy Management"
 };
+const BOOKING_SLOT_TIMES = [
+  "09:00",
+  "09:30",
+  "10:00",
+  "10:30",
+  "11:00",
+  "11:30",
+  "12:00",
+  "12:30",
+  "13:00",
+  "13:30",
+  "14:00",
+  "14:30",
+  "15:00",
+  "15:30",
+  "16:00",
+  "16:30",
+  "17:00",
+  "17:30",
+];
 
 function resolveUserRoles(user = null) {
   const roles = Array.isArray(user?.roles) ? user.roles : [];
@@ -82,7 +110,7 @@ async function fetchCustomerDashboardPayload(session, settings, fallbackState = 
     : (liveDoctors || []);
   const blockingErrors = [];
   if (hasOrderFailure || hasUpcomingFailure || hasPastFailure) {
-    blockingErrors.push("The pharmacy server is temporarily unavailable. Showing the last available customer dashboard data.");
+    blockingErrors.push("Oops! Connection error. We’re showing your last available dashboard data.");
   }
   const fallbackProfile = {
     id: session.user?.id || null,
@@ -143,6 +171,256 @@ function createJourneyState() {
     reviewFeedback: ""
   };
 }
+
+function createMtmFormState() {
+  return {
+    patient: {
+      name: "",
+      age: "",
+      dob: "",
+      gender: "",
+      maritalStatus: "",
+      address: "",
+      cityState: "",
+      phoneNumber: "",
+      emergencyContact: "",
+      preferredContactMethod: "",
+    },
+    emergencyContact: {
+      caregiverName: "",
+      relationship: "",
+      phoneNumber: "",
+      emailAddress: "",
+      address: "",
+      livesWithPatient: "",
+      consentToDiscussCare: "",
+    },
+    medicalHistory: {
+      height: "",
+      weight: "",
+      bloodPressure: "",
+      bloodGlucoseHbA1c: "",
+      primaryDiagnosis: "",
+      secondaryDiagnosis: "",
+      chronicConditions: "",
+      pastMedicalHistory: "",
+      pastSurgicalHistory: "",
+      drugAllergies: "",
+      drugIntolerances: "",
+      relevantLabResults: "",
+      clinicalMonitoringParameters: "",
+    },
+    medicationProfile: {
+      medicationName: "",
+      dosage: "",
+      frequency: "",
+      route: "",
+      indication: "",
+      prescribingDoctor: "",
+      startDate: "",
+      notes: "",
+    },
+    adherenceAssessment: {
+      barriers: [],
+      other: "",
+    },
+    additionalInformation: {
+      recentMedicationChanges: "",
+      previousMedicationsStopped: "",
+      reasonForDiscontinuation: "",
+      otcMedications: "",
+      herbalProducts: "",
+      supplements: "",
+    }
+  };
+}
+
+function createEmptyMtmMedicationProfile() {
+  return createMtmFormState().medicationProfile;
+}
+
+const MTM_GENDER_OPTIONS = ["Female", "Male"];
+const MTM_MARITAL_STATUS_OPTIONS = ["Single", "Married", "Separated", "Divorced", "Widowed", "Prefer not to say"];
+const MTM_CONTACT_METHOD_OPTIONS = ["Phone", "WhatsApp", "Email"];
+const MTM_RELATIONSHIP_OPTIONS = ["Spouse", "Parent", "Sibling", "Child", "Relative", "Friend", "Caregiver", "Other"];
+const MTM_YES_NO_OPTIONS = ["Yes", "No"];
+const MTM_ROUTE_OPTIONS = ["Oral", "Injection", "Topical", "Inhaled", "Sublingual", "Rectal", "Other"];
+const MTM_FREQUENCY_OPTIONS = ["Once daily", "Twice daily", "Three times daily", "Four times daily", "As needed", "Weekly", "Monthly", "Other"];
+
+function todayInputDate() {
+  return localDateKey(new Date());
+}
+
+function normalizeMtmPhoneNumber(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length > 11 && digits.startsWith("234")) {
+    return `0${digits.slice(3, 13).slice(0, 10)}`.slice(0, 11);
+  }
+  if (digits.length > 11 && digits.startsWith("0")) {
+    return digits.slice(0, 11);
+  }
+  if (digits.length === 10 && !digits.startsWith("0")) {
+    return `0${digits}`;
+  }
+  return digits.slice(0, 11);
+}
+
+function isValidEmailAddress(value) {
+  const email = String(value || "").trim();
+  return email === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isFutureDate(value) {
+  if (!value) return false;
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return parsed.getTime() > today.getTime();
+}
+
+function buildMtmStepErrors(step, mtmForm, labResultsFiles = []) {
+  const errors = {};
+  const patient = mtmForm?.patient || {};
+  const emergencyContact = mtmForm?.emergencyContact || {};
+  const medicalHistory = mtmForm?.medicalHistory || {};
+  const medicationProfile = mtmForm?.medicationProfile || {};
+  const adherenceAssessment = mtmForm?.adherenceAssessment || {};
+  const additionalInformation = mtmForm?.additionalInformation || {};
+  const fileList = Array.isArray(labResultsFiles) ? labResultsFiles : [];
+  const phonePattern = /^[0-9+\-()\s]{7,20}$/;
+
+  const required = {
+    1: ["name", "age", "dob", "gender", "address", "phoneNumber", "preferredContactMethod"],
+    2: ["caregiverName", "relationship", "phoneNumber", "consentToDiscussCare"],
+    3: ["primaryDiagnosis", "chronicConditions", "pastMedicalHistory", "drugAllergies"],
+    4: ["medicationName", "dosage", "frequency", "route", "indication", "prescribingDoctor", "startDate"],
+    5: [],
+    6: [],
+  };
+
+  const stepSections = {
+    1: patient,
+    2: emergencyContact,
+    3: medicalHistory,
+    4: medicationProfile,
+    5: adherenceAssessment,
+  };
+
+  const validateRequiredSet = (stepNumber) => {
+    required[stepNumber].forEach((key) => {
+      const section = stepSections[stepNumber];
+      if (!String(section?.[key] || "").trim()) {
+        errors[key] = "This field is required.";
+      }
+    });
+  };
+
+  if (step >= 1) validateRequiredSet(1);
+  if (step >= 2) validateRequiredSet(2);
+  if (step >= 3) validateRequiredSet(3);
+  if (step >= 4) validateRequiredSet(4);
+  if (step >= 5) validateRequiredSet(5);
+
+  if (step >= 1) {
+    if (!/^\d{1,3}$/.test(String(patient.age || "").trim())) {
+      errors.age = "Enter a valid age.";
+    }
+    if (!/^[a-zA-Z\s'.-]{2,120}$/.test(String(patient.name || "").trim())) {
+      errors.name = "Enter a valid full name.";
+    }
+    if (isFutureDate(String(patient.dob || "").trim())) {
+      errors.dob = "DOB cannot be in the future.";
+    }
+    if (!phonePattern.test(String(patient.phoneNumber || "").trim()) || normalizeMtmPhoneNumber(patient.phoneNumber).length !== 11) {
+      errors.phoneNumber = "Enter a valid 11-digit phone number.";
+    }
+    if (String(patient.emergencyContact || "").trim() && (!phonePattern.test(String(patient.emergencyContact || "").trim()) || normalizeMtmPhoneNumber(patient.emergencyContact).length !== 11)) {
+      errors.emergencyContact = "Enter a valid 11-digit emergency contact number.";
+    }
+    if (!["Female", "Male", "Other", "Prefer not to say"].includes(String(patient.gender || ""))) {
+      errors.gender = "Select a valid gender.";
+    }
+    if (!["Phone", "WhatsApp", "Email"].includes(String(patient.preferredContactMethod || ""))) {
+      errors.preferredContactMethod = "Select a contact method.";
+    }
+  }
+
+  if (step >= 2) {
+    if (!/^[a-zA-Z\s'.-]{2,120}$/.test(String(emergencyContact.caregiverName || "").trim())) {
+      errors.caregiverName = "Enter a valid caregiver name.";
+    }
+    if (!MTM_RELATIONSHIP_OPTIONS.includes(String(emergencyContact.relationship || ""))) {
+      errors.relationship = "Select a valid relationship.";
+    }
+    if (!phonePattern.test(String(emergencyContact.phoneNumber || "").trim()) || normalizeMtmPhoneNumber(emergencyContact.phoneNumber).length !== 11) {
+      errors.phoneNumber = "Enter a valid 11-digit phone number.";
+    }
+    if (!isValidEmailAddress(emergencyContact.emailAddress)) {
+      errors.emailAddress = "Enter a valid email address.";
+    }
+    if (!["Yes", "No"].includes(String(emergencyContact.livesWithPatient || ""))) {
+      errors.livesWithPatient = "Select Yes or No.";
+    }
+    if (!["Yes", "No"].includes(String(emergencyContact.consentToDiscussCare || ""))) {
+      errors.consentToDiscussCare = "Select Yes or No.";
+    }
+  }
+
+  if (step >= 3) {
+    if (!String(medicalHistory.primaryDiagnosis || "").trim()) errors.primaryDiagnosis = "This field is required.";
+    if (!String(medicalHistory.chronicConditions || "").trim()) errors.chronicConditions = "This field is required.";
+    if (!String(medicalHistory.pastMedicalHistory || "").trim()) errors.pastMedicalHistory = "This field is required.";
+    if (!String(medicalHistory.drugAllergies || "").trim()) errors.drugAllergies = "This field is required.";
+    if (fileList.some((file) => !isAllowedMedicalFile(file))) {
+      errors.relevantLabResults = "Upload PDF, image, or document files up to 20MB each.";
+    }
+  }
+
+  if (step >= 4) {
+    if (!String(medicationProfile.medicationName || "").trim()) errors.medicationName = "This field is required.";
+    if (!String(medicationProfile.dosage || "").trim()) errors.dosage = "This field is required.";
+    if (!MTM_FREQUENCY_OPTIONS.includes(String(medicationProfile.frequency || ""))) errors.frequency = "Select a valid frequency.";
+    if (!MTM_ROUTE_OPTIONS.includes(String(medicationProfile.route || ""))) errors.route = "Select a valid route.";
+    if (!String(medicationProfile.indication || "").trim()) errors.indication = "This field is required.";
+    if (!String(medicationProfile.prescribingDoctor || "").trim()) errors.prescribingDoctor = "This field is required.";
+    if (!String(medicationProfile.startDate || "").trim()) {
+      errors.startDate = "This field is required.";
+    } else if (isFutureDate(String(medicationProfile.startDate || "").trim())) {
+      errors.startDate = "Start date cannot be in the future.";
+    }
+  }
+
+  if (step >= 5 && !Array.isArray(adherenceAssessment.barriers)) {
+    errors.barriers = "Select at least one barrier.";
+  }
+  if (step >= 5 && Array.isArray(adherenceAssessment.barriers) && !adherenceAssessment.barriers.length) {
+    errors.barriers = "Select at least one barrier.";
+  }
+
+  return errors;
+}
+
+const MTM_STEP_TITLES = {
+  1: "Patient Details",
+  2: "Emergency Contact Information",
+  3: "Medical & Clinical History",
+  4: "Medication Profile",
+  5: "Medication Adherence Assessment",
+  6: "Review and Submit",
+};
+
+const MTM_ADHERENCE_OPTIONS = [
+  "Forgetfulness",
+  "Side Effects",
+  "Complex Regimen",
+  "Medication Cost",
+  "Access Issues",
+  "Low Understanding",
+  "Cultural Concerns",
+  "Other",
+];
 
 function defaultCustomerSettings() {
   return {
@@ -212,6 +490,8 @@ export default function CustomerDashboard() {
   const [selectedAppointment, setSelectedAppointment] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [appointmentActionBusy, setAppointmentActionBusy] = useState(false);
+  const [orderActionError, setOrderActionError] = useState("");
+  const [refillOrderBusy, setRefillOrderBusy] = useState(null);
   const [storeUrl, setStoreUrl] = useState("#");
   const [journey, setJourney] = useState(createJourneyState());
   const [reviewDeepLinkHandled, setReviewDeepLinkHandled] = useState(false);
@@ -341,6 +621,15 @@ export default function CustomerDashboard() {
   const profile = state.dashboard?.profile || {};
   const visibleDoctors = useMemo(() => sortPreferredDoctors(state.doctors, settings.preferredDoctorIds), [settings.preferredDoctorIds, state.doctors]);
   const subscriptionState = useSubscription(session);
+  const mtmRequestsKey = session && page === "therapy"
+    ? swrKeys.proxy.path("/mtm-requests", withBaseUrl(session))
+    : null;
+  const mtmRequestsQuery = useSWR(
+    mtmRequestsKey,
+    () => fetchCustomerMtmRequests(session),
+    { revalidateOnFocus: false, dedupingInterval: 30_000, keepPreviousData: true }
+  );
+  const mtmRequests = mtmRequestsQuery.data || [];
   useEffect(() => {
     rememberStoreContext(state.dashboard || {});
   }, [state.dashboard]);
@@ -434,6 +723,7 @@ export default function CustomerDashboard() {
   }
 
   async function cancelPendingOrder(order) {
+    setOrderActionError("");
     const optimisticOrder = { ...order, status: "cancelled" };
     await mutateSummary((current) => current ? { ...current, orders: current.orders.map((item) => item.id === order.id ? optimisticOrder : item) } : current, { revalidate: false });
     await ordersQuery.mutate((current) => Array.isArray(current) ? current.map((item) => item.id === order.id ? optimisticOrder : item) : current, { revalidate: false });
@@ -449,6 +739,43 @@ export default function CustomerDashboard() {
       await ordersQuery.mutate((current) => Array.isArray(current) ? current.map((item) => item.id === order.id ? order : item) : current, { revalidate: false });
       patchCustomerOrderCache(order);
       throw error;
+    }
+  }
+
+  async function refillOrder(order) {
+    setOrderActionError("");
+    if (!order?.id) {
+      return;
+    }
+    let canCreateRefill = Boolean(subscriptionState.canRefill);
+    if (!canCreateRefill && subscriptionState.isLoading) {
+      const refreshedSubscription = await subscriptionState.refresh();
+      canCreateRefill = Boolean(refreshedSubscription?.can_refill || refreshedSubscription?.canRefill);
+    }
+    if (!canCreateRefill) {
+      setSelectedOrder(null);
+      setPage("therapy");
+      return;
+    }
+
+    setRefillOrderBusy(order.id);
+    try {
+      const next = await apiRequest(session, `/orders/${order.id}/refill`, { method: "POST" });
+      await mutateSummary((current) => current ? { ...current, orders: upsertById(current.orders || [], next) } : current, { revalidate: false });
+      await ordersQuery.mutate((current) => Array.isArray(current) ? upsertById(current, next) : current, { revalidate: false });
+      patchCustomerOrderCache(next);
+      setSelectedOrder(next);
+      setPage("orders");
+      revalidateCustomerGroups(isProxyOrdersKey);
+    } catch (error) {
+      if (error?.code === "upgrade_required" || Number(error?.status || 0) === 403) {
+        setSelectedOrder(null);
+        setPage("therapy");
+        return;
+      }
+      setOrderActionError(String(error?.message || "The refill order could not be created."));
+    } finally {
+      setRefillOrderBusy(null);
     }
   }
 
@@ -518,25 +845,32 @@ export default function CustomerDashboard() {
     }
   }
 
-  async function createAppointmentCheckout() {
-    if (!journey.doctorId || !journey.selectedSlot) {
+  async function createAppointmentCheckout(override = null) {
+    const activeSlot = override?.selectedSlot || journey.selectedSlot;
+    const activeDuration = override?.durationMinutes || journey.durationMinutes || minimumBookingMinutes;
+    const activeReason = sanitizeClientText(override?.reason ?? journey.reason, { max: 500 }).trim() || "Doctor consultation booking";
+    const activeDoctorId = override?.doctorId ?? journey.doctorId;
+    if (!activeSlot) {
       return;
     }
     const session = hydrateStoredSession("patient");
     let createdAppointment = null;
     setJourney((current) => ({ ...current, loading: true, error: "" }));
     try {
+      const body = {
+        type: settings.preferredConsultationType,
+        start_at: activeSlot.start_at,
+        end_at: appointmentEndForSelection(activeSlot, activeDuration),
+        duration_minutes: activeDuration,
+        reason: activeReason,
+        timezone: settings.timezone || storeTimeZone
+      };
+      if (activeDoctorId) {
+        body.doctor_user_id = activeDoctorId;
+      }
       const appointment = await apiRequest(session, "/appointments", {
         method: "POST",
-        body: {
-          doctor_user_id: journey.doctorId,
-          type: settings.preferredConsultationType,
-          start_at: journey.selectedSlot.start_at,
-          end_at: appointmentEndForSelection(journey.selectedSlot, journey.durationMinutes || minimumBookingMinutes),
-          duration_minutes: journey.durationMinutes || minimumBookingMinutes,
-          reason: sanitizeClientText(journey.reason, { max: 500 }).trim() || "Doctor consultation booking",
-          timezone: settings.timezone || storeTimeZone
-        }
+        body
       });
       createdAppointment = appointment;
       const checkout = await apiRequest(session, `/appointments/${appointment.id}/checkout`);
@@ -564,7 +898,13 @@ export default function CustomerDashboard() {
         }));
         return;
       }
-      const appointment = buildMockAppointment(journey, selectedDoctor, settings, storeCurrency);
+      const appointment = buildMockAppointment({
+        ...journey,
+        doctorId: activeDoctorId,
+        selectedSlot: activeSlot,
+        durationMinutes: activeDuration,
+        reason: activeReason
+      }, selectedDoctor, settings, storeCurrency);
       setJourney((current) => ({
         ...current,
         mode: "checkout",
@@ -754,11 +1094,12 @@ export default function CustomerDashboard() {
 
   return <>
     <CustomerMobileDashboard
+      session={session}
       page={page}
       setPage={setPage}
       showSkeleton={showSkeleton}
       state={state}
-      stateError={state.error}
+      stateError={orderActionError || state.error}
       profile={profile}
       settings={settings}
       setSettings={setSettings}
@@ -784,11 +1125,15 @@ export default function CustomerDashboard() {
       appointmentsLoading={appointmentsLoading}
       doctorsLoading={doctorsLoading}
       subscriptionState={subscriptionState}
+      mtmRequests={mtmRequests}
+      mtmRequestsQuery={mtmRequestsQuery}
       onOpenAvailability={openDoctorAvailability}
       onOpenReviews={openDoctorReviews}
       onOpenAppointment={setSelectedAppointment}
       onOpenOrderDocuments={openOrderDocuments}
       onCancelPendingOrder={cancelPendingOrder}
+      onRefillOrder={refillOrder}
+      refillOrderBusy={refillOrderBusy}
       onUpdateAvailabilityDate={updateAvailabilityDate}
       onSelectSlot={(slot) => setJourney((current) => ({ ...current, selectedSlot: slot }))}
       onDurationChange={(durationMinutes) => setJourney((current) => ({ ...current, durationMinutes }))}
@@ -820,6 +1165,8 @@ export default function CustomerDashboard() {
       storeCurrency={storeCurrency}
       onOpenOrderDocuments={openOrderDocuments}
       onCancelPendingOrder={cancelPendingOrder}
+      onRefillOrder={refillOrder}
+      refillOrderBusy={refillOrderBusy}
       onClose={() => setSelectedOrder(null)}
     /> : null}
   </>;
@@ -1278,7 +1625,7 @@ function DoctorCards({ doctors, doctorsUnavailable, loading = false, onOpenAvail
   </div>;
 }
 
-function OrdersPage({ orders, counts, expandedOrderId, loading = false, onToggleOrder, onOpenOrderDocuments, onCancelPendingOrder, onOpenOrderDetails, storeCurrency }) {
+function OrdersPage({ orders, counts, expandedOrderId, loading = false, onToggleOrder, onOpenOrderDocuments, onCancelPendingOrder, onRefillOrder, refillOrderBusy = null, onOpenOrderDetails, storeCurrency }) {
   const orderedRows = [...orders].sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0));
   const pendingInProgress = orders.filter((order) => ["pending", "processing", "on-hold"].includes(String(order.status || "").toLowerCase())).length;
   const totalSpent = orders
@@ -1354,6 +1701,7 @@ function OrdersPage({ orders, counts, expandedOrderId, loading = false, onToggle
               </div>
               <div className="toolbar customer-order-actions">
                 <button className="pill-button" type="button" onClick={() => onToggleOrder(order.id)}>View</button>
+                {order.can_refill || order.refill_available ? <button className="pill-button" type="button" disabled={refillOrderBusy === order.id} onClick={() => onRefillOrder?.(order)}>{refillOrderBusy === order.id ? "Refilling..." : "Refill"}</button> : null}
                 {order.status === "completed" ? <button className="customer-order-pdf-button" type="button" aria-label="Open documents" title="Open documents" onClick={() => onOpenOrderDocuments(order)}>
                   <DashboardIcon name="orders" />
                 </button> : null}
@@ -1394,28 +1742,32 @@ function AppointmentPage({
   storefrontSettings,
   minimumBookingMinutes,
 }) {
+  const subscriptionState = arguments[0]?.subscriptionState || null;
+  const subscription = subscriptionState?.subscription || {};
   const [filter, setFilter] = useState("all");
-  const [doctorTab, setDoctorTab] = useState("recent");
-  const bookDoctorSectionRef = useRef(null);
+  const [bookingOpen, setBookingOpen] = useState(false);
+  const [bookingDate, setBookingDate] = useState(() => localDateInputValue(new Date()));
+  const [bookingTime, setBookingTime] = useState(BOOKING_SLOT_TIMES[0] || "09:00");
+  const [bookingReason, setBookingReason] = useState("");
+  const [bookingError, setBookingError] = useState("");
+  const [consultationQuotaDismissed, setConsultationQuotaDismissed] = useState(false);
+  const [bookingMonth, setBookingMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const bookingSectionRef = useRef(null);
   const filters = useMemo(() => buildAppointmentFilters(upcoming, past), [past, upcoming]);
   const allAppointments = useMemo(() => [...upcoming, ...past], [past, upcoming]);
   const visibleAppointments = useMemo(() => filterAppointmentsList(allAppointments, filter), [allAppointments, filter]);
-  const recentDoctorIds = useMemo(() => {
-    const seen = new Set();
-    return [...allAppointments]
-      .sort((left, right) => new Date(right.start_at || 0) - new Date(left.start_at || 0))
-      .reduce((acc, appointment) => {
-        const doctorId = String(appointment.doctor_user_id || "");
-        if (doctorId && !seen.has(doctorId)) {
-          seen.add(doctorId);
-          acc.push(doctorId);
-        }
-        return acc;
-      }, []);
-  }, [allAppointments]);
-  const recentDoctors = useMemo(() => recentDoctorIds.map((doctorId) => doctors.find((item) => String(item.user_id || item.id) === doctorId)).filter(Boolean), [doctors, recentDoctorIds]);
-  const displayedDoctors = doctorTab === "recent" && recentDoctors.length ? recentDoctors : doctors;
-  const showBookAppointmentPlus = appointmentsLoading || visibleAppointments.length > 0;
+  const showBookAppointmentPlus = true;
+  const consultationQuotaTotal = Number(subscription.free_consultations_total || 0);
+  const consultationQuotaUsed = Number(subscription.free_consultations_used || 0);
+  const consultationQuotaRemaining = Number(subscription.free_consultations_remaining || 0);
+  const consultationQuotaResetLabel = String(subscription.free_consultations_reset_label || "").trim();
+  const isProSubscription = String(subscription.plan_key || "").toLowerCase() === "nevari_access_pro" || Boolean(subscription.is_paid);
+  const showConsultationQuotaNotice = isProSubscription && !consultationQuotaDismissed;
+  const consultationQuotaTitle = consultationQuotaRemaining <= 0 ? "Free Monthly Consultation Allowance Used" : "Free Consultation Allowance";
+  const consultationQuotaBody = consultationQuotaRemaining <= 0
+    ? `You have used all 5 free consultation bookings included with your Pro membership for this month.`
+    : `You have ${consultationQuotaRemaining} of ${consultationQuotaTotal || 5} free consultation bookings remaining in your Pro membership for this cycle.`;
+  const consultationQuotaResetText = consultationQuotaResetLabel ? `Next reset: ${consultationQuotaResetLabel}` : "";
 
   if (journey.mode === "slots") {
     return <AvailableTimePage
@@ -1452,66 +1804,136 @@ function AppointmentPage({
   }
 
   function handleNewAppointmentClick() {
-    setDoctorTab("all");
-    if (bookDoctorSectionRef.current && typeof bookDoctorSectionRef.current.scrollIntoView === "function") {
-      bookDoctorSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    setBookingOpen(true);
+    setBookingError("");
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        if (bookingSectionRef.current && typeof bookingSectionRef.current.scrollIntoView === "function") {
+          bookingSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
     }
   }
 
-  return <div className="customer-dashboard-stack">
-    <section className="customer-list-shell book-doctor-shell">
+  async function handleAutoAssignBooking() {
+    const nextReason = sanitizeClientText(bookingReason, { max: 500 }).trim();
+    if (!bookingDate || !bookingTime || !nextReason) {
+      setBookingError("Select a date, time, and reason for the appointment.");
+      return;
+    }
+    setBookingError("");
+    await onCreateAppointmentCheckout({
+      doctorId: null,
+      durationMinutes: 30,
+      reason: nextReason,
+      selectedSlot: {
+        start_at: `${bookingDate}T${bookingTime}:00`,
+      },
+    });
+  }
+
+  const bookingMonthLabel = bookingMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const bookingMonthStart = new Date(bookingMonth.getFullYear(), bookingMonth.getMonth(), 1);
+  const bookingMonthEnd = new Date(bookingMonth.getFullYear(), bookingMonth.getMonth() + 1, 0);
+  const bookingLeadingDays = bookingMonthStart.getDay();
+  const bookingDaysInMonth = bookingMonthEnd.getDate();
+  const bookingCalendarCells = Array.from({ length: bookingLeadingDays + bookingDaysInMonth }, (_, index) => {
+    const dayNumber = index - bookingLeadingDays + 1;
+    return dayNumber > 0 ? dayNumber : null;
+  });
+
+  return <div className="customer-dashboard-stack customer-appointment-desktop-shell">
+    {showConsultationQuotaNotice ? <div className="detail-card appointment-quota-popup" role="dialog" aria-modal="false" aria-label="Consultation quota notice">
       <div className="customer-panel-head">
         <div>
-          <span className="customer-section-kicker">Appointment</span>
-          <h2>Appointment history</h2>
+          <span className="customer-section-kicker">Consultation quota</span>
+          <h2>{consultationQuotaTitle}</h2>
         </div>
-        {showBookAppointmentPlus ? <button className="pill-button customer-panel-booknow-btn" type="button" aria-label="Book now" title="Book now" onClick={handleNewAppointmentClick}>Book Now</button> : null}
+        <button className="icon-btn" type="button" aria-label="Dismiss consultation quota notice" onClick={() => setConsultationQuotaDismissed(true)}>x</button>
       </div>
-      <div className="filter-bar customer-filter-bar" role="tablist" aria-label="Appointment filters">
-        {filters.map((item) => <button className={`filter-btn ${filter === item.id ? "active" : ""}`} key={item.id} type="button" role="tab" aria-selected={filter === item.id} onClick={() => setFilter(item.id)}>
+      <p>{consultationQuotaBody}</p>
+      {consultationQuotaResetText ? <p>{consultationQuotaResetText}</p> : null}
+      {!consultationQuotaRemaining && consultationQuotaUsed >= consultationQuotaTotal ? null : <p>{consultationQuotaTotal ? `${consultationQuotaUsed} of ${consultationQuotaTotal} used.` : ""}</p>}
+      </div> : null}
+    {!bookingOpen ? <section className="customer-list-shell book-doctor-shell customer-appointment-history-shell">
+      
+      <div className="customer-mobile-pill-tabs" role="tablist" aria-label="Appointment filters">
+        {filters.map((item) => <button className={`customer-mobile-pill-tab ${filter === item.id ? "active" : ""}`} key={item.id} type="button" role="tab" aria-selected={filter === item.id} onClick={() => setFilter(item.id)}>
           {item.label}
-          <span className="filter-count">{item.count}</span>
         </button>)}
       </div>
-      <AppointmentSection title="Appointments" items={visibleAppointments} tone={filter} doctors={doctors} storeTimeZone={storeTimeZone} loading={appointmentsLoading} />
-    </section>
-    <section className="customer-list-shell" ref={bookDoctorSectionRef}>
-      <div className="customer-panel-head">
-        <div>
-          <span className="customer-section-kicker">Book appointment</span>
-          <h2>Choose a doctor</h2>
+      <AppointmentSection title="Appointments" items={visibleAppointments} doctors={doctors} storeTimeZone={storeTimeZone} loading={appointmentsLoading} emptyCtaLabel="Book Appointment" onEmptyCta={() => setBookingOpen(true)} />
+    </section> : <section className="customer-list-shell customer-appointment-book-shell" ref={bookingSectionRef}>
+      <div className="customer-mobile-title-row customer-mobile-appointment-book-title">
+        <button className="customer-mobile-back-link" type="button" onClick={() => setBookingOpen(false)}>
+          <MobileIcon name="arrow-left" />
+          <span>Go back</span>
+        </button>
+        <h1>Appointments</h1>
+      </div>
+      <div className="customer-mobile-book-card customer-mobile-book-card-shot customer-appointment-book-card">
+        <div className="customer-mobile-book-month">
+          <strong>{bookingMonthLabel}</strong>
+          <div className="customer-mobile-book-arrows">
+            <button type="button" aria-label="Previous month" onClick={() => setBookingMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}><MobileIcon name="arrow-left" /></button>
+            <button type="button" aria-label="Next month" onClick={() => setBookingMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}><MobileIcon name="arrow-right" /></button>
+          </div>
         </div>
+        <div className="customer-mobile-calendar-head">
+          {["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((label) => <span key={label}>{label}</span>)}
+        </div>
+        <div className="customer-mobile-calendar-grid">
+          {bookingCalendarCells.map((day, index) => {
+            if (!day) return <span key={`booking-blank-${index}`} />;
+            const dateValue = `${bookingMonth.getFullYear()}-${String(bookingMonth.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+            const isSelected = bookingDate === dateValue;
+            const isPast = new Date(`${dateValue}T00:00:00`).getTime() < new Date(`${localDateInputValue(new Date())}T00:00:00`).getTime();
+            return <button
+              key={dateValue}
+              type="button"
+              className={`customer-mobile-calendar-day ${isSelected ? "active" : ""} ${isPast ? "is-past" : ""}`}
+              disabled={isPast}
+              onClick={() => {
+                setBookingDate(dateValue);
+                if (bookingError) setBookingError("");
+              }}
+            >
+              {day}
+            </button>;
+          })}
+        </div>
+        <div className="customer-mobile-time-row customer-mobile-time-row-shot">
+            <strong>Time</strong>
+            <div className="customer-mobile-time-box customer-mobile-time-box-shot">
+              <select value={bookingTime} onChange={(event) => setBookingTime(event.target.value)}>
+                {BOOKING_SLOT_TIMES.map((slot) => <option key={slot} value={slot}>{formatSlotTime(slot)}</option>)}
+              </select>
+              <input className="small" value="" readOnly aria-hidden="true" />
+            </div>
+          </div>
+        {bookingError ? <p className="customer-mobile-field-error">{bookingError}</p> : null}
       </div>
-      <div className="filter-bar customer-segmented-bar" role="tablist" aria-label="Doctor list filter">
-        <button className={`filter-btn ${doctorTab === "recent" ? "active" : ""}`} type="button" role="tab" aria-selected={doctorTab === "recent"} onClick={() => setDoctorTab("recent")}>
-          My doctor
-          <span className="filter-count">{recentDoctors.length}</span>
-        </button>
-        <button className={`filter-btn ${doctorTab === "all" ? "active" : ""}`} type="button" role="tab" aria-selected={doctorTab === "all"} onClick={() => setDoctorTab("all")}>
-          All doctors
-          <span className="filter-count">{doctors.length}</span>
-        </button>
-      </div>
-      <DoctorCards
-        doctors={displayedDoctors}
-        doctorsUnavailable={doctorsUnavailable}
-        loading={doctorsLoading}
-        onOpenAvailability={onOpenAvailability}
-        onOpenReviews={onOpenReviews}
-        showReviewsAction={doctorTab === "recent"}
-        storeCurrency={storeCurrency}
-        className="book-doctor-vertical-list"
-      />
-    </section>
+      <label className="customer-mobile-field customer-mobile-appointment-reason-field">
+        <span>Reason for Appointment:</span>
+        <textarea rows={4} value={bookingReason} placeholder="Briefly state the reason for your appointment" onChange={(event) => {
+          setBookingReason(event.target.value);
+          if (bookingError) setBookingError("");
+        }} />
+      </label>
+      <button className="appointment-primary-cta customer-mobile-appointment-cta" type="button" onClick={handleAutoAssignBooking} disabled={journey.loading || !bookingDate || !bookingTime || !bookingReason.trim()}>
+        {journey.loading ? "Booking..." : "Book Appointment"}
+      </button>
+    </section>}
   </div>;
 }
 
-function OrderDetailsModal({ order, storeCurrency, onOpenOrderDocuments, onCancelPendingOrder, onClose }) {
+function OrderDetailsModal({ order, storeCurrency, onOpenOrderDocuments, onCancelPendingOrder, onRefillOrder, refillOrderBusy = null, onClose }) {
   const statusMeta = orderStatusMeta(order?.status);
   const typeMeta = getOrderTypeMeta(order || {});
   const canCancel = String(order?.status || "").toLowerCase() === "pending";
   const orderPaymentUrl = resolveOrderPaymentUrl(order);
   const canPayNow = Boolean(orderPaymentUrl);
+  const canRefill = Boolean(order?.can_refill || order?.refill_available);
   const items = Array.isArray(order?.items) ? order.items : [];
   const subtotal = items.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.price || 0)), 0);
   const deliveryFee = Math.max(0, Number(order?.total || 0) - subtotal);
@@ -1588,6 +2010,7 @@ function OrderDetailsModal({ order, storeCurrency, onOpenOrderDocuments, onCance
 
       <div className="action-stack">
         {canPayNow ? <a className="btn btn-primary btn-wide appointment-link-cta" href={orderPaymentUrl} target="_blank" rel="noreferrer">Pay now</a> : null}
+        {canRefill ? <button className="btn btn-primary btn-wide" type="button" disabled={refillOrderBusy === order?.id} onClick={() => onRefillOrder?.(order)}>{refillOrderBusy === order?.id ? "Creating refill..." : "Refill"}</button> : null}
         <button className="btn btn-outline btn-wide" type="button" onClick={() => onOpenOrderDocuments(order)}>Open receipt</button>
         {canCancel ? <button className="btn btn-primary btn-wide" type="button" onClick={() => onCancelPendingOrder(order)}>Cancel order</button> : null}
       </div>
@@ -1770,52 +2193,44 @@ function PatientReviewsPage({ doctor, journey, pastAppointments, onBack, onRevie
   </section>;
 }
 
-function AppointmentSection({ title, items, tone, doctors, storeTimeZone, loading = false }) {
+function AppointmentSection({ title, items, doctors, storeTimeZone, loading = false, emptyCtaLabel = "", onEmptyCta = null, onOpenAppointment = null }) {
   if (loading) {
-    return <div className="customer-appointment-history-slider" role="region" aria-label={`${title} loading`}>
-      <div className="customer-appointment-history-track">
-        {Array.from({ length: 3 }, (_, index) => <article className={`customer-appointment-card customer-appointment-card-slide ${tone} skeleton-panel`} key={`customer-appointment-live-skeleton-${index}`}>
-          <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
-          <div className="customer-appointment-copy">
-            <SkeletonBox className="skeleton-line skeleton-line-md" />
-            <SkeletonBox className="skeleton-line skeleton-line-sm" />
-            <SkeletonBox className="skeleton-line skeleton-line-sm" />
-          </div>
-          <div className="customer-appointment-side">
-            <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
-          </div>
-        </article>)}
-      </div>
+    return <div className="customer-mobile-appointment-history-list" role="region" aria-label={`${title} loading`}>
+      {Array.from({ length: 4 }, (_, index) => <article className="customer-mobile-visit-row customer-mobile-visit-row-shot skeleton-panel" key={`customer-appointment-live-skeleton-${index}`}>
+        <div className="customer-mobile-clock skeleton-circle skeleton-circle-sm" />
+        <div className="customer-mobile-visit-copy">
+          <SkeletonBox className="skeleton-line skeleton-line-md" />
+          <SkeletonBox className="skeleton-line skeleton-line-sm" />
+          <SkeletonBox className="skeleton-line skeleton-line-sm" />
+        </div>
+      </article>)}
     </div>;
   }
   if (!items.length) {
-    return <div className="customer-appointment-list">
-      <div className="empty-card compact-empty"><div className="card-title">No appointments in this section.</div></div>
+    return <div className="customer-mobile-appointment-history-list">
+      <div className="empty-card compact-empty">
+        <div className="card-title">You have no appointments.</div>
+        {emptyCtaLabel && onEmptyCta ? <button className="pill-button" type="button" onClick={onEmptyCta}>{emptyCtaLabel}</button> : null}
+      </div>
     </div>;
   }
 
-  return <div className="customer-appointment-history-slider" role="region" aria-label={`${title} horizontal list`}>
-    <div className="customer-appointment-history-track">
-      {items.map((appointment) => {
-        const doctor = doctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
-        const chipTone = appointmentChipTone(appointment);
-        return <article className={`customer-appointment-card customer-appointment-card-slide ${tone}`} key={appointment.id}>
-          <div className="customer-order-icon"><DashboardIcon name="appointment" /></div>
-          <div className="customer-appointment-copy">
-            <div className="card-title">{titleCase(appointment.type || "consultation")}</div>
-            <div className="card-desc">{shortDate(appointment.start_at, true, storeTimeZone)}</div>
-            <div className="customer-meta-line">{doctor?.display_name || `Doctor #${appointment.doctor_user_id}`}</div>
-          </div>
-          <div className="customer-appointment-side">
-            <div className="appointment-status-stack">
-              <span className={`chip ${chipTone}`}><span className="chip-dot" />{appointmentChipLabel(appointment)}</span>
-              {appointmentHasPrescription(appointment) ? <span className="appointment-prescription-availability">Prescription Available</span> : null}
-            </div>
-            {getAppointmentJoinUrl(appointment) ? <a className="pill-button" href={getAppointmentJoinUrl(appointment)} target="_blank" rel="noreferrer">Join</a> : null}
-          </div>
-        </article>;
-      })}
-    </div>
+  return <div className="customer-mobile-appointment-history-list" role="region" aria-label={`${title} appointments`}>
+    {items.map((appointment) => {
+      const doctor = doctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
+      const doctorLabel = appointmentDoctorLabel(appointment, doctor);
+      return <article className="customer-mobile-visit-row customer-mobile-visit-row-shot" key={appointment.id}>
+        {onOpenAppointment ? <button className="customer-mobile-row-overlay" type="button" aria-label="Open appointment details" onClick={() => onOpenAppointment(appointment)} /> : null}
+        <div className="customer-mobile-clock">
+          <MobileIcon name="clock" />
+        </div>
+        <div className="customer-mobile-visit-copy customer-mobile-visit-copy-shot">
+          <strong>{appointmentDisplayTitle(appointment, doctor)}</strong>
+          <span>{formatTime(appointment.start_at, storeTimeZone)}</span>
+          <small>{doctorLabel}</small>
+        </div>
+      </article>;
+    })}
   </div>;
 }
 
@@ -2080,6 +2495,44 @@ function sanitizeClientText(value, { max = 500, allowMarkup = false } = {}) {
   return cleaned.slice(0, max);
 }
 
+function sanitizeRequestFieldValue(key, value) {
+  if (key === "age") {
+    return String(value || "").replace(/\D/g, "").slice(0, 3);
+  }
+  if (key === "emergencyContact") {
+    return String(value || "").replace(/[^0-9+\-()\s]/g, "").slice(0, 20);
+  }
+  if (key === "name" || key === "mobilityStatus") {
+    return sanitizeClientText(value, { max: 120 }).replace(/[^a-zA-Z\s'.-]/g, "");
+  }
+  if (key === "address") {
+    return sanitizeClientText(value, { max: 200 });
+  }
+  return sanitizeClientText(value, { max: 120 });
+}
+
+function sanitizeMtmFieldValue(section, key, value) {
+  if (key === "age") {
+    return sanitizeRequestFieldValue("age", value);
+  }
+  if (key === "phoneNumber" || key === "emergencyContact") {
+    return normalizeMtmPhoneNumber(value);
+  }
+  if (key === "dob" || key === "startDate") {
+    return String(value || "").slice(0, 10);
+  }
+  if (key === "emailAddress") {
+    return sanitizeClientText(value, { max: 254 }).replace(/\s+/g, "");
+  }
+  if (["gender", "maritalStatus", "preferredContactMethod", "relationship", "livesWithPatient", "consentToDiscussCare", "frequency", "route"].includes(key)) {
+    return String(value || "");
+  }
+  if ((section === "patient" && key === "name") || (section === "emergencyContact" && ["caregiverName", "relationship"].includes(key))) {
+    return sanitizeClientText(value, { max: 120 }).replace(/[^a-zA-Z\s'.-]/g, "");
+  }
+  return sanitizeClientText(value, { max: 500 });
+}
+
 function isAllowedMedicalFile(file) {
   if (!file) return false;
   const allowedExtensions = /\.(pdf|png|jpe?g|webp|docx?)$/i;
@@ -2091,7 +2544,7 @@ function isAllowedMedicalFile(file) {
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   ]);
-  return file.size <= 5 * 1024 * 1024 && allowedExtensions.test(file.name || "") && (!file.type || allowedTypes.has(file.type));
+  return file.size <= 20 * 1024 * 1024 && allowedExtensions.test(file.name || "") && (!file.type || allowedTypes.has(file.type));
 }
 
 function normalizeBookingMinutes(value) {
@@ -2534,6 +2987,7 @@ function localDateInputValue(date = new Date()) {
 }
 
 function CustomerMobileDashboard({
+  session,
   page,
   setPage,
   showSkeleton,
@@ -2563,10 +3017,15 @@ function CustomerMobileDashboard({
   appointmentsLoading = false,
   doctorsLoading = false,
   subscriptionState,
+  mtmRequests = [],
+  mtmRequestsQuery,
   onOpenAvailability,
+  onOpenReviews,
   onOpenAppointment,
   onOpenOrderDocuments,
   onCancelPendingOrder,
+  onRefillOrder,
+  refillOrderBusy,
   onUpdateAvailabilityDate,
   onSelectSlot,
   onDurationChange,
@@ -2632,6 +3091,22 @@ function CustomerMobileDashboard({
   const uploadInputRefs = useRef({});
   const requestStep2ErrorTimeoutRef = useRef(null);
   const requestStep3ErrorTimeoutRef = useRef(null);
+  const [mtmStep, setMtmStep] = useState(1);
+  const [mtmTab, setMtmTab] = useState("request");
+  const [mtmAnimatingOut, setMtmAnimatingOut] = useState(false);
+  const [mtmForm, setMtmForm] = useState(() => createMtmFormState());
+  const [mtmSubmitted, setMtmSubmitted] = useState(false);
+  const [mtmSubmitting, setMtmSubmitting] = useState(false);
+  const [mtmSubmitError, setMtmSubmitError] = useState("");
+  const [mtmLoadingState, setMtmLoadingState] = useState(false);
+  const [mtmLatestRequest, setMtmLatestRequest] = useState(null);
+  const [mtmSelectedRequestId, setMtmSelectedRequestId] = useState("");
+  const [mtmStepErrors, setMtmStepErrors] = useState({});
+  const [mtmLabResultsFiles, setMtmLabResultsFiles] = useState([]);
+  const [mtmMedicationEntries, setMtmMedicationEntries] = useState([]);
+  const [mtmSnackbar, setMtmSnackbar] = useState("");
+  const mtmLabResultsInputRef = useRef(null);
+  const mtmHistoryRequestRefs = useRef(new Map());
   const [requestSubmitted, setRequestSubmitted] = useState(false);
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestSubmitError, setRequestSubmitError] = useState("");
@@ -2641,10 +3116,68 @@ function CustomerMobileDashboard({
   const [bookCalendarReason, setBookCalendarReason] = useState("");
   const [calendarDay, setCalendarDay] = useState(7);
   const [calendarTime, setCalendarTime] = useState("09:41");
+  const mtmHistoryRequests = useMemo(() => sortByDateDesc(mtmRequests, ["appointment_start", "scheduled_at", "created_at", "updated_at"]), [mtmRequests]);
+  const activeMtmRequest = useMemo(() => {
+    const selectedRequest = mtmHistoryRequests.find((request) => String(request?.id || "") === String(mtmSelectedRequestId || ""));
+    if (selectedRequest) {
+      return selectedRequest;
+    }
+    if (mtmSelectedRequestId) {
+      return String(mtmLatestRequest?.id || "") === String(mtmSelectedRequestId) ? mtmLatestRequest : null;
+    }
+    return mtmLatestRequest || mtmHistoryRequests[0] || null;
+  }, [mtmHistoryRequests, mtmLatestRequest, mtmSelectedRequestId]);
+
+  useEffect(() => {
+    if (!session || typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const mtmRequestId = params.get("mtm_request_id") || params.get("mtmRequestId");
+    if (!mtmRequestId) {
+      return;
+    }
+    if (page !== "therapy") {
+      goToPage("therapy");
+      return;
+    }
+    setMtmTab("history");
+    setMtmSelectedRequestId(String(mtmRequestId));
+  }, [page, session]);
+
+  useEffect(() => {
+    if (page !== "therapy" || mtmTab !== "history" || !mtmHistoryRequests.length) {
+      return;
+    }
+    if (!mtmSelectedRequestId) {
+      const fallbackRequestId = mtmLatestRequest?.id || mtmHistoryRequests[0]?.id;
+      if (fallbackRequestId) {
+        setMtmSelectedRequestId(String(fallbackRequestId));
+      }
+    }
+  }, [page, mtmHistoryRequests, mtmLatestRequest, mtmSelectedRequestId, mtmTab]);
+
+  useEffect(() => {
+    if (page !== "therapy" || mtmTab !== "history" || !mtmSelectedRequestId || typeof window === "undefined") {
+      return;
+    }
+    const node = mtmHistoryRequestRefs.current.get(String(mtmSelectedRequestId));
+    if (!node) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      node.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (typeof node.focus === "function") {
+        node.focus({ preventScroll: true });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [page, mtmSelectedRequestId, mtmTab, mtmHistoryRequests.length]);
+
   const searchInputRef = useRef(null);
 
   useEffect(() => {
-    if (!["appointment", "request"].includes(page)) {
+    if (!["appointment", "request", "therapy"].includes(page)) {
       setAppointmentTab("all");
       setRequestStep(1);
       setRequestSubmitted(false);
@@ -2652,6 +3185,18 @@ function CustomerMobileDashboard({
       setRequestSubmitLoadingState(false);
       setRequestSubmitError("");
       setLatestSubmittedRequest(null);
+      setMtmStep(1);
+      setMtmTab("request");
+      setMtmSubmitted(false);
+      setMtmSubmitting(false);
+      setMtmSubmitError("");
+      setMtmLoadingState(false);
+      setMtmLatestRequest(null);
+      setMtmSelectedRequestId("");
+      setMtmStepErrors({});
+      setMtmLabResultsFiles([]);
+      setMtmMedicationEntries([]);
+      setMtmForm(createMtmFormState());
       setAppointmentComposerOpen(false);
       setAppointmentComposerLoading(false);
       setAppointmentComposerDate("");
@@ -2665,6 +3210,42 @@ function CustomerMobileDashboard({
       setRequestStep3Errors({});
     }
   }, [page]);
+
+  useEffect(() => {
+    if (!mtmSnackbar) {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => setMtmSnackbar(""), 2200);
+    return () => window.clearTimeout(timeoutId);
+  }, [mtmSnackbar]);
+
+  useEffect(() => {
+    const suggestedName = sanitizeClientText(
+      settings.displayName || profile.display_name || session?.user?.display_name || session?.user?.name || "",
+      { max: 120 }
+    ).replace(/[^a-zA-Z\s'.-]/g, "");
+    if (!suggestedName) {
+      return;
+    }
+    setMtmForm((current) => {
+      if (String(current.patient?.name || "").trim()) {
+        return current;
+      }
+      return {
+        ...current,
+        patient: {
+          ...current.patient,
+          name: suggestedName,
+        },
+      };
+    });
+  }, [profile.display_name, session?.user?.display_name, session?.user?.name, settings.displayName]);
+
+  useEffect(() => {
+    if (page === "appointment" && !["all", "upcoming", "previous"].includes(appointmentTab)) {
+      setAppointmentTab("all");
+    }
+  }, [appointmentTab, page]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2837,12 +3418,22 @@ function CustomerMobileDashboard({
     setAppointmentComposerDatePicked(false);
   }, [appointmentComposerDate, appointmentComposerOpen]);
 
+  useEffect(() => {
+    if (page !== "appointment" || !appointmentComposerOpen || appointmentComposerSelectedSlot) return;
+    if (BOOKING_SLOT_TIMES[0]) {
+      setAppointmentComposerSelectedSlot(BOOKING_SLOT_TIMES[0]);
+    }
+  }, [appointmentComposerOpen, appointmentComposerSelectedSlot, page]);
+
   const mergedAppointments = useMemo(
     () => [...localAppointments, ...upcomingAppointments, ...pastAppointments]
       .sort((a, b) => dateTimeValue(b, ["start_at", "created_at", "updated_at"]) - dateTimeValue(a, ["start_at", "created_at", "updated_at"])),
     [localAppointments, pastAppointments, upcomingAppointments]
   );
   const visibleAppointments = useMemo(() => {
+    if (appointmentTab === "request") {
+      return [];
+    }
     if (appointmentTab === "upcoming") {
       return mergedAppointments.filter((item) => new Date(item.start_at || 0).getTime() >= Date.now());
     }
@@ -2860,7 +3451,7 @@ function CustomerMobileDashboard({
     () => sortByDateDesc(state.orders, ["created_at", "date_created", "updated_at", "date_modified", "date"]),
     [state.orders]
   );
-  const showAppointmentPagePlus = appointmentsLoading || visibleAppointments.length > 0;
+  const showAppointmentPagePlus = appointmentTab !== "request" && visibleAppointments.length > 0;
   const searchResults = useMemo(() => {
     const term = searchQuery.trim().toLowerCase();
     if (term.length < 3) {
@@ -2954,16 +3545,55 @@ function CustomerMobileDashboard({
     setPage("search");
   }
 
+  function openMtmHistoryRequest(requestId) {
+    const nextRequestId = String(requestId || "").trim();
+    if (!nextRequestId) {
+      return;
+    }
+    setMtmSubmitted(false);
+    setMtmTab("history");
+    setMtmSelectedRequestId(nextRequestId);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("mtm_request_id", nextRequestId);
+      url.searchParams.set("mtm_tab", "history");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }
+
   function exitSearchPage() {
     setPage(previousPage || "overview");
   }
 
   function openRequestFlow() {
     setAppointmentComposerOpen(false);
-    setAppointmentTab("upcoming");
+    setAppointmentTab("all");
     setRequestSubmitted(false);
     setRequestStep(1);
     goToPage("request");
+  }
+
+  function resolvedPharmacyStoreUrl() {
+    const candidates = [
+      storeUrl,
+      session?.baseUrl,
+      typeof window !== "undefined" ? window.location.origin : "",
+      "/",
+    ];
+    for (const candidate of candidates) {
+      const value = String(candidate || "").trim();
+      if (value && value !== "#") {
+        return value;
+      }
+    }
+    return "/";
+  }
+
+  function openPharmacyStore() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.open(resolvedPharmacyStoreUrl(), "_blank", "noopener,noreferrer");
   }
 
   function transitionToRequestStep(nextStep) {
@@ -2979,7 +3609,6 @@ function CustomerMobileDashboard({
 
   function validateAppointmentComposer() {
     const errors = {};
-    if (!selectedComposerDoctor) errors.doctor = "Select a doctor.";
     if (!appointmentComposerDate) errors.date = "Select a date.";
     if (!appointmentComposerSelectedSlot) errors.time = "Select a time slot.";
     if (!sanitizeClientText(appointmentComposerReason, { max: 500 }).trim()) errors.reason = "Reason for appointment is required.";
@@ -2995,9 +3624,6 @@ function CustomerMobileDashboard({
 
     try {
       const payload = {
-        doctorId: selectedComposerDoctor?.id || "",
-        doctorName: selectedComposerDoctor?.name || "",
-        doctorSpecialty: selectedComposerDoctor?.specialty || "",
         date: appointmentComposerDate,
         time: appointmentComposerSelectedSlot,
         reason: sanitizeClientText(appointmentComposerReason, { max: 500 }).trim(),
@@ -3023,7 +3649,8 @@ function CustomerMobileDashboard({
 
       const createdAppointment = result?.appointment || {
         id: `local-${Date.now()}`,
-        doctor_user_id: selectedComposerDoctor?.id || 0,
+        doctor_user_id: 0,
+        doctor_name: "Assigned doctor pending",
         start_at: `${appointmentComposerDate}T${appointmentComposerSelectedSlot}:00`,
         end_at: `${appointmentComposerDate}T${appointmentComposerSelectedSlot}:00`,
         title: "Doctor Consultation",
@@ -3034,11 +3661,15 @@ function CustomerMobileDashboard({
 
       setLocalAppointments((current) => [createdAppointment, ...current]);
       setAppointmentTab("upcoming");
+      const assignedDoctorName = result?.appointment?.doctor?.display_name
+        || result?.appointment?.doctor_name
+        || result?.appointment?.assigned_doctor_name
+        || "the assigned doctor";
       setAppointmentComposerSuccess({
         title: result?.degraded ? "Appointment Saved Pending Sync" : "Appointment Booked Successfully",
         subtitle: result?.degraded
-          ? `Your appointment with ${selectedComposerDoctor?.name || "the doctor"} was saved locally for ${friendlyDateFromDateKey(appointmentComposerDate, storeTimeZone)} at ${formatSlotTime(appointmentComposerSelectedSlot)}. It will need to sync once the appointment server is available.`
-          : `Your appointment with ${selectedComposerDoctor?.name || "the doctor"} has been booked for ${friendlyDateFromDateKey(appointmentComposerDate, storeTimeZone)} at ${formatSlotTime(appointmentComposerSelectedSlot)}.`,
+          ? `Your appointment was saved locally for ${friendlyDateFromDateKey(appointmentComposerDate, storeTimeZone)} at ${formatSlotTime(appointmentComposerSelectedSlot)}. It will need to sync once the appointment server is available.`
+          : `Your appointment with ${assignedDoctorName} has been booked for ${friendlyDateFromDateKey(appointmentComposerDate, storeTimeZone)} at ${formatSlotTime(appointmentComposerSelectedSlot)}.`,
         appointment: createdAppointment
       });
     } catch {
@@ -3048,7 +3679,7 @@ function CustomerMobileDashboard({
     }
   }
 
-  function validateRequestStep2() {
+  function getRequestStep2Errors() {
     const requiredFields = [
       ["name", "Name is required."],
       ["age", "Age is required."],
@@ -3061,29 +3692,40 @@ function CustomerMobileDashboard({
     requiredFields.forEach(([key, message]) => {
       if (!String(requestForm[key] || "").trim()) errors[key] = message;
     });
-    if (!errors.name && !/^[a-zA-Z\s'.-]{2,120}$/.test(String(requestForm.name || "").trim())) {
+    const name = sanitizeRequestFieldValue("name", requestForm.name).trim();
+    const age = sanitizeRequestFieldValue("age", requestForm.age).trim();
+    const gender = String(requestForm.gender || "").trim();
+    const address = sanitizeRequestFieldValue("address", requestForm.address).trim();
+    const emergencyContact = sanitizeRequestFieldValue("emergencyContact", requestForm.emergencyContact).trim();
+    const mobilityStatus = sanitizeRequestFieldValue("mobilityStatus", requestForm.mobilityStatus).trim();
+    if (!errors.name && !/^[a-zA-Z\s'.-]{2,120}$/.test(name)) {
       errors.name = "Enter a valid name (letters only).";
     }
-    if (!errors.age && !/^\d{1,3}$/.test(String(requestForm.age || "").trim())) {
+    if (!errors.age && !/^\d{1,3}$/.test(age)) {
       errors.age = "Age must be numbers only (max 3 digits).";
     }
-    if (!errors.gender && !["Male", "Female"].includes(String(requestForm.gender || "").trim())) {
+    if (!errors.gender && !["Male", "Female"].includes(gender)) {
       errors.gender = "Select Male or Female.";
     }
-    if (!errors.emergencyContact && !/^[0-9+\-()\s]{7,20}$/.test(String(requestForm.emergencyContact || "").trim())) {
+    if (!errors.emergencyContact && !/^[0-9+\-()\s]{7,20}$/.test(emergencyContact)) {
       errors.emergencyContact = "Enter a valid phone number.";
     }
-    if (!errors.address && String(requestForm.address || "").trim().length < 5) {
+    if (!errors.address && (address.length < 5 || address.length > 200)) {
       errors.address = "Enter a valid address.";
     }
-    if (!errors.mobilityStatus && !/^[a-zA-Z\s'.-]{2,120}$/.test(String(requestForm.mobilityStatus || "").trim())) {
+    if (!errors.mobilityStatus && !/^[a-zA-Z\s'.-]{2,120}$/.test(mobilityStatus)) {
       errors.mobilityStatus = "Enter a valid mobility status.";
     }
+    return errors;
+  }
+
+  function validateRequestStep2() {
+    const errors = getRequestStep2Errors();
     setRequestStep2Errors(errors);
     return Object.keys(errors).length === 0;
   }
 
-  function validateRequestStep3() {
+  function getRequestStep3Errors() {
     const requiredFields = [
       ["visitType", "Select visit type."],
       ["preferredDate", "Preferred visit date is required."],
@@ -3100,7 +3742,27 @@ function CustomerMobileDashboard({
     requiredFields.forEach(([key, message]) => {
       if (!String(careDetails[key] || "").trim()) errors[key] = message;
     });
+    if (!errors.visitType && !NURSE_REQUEST_VISIT_TYPES.includes(String(careDetails.visitType || "").trim())) {
+      errors.visitType = "Select a valid visit type.";
+    }
+    if (!errors.duration && !NURSE_REQUEST_DURATIONS.includes(String(careDetails.duration || "").trim())) {
+      errors.duration = "Select a valid duration.";
+    }
+    if (!errors.careShift && !NURSE_REQUEST_CARE_SHIFTS.includes(String(careDetails.careShift || "").trim())) {
+      errors.careShift = "Select day or night care.";
+    }
+    NURSE_REQUEST_YES_NO_FIELDS.forEach((key) => {
+      if (!errors[key] && !NURSE_REQUEST_YES_NO_OPTIONS.includes(String(careDetails[key] || "").trim())) {
+        errors[key] = "Select yes or no.";
+      }
+    });
     const today = localDateInputValue(new Date());
+    if (!errors.preferredDate && !/^\d{4}-\d{2}-\d{2}$/.test(String(careDetails.preferredDate || "").trim())) {
+      errors.preferredDate = "Enter a valid date.";
+    }
+    if (!errors.preferredTime && !/^\d{2}:\d{2}$/.test(String(careDetails.preferredTime || "").trim())) {
+      errors.preferredTime = "Enter a valid time.";
+    }
     if (!errors.preferredDate && careDetails.preferredDate < today) {
       errors.preferredDate = "Past dates are not allowed.";
     }
@@ -3112,9 +3774,19 @@ function CustomerMobileDashboard({
         errors.preferredTime = "Past time is not allowed.";
       }
     }
+    return errors;
+  }
+
+  function validateRequestStep3() {
+    const errors = getRequestStep3Errors();
     setRequestStep3Errors(errors);
     return Object.keys(errors).length === 0;
   }
+
+  const requestContinueDisabled = requestSubmitting
+    || (requestStep === 1 && !NURSE_REQUEST_CARE_TYPES.includes(selectedCareType))
+    || (requestStep === 2 && Object.keys(getRequestStep2Errors()).length > 0)
+    || (requestStep === 3 && Object.keys(getRequestStep3Errors()).length > 0);
 
   async function handleRequestContinue() {
     if (requestStep === 1) {
@@ -3182,6 +3854,201 @@ function CustomerMobileDashboard({
       window.setTimeout(() => setRequestSubmitLoadingState(false), 320);
       setRequestSubmitting(false);
     }
+  }
+
+  function transitionToMtmStep(nextStep) {
+    setMtmSubmitError("");
+    setMtmStepErrors({});
+    setMtmAnimatingOut(true);
+    window.setTimeout(() => {
+      setMtmStep(nextStep);
+      setMtmAnimatingOut(false);
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    }, 140);
+  }
+
+  function updateMtmField(section, key, value) {
+    const normalizedValue = sanitizeMtmFieldValue(section, key, value);
+    setMtmForm((current) => ({
+      ...current,
+      [section]: {
+        ...current[section],
+        [key]: normalizedValue,
+      }
+    }));
+    if (mtmStepErrors[key] && String(normalizedValue || "").trim()) {
+      setMtmStepErrors((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    }
+  }
+
+  function toggleMtmBarrier(option) {
+    setMtmForm((current) => {
+      const barriers = Array.isArray(current.adherenceAssessment.barriers) ? current.adherenceAssessment.barriers : [];
+      const nextBarriers = barriers.includes(option)
+        ? barriers.filter((item) => item !== option)
+        : [...barriers, option];
+      return {
+        ...current,
+        adherenceAssessment: {
+          ...current.adherenceAssessment,
+          barriers: nextBarriers,
+          other: nextBarriers.includes("Other") ? current.adherenceAssessment.other : "",
+        }
+      };
+    });
+  }
+
+  function validateMtmStep(step) {
+    const errors = buildMtmStepErrors(step, mtmForm, mtmLabResultsFiles);
+    setMtmStepErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
+  const mtmStepIsValid = useMemo(() => Object.keys(buildMtmStepErrors(mtmStep, mtmForm, mtmLabResultsFiles)).length === 0, [mtmStep, mtmForm, mtmLabResultsFiles]);
+  const mtmCanSubmit = useMemo(() => Object.keys(buildMtmStepErrors(6, mtmForm, mtmLabResultsFiles)).length === 0, [mtmForm, mtmLabResultsFiles]);
+
+  async function submitMtmRequest() {
+    if (mtmSubmitting) return;
+    if (!validateMtmStep(6)) return;
+    if (!session) {
+      setMtmSubmitError("Session is not available.");
+      return;
+    }
+    setMtmSubmitting(true);
+    setMtmLoadingState(true);
+    setMtmSubmitError("");
+    const currentMedicationDraft = String(mtmForm.medicationProfile.medicationName || "").trim()
+      ? [{ ...mtmForm.medicationProfile }]
+      : [];
+    const submittedMedications = [
+      ...mtmMedicationEntries,
+      ...currentMedicationDraft.filter((draft) => !mtmMedicationEntries.some((item) => item.medicationName === draft.medicationName && item.dosage === draft.dosage)),
+    ];
+    try {
+      const request = await createMtmRequest(session, {
+        patient: mtmForm.patient,
+        emergency_contact: mtmForm.emergencyContact,
+        medical_history: mtmForm.medicalHistory,
+        medication_profile: {
+          ...mtmForm.medicationProfile,
+          medications: submittedMedications,
+        },
+        adherence_assessment: mtmForm.adherenceAssessment,
+        additional_information: mtmForm.additionalInformation,
+        attachments: mtmLabResultsFiles.map((file) => ({
+          name: file.name,
+          size: file.size,
+          type: file.type || "",
+        })),
+        duration_minutes: 30,
+      });
+      const nextRequest = request || null;
+      setMtmLatestRequest(nextRequest);
+      if (nextRequest?.id) {
+        setMtmSelectedRequestId(String(nextRequest.id));
+      }
+      setMtmSubmitted(true);
+      await mtmRequestsQuery.mutate();
+    } catch (error) {
+      setMtmSubmitError(error?.message || "Unable to submit MTM request.");
+    } finally {
+      window.setTimeout(() => setMtmLoadingState(false), 240);
+      setMtmSubmitting(false);
+    }
+  }
+
+  async function scheduleMtmAppointment() {
+    if (!activeMtmRequest?.id) return;
+    if (!session) {
+      setMtmSubmitError("Session is not available.");
+      return;
+    }
+    setMtmLoadingState(true);
+    setMtmSubmitError("");
+    try {
+      const next = await scheduleMtmRequest(session, activeMtmRequest.id, {
+        scheduled_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+      if (next) {
+        setMtmLatestRequest(next);
+        setMtmSelectedRequestId(String(next.id || activeMtmRequest.id));
+      }
+      await mtmRequestsQuery.mutate();
+    } catch (error) {
+      setMtmSubmitError(error?.message || "Unable to schedule the MTM appointment.");
+    } finally {
+      setMtmLoadingState(false);
+    }
+  }
+
+  function handleLabResultsUpload(event) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) {
+      setMtmLabResultsFiles([]);
+      updateMtmField("medicalHistory", "relevantLabResults", "");
+      setMtmStepErrors((current) => {
+        const next = { ...current };
+        delete next.relevantLabResults;
+        return next;
+      });
+      return;
+    }
+    const invalidFile = files.find((file) => !isAllowedMedicalFile(file));
+    if (invalidFile) {
+      setMtmLabResultsFiles([]);
+      updateMtmField("medicalHistory", "relevantLabResults", "");
+      setMtmStepErrors((current) => ({
+        ...current,
+        relevantLabResults: "Upload PDF, image, or document files up to 20MB each.",
+      }));
+      event.target.value = "";
+      return;
+    }
+    setMtmLabResultsFiles(files);
+    updateMtmField("medicalHistory", "relevantLabResults", files.map((file) => file.name).join(", "));
+    setMtmStepErrors((current) => {
+      const next = { ...current };
+      delete next.relevantLabResults;
+      return next;
+    });
+  }
+
+  function addMtmMedicationEntry() {
+    const draft = mtmForm.medicationProfile;
+    const errors = buildMtmStepErrors(4, mtmForm, mtmLabResultsFiles);
+    if (Object.keys(errors).length > 0) {
+      setMtmStepErrors(errors);
+      return;
+    }
+    setMtmMedicationEntries((current) => [
+      ...current,
+      {
+        medicationName: draft.medicationName,
+        dosage: draft.dosage,
+        frequency: draft.frequency,
+        route: draft.route,
+        indication: draft.indication,
+        prescribingDoctor: draft.prescribingDoctor,
+        startDate: draft.startDate,
+        notes: draft.notes,
+      },
+    ]);
+    setMtmForm((current) => ({
+      ...current,
+      medicationProfile: createEmptyMtmMedicationProfile(),
+    }));
+    setMtmSnackbar("Medication added");
+    setMtmStepErrors({});
+  }
+
+  function removeMtmMedicationEntry(indexToRemove) {
+    setMtmMedicationEntries((current) => current.filter((_, index) => index !== indexToRemove));
   }
 
   function renderHeader(title, showBack = false, onBack = onResetJourney, headerAction = null) {
@@ -3257,7 +4124,7 @@ function CustomerMobileDashboard({
                   return;
                 }
                 if (item.id === "pharmacy") {
-                  goToPage("orders");
+                  openPharmacyStore();
                   return;
                 }
                 if (item.id === "therapy") {
@@ -3431,13 +4298,26 @@ function CustomerMobileDashboard({
                   <small>{statusLabel}</small>
                 </div>
                 <div className="customer-mobile-pill">{quantity}</div>
+                {order.can_refill || order.refill_available ? (
+                  <button
+                    className="pill-button customer-mobile-refill-button"
+                    type="button"
+                    disabled={refillOrderBusy === order.id}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRefillOrder?.(order);
+                    }}
+                  >
+                    {refillOrderBusy === order.id ? "Refilling..." : "Refill"}
+                  </button>
+                ) : null}
                 <button className="customer-mobile-row-overlay" type="button" aria-label="Open order details" onClick={() => setSelectedOrder(order)} />
               </article>;
             })}
           </div> : <CustomerMobileEmptyState
             message="No orders found"
             ctaLabel="Shop Medicines"
-            onCta={() => window.open(storeUrl, "_blank", "noreferrer")}
+            onCta={openPharmacyStore}
             icon="orders"
             illustrationSrc="/group-3.png"
             ctaStyle="shop"
@@ -3447,7 +4327,48 @@ function CustomerMobileDashboard({
     </div>;
   }
 
+  if (page === "appointment") {
+    return <div className="customer-mobile-app">
+      {renderDrawer()}
+      <main className={`customer-mobile-frame ${pageTransitionClass}`}>
+        {renderHeader("Appointments")}
+        {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
+        <AppointmentPage
+          doctors={visibleDoctors}
+          doctorsUnavailable={state.doctorsUnavailable}
+          doctorsLoading={doctorsLoading}
+          appointmentsLoading={appointmentsLoading}
+          journey={journey}
+          selectedDoctor={selectedDoctor}
+          upcoming={upcomingAppointments}
+          past={pastAppointments}
+          onOpenAvailability={onOpenAvailability}
+          onOpenReviews={onOpenReviews}
+          onUpdateAvailabilityDate={onUpdateAvailabilityDate}
+          onSelectSlot={onSelectSlot}
+          onDurationChange={onDurationChange}
+          onReasonChange={onReasonChange}
+          onCreateAppointmentCheckout={onCreateAppointmentCheckout}
+          onRefreshConfirmation={onRefreshConfirmation}
+          onCancelCheckoutAppointment={onCancelCheckoutAppointment}
+          onResetJourney={onResetJourney}
+          onReviewDraftChange={onReviewDraftChange}
+          onSubmitReview={onSubmitReview}
+          storeCurrency={storeCurrency}
+          storeTimeZone={storeTimeZone}
+          storefrontSettings={storefrontSettings}
+          minimumBookingMinutes={minimumBookingMinutes}
+        />
+      </main>
+    </div>;
+  }
+
   if (page === "therapy") {
+    const activeMtm = activeMtmRequest;
+    const activeMtmStatus = String(activeMtm?.status || "").toLowerCase();
+    const showMtmSuccessState = Boolean(mtmSubmitted);
+    const shouldShowScheduleCta = activeMtmStatus === "approved";
+    const activeMtmScheduledAt = dateTimeValue(activeMtm, ["appointment_start", "scheduled_at", "created_at"]);
     return <div className="customer-mobile-app">
       {renderDrawer()}
       <main className={`customer-mobile-frame ${pageTransitionClass}`}>
@@ -3471,25 +4392,397 @@ function CustomerMobileDashboard({
               </button>
               <div>
                 <h1>Medical Therapy Management</h1>
-                <p>Premium care planning and medication support for Nevari Access Pro members.</p>
+
               </div>
             </header>
-            <div className="therapy-feature-grid">
-              <ProtectedFeature allowed={subscriptionState.canAccessTherapyManagement}>
-                <article className="therapy-feature-card">
-                  <strong>Medication review</strong>
-                  <p>Review current prescriptions, track side effects, and keep your therapy plan aligned with care guidance.</p>
-                </article>
-                <article className="therapy-feature-card">
-                  <strong>Follow-up scheduling</strong>
-                  <p>Coordinate follow-up care and keep specialist consultations flowing without losing context.</p>
-                </article>
-                <article className="therapy-feature-card">
-                  <strong>Refill continuity</strong>
-                  <p>Stay on track with premium refill and delivery support designed for ongoing treatment.</p>
-                </article>
-              </ProtectedFeature>
+            <div className="customer-mobile-pill-tabs" role="tablist" aria-label="MTM tabs">
+              {[
+                ["request", "Request"],
+                ["history", "History"]
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  className={`customer-mobile-pill-tab ${mtmTab === id ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setMtmTab(id)}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
+            {mtmSubmitError ? <p className="customer-mobile-alert">{mtmSubmitError}</p> : null}
+            {mtmTab === "request" && !showMtmSuccessState ? <section className="customer-mtm-mobile-flow">
+              <div className="customer-mobile-step-title">Step {mtmStep} of 6 - {MTM_STEP_TITLES[mtmStep]}</div>
+              {mtmStep < 5 ? <p className="customer-mobile-step-copy">Please fill out the form</p> : null}
+              <div className={`customer-mobile-step-panel ${mtmAnimatingOut ? "is-out" : "is-in"}`}>
+                {mtmStep === 1 ? <div className="customer-mobile-form-stack">
+                  {[
+                    ["Name", "name", "text", "Enter your full name"],
+                    ["Age", "age", "text", "Enter your age"],
+                    ["DOB", "dob", "date", ""],
+                    ["Gender", "gender", "select", ""],
+                    ["Marital Status", "maritalStatus", "select", ""],
+                    ["Address", "address", "text", "Enter address"],
+                    ["City/State", "cityState", "text", "Enter city/state"],
+                    ["Phone Number", "phoneNumber", "tel", "Enter phone number"],
+                    ["Emergency Contact", "emergencyContact", "tel", "Emergency contact number"],
+                    ["Preferred Contact Method", "preferredContactMethod", "select", ""],
+                  ].map(([label, key, type, placeholder]) => <label className="customer-mobile-field" key={label}>
+                    <span>{label}:</span>
+                    {type === "select" ? <select
+                      value={mtmForm.patient[key]}
+                      className={mtmStepErrors[key] ? "has-error" : ""}
+                      onChange={(event) => updateMtmField("patient", key, event.target.value)}
+                    >
+                      <option value="">Select an option</option>
+                      {(key === "gender" ? MTM_GENDER_OPTIONS : key === "maritalStatus" ? MTM_MARITAL_STATUS_OPTIONS : MTM_CONTACT_METHOD_OPTIONS).map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select> : <input
+                      type={type}
+                      inputMode={key === "age" ? "numeric" : ["phoneNumber", "emergencyContact"].includes(key) ? "tel" : undefined}
+                      maxLength={key === "age" ? 3 : ["phoneNumber", "emergencyContact"].includes(key) ? 11 : 500}
+                      max={key === "dob" ? todayInputDate() : undefined}
+                      pattern={key === "age" ? "\\d{1,3}" : ["phoneNumber", "emergencyContact"].includes(key) ? "\\d{11}" : undefined}
+                      value={mtmForm.patient[key]}
+                      placeholder={placeholder}
+                      className={mtmStepErrors[key] ? "has-error" : ""}
+                      onChange={(event) => updateMtmField("patient", key, event.target.value)}
+                    />}
+                    {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                  </label>)}
+                </div> : null}
+                {mtmStep === 2 ? <div className="customer-mobile-form-stack">
+                  {[
+                    ["Caregiver / Next of Kin Name", "caregiverName"],
+                    ["Relationship", "relationship"],
+                    ["Phone Number", "phoneNumber"],
+                    ["Email Address", "emailAddress"],
+                    ["Address", "address"],
+                    ["Lives with Patient?", "livesWithPatient"],
+                    ["Consent to Discuss Care?", "consentToDiscussCare"],
+                  ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
+                    <span>{label}:</span>
+                    {key === "relationship" || key === "livesWithPatient" || key === "consentToDiscussCare" ? <select
+                      value={mtmForm.emergencyContact[key]}
+                      className={mtmStepErrors[key] ? "has-error" : ""}
+                      onChange={(event) => updateMtmField("emergencyContact", key, event.target.value)}
+                    >
+                      <option value="">Select an option</option>
+                      {(key === "relationship" ? MTM_RELATIONSHIP_OPTIONS : MTM_YES_NO_OPTIONS).map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select> : <input
+                      type={key === "phoneNumber" ? "tel" : key === "emailAddress" ? "email" : "text"}
+                      inputMode={key === "phoneNumber" ? "tel" : undefined}
+                      maxLength={key === "phoneNumber" ? 11 : key === "emailAddress" ? 254 : 500}
+                      pattern={key === "phoneNumber" ? "\\d{11}" : undefined}
+                      value={mtmForm.emergencyContact[key]}
+                      className={mtmStepErrors[key] ? "has-error" : ""}
+                      onChange={(event) => updateMtmField("emergencyContact", key, event.target.value)}
+                    />}
+                    {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                  </label>)}
+                </div> : null}
+                {mtmStep === 3 ? <div className="customer-mobile-form-stack">
+                  <section className="customer-mobile-form-group">
+                    <p class="customer-mobile-form-group-title">Vital Signs</p>
+                    {[
+                      ["Height", "height"],
+                      ["Weight", "weight"],
+                      ["Blood Pressure", "bloodPressure"],
+                      ["Blood Glucose/HbA1c", "bloodGlucoseHbA1c"],
+                    ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
+                      <span>{label}:</span>
+                      <input type="text" value={mtmForm.medicalHistory[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
+                      {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                    </label>)}
+                  </section>
+                  <section className="customer-mobile-form-group">
+                    <p class="customer-mobile-form-group-title">Medical Conditions</p>
+                    {[
+                      ["Primary Diagnosis", "primaryDiagnosis"],
+                      ["Secondary Diagnosis", "secondaryDiagnosis"],
+                      ["Chronic Conditions", "chronicConditions"],
+                    ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
+                      <span>{label}:</span>
+                      <input type="text" value={mtmForm.medicalHistory[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
+                      {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                    </label>)}
+                  </section>
+                  <section className="customer-mobile-form-group">
+                    <p class="customer-mobile-form-group-title">Medical History</p>
+                    {[
+                      ["Past Medical History", "pastMedicalHistory"],
+                      ["Past Surgical History", "pastSurgicalHistory"],
+                    ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
+                      <span>{label}:</span>
+                      <input type="text" value={mtmForm.medicalHistory[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
+                      {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                    </label>)}
+                  </section>
+                  <section className="customer-mobile-form-group">
+                    <p class="customer-mobile-form-group-title">Allergies</p>
+                    {[
+                      ["Drug Allergies", "drugAllergies"],
+                      ["Drug Intolerances", "drugIntolerances"],
+                    ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
+                      <span>{label}:</span>
+                      <input type="text" value={mtmForm.medicalHistory[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
+                      {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                    </label>)}
+                  </section>
+                  <section className="customer-mobile-form-group">
+                    <p class="customer-mobile-form-group-title">Monitoring</p>
+                    <label className="customer-mobile-field">
+                      <span>Relevant Lab Results:</span>
+                      <div className="customer-mobile-upload-row-wrap">
+                        <button
+                          type="button"
+                          className={`customer-mobile-upload-row-button ${mtmLabResultsFiles.length ? "uploaded" : ""}`}
+                          onClick={() => mtmLabResultsInputRef.current?.click()}
+                        >
+                          <span>Lab Results</span>
+                          {mtmLabResultsFiles.length ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
+                        </button>
+                        <input
+                          ref={mtmLabResultsInputRef}
+                          type="file"
+                          multiple
+                          accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx"
+                          className="customer-mobile-hidden-file"
+                          onChange={handleLabResultsUpload}
+                        />
+                        {mtmLabResultsFiles.length ? <div className="customer-mobile-upload-meta customer-mobile-upload-meta-wrap">
+                          <small className="customer-mobile-upload-filename" title={mtmLabResultsFiles.map((file) => file.name).join(", ")}>{mtmLabResultsFiles.length} file{mtmLabResultsFiles.length === 1 ? "" : "s"} selected</small>
+                          <button type="button" onClick={() => mtmLabResultsInputRef.current?.click()}>Replace</button>
+                          <button type="button" onClick={() => {
+                            setMtmLabResultsFiles([]);
+                            updateMtmField("medicalHistory", "relevantLabResults", "");
+                            if (mtmLabResultsInputRef.current) mtmLabResultsInputRef.current.value = "";
+                          }}>Remove</button>
+                        </div> : null}
+                      </div>
+                      <small className="customer-mobile-field-hint">Upload multiple files up to 20MB each.</small>
+                      {mtmLabResultsFiles.length ? <div className="customer-mobile-file-list">
+                        {mtmLabResultsFiles.map((file) => <div key={`${file.name}-${file.size}`} className="customer-mobile-file-chip">{file.name}</div>)}
+                      </div> : null}
+                      {mtmStepErrors.relevantLabResults ? <small className="customer-mobile-field-error">{mtmStepErrors.relevantLabResults}</small> : null}
+                    </label>
+                    <label className="customer-mobile-field">
+                      <span>Clinical Monitoring Parameters:</span>
+                      <input type="text" value={mtmForm.medicalHistory.clinicalMonitoringParameters} className={mtmStepErrors.clinicalMonitoringParameters ? "has-error" : ""} onChange={(event) => updateMtmField("medicalHistory", "clinicalMonitoringParameters", event.target.value)} />
+                      {mtmStepErrors.clinicalMonitoringParameters ? <small className="customer-mobile-field-error">{mtmStepErrors.clinicalMonitoringParameters}</small> : null}
+                    </label>
+                  </section>
+                </div> : null}
+                {mtmStep === 4 ? <div className="customer-mobile-form-stack">
+                  {mtmMedicationEntries.length ? <div className="customer-mobile-medication-accordion">
+                    {mtmMedicationEntries.map((item, index) => <details key={`${item.medicationName}-${index}`} className="customer-mobile-medication-summary">
+                      <summary>
+                        <div className="customer-mobile-medication-summary-text">
+                          <span>Medication {index + 1}</span>
+                          <strong>{item.medicationName || "Medication"}</strong>
+                        </div>
+                        <button
+                          className="customer-mobile-medication-remove"
+                          type="button"
+                          aria-label={`Remove medication ${index + 1}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            removeMtmMedicationEntry(index);
+                          }}
+                        >
+                          &times;
+                        </button>
+                      </summary>
+                      <div className="MTM-info-list">
+                        <div className="info-row"><span className="MTM-info-label"> <b>Dosage: </b></span><span className="MTM-info-value">{item.dosage || "Not set"}</span></div>
+                        <div className="info-row"><span className="MTM-info-label"><b>Frequency:</b> </span><span className="MTM-info-value">{item.frequency || "Not set"}</span></div>
+                        <div className="info-row"><span className="MTM-info-label"><b>Route: </b>
+           
+                        </span><span className="MTM-info-value">{item.route || "Not set"}</span></div>
+                        <div className="info-row"><span className="MTM-info-label"><b>Indication: </b></span><span className="MTM-info-value">{item.indication || "Not set"}</span></div>
+                      </div>
+                    </details>)}
+                  </div> : null}
+                  {[
+                    ["Medication Name", "medicationName"],
+                    ["Dosage", "dosage"],
+                    ["Frequency", "frequency"],
+                    ["Route", "route"],
+                    ["Indication", "indication"],
+                    ["Prescribing Doctor", "prescribingDoctor"],
+                    ["Start Date", "startDate"],
+                    ["Notes", "notes"],
+                  ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
+                    <span>{label}:</span>
+                    {key === "frequency" || key === "route" ? <select
+                      value={mtmForm.medicationProfile[key]}
+                      className={mtmStepErrors[key] ? "has-error" : ""}
+                      onChange={(event) => updateMtmField("medicationProfile", key, event.target.value)}
+                    >
+                      <option value="">Select an option</option>
+                      {(key === "frequency" ? MTM_FREQUENCY_OPTIONS : MTM_ROUTE_OPTIONS).map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select> : <input type={key === "startDate" ? "date" : "text"} max={key === "startDate" ? todayInputDate() : undefined} value={mtmForm.medicationProfile[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("medicationProfile", key, event.target.value)} />}
+                    {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                  </label>)}
+                  <button className="customer-mobile-add-medication-button" type="button" onClick={addMtmMedicationEntry}><span aria-hidden="true">+</span> Add Medication</button>
+                  <div className="customer-mobile-subsection-title">
+                    <strong>Additional Medication Information</strong>
+                    <small>Answer where relevant</small>
+                  </div>
+                  {[
+                    ["Recent Medication Changes", "recentMedicationChanges"],
+                    ["Previous Medications Stopped", "previousMedicationsStopped"],
+                    ["Reason for Discontinuation", "reasonForDiscontinuation"],
+                    ["OTC Medications", "otcMedications"],
+                    ["Herbal Products", "herbalProducts"],
+                    ["Supplements", "supplements"],
+                  ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
+                    <span>{label}</span>
+                    <textarea rows={4} value={mtmForm.additionalInformation[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("additionalInformation", key, event.target.value)} />
+                    {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                  </label>)}
+                </div> : null}
+                {mtmStep === 5 ? <div className="customer-mobile-flow-stack">
+                  <p className="customer-mobile-step-copy">Identify why medications may not be working.</p>
+                  <div className="customer-mobile-subsection-title">
+                    <strong>Adherence Barriers</strong>
+                    <small>Please select as appropriate</small>
+                  </div>
+                  {MTM_ADHERENCE_OPTIONS.map((option) => {
+                    const selected = mtmForm.adherenceAssessment.barriers.includes(option);
+                    return <button key={option} type="button" className={`customer-mobile-option-row ${selected ? "active" : ""}`} onClick={() => toggleMtmBarrier(option)}>
+                      <span>{option}</span>
+                      <span className={`customer-mobile-radio ${selected ? "selected" : ""}`} aria-hidden="true" />
+                    </button>;
+                  })}
+                  {mtmForm.adherenceAssessment.barriers.includes("Other") ? <label className="customer-mobile-field">
+                    <span>Other barrier:</span>
+                    <input type="text" value={mtmForm.adherenceAssessment.other} onChange={(event) => updateMtmField("adherenceAssessment", "other", event.target.value)} />
+                  </label> : null}
+                </div> : null}
+                {mtmStep === 6 ? <div className="customer-mobile-form-stack">
+                  <div className="detail-card info-list">
+                    <div className="info-row"><span className="info-label">Name</span><span className="info-value">{mtmForm.patient.name || "Not set"}</span></div>
+                    <div className="info-row"><span className="info-label">Primary Diagnosis</span><span className="info-value">{mtmForm.medicalHistory.primaryDiagnosis || "Not set"}</span></div>
+                    <div className="info-row"><span className="info-label">Medication</span><span className="info-value">{mtmMedicationEntries.length ? `${mtmMedicationEntries.length} added` : (mtmForm.medicationProfile.medicationName || "Not set")}</span></div>
+                    <div className="info-row"><span className="info-label">Adherence Barriers</span><span className="info-value">{mtmForm.adherenceAssessment.barriers.length ? mtmForm.adherenceAssessment.barriers.join(", ") : "None selected"}</span></div>
+                  </div>
+                </div> : null}
+              </div>
+              {mtmStepErrors.barriers ? <small className="customer-mobile-field-error">{mtmStepErrors.barriers}</small> : null}
+              {mtmStepErrors.reasonForDiscontinuation ? <small className="customer-mobile-field-error">{mtmStepErrors.reasonForDiscontinuation}</small> : null}
+              {mtmSnackbar ? <div className="customer-mobile-snackbar" role="status" aria-live="polite">{mtmSnackbar}</div> : null}
+              <button className="customer-mobile-primary-button" type="button" disabled={mtmSubmitting || (mtmStep < 6 ? !mtmStepIsValid : !mtmCanSubmit)} onClick={() => {
+                if (mtmStep < 6) {
+                  if (!validateMtmStep(mtmStep)) return;
+                  transitionToMtmStep(mtmStep + 1);
+                  return;
+                }
+                submitMtmRequest();
+              }}>{mtmSubmitting ? "Submitting..." : (mtmStep < 6 ? "Continue" : "Submit MTM Assessment")}</button>
+              {mtmStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToMtmStep(Math.max(1, mtmStep - 1))}>Go Back</button> : null}
+            </section> : null}
+            {mtmTab === "request" && showMtmSuccessState ? <section className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell">
+              <div className="customer-confirmation-icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#B68A2B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#B68A2B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </div>
+              <h2>{mtmLoadingState ? "Submitting MTM assessment..." : "Thank you for completing the MTM Patient Assessment Form."}</h2>
+              {!mtmLoadingState ? <p>Your information has been received. A NevariHealth pharmacist will review your submission and contact you within 24 hours.</p> : null}
+              {!mtmLoadingState ? <div className="detail-card info-list">
+                <div className="info-row"><span className="info-label">Status</span><span className="info-value">{titleCase(activeMtmStatus || "submitted")}</span></div>
+                <div className="info-row"><span className="info-label">Assigned Pharmacist</span><span className="info-value">{activeMtm?.assigned_pharmacist_user_id ? `Pharmacist #${activeMtm.assigned_pharmacist_user_id}` : "Pending assignment"}</span></div>
+              </div> : null}
+              {shouldShowScheduleCta ? <button className="customer-mobile-primary-button" type="button" onClick={scheduleMtmAppointment}>Schedule Appointment</button> : null}
+              <button className="customer-mobile-secondary-button" type="button" onClick={async () => {
+                await mtmRequestsQuery.mutate();
+                const nextHistoryRequestId = activeMtm?.id || mtmLatestRequest?.id;
+                if (nextHistoryRequestId) {
+                  openMtmHistoryRequest(nextHistoryRequestId);
+                } else {
+                  setMtmSubmitted(false);
+                  setMtmStep(1);
+                }
+              }}>{shouldShowScheduleCta ? "Refresh Status" : "View Request Status"}</button>
+            </section> : null}
+            {mtmTab === "history" ? <section className="customer-mobile-list-section customer-mobile-appointment-pane">
+              {activeMtm ? <article className="customer-mobile-panel customer-mobile-mtm-history-detail">
+                <div className="customer-panel-head">
+                  <div>
+                    <span className="customer-section-kicker">History</span>
+                    <h2>{activeMtm.patient?.name || activeMtm.patient?.fullName || `MTM Request #${activeMtm.id}`}</h2>
+                  </div>
+                  <span className="chip processing"><span className="chip-dot" />{titleCase(activeMtmStatus || "submitted")}</span>
+                </div>
+                <div className="detail-card info-list">
+                  <div className="info-row"><span className="info-label">Submitted</span><span className="info-value">{formatAppointmentListDateTime(activeMtmScheduledAt, storeTimeZone)}</span></div>
+                  <div className="info-row"><span className="info-label">Assigned Pharmacist</span><span className="info-value">{activeMtm.assigned_pharmacist_user_id ? `Pharmacist #${activeMtm.assigned_pharmacist_user_id}` : "Pending assignment"}</span></div>
+                  <div className="info-row"><span className="info-label">Scheduled For</span><span className="info-value">{activeMtm.scheduled_at ? formatAppointmentListDateTime(activeMtm.scheduled_at, storeTimeZone) : "Not scheduled yet"}</span></div>
+                  <div className="info-row"><span className="info-label">Consultation</span><span className="info-value">{activeMtm.consultation_method || "Google Meet"}</span></div>
+                  {activeMtm.google_meet_link ? <div className="info-row"><span className="info-label">Join Call</span><span className="info-value"><a href={activeMtm.google_meet_link} target="_blank" rel="noreferrer">Open Google Meet</a></span></div> : null}
+                </div>
+              </article> : null}
+              {mtmRequestsQuery.isLoading ? Array.from({ length: 3 }, (_, index) => <article className="customer-mobile-visit-row skeleton-panel" key={`customer-mobile-mtm-skeleton-${index}`}>
+                <div className="customer-mobile-clock skeleton-circle skeleton-circle-sm" />
+                <div className="customer-mobile-visit-copy">
+                  <SkeletonBox className="skeleton-line skeleton-line-md" />
+                  <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                </div>
+                <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+              </article>) : mtmHistoryRequests.length ? mtmHistoryRequests.map((request, index) => {
+                const scheduledAt = request?.appointment_start || request?.scheduled_at || request?.created_at;
+                const status = String(request?.status || "submitted").replace(/[_-]+/g, " ");
+                const pharmacistLabel = request?.assigned_pharmacist_name || (request?.assigned_pharmacist_user_id ? `Pharmacist #${request.assigned_pharmacist_user_id}` : "Reviewing pharmacist pending");
+                const isSelected = String(request?.id || "") === String(mtmSelectedRequestId || activeMtm?.id || "");
+                return <article
+                  className={`customer-mobile-visit-row ${isSelected ? "is-active" : ""}`}
+                  key={request?.id || `mtm-visit-${index}`}
+                  ref={(node) => {
+                    const key = String(request?.id || "");
+                    if (!key) return;
+                    if (node) {
+                      mtmHistoryRequestRefs.current.set(key, node);
+                    } else {
+                      mtmHistoryRequestRefs.current.delete(key);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  onClick={() => openMtmHistoryRequest(request?.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      openMtmHistoryRequest(request?.id);
+                    }
+                  }}
+                >
+                  <div className="customer-mobile-clock">
+                    <MobileIcon name="clock" />
+                  </div>
+                  <div className="customer-mobile-visit-copy">
+                    <strong>{request?.patient?.name || request?.patient?.fullName || "MTM Consultation"}</strong>
+                    <span>{formatAppointmentListDateTime(scheduledAt, storeTimeZone)}</span>
+                    <small>{pharmacistLabel}</small>
+                  </div>
+                  <div className="customer-mobile-appointment-status">
+                    <div className="appointment-status-stack">
+                      <span className={`chip processing ${isSelected ? "active" : ""}`}><span className="chip-dot" />{titleCase(status)}</span>
+                    </div>
+                  </div>
+                </article>;
+              }) : <CustomerMobileEmptyState
+                message="No MTM history yet"
+                ctaLabel="Request MTM"
+                onCta={() => setMtmTab("request")}
+                icon="appointments"
+                illustrationSrc="/group-3.png"
+              />}
+            </section> : null}
           </section>
         </SubscriptionGate>
       </main>
@@ -3605,6 +4898,86 @@ function CustomerMobileDashboard({
       const dayNumber = index - leadingDays + 1;
       return dayNumber > 0 ? dayNumber : null;
     });
+
+    if (page === "appointment") {
+      const greetingName = firstName(settings.displayName || profile.display_name || "Tee");
+      const selectedTimeValue = appointmentComposerSelectedSlot || BOOKING_SLOT_TIMES[0] || "09:00";
+
+      return <div className="customer-mobile-app">
+        {renderDrawer()}
+        <main className={`customer-mobile-frame ${pageTransitionClass} customer-mobile-appointment-screen`}>
+            <header className="customer-mobile-header is-overview customer-mobile-appointment-header">
+              <button className="customer-mobile-searchbar customer-mobile-searchbar-button" type="button" onClick={openSearchPage} aria-label="Search here for orders, appointments etc">
+                <MobileIcon name="search" />
+                <span>Search here for orders, appointments etc</span>
+              </button>
+              <div className="customer-mobile-greeting-row">
+                <button className="customer-mobile-icon-button" type="button" aria-label="Open menu" onClick={() => setDrawerOpen(true)}>
+                  <MobileIcon name="menu" />
+                </button>
+                <div className="customer-mobile-greeting-copy">
+                  <span>Welcome back, {greetingName}</span>
+                </div>
+              </div>
+              <div className="customer-mobile-title-row customer-mobile-appointment-title-row">
+                <h1>Appointments</h1>
+              </div>
+            </header>
+            <div className="customer-mobile-header-spacer is-overview customer-mobile-header-spacer-appointments" aria-hidden="true" />
+            {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
+            <div className="customer-mobile-pill-tabs customer-mobile-appointment-tabs" role="tablist" aria-label="Appointment tabs">
+              {[
+                ["all", "All"],
+                ["upcoming", "Upcoming"],
+                ["previous", "Previous"]
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  className={`customer-mobile-pill-tab ${appointmentTab === id ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setAppointmentTab(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <section className="customer-mobile-list-section customer-mobile-appointment-pane customer-mobile-appointment-history-list">
+              {appointmentsLoading ? Array.from({ length: 4 }, (_, index) => <article className="customer-mobile-visit-row customer-mobile-visit-row-shot skeleton-panel" key={`customer-mobile-visit-skeleton-${index}`}>
+                <div className="customer-mobile-clock skeleton-circle skeleton-circle-sm" />
+                <div className="customer-mobile-visit-copy">
+                  <SkeletonBox className="skeleton-line skeleton-line-md" />
+                  <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                  <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                </div>
+              </article>) : visibleAppointments.length ? visibleAppointments.map((appointment) => {
+                const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
+                const appointmentTitle = appointmentDisplayTitle(appointment, doctor);
+                const appointmentTime = formatTime(appointment.start_at, storeTimeZone);
+                return <article className="customer-mobile-visit-row customer-mobile-visit-row-shot" key={appointment.id}>
+                  <button className="customer-mobile-row-overlay" type="button" aria-label="Open appointment details" onClick={() => setSelectedAppointment(appointment)} />
+                  <div className="customer-mobile-clock">
+                    <MobileIcon name="clock" />
+                  </div>
+                  <div className="customer-mobile-visit-copy customer-mobile-visit-copy-shot">
+                    <strong>{appointmentTitle}</strong>
+                    <span>{appointmentTime}</span>
+                    <small>{doctorLabel}</small>
+                  </div>
+                </article>;
+              }) : <CustomerMobileEmptyState
+                message="You have no appointments"
+                ctaLabel="Book an appointment"
+                onCta={handleNewAppointmentClick}
+                icon="appointments"
+                illustrationSrc="/group-3.png"
+                ctaStyle="appointment"
+              />}
+            </section>
+            {showAppointmentPagePlus ? <button className="pill-button customer-mobile-appointment-booknow-btn" type="button" aria-label="Book appointment" title="Book appointment" onClick={handleNewAppointmentClick}><span aria-hidden="true">+</span></button> : null}
+        </main>
+      </div>;
+    }
+
     return <div className="customer-mobile-app">
       {renderDrawer()}
       <main className={`customer-mobile-frame ${pageTransitionClass}`}>
@@ -3612,35 +4985,16 @@ function CustomerMobileDashboard({
           showNurseRequestFlow ? "Request a Nurse" : "Appointments",
           false,
           onResetJourney,
-          (!showNurseRequestFlow && !appointmentComposerOpen && showAppointmentPagePlus)
-            ? <button className="pill-button customer-mobile-appointment-booknow-btn" type="button" aria-label="Book now" title="Book now" onClick={() => setAppointmentComposerOpen(true)}>Book Now</button>
-            : null
+          null
         )}
         {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
-        {!showNurseRequestFlow && !appointmentComposerOpen ? <div className="customer-mobile-pill-tabs" role="tablist" aria-label="Appointment tabs">
-          {[
-            ["all", "All"],
-            ["upcoming", "Upcoming"],
-            ["previous", "Previous"]
-          ].map(([id, label]) => (
-            <button
-              key={id}
-              className={`customer-mobile-pill-tab ${appointmentTab === id ? "active" : ""}`}
-              type="button"
-              onClick={() => setAppointmentTab(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </div> : null}
-
         {showNurseRequestFlow ? <section className="customer-mobile-flow">
           {!requestSubmitted ? <>
             <div className="customer-mobile-step-title">Step {requestStep} of 5 - {requestStep === 1 ? "Care Type" : requestStep === 2 ? "Patient Details" : requestStep === 3 ? "Care Details" : requestStep === 4 ? "Clinical Requirements" : "Upload Medical Information"}</div>
             <p className="customer-mobile-step-copy">{requestStep === 1 ? "Please select as appropriate:" : requestStep === 2 ? "Please fill out the form" : requestStep === 3 ? "Set the care schedule details." : requestStep === 4 ? "Select required clinical services." : "You can upload any of these, if available:"}</p>
             <div className={`customer-mobile-step-panel ${requestStepAnimatingOut ? "is-out" : "is-in"}`}>
               {requestStep === 1 ? <div className="customer-mobile-flow-stack">
-                {["Elderly Care", "Post Surgery Recovery", "Medication Assistance", "Wound Dressing", "Injection Administration", "Chronic Disease Monitoring", "Palliative Care"].map((label) => (
+                {NURSE_REQUEST_CARE_TYPES.map((label) => (
                   <button key={label} type="button" className={`customer-mobile-option-row ${selectedCareType === label ? "active" : ""}`} onClick={() => setSelectedCareType(label)}>
                     <span>{label}</span>
                     <span className={`customer-mobile-radio ${selectedCareType === label ? "selected" : ""}`} aria-hidden="true" />
@@ -3677,16 +5031,14 @@ function CustomerMobileDashboard({
                     <option value="Female">Female</option>
                   </select> : <input
                     type={key === "emergencyContact" ? "tel" : "text"}
-                    inputMode={key === "age" ? "numeric" : undefined}
-                    maxLength={key === "age" ? 3 : undefined}
+                    inputMode={key === "age" ? "numeric" : key === "emergencyContact" ? "tel" : undefined}
+                    maxLength={key === "age" ? 3 : key === "emergencyContact" ? 20 : key === "address" ? 200 : 120}
+                    pattern={key === "age" ? "\\d{1,3}" : key === "emergencyContact" ? "[0-9+\\-()\\s]{7,20}" : undefined}
                     value={requestForm[key]}
                     placeholder={placeholder}
                     className={requestStep2Errors[key] ? "has-error" : ""}
                     onChange={(event) => {
-                      let value = event.target.value;
-                      if (key === "age") value = value.replace(/\D/g, "").slice(0, 3);
-                      if (key === "name" || key === "mobilityStatus") value = value.replace(/[^a-zA-Z\s'.-]/g, "");
-                      if (key === "emergencyContact") value = value.replace(/[^0-9+\-()\s]/g, "");
+                      const value = sanitizeRequestFieldValue(key, event.target.value);
                       setRequestForm((current) => ({ ...current, [key]: value }));
                       if (requestStep2Errors[key] && value.trim()) {
                         setRequestStep2Errors((current) => {
@@ -3712,7 +5064,7 @@ function CustomerMobileDashboard({
                 <div className="customer-mobile-radio-group">
                   <span>Is this a recurring visit or one time care?</span>
                   <div className="customer-mobile-inline-radios">
-                    {["Recurring", "One Time"].map((label) => <label key={label}>
+                    {NURSE_REQUEST_VISIT_TYPES.map((label) => <label key={label}>
                       <input
                         type="radio"
                         name="visitType"
@@ -3779,12 +5131,7 @@ function CustomerMobileDashboard({
                     }
                   }}>
                     <option value="">Select duration</option>
-                    <option value="30 mins">30 mins</option>
-                    <option value="1 hour">1 hour</option>
-                    <option value="2 hours">2 hours</option>
-                    <option value="4 hours">4 hours</option>
-                    <option value="8 hours">8 hours</option>
-                    <option value="12 hours">12 hours</option>
+                    {NURSE_REQUEST_DURATIONS.map((duration) => <option value={duration} key={duration}>{duration}</option>)}
                   </select>
                   {requestStep3Errors.duration ? <small className="customer-mobile-field-error">{requestStep3Errors.duration}</small> : null}
                 </label>
@@ -3792,7 +5139,7 @@ function CustomerMobileDashboard({
                 <div className="customer-mobile-radio-group">
                   <span>Day/Night Care?</span>
                   <div className="customer-mobile-inline-radios">
-                    {["Day", "Night"].map((choice) => <label key={choice}>
+                    {NURSE_REQUEST_CARE_SHIFTS.map((choice) => <label key={choice}>
                       <input type="radio" name="careShift" checked={careDetails.careShift === choice} onChange={() => {
                         setCareDetails((current) => ({ ...current, careShift: choice }));
                         if (requestStep3Errors.careShift) {
@@ -3820,7 +5167,7 @@ function CustomerMobileDashboard({
                   <div className="customer-mobile-radio-group" key={label}>
                     <span>{label}</span>
                     <div className="customer-mobile-inline-radios">
-                      {["Yes", "No"].map((choice) => <label key={choice}>
+                      {NURSE_REQUEST_YES_NO_OPTIONS.map((choice) => <label key={choice}>
                         <input type="radio" name={key} checked={careDetails[key] === choice} onChange={() => {
                           setCareDetails((current) => ({ ...current, [key]: choice }));
                           if (requestStep3Errors[key]) {
@@ -3840,13 +5187,13 @@ function CustomerMobileDashboard({
                 ))}
               </div> : null}
               {requestStep === 4 ? <div className="customer-mobile-flow-stack">
-                {["Medication Administration", "Catheter Care", "Blood Pressure Monitoring", "Diabetes Monitoring", "IV Therapy", "Feeding Tube Support"].map((label) => {
+                {NURSE_REQUEST_CLINICAL_REQUIREMENTS.map((label) => {
                   const selected = clinicalRequirements.includes(label);
                   return <button key={label} type="button" className={`customer-mobile-option-row ${selected ? "active" : ""}`} onClick={() => setClinicalRequirements((current) => selected ? current.filter((item) => item !== label) : [...current, label])}><span>{label}</span><span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "✓" : ""}</span></button>;
                 })}
               </div> : null}
               {requestStep === 5 ? <div className="customer-mobile-flow-stack">
-                {["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"].map((label) => {
+                {NURSE_REQUEST_UPLOAD_LABELS.map((label) => {
                   const uploaded = uploadedMedicalFiles[label];
                   return <div key={label} className="customer-mobile-upload-row-wrap">
                     <button type="button" className={`customer-mobile-upload-row-button ${uploaded ? "uploaded" : ""}`} onClick={() => uploadInputRefs.current[label]?.click()}>
@@ -3880,7 +5227,7 @@ function CustomerMobileDashboard({
                 })}
               </div> : null}
             </div>
-            <button className="customer-mobile-primary-button" type="button" disabled={(requestStep === 1 && !selectedCareType) || requestSubmitting} onClick={handleRequestContinue}>{requestSubmitting ? "Submitting..." : "Continue"}</button>
+            <button className="customer-mobile-primary-button" type="button" disabled={requestContinueDisabled} onClick={handleRequestContinue}>{requestSubmitting ? "Submitting..." : "Continue"}</button>
             {requestSubmitError ? <small className="customer-mobile-field-error">{requestSubmitError}</small> : null}
             {requestStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToRequestStep(Math.max(1, requestStep - 1))}>Go Back</button> : null}
           </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="nurse-request-confirmation-title">
@@ -3902,177 +5249,13 @@ function CustomerMobileDashboard({
           </div>}
         </section> : null}
 
-        {appointmentComposerOpen ? <section className="customer-mobile-appointment-pane customer-mobile-book-pane">
-          <div className="customer-mobile-title-row">
-            <button className="customer-mobile-back-link" type="button" onClick={() => {
-              setAppointmentComposerOpen(false);
-              setAppointmentComposerDatePicked(false);
-            }}>
-              <MobileIcon name="arrow-left" />
-              <span>Go back</span>
-            </button>
-          </div>
-          <section className="customer-mobile-panel customer-mobile-doctor-select-panel">
-            <span className="customer-mobile-field-label">Select Doctor</span>
-            <div className="customer-mobile-doctor-picker-wrap">
-              <button className="customer-mobile-doctor-picker" type="button" onClick={() => setAppointmentComposerDoctorMenuOpen((current) => !current)}>
-                <div className="customer-mobile-doctor-pill">
-                  <span className="customer-mobile-doctor-avatar">{selectedComposerDoctor?.initials || "DR"}</span>
-                  <span className="customer-mobile-doctor-copy">
-                    <strong>{selectedComposerDoctor?.name || "Select doctor"}</strong>
-                    <small>{selectedComposerDoctor?.specialty || "General Physician"}</small>
-                  </span>
-                </div>
-                <MobileIcon name="arrow-right" />
-              </button>
-              {appointmentComposerDoctorMenuOpen ? <div className="customer-mobile-doctor-menu">
-                {composerDoctors.map((doctor) => <button key={doctor.id} type="button" className={`customer-mobile-doctor-menu-item ${appointmentComposerDoctorId === doctor.id ? "active" : ""}`} onClick={() => {
-                  setAppointmentComposerDoctorId(doctor.id);
-                  setAppointmentComposerDoctorMenuOpen(false);
-                  setAppointmentComposerSelectedSlot("");
-                  if (appointmentComposerErrors.doctor) {
-                    setAppointmentComposerErrors((current) => {
-                      const next = { ...current };
-                      delete next.doctor;
-                      return next;
-                    });
-                  }
-                  setAppointmentComposerSlotsRefreshing(true);
-                  window.setTimeout(() => setAppointmentComposerSlotsRefreshing(false), 180);
-                }}>
-                  <span className="customer-mobile-doctor-avatar">{doctor.initials}</span>
-                  <span className="customer-mobile-doctor-copy">
-                    <strong>{doctor.name}</strong>
-                    <small>{doctor.specialty}</small>
-                  </span>
-                </button>)}
-              </div> : null}
-            </div>
-            {appointmentComposerErrors.doctor ? <small className="customer-mobile-field-error">{appointmentComposerErrors.doctor}</small> : null}
-          </section>
-          <section className="customer-mobile-panel customer-mobile-calendar-card">
-            <div className="customer-mobile-book-month">
-              <strong>{monthLabel}</strong>
-              <div className="customer-mobile-book-arrows">
-                <button type="button" aria-label="Previous month" onClick={() => setAppointmentComposerMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}><MobileIcon name="arrow-left" /></button>
-                <button type="button" aria-label="Next month" onClick={() => setAppointmentComposerMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}><MobileIcon name="arrow-right" /></button>
-              </div>
-            </div>
-            <div className="customer-mobile-calendar-head">
-              {["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((label) => <span key={label}>{label}</span>)}
-            </div>
-            <div className="customer-mobile-calendar-grid">
-              {calendarCells.map((day, index) => {
-                if (!day) return <span key={`blank-${index}`} />;
-                const dateValue = `${appointmentComposerMonth.getFullYear()}-${String(appointmentComposerMonth.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-                const isSelected = appointmentComposerDate === dateValue;
-                const isPast = new Date(`${dateValue}T00:00:00`).getTime() < new Date(`${localDateInputValue(new Date())}T00:00:00`).getTime();
-                return <button key={dateValue} type="button" className={`customer-mobile-calendar-day ${isSelected ? "active" : ""} ${isPast ? "is-past" : ""}`} disabled={isPast} onClick={() => {
-                  setAppointmentComposerDate(dateValue);
-                  setAppointmentComposerDatePicked(true);
-                  setAppointmentComposerSelectedSlot("");
-                  if (appointmentComposerErrors.date || appointmentComposerErrors.time) {
-                    setAppointmentComposerErrors((current) => {
-                      const next = { ...current };
-                      delete next.date;
-                      delete next.time;
-                      return next;
-                    });
-                  }
-                  setAppointmentComposerSlotsRefreshing(true);
-                  window.setTimeout(() => setAppointmentComposerSlotsRefreshing(false), 180);
-                }}>{day}</button>;
-              })}
-            </div>
-            <div className={`customer-mobile-slot-row ${appointmentComposerSlotsRefreshing ? "is-refreshing" : ""}`}>
-              <strong>Available Times</strong>
-              <div className="customer-mobile-slot-pills">
-                {appointmentComposerSlots.map((slot) => <button
-                  key={slot.value}
-                  type="button"
-                  className={`customer-mobile-slot-pill ${appointmentComposerSelectedSlot === slot.value ? "active" : ""}`}
-                  disabled={slot.disabled || !appointmentComposerDate}
-                  onClick={() => {
-                    setAppointmentComposerSelectedSlot(slot.value);
-                    if (appointmentComposerErrors.time) {
-                      setAppointmentComposerErrors((current) => {
-                        const next = { ...current };
-                        delete next.time;
-                        return next;
-                      });
-                    }
-                  }}
-                >
-                  {formatSlotTime(slot.value)}
-                </button>)}
-              </div>
-              {appointmentComposerDate && !appointmentComposerHasAvailableSlots ? <small className="customer-mobile-slot-empty">No available times for this date. Please choose another date.</small> : null}
-              {appointmentComposerErrors.time ? <small className="customer-mobile-field-error">{appointmentComposerErrors.time}</small> : null}
-            </div>
-          </section>
-          <label className="customer-mobile-field">
-            <span>Reason for Appointment:</span>
-            <textarea rows={4} value={appointmentComposerReason} placeholder="Briefly state the reason for your appointment" onChange={(event) => {
-              const value = sanitizeClientText(event.target.value, { max: 500 });
-              setAppointmentComposerReason(value);
-              if (appointmentComposerErrors.reason && value.trim()) {
-                setAppointmentComposerErrors((current) => {
-                  const next = { ...current };
-                  delete next.reason;
-                  return next;
-                });
-              }
-            }} />
-            {appointmentComposerErrors.reason ? <small className="customer-mobile-field-error">{appointmentComposerErrors.reason}</small> : null}
-          </label>
-          {!appointmentComposerSuccess ? <>
-            <button
-              className="customer-mobile-primary-button"
-              type="button"
-              disabled={!selectedComposerDoctor || !appointmentComposerDate || !appointmentComposerSelectedSlot || !appointmentComposerReason.trim() || appointmentComposerLoading}
-              onClick={handleAppointmentComposerBooking}
-            >
-              {appointmentComposerLoading ? "Booking..." : "Book Appointment"}
-            </button>
-            {appointmentComposerErrors.submit ? <small className="customer-mobile-field-error">{appointmentComposerErrors.submit}</small> : null}
-          </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="appointment-confirmation-title">
-            <section className="customer-mobile-panel customer-mobile-submit-state appointment-booking-success customer-confirmation-shell">
-              <div className="customer-confirmation-icon" aria-hidden="true">
-                <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#22A06B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#22A06B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              </div>
-              <h2 id="appointment-confirmation-title">{appointmentComposerSuccess.title || "Appointment Booked!"}</h2>
-              <p>{appointmentComposerSuccess.subtitle}</p>
-              <div className="customer-confirmation-next">
-                <h3>What happens next?</h3>
-                <div className="customer-confirmation-next-row"><span>Status</span><strong className="badge">{appointmentComposerSuccess.appointment?.pending_sync ? "Pending Sync" : "Confirmed"}</strong></div>
-                <div className="customer-confirmation-next-row"><span>Next step</span><strong>{appointmentComposerSuccess.appointment?.pending_sync ? "Server sync" : "Calendar + reminders"}</strong></div>
-                <div className="customer-confirmation-next-row"><span>Notification</span><strong>{appointmentComposerSuccess.appointment?.pending_sync ? "Pending" : "Email sent"}</strong></div>
-              </div>
-              <button className="customer-mobile-primary-button" type="button" onClick={() => {
-                setSelectedAppointment(appointmentComposerSuccess.appointment);
-                setAppointmentComposerOpen(false);
-                setAppointmentComposerDatePicked(false);
-                setAppointmentComposerSuccess(null);
-              }}>View Appointment Details</button>
-              <button className="customer-mobile-secondary-button" type="button" onClick={() => {
-                setAppointmentComposerOpen(false);
-                setAppointmentComposerSuccess(null);
-                setAppointmentComposerDate(localDateInputValue(new Date()));
-                setAppointmentComposerDatePicked(false);
-                setAppointmentComposerSelectedSlot("");
-                setAppointmentComposerReason("");
-              }}>Back to Appointments</button>
-            </section>
-          </div>}
-        </section> : null}
-
-        {false && appointmentTab === "request" ? <section className="customer-mobile-flow">
+        {!showNurseRequestFlow && appointmentTab === "request" ? <section className="customer-mobile-flow">
           {!requestSubmitted ? <>
             <div className="customer-mobile-step-title">Step {requestStep} of 5 - {requestStep === 1 ? "Care Type" : requestStep === 2 ? "Patient Details" : requestStep === 3 ? "Care Details" : requestStep === 4 ? "Clinical Requirements" : "Upload Medical Information"}</div>
             <p className="customer-mobile-step-copy">{requestStep === 1 ? "Please select as appropriate:" : requestStep === 2 ? "Please fill out the form" : requestStep === 3 ? "Set the care schedule details." : requestStep === 4 ? "Select required clinical services." : "You can upload any of these, if available:"}</p>
             <div className={`customer-mobile-step-panel ${requestStepAnimatingOut ? "is-out" : "is-in"}`}>
               {requestStep === 1 ? <div className="customer-mobile-flow-stack">
-                {["Elderly Care", "Post Surgery Recovery", "Medication Assistance", "Wound Dressing", "Injection Administration", "Chronic Disease Monitoring", "Palliative Care"].map((label) => (
+                {NURSE_REQUEST_CARE_TYPES.map((label) => (
                   <button key={label} type="button" className={`customer-mobile-option-row ${selectedCareType === label ? "active" : ""}`} onClick={() => setSelectedCareType(label)}>
                     <span>{label}</span>
                     <span className={`customer-mobile-radio ${selectedCareType === label ? "selected" : ""}`} aria-hidden="true" />
@@ -4110,16 +5293,14 @@ function CustomerMobileDashboard({
                     <option value="Female">Female</option>
                   </select> : <input
                     type={key === "emergencyContact" ? "tel" : "text"}
-                    inputMode={key === "age" ? "numeric" : undefined}
-                    maxLength={key === "age" ? 3 : undefined}
+                    inputMode={key === "age" ? "numeric" : key === "emergencyContact" ? "tel" : undefined}
+                    maxLength={key === "age" ? 3 : key === "emergencyContact" ? 20 : key === "address" ? 200 : 120}
+                    pattern={key === "age" ? "\\d{1,3}" : key === "emergencyContact" ? "[0-9+\\-()\\s]{7,20}" : undefined}
                     value={requestForm[key]}
                     placeholder={placeholder}
                     className={requestStep2Errors[key] ? "has-error" : ""}
                     onChange={(event) => {
-                      let value = event.target.value;
-                      if (key === "age") value = value.replace(/\D/g, "").slice(0, 3);
-                      if (key === "name" || key === "mobilityStatus") value = value.replace(/[^a-zA-Z\s'.-]/g, "");
-                      if (key === "emergencyContact") value = value.replace(/[^0-9+\-()\s]/g, "");
+                      const value = sanitizeRequestFieldValue(key, event.target.value);
                       setRequestForm((current) => ({ ...current, [key]: value }));
                       if (requestStep2Errors[key] && value.trim()) {
                         setRequestStep2Errors((current) => {
@@ -4151,7 +5332,7 @@ function CustomerMobileDashboard({
                 <div className="customer-mobile-radio-group">
                   <span>Is this a recurring visit or one time care?</span>
                   <div className="customer-mobile-inline-radios">
-                    {["Recurring", "One Time"].map((label) => <label key={label}>
+                    {NURSE_REQUEST_VISIT_TYPES.map((label) => <label key={label}>
                       <input
                         type="radio"
                         name="visitType"
@@ -4218,12 +5399,7 @@ function CustomerMobileDashboard({
                     }
                   }}>
                     <option value="">Select duration</option>
-                    <option value="30 mins">30 mins</option>
-                    <option value="1 hour">1 hour</option>
-                    <option value="2 hours">2 hours</option>
-                    <option value="4 hours">4 hours</option>
-                    <option value="8 hours">8 hours</option>
-                    <option value="12 hours">12 hours</option>
+                    {NURSE_REQUEST_DURATIONS.map((duration) => <option value={duration} key={duration}>{duration}</option>)}
                   </select>
                   {requestStep3Errors.duration ? <small className="customer-mobile-field-error">{requestStep3Errors.duration}</small> : null}
                 </label>
@@ -4231,7 +5407,7 @@ function CustomerMobileDashboard({
                 <div className="customer-mobile-radio-group">
                   <span>Day/Night Care?</span>
                   <div className="customer-mobile-inline-radios">
-                    {["Day", "Night"].map((choice) => <label key={choice}>
+                    {NURSE_REQUEST_CARE_SHIFTS.map((choice) => <label key={choice}>
                       <input type="radio" name="careShift" checked={careDetails.careShift === choice} onChange={() => {
                         setCareDetails((current) => ({ ...current, careShift: choice }));
                         if (requestStep3Errors.careShift) {
@@ -4259,7 +5435,7 @@ function CustomerMobileDashboard({
                   <div className="customer-mobile-radio-group" key={label}>
                     <span>{label}</span>
                     <div className="customer-mobile-inline-radios">
-                      {["Yes", "No"].map((choice) => <label key={choice}>
+                      {NURSE_REQUEST_YES_NO_OPTIONS.map((choice) => <label key={choice}>
                         <input type="radio" name={key} checked={careDetails[key] === choice} onChange={() => {
                           setCareDetails((current) => ({ ...current, [key]: choice }));
                           if (requestStep3Errors[key]) {
@@ -4280,7 +5456,7 @@ function CustomerMobileDashboard({
               </div> : null}
 
               {requestStep === 4 ? <div className="customer-mobile-flow-stack">
-                {["Medication Administration", "Catheter Care", "Blood Pressure Monitoring", "Diabetes Monitoring", "IV Therapy", "Feeding Tube Support"].map((label) => {
+                {NURSE_REQUEST_CLINICAL_REQUIREMENTS.map((label) => {
                   const selected = clinicalRequirements.includes(label);
                   return <button
                     key={label}
@@ -4297,7 +5473,7 @@ function CustomerMobileDashboard({
               </div> : null}
 
               {requestStep === 5 ? <div className="customer-mobile-flow-stack">
-                {["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"].map((label) => {
+                {NURSE_REQUEST_UPLOAD_LABELS.map((label) => {
                   const uploaded = uploadedMedicalFiles[label];
                   return <div key={label} className="customer-mobile-upload-row-wrap">
                     <button type="button" className={`customer-mobile-upload-row-button ${uploaded ? "uploaded" : ""}`} onClick={() => uploadInputRefs.current[label]?.click()}>
@@ -4337,7 +5513,7 @@ function CustomerMobileDashboard({
               </div> : null}
             </div>
 
-            <button className="customer-mobile-primary-button" type="button" disabled={(requestStep === 1 && !selectedCareType) || requestSubmitting} onClick={handleRequestContinue}>{requestSubmitting ? "Submitting..." : "Continue"}</button>
+            <button className="customer-mobile-primary-button" type="button" disabled={requestContinueDisabled} onClick={handleRequestContinue}>{requestSubmitting ? "Submitting..." : "Continue"}</button>
             {requestSubmitError ? <small className="customer-mobile-field-error">{requestSubmitError}</small> : null}
             {requestStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToRequestStep(Math.max(1, requestStep - 1))}>Go Back</button> : null}
           </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="nurse-request-confirmation-title-secondary">
@@ -4358,50 +5534,6 @@ function CustomerMobileDashboard({
           </div>}
         </section> : null}
 
-        {!showNurseRequestFlow && !appointmentComposerOpen && (appointmentTab === "all" || appointmentTab === "upcoming" || appointmentTab === "previous") ? <section className="customer-mobile-list-section customer-mobile-appointment-pane">
-          {appointmentsLoading ? Array.from({ length: 4 }, (_, index) => <article className="customer-mobile-visit-row skeleton-panel" key={`customer-mobile-visit-skeleton-${index}`}>
-            <div className="customer-mobile-clock skeleton-circle skeleton-circle-sm" />
-            <div className="customer-mobile-visit-copy">
-              <SkeletonBox className="skeleton-line skeleton-line-md" />
-              <SkeletonBox className="skeleton-line skeleton-line-sm" />
-              <SkeletonBox className="skeleton-line skeleton-line-sm" />
-            </div>
-            <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
-          </article>) : visibleAppointments.length ? visibleAppointments.map((appointment) => {
-            const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
-            const appointmentTitle = appointmentDisplayTitle(appointment, doctor);
-            const doctorLabel = appointmentDoctorLabel(appointment, doctor);
-            const appointmentStatusTone = appointmentChipTone(appointment);
-            const appointmentStatusLabel = appointmentChipLabel(appointment);
-            return <article className="customer-mobile-visit-row" key={appointment.id}>
-              <div className="customer-mobile-clock">
-                <MobileIcon name="clock" />
-              </div>
-              <div className="customer-mobile-visit-copy">
-                <strong>{appointmentTitle}</strong>
-                <span>{formatAppointmentListDateTime(appointment.start_at, storeTimeZone)}</span>
-                <small>{doctorLabel}</small>
-              </div>
-              <div className="customer-mobile-appointment-status">
-                <div className="appointment-status-stack">
-                  <span className={`chip ${appointmentStatusTone}`}><span className="chip-dot" />{appointmentStatusLabel}</span>
-                  {appointmentHasPrescription(appointment) ? <span className="appointment-prescription-availability">Prescription Available</span> : null}
-                </div>
-              </div>
-              <button className="customer-mobile-row-overlay" type="button" aria-label="Open appointment details" onClick={() => onOpenAppointment(appointment)} />
-            </article>;
-          }) : <CustomerMobileEmptyState
-            message="You have no appointments"
-            ctaLabel="Book an appointment"
-            onCta={() => {
-              setAppointmentComposerDatePicked(false);
-              setAppointmentComposerOpen(true);
-            }}
-            icon="appointments"
-            illustrationSrc="/group-3.png"
-            ctaStyle="appointment"
-          />}
-        </section> : null}
       </main>
     </div>;
   }

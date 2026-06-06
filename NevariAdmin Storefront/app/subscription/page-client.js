@@ -7,6 +7,14 @@ import SubscriptionSuccess from "../components/subscription/SubscriptionSuccess"
 import { hydrateStoredSession } from "../components/role-dashboard-utils";
 import { useSubscription } from "../hooks/use-subscription";
 
+function sanitizeReturnPath(value) {
+  const path = String(value || "").trim();
+  if (!path || !path.startsWith("/") || path.startsWith("//")) {
+    return "/dashboard";
+  }
+  return path;
+}
+
 function resolveCustomerSession() {
   const session = hydrateStoredSession("patient");
   const roles = Array.isArray(session?.user?.roles) ? session.user.roles : [];
@@ -32,6 +40,7 @@ export default function SubscriptionPageClient() {
     || searchParams.get("transaction_ref")
     || searchParams.get("transaction")
     || "", [searchParams]);
+  const continuePath = useMemo(() => sanitizeReturnPath(searchParams.get("returnTo")), [searchParams]);
 
   useEffect(() => {
     const hydratedSession = resolveCustomerSession();
@@ -43,7 +52,7 @@ export default function SubscriptionPageClient() {
   }, [router]);
 
   useEffect(() => {
-    if (!paymentReference || !session || verifying || subscriptionState.showSuccess || verifiedReference === paymentReference) {
+    if (!paymentReference || !session || verifying || verifiedReference === paymentReference || subscriptionState.active) {
       return undefined;
     }
     let mounted = true;
@@ -52,6 +61,9 @@ export default function SubscriptionPageClient() {
       setVerifying(true);
       try {
         await subscriptionState.verifyCheckout(paymentReference);
+        await subscriptionState.refresh();
+      } catch {
+        // verifyCheckout stores the user-facing error; keep this reference marked so a bad callback does not loop.
       } finally {
         if (mounted) {
           setVerifying(false);
@@ -72,7 +84,7 @@ export default function SubscriptionPageClient() {
     );
   }
 
-  if (paymentReference && (verifying || subscriptionState.isActionBusy)) {
+  if (paymentReference && !subscriptionState.active && (verifying || subscriptionState.isActionBusy)) {
     return (
       <section className="subscription-shell subscription-shell-loading">
         <div className="subscription-loading-card">Verifying your subscription...</div>
@@ -80,14 +92,14 @@ export default function SubscriptionPageClient() {
     );
   }
 
-  if (subscriptionState.showSuccess) {
+  if (subscriptionState.showSuccess || subscriptionState.active) {
     return (
       <SubscriptionSuccess
         busy={subscriptionState.isActionBusy}
         onContinue={async () => {
           await subscriptionState.refresh();
           subscriptionState.dismissSuccess();
-          router.replace("/dashboard");
+          router.replace(continuePath);
         }}
       />
     );
@@ -97,7 +109,7 @@ export default function SubscriptionPageClient() {
     <Paywall
       busy={subscriptionState.isActionBusy}
       error={subscriptionState.actionError}
-      onOpenMenu={() => router.push("/dashboard")}
+      onOpenMenu={() => router.push(continuePath)}
       onSubscribe={() => subscriptionState.launchCheckout()}
     />
   );

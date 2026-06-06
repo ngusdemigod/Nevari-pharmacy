@@ -90,16 +90,14 @@ export default function ManageSubscription({
       : "month";
   const nextBillingLabel = isFree
     ? "Not scheduled"
-    : isActive
-      ? `Auto renew: ${formatDate(nextPaymentDate) || "Not scheduled"}`
-      : isPendingCancellation
-        ? `Access ends on ${formatDate(accessEndsAt || nextPaymentDate) || "Not scheduled"}`
+    : isPendingCancellation
+      ? `Access ends on ${formatDate(accessEndsAt || nextPaymentDate) || "Not scheduled"}`
+      : isActive
+        ? `Auto renew: ${formatDate(nextPaymentDate) || "Not scheduled"}`
         : "Subscription cancelled";
   const actionLabel = isFree
     ? "Upgrade to Pro"
-    : isPendingCancellation
-      ? "Resume Pro"
-      : "Cancel";
+    : "Cancel";
   const isActionPending = actionBusy === "upgrade" || actionBusy === "cancel" || busy;
 
   useEffect(() => {
@@ -178,7 +176,7 @@ export default function ManageSubscription({
               className={`subscription-action ${isFree ? "is-primary" : isPendingCancellation ? "is-secondary" : "is-danger"}`}
               type="button"
               disabled={isActionPending}
-              onClick={isFree ? handleUpgrade : isPendingCancellation ? handleUpgrade : openCancelModal}
+              onClick={isFree ? handleUpgrade : openCancelModal}
             >
               {actionBusy === "upgrade"
                 ? "Redirecting..."
@@ -207,14 +205,10 @@ export default function ManageSubscription({
                 <h3 id="cancelProTitle">Cancel Pro subscription?</h3>
                 <p>Your Pro access may end when the billing period closes.</p>
               </div>
-              <button type="button" aria-label="Close cancel subscription modal" onClick={closeCancelModal} disabled={actionBusy === "cancel"}>
-                Close
-              </button>
+             
             </div>
             <div className="modal-body">
-              <p>
-                Choose Keep Pro to stay subscribed, or confirm cancellation to stop future billing after the current cycle.
-              </p>
+              
               {localError ? <p className="subscription-feedback error">{localError}</p> : null}
             </div>
             <div className="modal-actions">

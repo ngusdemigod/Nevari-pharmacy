@@ -1,25 +1,15 @@
 "use client";
 
-function Seal() {
-  return (
-    <div className="subscription-seal subscription-seal-success" aria-hidden="true">
-      <div className="subscription-seal-inner">
-        <span className="subscription-seal-check">✓</span>
-      </div>
-    </div>
-  );
-}
+import { SubscriptionProBadge, SubscriptionSealArt } from "./SubscriptionVisuals";
 
 export default function SubscriptionSuccess({ onContinue, busy = false }) {
   return (
     <section className="subscription-shell subscription-shell-success">
       <div className="subscription-copy-block subscription-copy-block-success">
         <h1 className="subscription-title">
-          Congratulations, you&apos;re now on Nevari Access <span className="subscription-pro-badge">Pro</span>
+          Congratulations, you&apos;re now on Nevari Access <SubscriptionProBadge />
         </h1>
-        <div className="subscription-seal-wrap">
-          <Seal />
-        </div>
+        <SubscriptionSealArt variant="success" />
       </div>
 
       <div className="subscription-success-footer">

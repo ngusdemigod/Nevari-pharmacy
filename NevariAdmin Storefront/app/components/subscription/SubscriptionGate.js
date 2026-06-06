@@ -17,7 +17,7 @@ export default function SubscriptionGate({
   if (loading) {
     return (
       <section className="subscription-shell subscription-shell-loading">
-        <div className="subscription-loading-card">Loading your Nevari Access Pro subscription...</div>
+        <div className="subscription-loading-spinner" aria-label="Loading subscription access" />
       </section>
     );
   }

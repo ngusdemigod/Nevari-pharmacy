@@ -650,7 +650,7 @@ final class Nevari_Auth {
     }
 
     private static function frontend_requires_email_verification(string $frontend_type): bool {
-        return in_array($frontend_type, ['storefront', 'doctors_dashboard'], true);
+        return in_array($frontend_type, ['storefront', 'doctors_dashboard', 'pharmacist_dashboard'], true);
     }
 
     private static function issue_login_challenge(WP_User $user, array $frontend) {
@@ -745,6 +745,9 @@ final class Nevari_Auth {
 
         if ($frontend_type === 'doctors_dashboard') {
             return in_array('doctor', (array) $resolved_user->roles, true);
+        }
+        if ($frontend_type === 'pharmacist_dashboard') {
+            return in_array('pharmacist', (array) $resolved_user->roles, true);
         }
 
         if ($frontend_type === 'patient_dashboard') {
