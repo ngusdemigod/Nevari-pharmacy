@@ -442,7 +442,7 @@ function buildTransportErrorResponse(error, targetUrl, softFail = false) {
         code: isTimeout ? "upstream_timeout" : "upstream_unreachable",
         message: isTimeout
           ? "The pharmacy server took too long to respond. Try again shortly."
-          : "The pharmacy server could not be reached. Verify the site is online and reachable from this storefront.",
+          : "Oops.. Connection error, Check your internet connection",
         details: {
           status,
           path: targetUrl.pathname,

@@ -4,6 +4,8 @@ if (!defined('ABSPATH')) {
 }
 
 final class Nevari_Auth {
+    private static int $api_session_resolution_depth = 0;
+
     public static function init(): void {
         add_filter('determine_current_user', [__CLASS__, 'determine_current_user'], 20, 1);
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
@@ -70,32 +72,46 @@ final class Nevari_Auth {
         return $api_user_id ?: $user_id;
     }
 
+    public static function is_resolving_api_session_user(): bool {
+        return self::$api_session_resolution_depth > 0;
+    }
+
     public static function api_session_user_id(): int {
-        $token = Nevari_Helpers::get_bearer_token();
-        if (!$token) {
+        if (self::is_resolving_api_session_user()) {
             return 0;
         }
-        $payload = self::decode_jwt($token);
-        if (!$payload || empty($payload['sub']) || empty($payload['type']) || $payload['type'] !== 'access') {
-            Nevari_Audit::log('security', 'nevari', 'auth.invalid_token', 'error', [
-                'severity' => 'warning',
-                'error_code' => 'invalid_token',
-                'message' => 'Invalid bearer token used.',
-            ]);
-            return 0;
+        self::$api_session_resolution_depth++;
+        try {
+            $token = Nevari_Helpers::get_bearer_token();
+            if (!$token) {
+                return 0;
+            }
+            $payload = self::decode_jwt($token);
+            if (!$payload || empty($payload['sub']) || empty($payload['type']) || $payload['type'] !== 'access') {
+                Nevari_Audit::log('security', 'nevari', 'auth.invalid_token', 'error', [
+                    'actor_user_id' => 0,
+                    'severity' => 'warning',
+                    'error_code' => 'invalid_token',
+                    'message' => 'Invalid bearer token used.',
+                ]);
+                return 0;
+            }
+            if (!Nevari_Connections::validate_token_context($payload)) {
+                Nevari_Audit::log('security', 'nevari', 'auth.invalid_frontend_context', 'error', [
+                    'actor_user_id' => 0,
+                    'severity' => 'warning',
+                    'error_code' => 'invalid_frontend_context',
+                    'message' => 'Access token was used from an untrusted frontend context.',
+                ]);
+                return 0;
+            }
+            if (!self::user_can_access_frontend((int) $payload['sub'], (string) $payload['frontend_type'])) {
+                return 0;
+            }
+            return (int) $payload['sub'];
+        } finally {
+            self::$api_session_resolution_depth = max(0, self::$api_session_resolution_depth - 1);
         }
-        if (!Nevari_Connections::validate_token_context($payload)) {
-            Nevari_Audit::log('security', 'nevari', 'auth.invalid_frontend_context', 'error', [
-                'severity' => 'warning',
-                'error_code' => 'invalid_frontend_context',
-                'message' => 'Access token was used from an untrusted frontend context.',
-            ]);
-            return 0;
-        }
-        if (!self::user_can_access_frontend((int) $payload['sub'], (string) $payload['frontend_type'])) {
-            return 0;
-        }
-        return (int) $payload['sub'];
     }
 
     public static function api_session_required(): bool {

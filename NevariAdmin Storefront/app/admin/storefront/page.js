@@ -70,7 +70,7 @@ const DEFAULT_EMAIL_TEMPLATES = [
   { id: "order-invoice-email", name: "Order Invoice Email", category: "Orders", status: "active", subject: "Invoice for order #{order_number}", html: "<h1>{document_title}</h1><p>Hello {customer_firstname},</p><p>Your invoice for order #{order_number} is attached.</p><p>{payment_link_html}</p><p>Total due: {invoice_total}</p>" },
   { id: "order-receipt-email", name: "Order Receipt Email", category: "Orders", status: "active", subject: "Receipt for order #{order_number}", html: "<h1>{document_title}</h1><p>Hello {customer_firstname},</p><p>Your receipt for order #{order_number} is attached.</p><p>Thank you for shopping with {site_name}.</p>" },
   { id: "doctor_order_assigned", name: "Doctor Order Assigned", category: "Orders", status: "active", subject: "A pharmacy order needs your review", html: "<p>Hello {doctor_name},</p><p>Order {order_number} has been assigned to you for {patient_name}.</p><p>Product/service: {product_service_assigned}</p><p>You can open your dashboard to create a prescription or schedule an appointment.</p>" },
-  { id: "appointment_customer_confirmation", name: "Appointment Customer Confirmation", category: "Consultations", status: "active", subject: "Appointment confirmed with {doctor_name}", html: "<h1>Appointment confirmed</h1><p>Hello {patient_name},</p><p>Your {consultation_type} appointment is confirmed for {appointment_date} at {appointment_time}.</p><p><strong>Doctor:</strong> {doctor_name}<br /><strong>Duration:</strong> {appointment_duration}<br /><strong>Booking ID:</strong> {booking_id}<br /><strong>Reference:</strong> {appointment_reference}<br /><strong>Order ID:</strong> {order_id}<br /><strong>Amount paid:</strong> {amount_paid}</p><p>{google_meet_link_html}</p><p><a href=\"{cancel_link}\">Cancel appointment</a> | <a href=\"{reschedule_link}\">Reschedule appointment</a></p><p>Please join 5 minutes before the appointment starts.</p>" },
+  { id: "appointment_customer_confirmation", name: "Appointment Customer Confirmation", category: "Consultations", status: "active", subject: "Appointment confirmed with {doctor_name}", html: "<h1>Appointment confirmed</h1><p>Hello {patient_name},</p><p>Your {consultation_type} appointment is confirmed for {appointment_date} at {appointment_time}.</p><p><strong>Doctor:</strong> {doctor_name}<br /><strong>Duration:</strong> {appointment_duration}<br /><strong>Booking ID:</strong> {booking_id}<br /><strong>Reference:</strong> {appointment_reference}<br /><strong>Order ID:</strong> {order_id}<br /><strong>Amount paid:</strong> {amount_paid}</p><p>{google_meet_link_html}</p><p><a href=\"{manage_link}\">Manage appointment</a></p><p>Please join 5 minutes before the appointment starts.</p>" },
   { id: "appointment_doctor_notification", name: "Appointment Doctor Notification", category: "Consultations", status: "active", subject: "New appointment with {patient_name}", html: "<h1>New appointment</h1><p>Hello {doctor_name},</p><p>A new {consultation_type} appointment has been confirmed.</p><p><strong>Patient:</strong> {patient_name}<br /><strong>Email:</strong> {customer_email}<br /><strong>Phone:</strong> {customer_phone}<br /><strong>Date:</strong> {appointment_date}<br /><strong>Time:</strong> {appointment_time}<br /><strong>Duration:</strong> {appointment_duration}<br /><strong>Booking ID:</strong> {booking_id}<br /><strong>Reference:</strong> {appointment_reference}</p><p><strong>Patient note:</strong> {patient_note}</p><p>{google_meet_link_html}</p><p><a href=\"{dashboard_link}\">Open dashboard</a></p>" },
   { id: "appointment_customer_reminder_24h", name: "Customer Reminder 24h", category: "Consultations", status: "active", subject: "Reminder: appointment with {doctor_name} tomorrow", html: "<h1>Appointment reminder</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} is scheduled for {appointment_date} at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}</p><p>{google_meet_link_html}</p><p><a href=\"{cancel_link}\">Cancel</a> | <a href=\"{reschedule_link}\">Reschedule</a></p>" },
   { id: "appointment_customer_reminder_1h", name: "Customer Reminder 1h", category: "Consultations", status: "active", subject: "Your appointment starts in 1 hour", html: "<h1>Your appointment starts in 1 hour</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} starts at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}</p><p>{google_meet_link_html}</p>" },
@@ -218,7 +218,6 @@ const EMPTY_DOCTOR_FORM = {
   position: "specialist",
   isAvailable: true,
   maxWorkloadPerWeek: 40,
-  pricingTier: "specialist",
   productCategoryIds: []
 };
 
@@ -237,6 +236,23 @@ const BOOKING_SLOT_TIMES = [
 const BOOKING_DURATION_OPTIONS = [30, 45, 60, 90, 120];
 
 const CUSTOMER_STATUS_EMAILS = new Set(["awaiting-doctor", "processing", "completed", "failed", "refunded"]);
+
+function getBookingSlotOptions(appointments = [], selectedDateKey = "", selectedStartAt = "") {
+  const selectedTimeKey = selectedStartAt ? localTimeKey(selectedStartAt) : "";
+  const selectedDayAppointments = appointments.filter((appointment) => localDateKey(appointment.start_at) === selectedDateKey);
+  const selectedBookedSlots = new Set(selectedDayAppointments.map((appointment) => localTimeKey(appointment.start_at)).filter(Boolean));
+  return BOOKING_SLOT_TIMES.map((time) => {
+    const taken = selectedBookedSlots.has(time);
+    const past = selectedDateKey ? !isFutureLocalDateTimeValue(buildDateTimeLocalValue(selectedDateKey, time)) : true;
+    return {
+      time,
+      taken,
+      past,
+      disabled: taken || past,
+      selected: selectedTimeKey === time
+    };
+  });
+}
 
 function shouldNotifyCustomerForOrderStatus(status) {
   return CUSTOMER_STATUS_EMAILS.has(String(status || "").toLowerCase().replace(/\s+/g, "-"));
@@ -306,11 +322,6 @@ function defaultAdminAppointmentSettings() {
     apiKeyRotationEnabled: true,
     auditLogRetention: 90,
     rolePermissionsLocked: true,
-    pricingTiers: {
-      junior: "5000",
-      senior: "8000",
-      specialist: "12000"
-    },
     categoryPricing: {
       cardiology: "12000",
       dermatology: "9000",
@@ -1006,41 +1017,41 @@ function loadEmailTemplates() {
 
 function renderEmailTemplate(html, values = {}) {
   const hookValues = {
-    content: "Your care team has an update for you.",
-    customer_firstname: "Ada",
-    customer_lastname: "Okafor",
-    order_id: "1048",
-    order_number: "1048",
-    appointment_date: "May 22, 2026",
-    appointment_time: "10:00 AM",
-    appointment_start: "May 22, 2026 at 10:00 AM",
-    consultation_type: "Video consultation",
-    amount_paid: "$75.00",
-    booking_id: "BK-1048",
+    content: "",
+    customer_firstname: "",
+    customer_lastname: "",
+    order_id: "",
+    order_number: "",
+    appointment_date: "",
+    appointment_time: "",
+    appointment_start: "",
+    consultation_type: "",
+    amount_paid: "",
+    booking_id: "",
     site_name: DEFAULT_SITE_NAME,
-    support_email: "support@nevarihealth.com",
-    doctor_name: "Dr. Morgan Lee",
-    patient_name: "Ada Okafor",
-    recipient_name: "Ada Okafor",
-    customer_email: "ada@example.com",
-    customer_phone: "+1 555 0100",
-    patient_note: "Follow-up on blood pressure medication.",
-    reason: "Follow-up on blood pressure medication.",
-    google_meet_link: "https://meet.google.com/example-room",
-    google_meet_link_html: '<a href="https://meet.google.com/example-room">Join Google Meet</a>',
-    join_link: "https://meet.google.com/example-room",
-    join_link_html: '<a href="https://meet.google.com/example-room">Join Consultation</a>',
-    cancel_link: "https://example.com/dashboard?cancel=BK-1048",
-    reschedule_link: "https://example.com/dashboard?reschedule=BK-1048",
-    review_link: "https://example.com/dashboard?review=1&doctor_id=8&appointment_id=1048",
-    feedback_link: "https://example.com/dashboard?review=1&doctor_id=8&appointment_id=1048",
-    dashboard_link: "https://example.com/dashboard",
-    doctor_dashboard_link: "https://example.com/admin/doctor",
-    document_type: "invoice",
-    document_title: "Invoice",
-    invoice_total: "$128.00",
-    payment_link: "https://example.com/pay",
-    payment_link_html: '<a href="https://example.com/pay">Pay now</a>',
+    support_email: "",
+    doctor_name: "",
+    patient_name: "",
+    recipient_name: "",
+    customer_email: "",
+    customer_phone: "",
+    patient_note: "",
+    reason: "",
+    google_meet_link: "",
+    google_meet_link_html: "",
+    join_link: "",
+    join_link_html: "",
+    cancel_link: "",
+    reschedule_link: "",
+    review_link: "",
+    feedback_link: "",
+    dashboard_link: "",
+    doctor_dashboard_link: "",
+    document_type: "",
+    document_title: "",
+    invoice_total: "",
+    payment_link: "",
+    payment_link_html: "",
     ...values
   };
   return String(html || "").replace(/\{([a-z0-9_]+)\}/gi, (match, key) => hookValues[key] ?? match);
@@ -1102,15 +1113,6 @@ function normalizeText(value) {
   return String(value || "").toLowerCase();
 }
 
-function normalizePricingTier(value) {
-  return String(value || "").trim().toLowerCase() || "specialist";
-}
-
-function formatPricingTierLabel(value) {
-  const normalized = normalizePricingTier(value);
-  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
-}
-
 function safeNumber(value) {
   return Number(value || 0);
 }
@@ -1170,6 +1172,13 @@ function addMinutesToLocalValue(value, minutes) {
   }
   date.setMinutes(date.getMinutes() + Number(minutes || 30));
   return `${localDateKey(date)}T${localTimeKey(date)}`;
+}
+
+function formatSlotLabel(time) {
+  if (!time) {
+    return "";
+  }
+  return new Date(`2000-01-01T${time}:00`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 }
 
 function getProductImage(product) {
@@ -1685,8 +1694,7 @@ function BookingCalendarWidget({
     return date;
   });
   const selectedDateObject = selectedDateKey ? new Date(`${selectedDateKey}T00:00:00`) : new Date();
-  const selectedDayAppointments = appointments.filter((appointment) => localDateKey(appointment.start_at) === selectedDateKey);
-  const selectedBookedSlots = new Set(selectedDayAppointments.map((appointment) => localTimeKey(appointment.start_at)).filter(Boolean));
+  const slotOptions = getBookingSlotOptions(appointments, selectedDateKey, selectedStartAt);
   const showDatePanel = !contextualFlow || !selectedDateKey;
   const showSlotPanel = showTimeSlots && (!contextualFlow || Boolean(selectedDateKey));
 
@@ -1828,19 +1836,17 @@ function BookingCalendarWidget({
           <div className="booking-slots-grid">
             {loading ? Array.from({ length: 10 }, (_, index) => (
               <SkeletonBox className="booking-t-slot-skeleton" key={index} />
-            )) : BOOKING_SLOT_TIMES.map((time) => {
-              const taken = selectedBookedSlots.has(time);
-              const pastSlot = showTimeSlots && !isFutureLocalDateTimeValue(buildDateTimeLocalValue(selectedDateKey, time));
+            )) : slotOptions.map((slot) => {
               return (
                 <button
-                  className={`booking-t-slot ${taken || pastSlot ? "taken" : ""} ${selectedTimeKey === time ? "chosen" : ""}`.trim()}
+                  className={`booking-t-slot ${slot.disabled ? "taken" : ""} ${slot.selected ? "chosen" : ""}`.trim()}
                   type="button"
-                  key={time}
-                  disabled={taken || pastSlot}
-                  onClick={() => onSlotSelect?.(selectedDateKey, time)}
+                  key={slot.time}
+                  disabled={slot.disabled}
+                  onClick={() => onSlotSelect?.(selectedDateKey, slot.time)}
                 >
-                  <span className="booking-t-time">{time}</span>
-                  <span className="booking-t-label">{taken ? "Booked" : pastSlot ? "Past" : "Open"}</span>
+                  <span className="booking-t-time">{slot.time}</span>
+                  <span className="booking-t-label">{slot.taken ? "Booked" : slot.past ? "Past" : "Open"}</span>
                 </button>
               );
             })}
@@ -2162,6 +2168,9 @@ export default function Page() {
   const [appDataLoaded, setAppDataLoaded] = useState(false);
   const [appointmentSettings, setAppointmentSettings] = useState(() => loadAdminAppointmentSettings());
   const [doctorDetailTierLoading, setDoctorDetailTierLoading] = useState(false);
+  const [globalConsultationFee, setGlobalConsultationFee] = useState("5000");
+  const [globalConsultationFeeLoading, setGlobalConsultationFeeLoading] = useState(false);
+  const [globalConsultationFeeFeedback, setGlobalConsultationFeeFeedback] = useState("");
   const latestSessionRef = useRef(session);
   const refreshPromiseRef = useRef(null);
   const bootstrapStartedRef = useRef(false);
@@ -2935,16 +2944,6 @@ export default function Page() {
     return extractApiErrorMessage(error);
   }
 
-  function normalizeDoctorTierOption(value) {
-    return normalizePricingTier(value);
-  }
-
-  function consultationFeeForTier(pricingTier) {
-    const tier = normalizeDoctorTierOption(pricingTier);
-    const fee = appointmentSettings.pricingTiers?.[tier];
-    return fee === undefined || fee === null ? "" : String(fee);
-  }
-
   function addDoctorCreateCategory(categoryId) {
     const nextId = String(categoryId || "");
     if (!nextId) {
@@ -3626,8 +3625,6 @@ export default function Page() {
             position: doctorCreateForm.position,
             is_available: doctorCreateForm.isAvailable,
             max_workload_per_week: Number(doctorCreateForm.maxWorkloadPerWeek || 40),
-            pricing_tier: normalizeDoctorTierOption(doctorCreateForm.pricingTier),
-            consultation_fee: consultationFeeForTier(doctorCreateForm.pricingTier),
             product_category_ids: doctorCreateForm.productCategoryIds.map(Number)
           }
         });
@@ -3692,42 +3689,38 @@ export default function Page() {
     }
   }
 
-  async function updateDoctorPricingTier(doctor, pricingTier) {
-    if (!doctor) {
+  async function saveGlobalConsultationFee() {
+    const normalizedFee = String(globalConsultationFee || "").trim();
+    const feeValue = Number(normalizedFee);
+    if (!Number.isFinite(feeValue) || feeValue <= 0) {
+      const message = "Enter a valid global consultation fee.";
+      setGlobalConsultationFeeFeedback(message);
+      showSnackbar(message, "error");
       return;
     }
-    const doctorId = doctor.user_id || doctor.id;
-    if (!doctorId) {
-      return;
-    }
-    setDoctorDetailTierLoading(true);
+    setGlobalConsultationFeeLoading(true);
+    setGlobalConsultationFeeFeedback("");
     try {
-      const consultationFee = consultationFeeForTier(pricingTier);
-      const payload = await apiRequest(`/doctors/${doctorId}`, {
+      const payload = await apiRequest("/doctors/settings", {
         method: "POST",
-        body: {
-          position: normalizeDoctorTierOption(pricingTier),
-          pricing_tier: normalizeDoctorTierOption(pricingTier),
-          consultation_fee: consultationFee
-        }
+        body: { global_consultation_fee: feeValue }
       });
-      const nextDoctor = payload?.data || { ...doctor, pricing_tier: normalizeDoctorTierOption(pricingTier), consultation_fee: consultationFee };
+      const nextFee = String(payload?.data?.global_consultation_fee ?? feeValue);
+      setGlobalConsultationFee(nextFee);
+      setGlobalConsultationFeeFeedback("Global consultation fee saved.");
       setData((prev) => ({
         ...prev,
-        doctors: (prev.doctors || []).map((item) => (
-          String(item.user_id || item.id) === String(doctorId)
-            ? { ...item, ...nextDoctor }
-            : item
-        ))
+        doctors: (prev.doctors || []).map((doctor) => ({ ...doctor, consultation_fee: Number(nextFee) || 5000 }))
       }));
-      patchDoctorCache(nextDoctor);
+      patchCacheList(isDoctorListKey, (list) => list.map((doctor) => ({ ...doctor, consultation_fee: Number(nextFee) || 5000 })));
       revalidateCacheGroups(isDoctorListKey);
-      showSnackbar(`${nextDoctor.display_name || doctor.display_name || "Doctor"} moved to the ${formatPricingTierLabel(pricingTier)} tier.`, "success");
+      showSnackbar("Global consultation fee saved.", "success");
     } catch (error) {
-      const message = extractApiErrorMessage(error) || "Doctor tier could not be updated.";
+      const message = extractApiErrorMessage(error) || "Global consultation fee could not be updated.";
+      setGlobalConsultationFeeFeedback(message);
       showSnackbar(message, "error");
     } finally {
-      setDoctorDetailTierLoading(false);
+      setGlobalConsultationFeeLoading(false);
     }
   }
 
@@ -5174,6 +5167,7 @@ export default function Page() {
         apiRequest("/prescriptions", { params: { per_page: 40 } }, activeSession),
         apiRequest("/emails/logs", { params: { per_page: 20 } }, activeSession),
         apiRequest("/doctors", { params: { per_page: 50 } }, activeSession),
+        apiRequest("/doctors/settings", {}, activeSession),
         apiRequest("/products", { params: { per_page: 100 } }, activeSession),
         apiRequest("/products/categories", { params: { per_page: 100 } }, activeSession)
       ]);
@@ -5189,6 +5183,7 @@ export default function Page() {
         prescriptionsPayload,
         emailsPayload,
         doctorsPayload,
+        doctorSettingsPayload,
         productsPayload,
         productCategoriesPayload
       ] = [
@@ -5198,8 +5193,9 @@ export default function Page() {
         getSettledValue(endpointResults[3], { data: [] }),
         getSettledValue(endpointResults[4], { data: [] }),
         getSettledValue(endpointResults[5], { data: [] }),
-        getSettledValue(endpointResults[6], { data: [] }),
-        getSettledValue(endpointResults[7], { data: [] })
+        getSettledValue(endpointResults[6], { data: {} }),
+        getSettledValue(endpointResults[7], { data: [] }),
+        getSettledValue(endpointResults[8], { data: [] })
       ];
 
       const orders = ordersPayload.data || [];
@@ -5235,9 +5231,12 @@ export default function Page() {
       const nextAppointments = appointmentsPayload.data || [];
       const nextEmails = emailsPayload.data || [];
       const nextDoctors = doctorsPayload.data || [];
+      const nextDoctorSettings = doctorSettingsPayload.data || {};
       const nextProducts = productsPayload.data || [];
       const nextProductCategories = productCategoriesPayload.data || [];
       rememberStoreContext(nextDashboard);
+      setGlobalConsultationFee(String(nextDoctorSettings.global_consultation_fee || 5000));
+      setGlobalConsultationFeeFeedback("");
 
       setData({
         dashboard: nextDashboard,
@@ -6166,7 +6165,62 @@ export default function Page() {
     return matchesCategory && matchesTemplateSearch;
   });
   const selectedEmailTemplateUnsupportedHooks = unsupportedEmailHooks(selectedEmailTemplate);
+  const emailPreviewOrder = (data.orderDetails || data.orders || [])[0] || null;
+  const emailPreviewAppointment = (data.appointments || [])[0] || null;
+  const emailPreviewDoctor = emailPreviewAppointment
+    ? (data.doctors || []).find((doctor) => Number(doctor.user_id || doctor.id) === Number(emailPreviewAppointment.doctor_user_id))
+    : (emailPreviewOrder?.assigned_doctor || (data.doctors || [])[0] || null);
+  const emailPreviewCustomerName = emailPreviewOrder
+    ? customerFullName(emailPreviewOrder)
+    : (emailPreviewAppointment ? patientLabel(emailPreviewAppointment.patient_user_id) : "");
+  const emailPreviewCustomerParts = String(emailPreviewCustomerName || "").trim().split(/\s+/).filter(Boolean);
+  const emailPreviewAppointmentStart = emailPreviewAppointment?.start_at || "";
+  const emailPreviewOrigin = typeof window !== "undefined" ? window.location.origin : "";
+  const emailPreviewPaymentLink = emailPreviewOrder?.payment_url || emailPreviewOrder?.payment_link || "";
+  const emailPreviewMeetingLink = emailPreviewAppointment?.google_meet_link || emailPreviewAppointment?.join_url || emailPreviewAppointment?.join_link || "";
+  const emailPreviewVariables = {
+    content: emailPreviewOrder || emailPreviewAppointment ? "Current storefront data is shown in this preview." : "",
+    customer_name: emailPreviewCustomerName,
+    customer_firstname: emailPreviewCustomerParts[0] || emailPreviewCustomerName,
+    customer_lastname: emailPreviewCustomerParts.slice(1).join(" "),
+    order_id: emailPreviewOrder?.id ? String(emailPreviewOrder.id) : "",
+    order_number: emailPreviewOrder?.number ? String(emailPreviewOrder.number) : (emailPreviewOrder?.id ? String(emailPreviewOrder.id) : ""),
+    order_total: emailPreviewOrder ? formatMoney(emailPreviewOrder.total || 0, storeCurrency) : "",
+    invoice_total: emailPreviewOrder ? formatMoney(emailPreviewOrder.total || 0, storeCurrency) : "",
+    appointment_date: emailPreviewAppointmentStart ? formatDate(emailPreviewAppointmentStart, false) : "",
+    appointment_time: emailPreviewAppointmentStart ? localTimeKey(emailPreviewAppointmentStart) : "",
+    appointment_start: emailPreviewAppointmentStart ? formatDate(emailPreviewAppointmentStart, true) : "",
+    consultation_type: emailPreviewAppointment?.type || emailPreviewAppointment?.consultation_type || "",
+    amount_paid: emailPreviewOrder ? formatMoney(emailPreviewOrder.total || 0, storeCurrency) : "",
+    booking_id: emailPreviewAppointment?.id ? String(emailPreviewAppointment.id) : "",
+    site_name: siteName,
+    support_email: appointmentSettings.smtpSender || "",
+    doctor_name: emailPreviewDoctor?.display_name || emailPreviewDoctor?.name || "",
+    patient_name: emailPreviewCustomerName,
+    recipient_name: emailPreviewCustomerName || emailPreviewDoctor?.display_name || "",
+    customer_email: emailPreviewOrder ? customerEmail(emailPreviewOrder) : "",
+    customer_phone: emailPreviewOrder?.billing?.phone || "",
+    patient_note: emailPreviewAppointment?.reason || emailPreviewAppointment?.patient_note || "",
+    reason: emailPreviewAppointment?.reason || emailPreviewAppointment?.patient_note || "",
+    primary_product_name: emailPreviewOrder?.items?.[0]?.name || "",
+    product_service_assigned: emailPreviewOrder?.items?.[0]?.name || "",
+    google_meet_link: emailPreviewMeetingLink,
+    google_meet_link_html: emailPreviewMeetingLink ? `<a href="${escapeHtml(emailPreviewMeetingLink)}">Join consultation</a>` : "",
+    join_link: emailPreviewMeetingLink,
+    join_link_html: emailPreviewMeetingLink ? `<a href="${escapeHtml(emailPreviewMeetingLink)}">Join consultation</a>` : "",
+    cancel_link: emailPreviewAppointment?.cancel_url || "",
+    reschedule_link: emailPreviewAppointment?.reschedule_url || "",
+    review_link: emailPreviewAppointment?.review_url || "",
+    feedback_link: emailPreviewAppointment?.review_url || "",
+    dashboard_link: emailPreviewOrigin ? `${emailPreviewOrigin}/admin/storefront` : "",
+    doctor_dashboard_link: emailPreviewOrigin ? `${emailPreviewOrigin}/admin/doctor` : "",
+    document_type: emailPreviewOrder ? getOrderDocumentType(emailPreviewOrder) : "",
+    document_title: emailPreviewOrder ? (getOrderDocumentType(emailPreviewOrder) === "receipt" ? "Receipt" : "Invoice") : "",
+    payment_link: emailPreviewPaymentLink,
+    payment_link_html: emailPreviewPaymentLink ? `<a href="${escapeHtml(emailPreviewPaymentLink)}">Pay now</a>` : ""
+  };
   const selectedEmailTemplatePreview = renderEmailTemplate(selectedEmailTemplate?.html, {
+    ...emailPreviewVariables,
     site_name: siteName,
     support_email: appointmentSettings.smtpSender || "support@nevarihealth.com"
   });
@@ -6808,6 +6862,16 @@ export default function Page() {
   const consultationDayAppointments = consultationDoctorAppointments.filter((appointment) => normalizeDateKey(appointment.start_at) === consultationSelectedDayKey);
   const consultationVisiblePatientOptions = consultationPatientOptions.slice(0, 6);
   const consultationSelectedPatient = consultationPatientOptions.find((row) => String(row.id) === String(consultationCreateForm.patientUserId)) || null;
+  const consultationSelectedDateKey = consultationCreateForm.startAt ? localDateKey(consultationCreateForm.startAt) : consultationBookingDate;
+  const consultationSlotOptions = getBookingSlotOptions(consultationDoctorAppointments, consultationSelectedDateKey, consultationCreateForm.startAt);
+  const consultationSummaryDate = consultationCreateForm.startAt
+    ? formatDate(consultationCreateForm.startAt)
+    : consultationSelectedDateKey
+      ? formatDayLabel(new Date(`${consultationSelectedDateKey}T00:00:00`))
+      : "Choose a date";
+  const consultationSummaryTime = consultationCreateForm.startAt
+    ? new Date(consultationCreateForm.startAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+    : "Choose a slot";
   const consultationCanSubmit = createModalType !== "consultation" || Boolean(
     consultationCreateForm.doctorUserId
     && consultationCreateForm.patientUserId
@@ -9003,6 +9067,30 @@ export default function Page() {
                       </div>
                     </div>
                     {renderTeamBlock()}
+                    <div className="doctor-settings-card global-fee-card">
+                      <h3>Global consultation fee</h3>
+                      <p className="muted">This flat rate applies to every doctor and all new consultation bookings.</p>
+                      <label>
+                        <span>Consultation fee ({storeCurrency})</span>
+                        <input
+                          inputMode="decimal"
+                          value={globalConsultationFee}
+                          onChange={(event) => {
+                            setGlobalConsultationFee(event.target.value);
+                            if (globalConsultationFeeFeedback) {
+                              setGlobalConsultationFeeFeedback("");
+                            }
+                          }}
+                          placeholder="5000"
+                        />
+                      </label>
+                      <div className="stacked-order-popup-actions doctor-detail-actions">
+                        <button className="pill-button" type="button" onClick={saveGlobalConsultationFee} disabled={globalConsultationFeeLoading}>
+                          {globalConsultationFeeLoading ? "Saving..." : "Save consultation fee"}
+                        </button>
+                      </div>
+                      {globalConsultationFeeFeedback ? <p className="receipt-feedback">{globalConsultationFeeFeedback}</p> : null}
+                    </div>
                   </article>
                 </section>
                 <section className="panel table-panel">
@@ -9068,7 +9156,7 @@ export default function Page() {
                           type="email"
                           value={bookingEmailTest.recipientEmail}
                           onChange={(event) => setBookingEmailTest((current) => ({ ...current, recipientEmail: event.target.value, feedback: "" }))}
-                          placeholder="test@example.com"
+                          placeholder="Enter recipient email"
                         />
                       </label>
                       <div className="toolbar">
@@ -9336,7 +9424,7 @@ export default function Page() {
                   <div>
                     <p className="section-kicker">Storefront settings</p>
                     <h2>Appointment system controls</h2>
-                    <p className="hero-text">Manage frontend test controls for booking automation, reminders, pricing tiers, security, and the external meeting service without leaving the admin dashboard.</p>
+                    <p className="hero-text">Manage frontend test controls for booking automation, reminders, security, category pricing, and the external meeting service without leaving the admin dashboard.</p>
                   </div>
                   <div className="banner-actions">
                     <button className="button-primary" type="button" onClick={() => showAuthGate("auth")}>Manage session</button>
@@ -9389,11 +9477,9 @@ export default function Page() {
                   </article>
 
                   <article className="doctor-settings-card">
-                    <h3>Consultation pricing</h3>
+                    <h3>Consultation rules</h3>
                     <label><span>Minimum consultation minutes</span><input type="number" min="5" value={appointmentSettings.minimumConsultationMinutes} onChange={(event) => setAppointmentSettings((current) => ({ ...current, minimumConsultationMinutes: event.target.value }))} /></label>
-                    <label><span>Junior tier</span><input value={appointmentSettings.pricingTiers.junior} onChange={(event) => setAppointmentSettings((current) => ({ ...current, pricingTiers: { ...current.pricingTiers, junior: event.target.value } }))} /></label>
-                    <label><span>Senior tier</span><input value={appointmentSettings.pricingTiers.senior} onChange={(event) => setAppointmentSettings((current) => ({ ...current, pricingTiers: { ...current.pricingTiers, senior: event.target.value } }))} /></label>
-                    <label><span>Specialist tier</span><input value={appointmentSettings.pricingTiers.specialist} onChange={(event) => setAppointmentSettings((current) => ({ ...current, pricingTiers: { ...current.pricingTiers, specialist: event.target.value } }))} /></label>
+                    <div className="muted">Global consultation pricing is managed from the Doctors page.</div>
                     <label><span>General category price</span><input value={appointmentSettings.categoryPricing.general} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, general: event.target.value } }))} /></label>
                     <label><span>Cardiology category price</span><input value={appointmentSettings.categoryPricing.cardiology} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, cardiology: event.target.value } }))} /></label>
                   </article>
@@ -10387,97 +10473,36 @@ export default function Page() {
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <button className="app-modal-backdrop" type="button" aria-label="Close create form" onClick={closeCreateModal} />
-            <section className={`detail-section stacked-order-popup create-record-popup ${createModalType === "consultation" ? "consultation-create-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-label={`Create ${createModalType}`}>
+            <section className={`detail-section stacked-order-popup create-record-popup ${createModalType === "consultation" ? "consultation-create-popup consultation-design-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-label={`Create ${createModalType}`}>
               <form className="create-record-form" onSubmit={submitGenericCreate}>
                 <div className="panel-header stacked-order-popup-header">
                   <div>
-                    <p className="section-kicker">Create record</p>
-                    <h3>New {formatStatusLabel(createModalType)}</h3>
+                    {createModalType === "consultation" ? null : <p className="section-kicker">Create record</p>}
+                    <h3>{createModalType === "consultation" ? "New appointment" : `New ${formatStatusLabel(createModalType)}`}</h3>
+                    {createModalType === "consultation" ? <p>Book a consultation using patient details, doctor availability, appointment type and time slot.</p> : null}
                   </div>
                   <button className="icon-button" type="button" aria-label="Close create form" onClick={closeCreateModal}><InlineIcon id="i-x" /></button>
                 </div>
 
                 {createModalType === "consultation" ? (
-                  <div className="consultation-create-shell">
-                    {consultationCreateDoctorsQuery.isLoading || consultationCreatePatientsQuery.isLoading || consultationCreateAppointmentsQuery.isLoading ? (
+                  <div className="consultation-create-shell consultation-design-shell">
+                    {(consultationCreateDoctorsQuery.isLoading || consultationCreatePatientsQuery.isLoading || consultationCreateAppointmentsQuery.isLoading) ? (
                       <p className="muted popup-support-copy detail-field-wide">Loading consultation dependencies...</p>
                     ) : null}
-                    {consultationCreateDoctorsQuery.error || consultationCreatePatientsQuery.error || consultationCreateAppointmentsQuery.error ? (
+                    {(consultationCreateDoctorsQuery.error || consultationCreatePatientsQuery.error || consultationCreateAppointmentsQuery.error) ? (
                       <p className="muted popup-support-copy detail-field-wide">Some consultation dependencies could not be loaded. Existing cached options are shown where available.</p>
                     ) : null}
-                    <aside className="consultation-calendar-panel consultation-booking-panel">
-                      <BookingCalendarWidget
-                        title={consultationDoctorProfile?.display_name || "Doctor Calendar"}
-                        subtitle="Select the booking day and time slot"
-                        appointments={consultationDoctorAppointments}
-                        selectedDate={consultationBookingDate}
-                        selectedStartAt={consultationCreateForm.startAt}
-                        viewDate={consultationCreateCalendarViewDate}
-                        duration={consultationDuration}
-                        contextualFlow
-                        loading={consultationCreateAppointmentsQuery.isLoading && !consultationCreateAppointmentsQuery.data}
-                        onViewDateChange={setConsultationCreateCalendarViewDate}
-                        onClearDate={clearConsultationBookingDate}
-                        onDateSelect={selectConsultationBookingDate}
-                        onSlotSelect={(dateKey, time) => selectConsultationCalendarSlot(dateKey, time, consultationDuration)}
-                        onDurationChange={(minutes) => {
-                          setConsultationDuration(minutes);
-                          if (consultationCreateForm.startAt) {
-                            setConsultationCreateForm((prev) => ({
-                              ...prev,
-                              endAt: addMinutesToLocalValue(prev.startAt, minutes)
-                            }));
-                          }
-                        }}
-                      />
-                    </aside>
 
-                    <div className="consultation-form-panel consultation-booking-form-panel">
-                      <div className="consultation-doctor-banner">
-                        <span>Selected doctor</span>
-                        <strong>{consultationDoctorProfile?.display_name || "Choose a doctor"}</strong>
-                        <small>{consultationDoctorAppointments.length} bookings visible</small>
+                    <section className="consultation-design-card consultation-design-form-card">
+                      <div className="consultation-design-card-title">
+                        <InlineIcon id="i-calendar" />
+                        <span>Appointment details</span>
                       </div>
-                      <div className="detail-form-grid consultation-form-grid">
-                        <label className="detail-field detail-field-wide">
-                          <span>Doctor</span>
-                          <div className="consultation-search-combo">
-                            <input
-                              value={consultationDoctorSearch}
-                              onChange={(event) => {
-                                setConsultationDoctorSearch(event.target.value);
-                                setConsultationCreateForm((prev) => ({ ...prev, doctorUserId: "", startAt: "", endAt: "" }));
-                                setConsultationBookingDate("");
-                              }}
-                              placeholder="Search by doctor name, specialty, or email"
-                              aria-label="Search doctors for consultation"
-                            />
-                            <div className="consultation-search-results">
-                              {consultationCreateDoctorsQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading doctors"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
-                              {consultationDoctorOptions.length ? consultationDoctorOptions.map((doctor) => {
-                                const doctorId = doctor.user_id || doctor.id;
-                                return (
-                                  <button
-                                    key={doctorId}
-                                    type="button"
-                                    className={`consultation-search-result consultation-strip-result ${String(consultationCreateForm.doctorUserId) === String(doctorId) ? "active" : ""}`}
-                                    onClick={() => selectConsultationDoctor(doctorId, doctor.display_name || doctor.email || `Doctor #${doctorId}`)}
-                                  >
-                                    <span className="consultation-strip-avatar">{getNameInitials(doctor.display_name || doctor.email || `Doctor ${doctorId}`, "DR")}</span>
-                                    <span className="consultation-strip-copy">
-                                      <strong>{doctor.display_name || `Doctor #${doctorId}`}</strong>
-                                      <span>{[doctor.specialty || doctor.specialties?.[0], doctor.email].filter(Boolean).join(" - ") || "Doctor profile"}</span>
-                                    </span>
-                                  </button>
-                                );
-                              }) : <div className="consultation-search-empty">No matching doctors.</div>}
-                            </div>
-                          </div>
-                          <small className="product-field-note">{consultationDoctorProfile ? `Selected: ${consultationDoctorProfile.display_name || "Doctor"} - ${consultationDoctorProfile.email || "No email on file"}` : "Search and choose a doctor to load availability."}</small>
-                        </label>
-                        <label className="detail-field detail-field-wide">
-                          <span>Patient</span>
-                          <div className="consultation-search-combo">
+
+                      <div className="consultation-design-grid">
+                        <label className="consultation-design-field">
+                          <span>Patient name</span>
+                          <div className="consultation-search-combo consultation-design-combo">
                             <input
                               value={consultationPatientSearch}
                               onChange={(event) => {
@@ -10486,7 +10511,7 @@ export default function Page() {
                               }}
                               placeholder="Search by email, username, or name"
                             />
-                            <div className="consultation-search-results">
+                            <div className="consultation-search-results consultation-design-results">
                               {consultationCreatePatientsQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading patients"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
                               {consultationVisiblePatientOptions.length ? consultationVisiblePatientOptions.map((option) => (
                                 <button
@@ -10507,59 +10532,114 @@ export default function Page() {
                               )) : <div className="consultation-search-empty">No matching customers.</div>}
                             </div>
                           </div>
-                          <small className="product-field-note">{consultationSelectedPatient ? `Selected: ${consultationSelectedPatient.name} - ${consultationSelectedPatient.email}` : "Search and choose a patient from the list."}</small>
                         </label>
-                        <label className="detail-field consultation-hidden-time-field">
-                          <span>Doctor</span>
-                          <div className="select-wrap">
-                            <select value={consultationCreateForm.doctorUserId} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, doctorUserId: event.target.value }))}>
-                              <option value="">Select doctor</option>
-                              {popupConsultationDoctors.map((doctor) => <option key={doctor.user_id || doctor.id} value={doctor.user_id || doctor.id}>{doctor.display_name}</option>)}
-                            </select>
-                          </div>
-                        </label>
-                        <label className="detail-field consultation-hidden-time-field">
-                          <span>Start time</span>
-                          <input type="datetime-local" value={consultationCreateForm.startAt} min={nowDateTimeLocalValue()} readOnly required />
-                        </label>
-                        <label className="detail-field consultation-hidden-time-field">
-                          <span>End time</span>
-                          <input type="datetime-local" value={consultationCreateForm.endAt} min={nowDateTimeLocalValue()} readOnly required />
-                        </label>
-                        <label className="detail-field">
-                          <span>Type</span>
-                          <div className="select-wrap">
+
+                        <label className="consultation-design-field">
+                          <span>Consultation type</span>
+                          <div className="select-wrap consultation-design-select">
                             <select value={consultationCreateForm.type} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, type: event.target.value }))}>
-                              <option value="video">Video</option>
-                              <option value="audio">Audio</option>
+                              <option value="video">Video consultation</option>
+                              <option value="audio">Audio consultation</option>
                             </select>
                           </div>
                         </label>
-                        <label className="detail-field">
-                          <span>Status</span>
-                          <div className="select-wrap">
-                            <select value={consultationCreateForm.status} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, status: event.target.value }))}>
-                              <option value="requested">Requested</option>
-                              <option value="confirmed">Confirmed</option>
-                              <option value="completed">Completed</option>
-                            </select>
+
+                        <label className="consultation-design-field">
+                          <span>Doctor</span>
+                          <div className="consultation-search-combo consultation-design-combo">
+                            <input
+                              value={consultationDoctorSearch}
+                              onChange={(event) => {
+                                setConsultationDoctorSearch(event.target.value);
+                                setConsultationCreateForm((prev) => ({ ...prev, doctorUserId: "", startAt: "", endAt: "" }));
+                                setConsultationBookingDate("");
+                              }}
+                              placeholder="Search by doctor name, specialty, or email"
+                              aria-label="Search doctors for consultation"
+                            />
+                            <div className="consultation-search-results consultation-design-results">
+                              {consultationCreateDoctorsQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading doctors"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
+                              {consultationDoctorOptions.length ? consultationDoctorOptions.map((doctor) => {
+                                const doctorId = doctor.user_id || doctor.id;
+                                return (
+                                  <button
+                                    key={doctorId}
+                                    type="button"
+                                    className={`consultation-search-result consultation-strip-result ${String(consultationCreateForm.doctorUserId) === String(doctorId) ? "active" : ""}`}
+                                    onClick={() => selectConsultationDoctor(doctorId, doctor.display_name || doctor.email || `Doctor #${doctorId}`)}
+                                  >
+                                    <span className="consultation-strip-avatar">{getNameInitials(doctor.display_name || doctor.email || `Doctor ${doctorId}`, "DR")}</span>
+                                    <span className="consultation-strip-copy">
+                                      <strong>{doctor.display_name || `Doctor #${doctorId}`}</strong>
+                                      <span>{[doctor.specialty || doctor.specialties?.[0], doctor.email].filter(Boolean).join(" - ") || "Doctor profile"}</span>
+                                    </span>
+                                  </button>
+                                );
+                              }) : <div className="consultation-search-empty">No matching doctors.</div>}
+                            </div>
                           </div>
                         </label>
-                        <label className="detail-field detail-field-wide">
-                          <span>Reason</span>
-                          <textarea rows={4} value={consultationCreateForm.reason} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, reason: event.target.value }))} />
+
+                        <label className="consultation-design-field">
+                          <span>Date</span>
+                          <input
+                            type="date"
+                            value={consultationSelectedDateKey}
+                            min={localDateKey()}
+                            onChange={(event) => {
+                              const nextDate = event.target.value;
+                              if (!nextDate) {
+                                clearConsultationBookingDate();
+                                return;
+                              }
+                              selectConsultationBookingDate(nextDate, new Date(`${nextDate}T00:00:00`));
+                            }}
+                          />
                         </label>
-                        <article className="consultation-summary-card detail-field-wide">
-                          <div><span>Selected doctor</span><strong>{consultationDoctorProfile?.display_name || "Not selected"}</strong></div>
-                          <div><span>Selected patient</span><strong>{consultationSelectedPatient?.name || "Not selected"}</strong></div>
-                          <div><span>Date</span><strong>{consultationCreateForm.startAt ? formatDate(consultationCreateForm.startAt) : "Choose a day"}</strong></div>
-                          <div><span>Time</span><strong>{consultationCreateForm.startAt ? `${localTimeKey(consultationCreateForm.startAt)} - ${consultationDuration} min` : "Choose a slot"}</strong></div>
-                          <div><span>Type</span><strong>{formatStatusLabel(consultationCreateForm.type)}</strong></div>
-                          <div><span>Status</span><strong>{formatStatusLabel(consultationCreateForm.status)}</strong></div>
-                        </article>
-                        {!consultationCanSubmit ? <p className="consultation-validation-message detail-field-wide">Select a doctor, patient, booking day, booking time, and consultation type to continue.</p> : null}
+
+                        <div className="consultation-design-field consultation-design-slots">
+                          <span>Available time slots</span>
+                          <div className="consultation-design-slot-row">
+                            {consultationSelectedDateKey ? consultationSlotOptions.map((slot) => (
+                              <button
+                                type="button"
+                                key={slot.time}
+                                className={`consultation-design-slot ${slot.selected ? "active" : ""}`}
+                                disabled={slot.disabled}
+                                onClick={() => selectConsultationCalendarSlot(consultationSelectedDateKey, slot.time, consultationDuration)}
+                              >
+                                {formatSlotLabel(slot.time)}
+                              </button>
+                            )) : <span className="consultation-design-empty-note">Choose a date to view available slots.</span>}
+                          </div>
+                        </div>
+
+                        <label className="consultation-design-field consultation-design-reason">
+                          <span>Reason for visit</span>
+                          <textarea
+                            rows={4}
+                            value={consultationCreateForm.reason}
+                            onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, reason: event.target.value }))}
+                            placeholder="Add the patient's reason for this consultation."
+                          />
+                        </label>
                       </div>
-                    </div>
+                      {!consultationCanSubmit ? <p className="consultation-validation-message">Select a doctor, patient, booking day, booking time, and consultation type to continue.</p> : null}
+                    </section>
+
+                    <aside className="consultation-design-card consultation-design-summary">
+                      <div className="consultation-design-summary-icon">
+                        <InlineIcon id="i-calendar" />
+                      </div>
+                      <h4>{consultationSelectedPatient?.name || "Patient not selected"}</h4>
+                      <p>{formatStatusLabel(consultationCreateForm.type || "consultation")} consultation</p>
+                      <div className="consultation-design-summary-list">
+                        <div><span>Doctor</span><strong>{consultationDoctorProfile?.display_name || "Choose doctor"}</strong></div>
+                        <div><span>Date</span><strong>{consultationSummaryDate}</strong></div>
+                        <div><span>Time</span><strong>{consultationSummaryTime}</strong></div>
+                      </div>
+                      <div className="consultation-design-note">This popup connects the booking calendar, consultation list and doctor availability components.</div>
+                    </aside>
                   </div>
                 ) : (
                   <div className="profile-create-shell">
@@ -10591,19 +10671,9 @@ export default function Page() {
                             </div>
                           </label>
                           <label className="detail-field">
-                            <span>Pricing tier</span>
-                            <div className="select-wrap">
-                              <select value={doctorCreateForm.pricingTier} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, pricingTier: event.target.value }))}>
-                                {DOCTOR_PRICING_TIER_OPTIONS.map((tier) => (
-                                  <option key={tier.value} value={tier.value}>{tier.label}</option>
-                                ))}
-                              </select>
-                            </div>
-                          </label>
-                          <label className="detail-field">
                             <span>Position</span>
                             <div className="select-wrap">
-                              <select value={doctorCreateForm.position} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, position: event.target.value, pricingTier: event.target.value }))}>
+                              <select value={doctorCreateForm.position} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, position: event.target.value }))}>
                                 {DOCTOR_PRICING_TIER_OPTIONS.map((tier) => (
                                   <option key={`position-${tier.value}`} value={tier.value}>{tier.label}</option>
                                 ))}
@@ -10691,7 +10761,7 @@ export default function Page() {
                 {createFeedback ? <p className="muted popup-support-copy">{createFeedback}</p> : null}
                 <div className="stacked-order-popup-actions">
                   <button className="pill-button" type="button" onClick={closeCreateModal}>Cancel</button>
-                  <button className="button-primary" type="submit" disabled={createLoading || !consultationCanSubmit}>{createLoading ? "Submitting..." : "Create"}</button>
+                  <button className="button-primary" type="submit" disabled={createLoading || !consultationCanSubmit}>{createLoading ? (createModalType === "consultation" ? "Booking..." : "Submitting...") : (createModalType === "consultation" ? "Book appointment" : "Create")}</button>
                 </div>
               </form>
             </section>
@@ -10831,22 +10901,12 @@ export default function Page() {
                       />
                     </div>
                     <div className="detail-block">
-                      <span>Pricing tier</span>
-                      <div className="select-wrap doctor-tier-select">
-                        <select
-                          value={normalizeDoctorTierOption(selectedDoctorProfile.pricing_tier || selectedDoctorProfile.pricingTier || "specialist")}
-                          onChange={(event) => updateDoctorPricingTier(selectedDoctorProfile, event.target.value)}
-                          disabled={doctorDetailTierLoading}
-                        >
-                          {DOCTOR_PRICING_TIER_OPTIONS.map((tier) => (
-                            <option key={tier.value} value={tier.value}>{tier.label}</option>
-                          ))}
-                        </select>
-                      </div>
+                      <span>Consultation fee</span>
+                      <strong>{formatMoney(selectedDoctorProfile.consultation_fee || 5000, storeCurrency)}</strong>
                     </div>
                     <div className="detail-block customer-detail-wide"><span>Product categories</span><strong>{(selectedDoctorProfile.product_categories || []).map((item) => item.name).join(", ") || "No categories assigned"}</strong></div>
                   </div>
-                  <div className="detail-section receipt-panel"><div className="panel-header"><div><p className="section-kicker">Linked patients</p><h3>Contacts</h3></div></div>{selectedDoctorPatients.length ? selectedDoctorPatients.map((patient) => <div className="signal-row" key={patient.id}><div><strong>{patient.name}</strong><span>{patient.email}</span></div><button className="pill-button" type="button">Unlink</button></div>) : <div className="muted">No linked patients found.</div>}</div>
+                  <div className="detail-section receipt-panel"><div className="panel-header"><div><p className="section-kicker">Linked patients</p><h3>Contacts</h3></div></div>{selectedDoctorPatients.length ? selectedDoctorPatients.map((patient) => <div className="signal-row" key={patient.id}><div><strong>{patient.name}</strong><span>{patient.email}</span></div><span className="status-pill info">{patient.source}</span></div>) : <div className="muted">No linked patients found.</div>}</div>
                 </div>
               ) : (
                 <div className="history-list">

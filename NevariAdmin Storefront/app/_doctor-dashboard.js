@@ -17,6 +17,7 @@ const DOCTOR_SETTINGS_KEY = "nevari_doctor_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
 const DOCTOR_DASHBOARD_CACHE_SCOPE = "doctor-dashboard";
 const pages = ["overview", "consultations", "mtm", "availability", "profile", "settings"];
+const DEFAULT_CONSULTATION_FEE_NGN = 5000;
 const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const DOCTOR_DASHBOARD_REFRESH_MS = 45_000;
 const DEFAULT_SLOT_INTERVAL_MINUTES = 30;
@@ -80,6 +81,11 @@ async function fetchDoctorOrders(session) {
   })) || [];
 }
 
+function doctorConsultationFee(doctor) {
+  const value = Number(doctor?.consultation_fee || doctor?.consultationFee || 0);
+  return value > 0 ? value : DEFAULT_CONSULTATION_FEE_NGN;
+}
+
 async function fetchDoctorProducts(session, doctorId) {
   return (await apiRequest(session, `/doctors/${doctorId}/products`, {
     params: { per_page: 40, page: 1 },
@@ -119,6 +125,7 @@ export default function DoctorDashboard() {
   const [page, setPage] = useState("overview");
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [session, setSession] = useState(null);
+  const [authResolved, setAuthResolved] = useState(false);
   const [doctorId, setDoctorId] = useState(null);
   const [cacheKey, setCacheKey] = useState(null);
   const [availabilityDraft, setAvailabilityDraft] = useState({});
@@ -126,6 +133,10 @@ export default function DoctorDashboard() {
   const [availabilityFeedback, setAvailabilityFeedback] = useState("");
   const [appointmentFeedback, setAppointmentFeedback] = useState("");
   const [mtmFeedback, setMtmFeedback] = useState("");
+  const [logoutBusy, setLogoutBusy] = useState(false);
+  const [completionModal, setCompletionModal] = useState({ open: false, appointmentId: null });
+  const [completionDraft, setCompletionDraft] = useState({ doctorNotes: "", diagnosis: "", productQuantities: {} });
+  const [completionSubmitting, setCompletionSubmitting] = useState(false);
   const [selectedMtmRequestId, setSelectedMtmRequestId] = useState(null);
   const [doctorSettings, setDoctorSettings] = useState(() => loadDoctorSettings());
   const [bookingIntervalMinutes, setBookingIntervalMinutes] = useState(() => loadBookingIntervalMinutes());
@@ -172,12 +183,14 @@ export default function DoctorDashboard() {
     const hydratedSession = hydrateStoredSession("doctor");
     const nextDoctorId = hydratedSession.user?.id;
     if (!isSessionUsable(hydratedSession) || !nextDoctorId || !hasDoctorRole(hydratedSession.user)) {
+      setAuthResolved(true);
       router.replace("/admin/doctor/login");
       return;
     }
     setSession(hydratedSession);
     setDoctorId(nextDoctorId);
     setCacheKey(buildDashboardCacheKey("doctor", DOCTOR_DASHBOARD_CACHE_SCOPE, nextDoctorId));
+    setAuthResolved(true);
   }, [router]);
 
   useEffect(() => {
@@ -372,6 +385,95 @@ export default function DoctorDashboard() {
     }
   }
 
+  function openCompleteAppointmentModal(appointmentId) {
+    const appointment = state.appointments.find((item) => String(item.id) === String(appointmentId));
+    setCompletionDraft({
+      doctorNotes: String(appointment?.doctor_notes || "").trim(),
+      diagnosis: "",
+      productQuantities: {}
+    });
+    setCompletionModal({ open: true, appointmentId });
+    setAppointmentFeedback("");
+  }
+
+  function closeCompleteAppointmentModal() {
+    if (completionSubmitting) return;
+    setCompletionModal({ open: false, appointmentId: null });
+    setCompletionDraft({ doctorNotes: "", diagnosis: "", productQuantities: {} });
+  }
+
+  async function submitAppointmentCompletion() {
+    const appointment = state.appointments.find((item) => String(item.id) === String(completionModal.appointmentId));
+    if (!appointment) {
+      setAppointmentFeedback("The appointment could not be found.");
+      return;
+    }
+    const doctorNotes = String(completionDraft.doctorNotes || "").trim();
+    if (!doctorNotes) {
+      setAppointmentFeedback("Doctor remarks are required before completion.");
+      return;
+    }
+
+    const selectedItems = Object.entries(completionDraft.productQuantities || {})
+      .map(([productId, quantity]) => ({ product_id: Number(productId), quantity: Number(quantity) }))
+      .filter((item) => item.product_id > 0 && item.quantity > 0);
+
+    setCompletionSubmitting(true);
+    setAppointmentFeedback("");
+    try {
+      if (selectedItems.length) {
+        const patient = appointment?.patient || {};
+        const [firstName, ...restName] = String(patient.display_name || "").trim().split(/\s+/).filter(Boolean);
+        const prescription = await apiRequest(session, "/prescriptions", {
+          method: "POST",
+          body: {
+            patient_user_id: appointment.patient_user_id,
+            appointment_id: appointment.id,
+            diagnosis: String(completionDraft.diagnosis || appointment.reason || "Consultation follow-up").trim(),
+            instructions: doctorNotes,
+            valid_from: new Date().toISOString(),
+            items: selectedItems
+          }
+        });
+        await apiRequest(session, `/prescriptions/${prescription.id}/issue`, { method: "POST" });
+        await apiRequest(session, `/prescriptions/${prescription.id}/assign`, {
+          method: "POST",
+          body: { notify_patient: true }
+        });
+        const customerOrder = await apiRequest(session, "/orders", {
+          method: "POST",
+          body: {
+            customer_id: appointment.patient_user_id,
+            appointment_id: appointment.id,
+            prescription_id: prescription.id,
+            custom_email_only: true,
+            items: selectedItems,
+            billing: {
+              first_name: firstName || "Customer",
+              last_name: restName.join(" "),
+              email: patient.email || "",
+              phone: patient.phone || patient.billing_phone || "",
+              address_1: patient.address || patient.billing_address_1 || "",
+              city: patient.city || "",
+              state: patient.state || "",
+              postcode: patient.postcode || "",
+              country: patient.country || "NG"
+            }
+          }
+        });
+        if (customerOrder) {
+          await ordersQuery.mutate((current) => Array.isArray(current) ? upsertById(current, customerOrder) : current, { revalidate: false });
+          globalMutate(isProxyOrdersKey, (current) => updateListPayload(current, (list) => upsertById(list, customerOrder)), { revalidate: false });
+        }
+      }
+
+      await handleAppointmentAction(appointment.id, "complete", { doctor_notes: doctorNotes });
+      closeCompleteAppointmentModal();
+    } finally {
+      setCompletionSubmitting(false);
+    }
+  }
+
   async function saveAvailability() {
     if (!doctorId || !session) {
       return;
@@ -429,9 +531,17 @@ export default function DoctorDashboard() {
     }
   }
 
-  function handleLogout() {
-    clearSessionAuth(FRONTENDS.doctor, session || hydrateStoredSession("doctor"));
-    router.replace("/admin/doctor/login");
+  async function handleLogout() {
+    if (logoutBusy) {
+      return;
+    }
+    setLogoutBusy(true);
+    try {
+      clearSessionAuth(FRONTENDS.doctor, session || hydrateStoredSession("doctor"));
+      router.replace("/admin/doctor/login");
+    } catch {
+      setLogoutBusy(false);
+    }
   }
 
   const appointmentDates = useMemo(() => new Set(state.appointments.map((item) => String(item.start_at || "").slice(0, 10))), [state.appointments]);
@@ -446,7 +556,7 @@ export default function DoctorDashboard() {
   const reviews = state.reviews?.reviews || [];
   const reviewSummary = state.reviews?.summary || { average: 0, count: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
   const paidAppointments = state.appointments.filter((item) => item.payment_status === "paid");
-  const estimatedRevenue = paidAppointments.reduce((sum, item) => sum + Number(state.doctor?.consultation_fee || 0), 0);
+  const estimatedRevenue = paidAppointments.reduce((sum) => sum + doctorConsultationFee(state.doctor), 0);
   const storeCurrency = state.dashboard?.store_currency || storedStoreCurrency();
   useEffect(() => {
     rememberStoreContext(state.dashboard || state.doctor || {});
@@ -475,6 +585,10 @@ export default function DoctorDashboard() {
     return () => window.removeEventListener("resize", fitStats);
   }, [showSkeleton, page, state.appointments.length, state.orders.length, state.products.length, state.patients.length]);
 
+  if (!authResolved) {
+    return <DoctorDashboardBootSkeleton />;
+  }
+
   return <RoleShell title="Nevari Doctor" pages={pages} active={page} onPageChange={setPage} renderNavIcon={renderDoctorNavIcon}>
     {state.error ? <p className="receipt-feedback">{state.error}</p> : null}
     {showSkeleton ? <DoctorDashboardSkeleton page={page} /> : null}
@@ -499,8 +613,8 @@ export default function DoctorDashboard() {
       rows={visibleAppointments}
       appointmentFeedback={appointmentFeedback}
       onConfirm={(appointmentId) => handleAppointmentAction(appointmentId, "confirm")}
-      onComplete={(appointmentId) => handleAppointmentAction(appointmentId, "complete")}
-    /> : null}
+      onComplete={openCompleteAppointmentModal}
+      /> : null}
     {!showSkeleton && page === "mtm" ? <MtmQueuePage
       requests={state.mtmRequests}
       selectedRequestId={selectedMtmRequestId}
@@ -543,7 +657,16 @@ export default function DoctorDashboard() {
     }} /> : null}
     {!showSkeleton && page === "products" ? <TablePanel title="Assigned Products" rows={state.products} columns={["Product", "Categories", "Price", "Stock"]} render={(item) => [item.name, (item.categories || []).join(", "), money(item.price, storeCurrency), item.stock_quantity ?? "n/a"]} /> : null}
     {!showSkeleton && page === "patients" ? <TablePanel title="Customers" rows={state.patients} columns={["Customer", "Email", "First linked", "Last interaction"]} render={(item) => [item.display_name, item.email, shortDate(item.first_linked_at), shortDate(item.last_interaction_at)]} /> : null}
-    {!showSkeleton && page === "profile" ? <ProfilePage doctor={state.doctor} estimatedRevenue={estimatedRevenue} storeCurrency={storeCurrency} onLogout={handleLogout} /> : null}
+    {!showSkeleton && page === "profile" ? <ProfilePage doctor={state.doctor} estimatedRevenue={estimatedRevenue} storeCurrency={storeCurrency} onLogout={handleLogout} logoutBusy={logoutBusy} /> : null}
+    {completionModal.open ? <AppointmentCompletionModal
+      appointment={state.appointments.find((item) => String(item.id) === String(completionModal.appointmentId)) || null}
+      products={state.products}
+      draft={completionDraft}
+      onChange={setCompletionDraft}
+      onClose={closeCompleteAppointmentModal}
+      onSubmit={submitAppointmentCompletion}
+      submitting={completionSubmitting}
+    /> : null}
   </RoleShell>;
 }
 
@@ -569,8 +692,8 @@ function AppointmentDetailCard({ appointment, onConfirm, onComplete }) {
   const canConfirm = appointment.status === "awaiting_payment" ? false : appointment.status === "requested";
   const canComplete = appointment.status === "confirmed";
   const calendarUrl = buildUrl(session, `/appointments/${appointment.id}/calendar`);
-  const joinUrl = [appointment?.meet_link, appointment?.google_meet_link, appointment?.meeting_link, appointment?.meeting_url]
-    .find((value) => typeof value === "string" && /https?:\/\/meet\.google\.com\//i.test(value)) || "";
+  const joinUrl = [appointment?.join_url, appointment?.meet_link, appointment?.google_meet_link, appointment?.meeting_link, appointment?.meeting_url]
+    .find((value) => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
   return <article className="doctor-appointment-detail-card">
     <div className="doctor-appointment-detail-head">
       <div>
@@ -582,21 +705,92 @@ function AppointmentDetailCard({ appointment, onConfirm, onComplete }) {
         <span className={`status-badge ${appointment.status === "completed" || appointment.status === "confirmed" ? "success" : "warning"}`}>{titleCase(appointment.status)}</span>
       </div>
     </div>
-    <div className="doctor-appointment-grid">
-      <div><span>Patient</span><strong>{appointment.patient?.display_name || appointment.patient_user_id}</strong></div>
-      <div><span>Email</span><strong>{appointment.patient?.email || "n/a"}</strong></div>
-      <div><span>Reason</span><strong>{appointment.reason || "Consultation booking"}</strong></div>
-      <div><span>Time zone</span><strong>{appointment.timezone || "UTC"}</strong></div>
-      <div><span>Review</span><strong>{appointment.review ? `${appointment.review.rating}/5` : "Pending"}</strong></div>
-      <div><span>Order</span><strong>{appointment.order_id ? `#${appointment.order_id}` : "n/a"}</strong></div>
-    </div>
-    <div className="doctor-appointment-actions">
-      {joinUrl ? <a className="pill-button" href={joinUrl} target="_blank" rel="noreferrer">Join Google Meet</a> : null}
+      <div className="doctor-appointment-grid">
+        <div><span>Patient</span><strong>{appointment.patient?.display_name || appointment.patient_user_id}</strong></div>
+        <div><span>Email</span><strong>{appointment.patient?.email || "n/a"}</strong></div>
+        <div><span>Reason</span><strong>{appointment.reason || "Consultation booking"}</strong></div>
+        <div><span>Time zone</span><strong>{appointment.timezone || "UTC"}</strong></div>
+        <div><span>Booked time</span><strong>{appointment.created_at ? shortDate(appointment.created_at, true) : "n/a"}</strong></div>
+        <div><span>Consultation time</span><strong>{appointment.start_at ? `${shortDate(appointment.start_at, true)}${appointment.end_at ? ` - ${new Date(appointment.end_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}` : "n/a"}</strong></div>
+        <div><span>Review</span><strong>{appointment.review ? `${appointment.review.rating}/5` : "Pending"}</strong></div>
+        <div><span>Order</span><strong>{appointment.order_id ? `#${appointment.order_id}` : "n/a"}</strong></div>
+      </div>
+      {appointment.doctor_notes ? <div className="doctor-appointment-note"><span>Doctor remarks</span><p>{appointment.doctor_notes}</p></div> : null}
+      <div className="doctor-appointment-actions">
+      {joinUrl ? <a className="pill-button" href={joinUrl} target="_blank" rel="noreferrer">Join Appointment</a> : null}
       <a className="pill-button" href={calendarUrl} target="_blank" rel="noreferrer">Calendar file</a>
       {canConfirm ? <button className="pill-button" type="button" onClick={() => onConfirm(appointment.id)}>Confirm</button> : null}
       {canComplete ? <button className="pill-button" type="button" onClick={() => onComplete(appointment.id)}>Mark complete</button> : null}
     </div>
-  </article>;
+    </article>;
+  }
+
+function AppointmentCompletionModal({ appointment, products, draft, onChange, onClose, onSubmit, submitting }) {
+  const patientName = appointment?.patient?.display_name || `Patient #${appointment?.patient_user_id || ""}`;
+  const selectedProducts = Array.isArray(products) ? products : [];
+
+  function setField(key, value) {
+    onChange((current) => ({ ...current, [key]: value }));
+  }
+
+  function setProductQuantity(productId, value) {
+    const normalized = Math.max(0, Number.parseInt(value, 10) || 0);
+    onChange((current) => ({
+      ...current,
+      productQuantities: {
+        ...(current.productQuantities || {}),
+        [productId]: normalized
+      }
+    }));
+  }
+
+  return <div className="doctor-completion-modal" role="dialog" aria-modal="true" aria-label="Complete appointment">
+    <button className="doctor-completion-backdrop" type="button" aria-label="Close completion modal" onClick={onClose} />
+    <section className="doctor-completion-card">
+      <div className="doctor-completion-head">
+        <div>
+          <h3>Complete consultation</h3>
+          <p>{patientName}</p>
+        </div>
+        <button className="pill-button" type="button" onClick={onClose} disabled={submitting}>Close</button>
+      </div>
+      <label className="customer-mobile-field">
+        <span>Doctor remarks</span>
+        <textarea rows={5} value={draft.doctorNotes} onChange={(event) => setField("doctorNotes", event.target.value)} />
+      </label>
+      <label className="customer-mobile-field">
+        <span>Diagnosis / follow-up summary</span>
+        <textarea rows={3} value={draft.diagnosis} onChange={(event) => setField("diagnosis", event.target.value)} />
+      </label>
+      <div className="doctor-completion-products">
+        <div className="doctor-completion-products-head">
+          <strong>Create follow-up product order</strong>
+          <span>Optional. Quantities above zero will be prescribed and emailed to the customer with a payment link.</span>
+        </div>
+        {selectedProducts.length ? selectedProducts.map((product) => (
+          <label className="doctor-completion-product-row" key={product.id}>
+            <div>
+              <strong>{product.name}</strong>
+              <span>{money(product.price, storedStoreCurrency())}</span>
+            </div>
+            <input
+              type="number"
+              min="0"
+              value={draft.productQuantities?.[product.id] || ""}
+              onChange={(event) => setProductQuantity(product.id, event.target.value)}
+              placeholder="0"
+            />
+          </label>
+        )) : <p className="muted">No doctor-linked products are available.</p>}
+      </div>
+      <div className="doctor-completion-actions">
+        <button className="pill-button" type="button" onClick={onClose} disabled={submitting}>Cancel</button>
+        <button className="pill-button primary" type="button" onClick={onSubmit} disabled={submitting}>
+          {submitting ? "Saving..." : "Complete consultation"}
+        </button>
+      </div>
+    </section>
+  </div>;
 }
 
 function MtmQueuePage({ requests, selectedRequestId, onSelectRequest, onApprove, onFollowUp, onComplete, onSaveActionPlan, feedback }) {
@@ -773,14 +967,16 @@ function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange,
   </section>;
 }
 
-function ProfilePage({ doctor, estimatedRevenue, storeCurrency, onLogout }) {
+function ProfilePage({ doctor, estimatedRevenue, storeCurrency, onLogout, logoutBusy = false }) {
   return <section className="panel role-profile">
     <div className="panel-header">
       <div>
         <h2>{doctor?.display_name || "Doctor profile"}</h2>
         <p>{doctor?.email || "No email available"}</p>
       </div>
-      <button className="pill-button danger" type="button" onClick={onLogout}>Logout</button>
+      <button className="pill-button danger" type="button" onClick={onLogout} disabled={logoutBusy}>
+        {logoutBusy ? <span className="appointment-cta-spinner" aria-label="Logging out" /> : "Logout"}
+      </button>
     </div>
     <div className="doctor-profile-metrics">
       <article>
@@ -793,7 +989,7 @@ function ProfilePage({ doctor, estimatedRevenue, storeCurrency, onLogout }) {
       </article>
       <article>
         <span>Consultation fee</span>
-        <strong>{money(doctor?.consultation_fee || 0, storeCurrency)}</strong>
+        <strong>{money(doctorConsultationFee(doctor), storeCurrency)}</strong>
       </article>
       <article>
         <span>Estimated revenue</span>
@@ -825,8 +1021,7 @@ function DoctorSettingsPage({ doctor, appointments, settings, onSettingsChange, 
 
         <article className="doctor-settings-card">
           <h3>Consultation controls</h3>
-          <div className="doctor-settings-summary"><span>Pricing tier</span><strong>{settings.pricingTier}</strong></div>
-          <div className="doctor-settings-summary"><span>Consultation fee</span><strong>{money(doctor?.consultation_fee || 0, storeCurrency)}</strong></div>
+          <div className="doctor-settings-summary"><span>Consultation fee</span><strong>{money(doctorConsultationFee(doctor), storeCurrency)}</strong></div>
           <div className="doctor-settings-summary"><span>Working days</span><strong>{activeDays}</strong></div>
           <SettingsToggle label="Auto-accept appointments" checked={settings.autoAcceptAppointments} onChange={(checked) => onSettingsChange((current) => ({ ...current, autoAcceptAppointments: checked, manualApprovalMode: checked ? false : current.manualApprovalMode }))} />
           <SettingsToggle label="Manual approval mode" checked={settings.manualApprovalMode} onChange={(checked) => onSettingsChange((current) => ({ ...current, manualApprovalMode: checked, autoAcceptAppointments: checked ? false : current.autoAcceptAppointments }))} />
@@ -850,8 +1045,8 @@ function DoctorSettingsPage({ doctor, appointments, settings, onSettingsChange, 
           <h3>Payments</h3>
           <div className="doctor-settings-summary"><span>Earnings overview</span><strong>{money(estimatedRevenue, storeCurrency)}</strong></div>
           <div className="doctor-settings-summary"><span>Paid appointments</span><strong>{appointments.filter((item) => item.payment_status === "paid").length}</strong></div>
-          <div className="doctor-settings-summary"><span>Tier lock</span><strong>Admin controlled</strong></div>
-          <p className="muted">Consultation pricing is read-only for doctors. Tiers, category rates, and customer billing remain under admin control.</p>
+          <div className="doctor-settings-summary"><span>Pricing control</span><strong>Admin managed</strong></div>
+          <p className="muted">Consultation pricing is read-only for doctors. The global consultation fee and customer billing remain under admin control.</p>
         </article>
       </div>
     </div>
@@ -864,6 +1059,31 @@ export function TablePanel({ title, rows, columns, render }) {
 
 export function SkeletonBox({ className = "" }) {
   return <div className={`skeleton ${className}`.trim()} aria-hidden="true" />;
+}
+
+function DoctorDashboardBootSkeleton() {
+  return <div className="desktop-dashboard-page role-shell-exact">
+    <section className="desktop-dashboard-shell">
+      <div className="desktop-dashboard-screen">
+        <div className="screen-scroll">
+          <section className="table-panel skeleton-panel">
+            <div className="panel-header">
+              <div>
+                <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                <SkeletonBox className="skeleton-line skeleton-line-lg" />
+              </div>
+            </div>
+            <div className="doctor-list">
+              {Array.from({ length: 3 }, (_, index) => <div className="doctor-card skeleton-panel" key={`doctor-auth-skeleton-${index}`}>
+                <SkeletonBox className="skeleton-line skeleton-line-md" />
+                <SkeletonBox className="skeleton-line skeleton-line-sm" />
+              </div>)}
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </div>;
 }
 
 function hasDoctorDashboardData(state) {
@@ -1157,7 +1377,7 @@ function DoctorOverview({ doctor, dashboard, appointments, orders, patients, rev
       <article className="doctor-insight-card">
         <span>Estimated revenue</span>
         <strong>{money(estimatedRevenue, storeCurrency)}</strong>
-        <small>Paid appointments using your current consultation fee.</small>
+        <small>Paid appointments using the admin-managed global consultation fee.</small>
       </article>
       <article className="doctor-insight-card">
         <span>Rating</span>
@@ -1413,7 +1633,6 @@ function defaultDoctorSettings() {
     specialization: "",
     bio: "",
     licenseNumber: "",
-    pricingTier: "Specialist",
     autoAcceptAppointments: false,
     manualApprovalMode: true,
     emergencyAvailability: false,
@@ -1451,7 +1670,7 @@ function buildDoctorBootstrapState(session, fallbackState = emptyDoctorState) {
       email: fallbackDoctor.email || sessionUser.email || "",
       specialties: Array.isArray(fallbackDoctor.specialties) ? fallbackDoctor.specialties : [],
       languages: Array.isArray(fallbackDoctor.languages) ? fallbackDoctor.languages : [],
-      consultation_fee: fallbackDoctor.consultation_fee || 0,
+      consultation_fee: doctorConsultationFee(fallbackDoctor),
       store_currency: storedStoreCurrency(),
       store_timezone: fallbackDoctor.store_timezone || storedStoreTimeZone(),
       product_categories: Array.isArray(fallbackDoctor.product_categories) ? fallbackDoctor.product_categories : []

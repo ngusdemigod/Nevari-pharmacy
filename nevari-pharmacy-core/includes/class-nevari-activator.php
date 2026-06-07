@@ -47,6 +47,7 @@ final class Nevari_Activator {
         $round_robin_tracker = Nevari_Helpers::table('round_robin_tracker');
         $patient_doctor_links = Nevari_Helpers::table('patient_doctor_links');
         $appointments = Nevari_Helpers::table('appointments');
+        $appointment_invoices = Nevari_Helpers::table('appointment_invoices');
         $prescriptions = Nevari_Helpers::table('prescriptions');
         $prescription_items = Nevari_Helpers::table('prescription_items');
         $assignment_history = Nevari_Helpers::table('prescription_assignment_history');
@@ -133,6 +134,15 @@ final class Nevari_Activator {
             google_meet_next_retry_at DATETIME NULL,
             google_meet_error TEXT NULL,
             google_meet_created_at DATETIME NULL,
+            google_meet_ended_at DATETIME NULL,
+            patient_join_token_hash VARCHAR(64) NULL,
+            doctor_join_token_hash VARCHAR(64) NULL,
+            join_valid_from_at DATETIME NULL,
+            join_expires_at DATETIME NULL,
+            patient_checked_in_at DATETIME NULL,
+            doctor_checked_in_at DATETIME NULL,
+            missed_attendance_at DATETIME NULL,
+            missed_attendance_role VARCHAR(20) NULL,
             payment_completed_at DATETIME NULL,
             completed_at DATETIME NULL,
             reserved_until DATETIME NULL,
@@ -161,12 +171,42 @@ final class Nevari_Activator {
             KEY google_meet_space_name (google_meet_space_name),
             KEY google_meet_status (google_meet_status),
             KEY google_meet_next_retry_at (google_meet_next_retry_at),
+            KEY patient_join_token_hash (patient_join_token_hash),
+            KEY doctor_join_token_hash (doctor_join_token_hash),
+            KEY join_expires_at (join_expires_at),
             KEY reminder_sent_at (reminder_sent_at),
             KEY customer_reminder_24h_sent_at (customer_reminder_24h_sent_at),
             KEY customer_reminder_1h_sent_at (customer_reminder_1h_sent_at),
             KEY doctor_reminder_24h_sent_at (doctor_reminder_24h_sent_at),
             KEY doctor_reminder_1h_sent_at (doctor_reminder_1h_sent_at),
             KEY customer_followup_sent_at (customer_followup_sent_at)
+        ) {$charset};");
+
+        dbDelta("CREATE TABLE {$appointment_invoices} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            appointment_id BIGINT UNSIGNED NOT NULL,
+            patient_user_id BIGINT UNSIGNED NOT NULL,
+            doctor_user_id BIGINT UNSIGNED NOT NULL,
+            invoice_number VARCHAR(64) NOT NULL,
+            amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            currency VARCHAR(8) NOT NULL DEFAULT 'NGN',
+            status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            gateway VARCHAR(30) NULL,
+            payment_reference VARCHAR(191) NULL,
+            transaction_id VARCHAR(191) NULL,
+            customer_name VARCHAR(191) NULL,
+            customer_email VARCHAR(191) NULL,
+            paid_at DATETIME NULL,
+            cancelled_at DATETIME NULL,
+            metadata LONGTEXT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY appointment_id (appointment_id),
+            UNIQUE KEY invoice_number (invoice_number),
+            KEY patient_status (patient_user_id, status),
+            KEY doctor_status (doctor_user_id, status),
+            KEY payment_reference (payment_reference)
         ) {$charset};");
 
         $appointment_reviews = Nevari_Helpers::table('appointment_reviews');
@@ -652,9 +692,9 @@ final class Nevari_Activator {
                 'template_key' => 'appointment_requested',
                 'name' => 'Appointment Requested',
                 'subject' => 'Your appointment with {{doctor_name}} is pending payment',
-                'body_html' => '<p>Hello {{patient_name}},</p><p>Your appointment with {{doctor_name}} has been created for {{appointment_start}}.</p><p>{{google_meet_link_html}}</p><p>{{payment_link_html}}</p><p>You can also view this booking inside your Nevari dashboard.</p>',
-                'body_text' => 'Hello {{patient_name}}, your appointment with {{doctor_name}} has been created for {{appointment_start}}. Google Meet: {{google_meet_link}} Pay here: {{payment_link}}',
-                'variables' => ['patient_name', 'doctor_name', 'appointment_start', 'payment_link', 'payment_link_html', 'google_meet_link', 'google_meet_link_html'],
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your appointment with {{doctor_name}} is pending payment.</p><p>Your appointment has been created for {{appointment_date}} at {{appointment_time}}.</p><p><strong>Duration:</strong> {{appointment_duration}}<br /><strong>Reference:</strong> {{appointment_reference}}<br /><strong>Invoice:</strong> {{invoice_number}}</p><p>This booking expires after 10 minutes if payment is not completed.</p><p>{{payment_link_html}}</p><p>You can also view this booking inside your Nevari dashboard.</p>',
+                'body_text' => 'Hello {{patient_name}}, your appointment with {{doctor_name}} is pending payment for {{appointment_date}} at {{appointment_time}}. Duration: {{appointment_duration}}. Reference: {{appointment_reference}}. Invoice: {{invoice_number}}. Pay here: {{payment_link}}',
+                'variables' => ['patient_name', 'doctor_name', 'appointment_start', 'appointment_date', 'appointment_time', 'appointment_duration', 'appointment_reference', 'invoice_number', 'payment_link', 'payment_link_html', 'google_meet_link', 'google_meet_link_html'],
             ],
             [
                 'template_key' => 'appointment_payment_receipt',

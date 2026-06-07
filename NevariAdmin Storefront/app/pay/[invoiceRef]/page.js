@@ -13,7 +13,11 @@ const DEFAULT_SESSION = {
   accessToken: ""
 };
 
-function hydrateSession(frontend = "patient") {
+function normalizeBaseUrl(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function hydrateSession(frontend = "patient", queryBaseUrl = "") {
   if (typeof window === "undefined") return DEFAULT_SESSION;
   const config = FRONTENDS[frontend] || FRONTENDS.patient;
   const own = JSON.parse(localStorage.getItem(config.storageKey) || "{}");
@@ -26,22 +30,38 @@ function hydrateSession(frontend = "patient") {
   }
   const admin = JSON.parse(localStorage.getItem(FRONTENDS.admin.storageKey) || "{}");
   const shared = config.type !== FRONTENDS.admin.type ? {
-    baseUrl: admin.baseUrl || DEFAULT_SESSION.baseUrl,
+    baseUrl: normalizeBaseUrl(queryBaseUrl) || normalizeBaseUrl(admin.baseUrl) || DEFAULT_SESSION.baseUrl,
     frontendOrigin: window.location.origin,
     frontendUrl: window.location.href
   } : {};
-  return { ...DEFAULT_SESSION, ...shared, ...own, frontendType: config.type, frontendOrigin: window.location.origin, frontendUrl: window.location.href };
+  return {
+    ...DEFAULT_SESSION,
+    ...shared,
+    ...own,
+    baseUrl: normalizeBaseUrl(queryBaseUrl) || normalizeBaseUrl(own.baseUrl) || normalizeBaseUrl(shared.baseUrl) || DEFAULT_SESSION.baseUrl,
+    frontendType: config.type,
+    frontendOrigin: window.location.origin,
+    frontendUrl: window.location.href
+  };
 }
 
-function buildUrl(session, path) {
+function buildUrl(session, path, params = null) {
   const url = new URL("/api/nevari-proxy", window.location.origin);
   url.searchParams.set("baseUrl", String(session.baseUrl || "").replace(/\/+$/, ""));
   url.searchParams.set("path", path);
+  if (params && typeof params === "object") {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === "") {
+        return;
+      }
+      url.searchParams.set(key, String(value));
+    });
+  }
   return url.toString();
 }
 
-async function request(session, path, { method = "GET", body } = {}) {
-  const response = await fetch(buildUrl(session, path), {
+async function request(session, path, { method = "GET", body, params } = {}) {
+  const response = await fetch(buildUrl(session, path, params), {
     method,
     headers: {
       Accept: "application/json",
@@ -78,6 +98,10 @@ function callbackReference(searchParams, gateway) {
   return searchParams.get("reference") || searchParams.get("trxref") || searchParams.get("session_id") || "";
 }
 
+function InlineSpinner() {
+  return <span className="paywall-spinner" aria-label="Loading payment details" />;
+}
+
 export default function PaywallPage() {
   const { invoiceRef } = useParams();
   const searchParams = useSearchParams();
@@ -93,23 +117,32 @@ export default function PaywallPage() {
   useEffect(() => {
     const role = searchParams.get("role") || "patient";
     const frontend = role === "admin" ? "admin" : role === "doctor" ? "doctor" : "patient";
-    setSession(hydrateSession(frontend));
+    setSession(hydrateSession(frontend, searchParams.get("base_url") || ""));
   }, [searchParams]);
 
   useEffect(() => {
     let active = true;
     async function load() {
-      if (!session.baseUrl) return;
       setLoading(true);
       setError("");
+      if (!session.baseUrl) {
+        if (active) {
+          setData(null);
+          setError("Payment page is missing the store connection details. Reopen the payment link from your dashboard or configure NEXT_PUBLIC_NEVARI_BASE_URL.");
+          setLoading(false);
+        }
+        return;
+      }
       try {
-        const payload = await request(session, `/invoices/${encodeURIComponent(String(invoiceRef || ""))}/payment-data?payment_token=${encodeURIComponent(paymentToken)}`);
+        const payload = await request(session, `/invoices/${encodeURIComponent(String(invoiceRef || ""))}/payment-data`, {
+          params: { payment_token: paymentToken }
+        });
         if (!active) return;
         const status = String(payload.payment_status || payload.order_status || "").toLowerCase();
         const terminal = ["paid", "completed", "cancelled", "refunded"].includes(status) || Number(payload?.totals?.balance_due || 0) <= 0;
         if (terminal) {
           setData(payload);
-          openReceipt(payload.order_id);
+          openPaymentSuccess(payload);
           return;
         }
         setData(payload);
@@ -129,20 +162,23 @@ export default function PaywallPage() {
   useEffect(() => {
     let active = true;
     async function verifyRedirect() {
-      if (!session.baseUrl || !data?.order_id) return;
-      const gateway = searchParams.get("gateway");
-      const reference = callbackReference(searchParams, gateway);
-      if (!gateway || !reference) return;
-      setSubmitting(true);
-      setError("");
-      try {
-        const verified = await request(session, `/orders/${data.order_id}/payment/verify`, {
-          method: "POST",
-          body: { gateway, reference, payment_token: paymentToken }
-        });
-        if (active && verified?.paid) {
-          openReceipt(data.order_id);
-        }
+        if (!session.baseUrl || !(data?.order_id || data?.appointment_id)) return;
+        const gateway = searchParams.get("gateway");
+        const reference = callbackReference(searchParams, gateway);
+        if (!gateway || !reference) return;
+        setSubmitting(true);
+        setError("");
+        try {
+          const path = data?.entity_type === "appointment"
+            ? `/appointments/${data.appointment_id}/payment/verify`
+            : `/orders/${data.order_id}/payment/verify`;
+          const verified = await request(session, path, {
+            method: "POST",
+            body: { gateway, reference, payment_token: paymentToken }
+          });
+          if (active && verified?.paid) {
+            openPaymentSuccess(data);
+          }
       } catch (nextError) {
         if (active) setError(String(nextError?.message || "Payment verification failed."));
       } finally {
@@ -163,18 +199,39 @@ export default function PaywallPage() {
     return `/admin/orders/${encodeURIComponent(orderId)}/documents?role=${encodeURIComponent(role)}&tab=receipt&statusMode=payment`;
   }
 
-  function openReceipt(orderId) {
-    window.location.href = receiptViewerUrl(orderId);
+  function openPaymentSuccess(payload) {
+    if (payload?.entity_type === "appointment") {
+      const role = searchParams.get("role") || "patient";
+      const dashboardPath = role === "doctor" ? "/admin/doctor/dashboard" : role === "admin" ? "/admin/storefront" : "/dashboard";
+      const appointmentId = payload?.appointment_id || data?.appointment_id || "";
+      const appointmentQuery = appointmentId ? `?appointment=${encodeURIComponent(String(appointmentId))}` : "";
+      window.location.href = `${dashboardPath}${appointmentQuery}`;
+      return;
+    }
+    if (payload?.order_id) {
+      window.location.href = receiptViewerUrl(payload.order_id);
+    }
   }
 
   async function startPayment(gateway = activeGateway) {
-    if (!data?.order_id || !gateway) return;
+    if (!(data?.order_id || data?.appointment_id) || !gateway) return;
     setActiveGateway(gateway);
     setSubmitting(true);
     setError("");
     try {
-      const callbackUrl = `${window.location.origin}/pay/${encodeURIComponent(data.invoice_number)}?role=${encodeURIComponent(searchParams.get("role") || "patient")}&gateway=${encodeURIComponent(gateway)}&payment_token=${encodeURIComponent(paymentToken)}`;
-      const payload = await request(session, `/orders/${data.order_id}/payment/initialize`, {
+      const callbackParams = new URLSearchParams({
+        role: searchParams.get("role") || "patient",
+        gateway,
+        payment_token: paymentToken
+      });
+      if (session.baseUrl) {
+        callbackParams.set("base_url", session.baseUrl);
+      }
+      const callbackUrl = `${window.location.origin}/pay/${encodeURIComponent(data.invoice_number)}?${callbackParams.toString()}`;
+      const path = data?.entity_type === "appointment"
+        ? `/appointments/${data.appointment_id}/payment/initialize`
+        : `/orders/${data.order_id}/payment/initialize`;
+      const payload = await request(session, path, {
         method: "POST",
         body: { gateway, callback_url: callbackUrl, payment_token: paymentToken }
       });
@@ -189,13 +246,13 @@ export default function PaywallPage() {
   }
 
   if (loading) {
-    return <main className="paywall-page"><section className="paywall-card">Loading payment details...</section></main>;
+    return <main className="paywall-page"><section className="paywall-card paywall-card-loading"><InlineSpinner /></section></main>;
   }
   if (error && !data) {
     return <main className="paywall-page"><section className="paywall-card error">{error}</section></main>;
   }
   if (!data) {
-    return <main className="paywall-page"><section className="paywall-card">Loading payment details...</section></main>;
+    return <main className="paywall-page"><section className="paywall-card paywall-card-loading"><InlineSpinner /></section></main>;
   }
 
   return (
@@ -207,19 +264,19 @@ export default function PaywallPage() {
         <div className="paywall-grid">
           <span>Customer</span><strong>{data.customer?.name || "Customer"}</strong>
           <span>Email</span><strong>{data.customer?.email || "n/a"}</strong>
-          <span>Order</span><strong>#{data.order_number || data.order_id}</strong>
+            <span>{data?.entity_type === "appointment" ? "Appointment" : "Order"}</span><strong>{data?.entity_type === "appointment" ? `#${data.appointment_id}` : `#${data.order_number || data.order_id}`}</strong>
           <span>Status</span><strong>{titleCase(data.payment_status || data.order_status)}</strong>
           <span>Total</span><strong>{money(data?.totals?.total, data.currency)}</strong>
           <span>Balance due</span><strong>{money(data?.totals?.balance_due, data.currency)}</strong>
         </div>
         <div className="paywall-items">
-          <h2>Order items</h2>
+            <h2>{data?.entity_type === "appointment" ? "Appointment details" : "Order items"}</h2>
           {items.length ? items.map((item, index) => (
             <div className="paywall-item" key={`${item.name || "item"}-${index}`}>
               <span>{item.name || "Item"} x {item.qty || item.quantity || 1}</span>
               <strong>{money(item.total ?? item.rate ?? item.price, data.currency)}</strong>
             </div>
-          )) : <p className="paywall-muted">No line items were returned for this order.</p>}
+            )) : <p className="paywall-muted">No line items were returned for this invoice.</p>}
         </div>
         <div className="gateway-list">
           {gateways.map((gateway, index) => (
@@ -234,7 +291,16 @@ export default function PaywallPage() {
       <style jsx>{`
         .paywall-page { min-height: 100vh; display: grid; place-items: center; background: #f4f6f8; padding: 24px; color: #111; box-sizing: border-box; }
         .paywall-card { width: min(520px, 100%); background: #fff; padding: 36px; border: 1px solid #dfe7f0; box-shadow: 0 24px 80px rgba(14, 41, 85, .12); box-sizing: border-box; }
+        .paywall-card-loading { min-height: 220px; display: grid; place-items: center; }
         .paywall-card.error { color: #9f2f2f; }
+        .paywall-spinner {
+          width: 24px;
+          height: 24px;
+          border-radius: 999px;
+          border: 2px solid rgba(14, 41, 85, 0.18);
+          border-top-color: #0E2955;
+          animation: paywallSpin .72s linear infinite;
+        }
         .paywall-logo { width: 72px; height: 72px; object-fit: contain; }
         .paywall-kicker { margin-top: 18px; color: #0E2955; text-transform: uppercase; font-weight: 700; font-size: 12px; }
         h1 { margin: 8px 0 24px; color: #0E2955; font-size: 36px; line-height: 1.1; overflow-wrap: anywhere; }
@@ -251,6 +317,10 @@ export default function PaywallPage() {
         .gateway-button { border: 1px solid #0E2955; background: #0E2955; color: #fff; padding: 14px 18px; font-weight: 800; border-radius: 8px; font-size: 15px; }
         .gateway-button:disabled { opacity: .65; cursor: wait; }
         .paywall-error { margin-top: 14px; color: #9f2f2f; font-weight: 700; }
+        @keyframes paywallSpin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
         @media (max-width: 720px) {
           .paywall-page { padding: 12px; align-items: start; }
           .paywall-card { padding: 18px; }

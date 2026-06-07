@@ -4,6 +4,8 @@ if (!defined('ABSPATH')) {
 }
 
 final class Nevari_Audit {
+    private static int $logging_depth = 0;
+
     public static function init(): void {
         add_action('wp_login', [__CLASS__, 'log_login_success'], 10, 2);
         add_action('wp_login_failed', [__CLASS__, 'log_login_failed'], 10, 1);
@@ -39,53 +41,71 @@ final class Nevari_Audit {
         global $wpdb;
         $table = Nevari_Helpers::table('audit_logs');
 
-        $actor_user_id = array_key_exists('actor_user_id', $args) ? $args['actor_user_id'] : get_current_user_id();
-        $roles = $actor_user_id ? Nevari_Helpers::current_user_roles((int) $actor_user_id) : [];
-        $actor_role = $args['actor_role'] ?? ($roles ? reset($roles) : null);
+        self::$logging_depth++;
+        try {
+            $actor_user_id = self::resolve_actor_user_id($args);
+            $roles = $actor_user_id ? Nevari_Helpers::current_user_roles((int) $actor_user_id) : [];
+            $actor_role = $args['actor_role'] ?? ($roles ? reset($roles) : null);
 
-        $ip = Nevari_Helpers::client_ip();
+            $ip = Nevari_Helpers::client_ip();
 
-        $user_agent = !empty($_SERVER['HTTP_USER_AGENT']) ? substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])), 0, 1000) : null;
-        $metadata = isset($args['metadata']) ? Nevari_Helpers::json_encode_safe($args['metadata']) : null;
+            $user_agent = !empty($_SERVER['HTTP_USER_AGENT']) ? substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])), 0, 1000) : null;
+            $metadata = isset($args['metadata']) ? Nevari_Helpers::json_encode_safe($args['metadata']) : null;
 
-        $data = [
-            'event_uuid' => $args['event_uuid'] ?? wp_generate_uuid4(),
-            'category' => sanitize_key($category),
-            'source' => sanitize_key($source),
-            'action' => sanitize_text_field($action),
-            'status' => in_array($status, ['success', 'error'], true) ? $status : 'success',
-            'severity' => sanitize_key($args['severity'] ?? ($status === 'error' ? 'error' : 'info')),
-            'actor_user_id' => $actor_user_id ? (int) $actor_user_id : null,
-            'actor_role' => $actor_role ? sanitize_key((string) $actor_role) : null,
-            'actor_ip' => $ip ?: null,
-            'user_agent' => $user_agent,
-            'object_type' => isset($args['object_type']) ? sanitize_key((string) $args['object_type']) : null,
-            'object_id' => isset($args['object_id']) ? (int) $args['object_id'] : null,
-            'related_user_id' => isset($args['related_user_id']) ? (int) $args['related_user_id'] : null,
-            'order_id' => isset($args['order_id']) ? (int) $args['order_id'] : null,
-            'product_id' => isset($args['product_id']) ? (int) $args['product_id'] : null,
-            'appointment_id' => isset($args['appointment_id']) ? (int) $args['appointment_id'] : null,
-            'prescription_id' => isset($args['prescription_id']) ? (int) $args['prescription_id'] : null,
-            'email_log_id' => isset($args['email_log_id']) ? (int) $args['email_log_id'] : null,
-            'request_id' => $args['request_id'] ?? Nevari_Helpers::request_id(),
-            'message' => isset($args['message']) ? sanitize_text_field((string) $args['message']) : null,
-            'error_code' => isset($args['error_code']) ? sanitize_key((string) $args['error_code']) : null,
-            'error_message' => isset($args['error_message']) ? sanitize_textarea_field((string) $args['error_message']) : null,
-            'metadata' => $metadata,
-            'created_at' => Nevari_Helpers::now(),
-        ];
+            $data = [
+                'event_uuid' => $args['event_uuid'] ?? wp_generate_uuid4(),
+                'category' => sanitize_key($category),
+                'source' => sanitize_key($source),
+                'action' => sanitize_text_field($action),
+                'status' => in_array($status, ['success', 'error'], true) ? $status : 'success',
+                'severity' => sanitize_key($args['severity'] ?? ($status === 'error' ? 'error' : 'info')),
+                'actor_user_id' => $actor_user_id ? (int) $actor_user_id : null,
+                'actor_role' => $actor_role ? sanitize_key((string) $actor_role) : null,
+                'actor_ip' => $ip ?: null,
+                'user_agent' => $user_agent,
+                'object_type' => isset($args['object_type']) ? sanitize_key((string) $args['object_type']) : null,
+                'object_id' => isset($args['object_id']) ? (int) $args['object_id'] : null,
+                'related_user_id' => isset($args['related_user_id']) ? (int) $args['related_user_id'] : null,
+                'order_id' => isset($args['order_id']) ? (int) $args['order_id'] : null,
+                'product_id' => isset($args['product_id']) ? (int) $args['product_id'] : null,
+                'appointment_id' => isset($args['appointment_id']) ? (int) $args['appointment_id'] : null,
+                'prescription_id' => isset($args['prescription_id']) ? (int) $args['prescription_id'] : null,
+                'email_log_id' => isset($args['email_log_id']) ? (int) $args['email_log_id'] : null,
+                'request_id' => $args['request_id'] ?? Nevari_Helpers::request_id(),
+                'message' => isset($args['message']) ? sanitize_text_field((string) $args['message']) : null,
+                'error_code' => isset($args['error_code']) ? sanitize_key((string) $args['error_code']) : null,
+                'error_message' => isset($args['error_message']) ? sanitize_textarea_field((string) $args['error_message']) : null,
+                'metadata' => $metadata,
+                'created_at' => Nevari_Helpers::now(),
+            ];
 
-        $formats = [
-            '%s', '%s', '%s', '%s', '%s', '%s',
-            '%d', '%s', '%s', '%s', '%s', '%d',
-            '%d', '%d', '%d', '%d', '%d', '%d',
-            '%s', '%s', '%s', '%s', '%s', '%s',
-        ];
+            $formats = [
+                '%s', '%s', '%s', '%s', '%s', '%s',
+                '%d', '%s', '%s', '%s', '%s', '%d',
+                '%d', '%d', '%d', '%d', '%d', '%d',
+                '%s', '%s', '%s', '%s', '%s', '%s',
+            ];
 
-        $result = $wpdb->insert($table, $data, $formats);
-        if (false === $result && defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('Nevari audit insert failed: ' . $wpdb->last_error); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+            $result = $wpdb->insert($table, $data, $formats);
+            if (false === $result && defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('Nevari audit insert failed: ' . $wpdb->last_error); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+            }
+        } finally {
+            self::$logging_depth = max(0, self::$logging_depth - 1);
         }
+    }
+
+    private static function resolve_actor_user_id(array $args): int {
+        if (array_key_exists('actor_user_id', $args)) {
+            return (int) $args['actor_user_id'];
+        }
+        if (self::$logging_depth > 1) {
+            return 0;
+        }
+        if (class_exists('Nevari_Auth') && method_exists('Nevari_Auth', 'is_resolving_api_session_user') && Nevari_Auth::is_resolving_api_session_user()) {
+            return 0;
+        }
+        return (int) get_current_user_id();
     }
 
     public static function query(array $args = []): array {

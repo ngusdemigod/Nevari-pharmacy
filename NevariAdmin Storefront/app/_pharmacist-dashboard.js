@@ -68,6 +68,7 @@ function feedbackTone(message) {
 export default function PharmacistDashboard() {
   const router = useRouter();
   const [session, setSession] = useState(null);
+  const [authResolved, setAuthResolved] = useState(false);
   const [view, setView] = useState("products");
   const [selectedRequestId, setSelectedRequestId] = useState(null);
   const [selectedProductId, setSelectedProductId] = useState(null);
@@ -84,10 +85,12 @@ export default function PharmacistDashboard() {
   useEffect(() => {
     const hydrated = hydrateStoredSession("pharmacist");
     if (!isSessionUsable(hydrated) || !hasPharmacistRole(hydrated.user)) {
+      setAuthResolved(true);
       router.replace(FRONTENDS.pharmacist.loginPath);
       return;
     }
     setSession(hydrated);
+    setAuthResolved(true);
   }, [router]);
 
   const productsQuery = useSWR(
@@ -132,6 +135,10 @@ export default function PharmacistDashboard() {
       setSelectedRequestId(mtmRequests[0].id);
     }
   }, [mtmRequests, selectedRequestId]);
+
+  if (!authResolved) {
+    return <PharmacistDashboardBootSkeleton />;
+  }
 
   function logout() {
     clearSessionAuth(FRONTENDS.pharmacist, session || hydrateStoredSession("pharmacist"));
@@ -465,6 +472,35 @@ export default function PharmacistDashboard() {
           </> : <div className="empty-card compact-empty"><div className="card-title">Select an MTM request.</div></div>}
         </article>
       </section> : null}
+    </section>
+  </main>;
+}
+
+function PharmacistDashboardBootSkeleton() {
+  return <main className="pharmacist-dashboard-shell">
+    <aside className="pharmacist-dashboard-sidebar">
+      <div className="pharmacist-dashboard-brand skeleton-panel">
+        <div className="pharmacist-dashboard-brand-mark">N</div>
+        <div>
+          <strong>Nevari Pharmacist</strong>
+          <span>Operations workspace</span>
+        </div>
+      </div>
+    </aside>
+    <section className="pharmacist-dashboard-main">
+      <header className="pharmacist-dashboard-header skeleton-panel">
+        <div>
+          <div className="skeleton skeleton-line skeleton-line-xs" />
+          <div className="skeleton skeleton-line skeleton-line-lg" />
+        </div>
+      </header>
+      <section className="pharmacist-dashboard-grid">
+        {Array.from({ length: 2 }, (_, index) => <article className="pharmacist-dashboard-panel skeleton-panel" key={`pharmacist-auth-skeleton-${index}`}>
+          <div className="skeleton skeleton-line skeleton-line-md" />
+          <div className="skeleton skeleton-line skeleton-line-sm" />
+          <div className="skeleton skeleton-line skeleton-line-sm" />
+        </article>)}
+      </section>
     </section>
   </main>;
 }

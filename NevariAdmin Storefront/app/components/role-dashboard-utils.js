@@ -1,7 +1,7 @@
 "use client";
 
 import { FRONTENDS } from "./frontend-config";
-import { createPairingRequiredError, isPairingRequiredPayload, resetToPairingState } from "./role-session";
+import { clearSessionAuth, createPairingRequiredError, isPairingRequiredPayload, resetToPairingState } from "./role-session";
 
 export const STORAGE_KEY = FRONTENDS.patient.storageKey;
 export const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -112,6 +112,26 @@ function createApiError(payload, response) {
   return error;
 }
 
+function frontendConfigForSession(session) {
+  return Object.values(FRONTENDS).find((frontend) => frontend.type === session?.frontendType) || FRONTENDS.patient;
+}
+
+function isUnauthorizedPayload(payload, response) {
+  const status = Number(response?.status || 0);
+  const code = String(payload?.error?.code || payload?.code || "").trim().toLowerCase();
+  return status === 401 || status === 403 || code === "session_expired" || code === "rest_forbidden" || code === "forbidden";
+}
+
+function forceSessionLogout(session) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const frontend = frontendConfigForSession(session);
+  clearDashboardCacheForFrontend(frontend === FRONTENDS.patient ? "patient" : frontend.type, session?.user?.id);
+  clearSessionAuth(frontend, session);
+  window.location.replace(frontend.loginPath);
+}
+
 export async function apiRequest(session, path, { method = "GET", params = {}, body, suppressHttpError = false } = {}) {
   const requestParams = suppressHttpError ? { ...params, softFail: "1" } : params;
   const response = await fetch(buildUrl(session, path, requestParams), {
@@ -129,6 +149,10 @@ export async function apiRequest(session, path, { method = "GET", params = {}, b
   if (isPairingRequiredPayload(payload)) {
     resetToPairingState();
     throw createPairingRequiredError(payload?.error?.message || payload?.message);
+  }
+  if (isUnauthorizedPayload(payload, response)) {
+    forceSessionLogout(session);
+    throw createApiError(payload, response);
   }
   if ((!response.ok || !payload?.success) && !suppressHttpError) {
     throw createApiError(payload, response);

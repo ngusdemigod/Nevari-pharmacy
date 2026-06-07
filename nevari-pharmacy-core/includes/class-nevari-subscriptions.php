@@ -2586,72 +2586,29 @@ final class Nevari_Subscriptions {
         return gmdate('Y-m-d H:i:s', strtotime('-1 month', $timestamp));
     }
 
-    private static function subscription_quota_table_name(): string {
-        global $wpdb;
-        $candidates = [];
-        if (class_exists('Nevari_Helpers')) {
-            try {
-                $candidates[] = Nevari_Helpers::table('appointments');
-            } catch (Throwable $e) {
-                // Fall back to the common table name guesses below.
-            }
-        }
-        $candidates = array_values(array_unique(array_filter(array_merge($candidates, [
-            $wpdb->prefix . 'nevari_appointments',
-            $wpdb->prefix . 'appointments',
-            'nevari_appointments',
-            'appointments',
-        ]))));
-
-        foreach ($candidates as $candidate) {
-            $found = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $candidate));
-            if ((string) $found === (string) $candidate) {
-                return (string) $candidate;
-            }
-        }
-
-        return '';
-    }
-
-    private static function subscription_quota_first_column(string $table, array $candidates): string {
-        global $wpdb;
-        if ($table === '') {
-            return '';
-        }
-        foreach ($candidates as $candidate) {
-            $found = $wpdb->get_var($wpdb->prepare("SHOW COLUMNS FROM {$table} LIKE %s", $candidate));
-            if (is_string($found) && $found !== '') {
-                return $candidate;
-            }
-        }
-        return '';
-    }
-
     private static function subscription_quota_used(int $user_id, array $claims): int {
         global $wpdb;
-        $table = self::subscription_quota_table_name();
-        if ($table === '' || $user_id <= 0) {
+        if ($user_id <= 0) {
             return 0;
         }
 
-        $user_column = self::subscription_quota_first_column($table, ['patient_id', 'customer_id', 'user_id', 'client_id', 'subscriber_id']);
-        $status_column = self::subscription_quota_first_column($table, ['status', 'appointment_status']);
-        $date_column = self::subscription_quota_first_column($table, ['confirmed_at', 'paid_at', 'created_at', 'updated_at', 'appointment_date', 'scheduled_at', 'start_at']);
-        if ($user_column === '' || $status_column === '' || $date_column === '') {
+        $table = Nevari_Helpers::table('appointments');
+        $found = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
+        if ((string) $found !== (string) $table) {
             return 0;
         }
 
         $reset_at = self::subscription_quota_reset_at($claims);
         $cycle_start = self::subscription_quota_cycle_start($claims, $reset_at);
 
-        $sql = "SELECT COUNT(1) FROM {$table} WHERE {$user_column} = %d AND {$status_column} IN ('confirmed', 'completed')";
+        $sql = "SELECT COUNT(1) FROM {$table} WHERE patient_user_id = %d AND status IN ('confirmed', 'completed')";
         $params = [$user_id];
         if ($cycle_start) {
-            $sql .= " AND {$date_column} >= %s";
+            $sql .= " AND start_at >= %s";
             $params[] = $cycle_start;
         }
         if ($reset_at) {
-            $sql .= " AND {$date_column} < %s";
+            $sql .= " AND start_at < %s";
             $params[] = $reset_at;
         }
 

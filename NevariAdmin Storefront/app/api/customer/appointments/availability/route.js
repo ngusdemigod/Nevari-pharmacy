@@ -1,28 +1,22 @@
+"use server";
+
 import { NextResponse } from "next/server";
 import {
   invalidNextJson,
   isAllowedUrl,
-  isValidId,
   rejectUnknownFields,
   sanitizeText
 } from "../../../../lib/inputValidation";
+import { customerSessionError, isUpstreamAuthFailure, requestUpstreamJson, resolveCustomerSession, upstreamErrorMessage } from "../_shared";
 
 function asText(value) {
   return String(value || "").trim();
 }
 
-function resolveApiBase(baseUrl) {
-  const cleaned = String(baseUrl || "").trim().replace(/\/+$/, "");
-  if (!cleaned) return "";
-  if (cleaned.includes("/wp-json/nevari/v1")) return cleaned;
-  if (cleaned.includes("/wp-json/")) return `${cleaned}/nevari/v1`;
-  return `${cleaned}/wp-json/nevari/v1`;
-}
-
-function normalizeSlots(payload) {
+function normalizeDoctors(payload) {
   const candidateLists = [
-    payload?.data?.slots,
-    payload?.slots,
+    payload?.data?.doctors,
+    payload?.doctors,
     payload?.data,
     payload?.results,
     payload?.items
@@ -31,112 +25,78 @@ function normalizeSlots(payload) {
   return Array.isArray(firstArray) ? firstArray : [];
 }
 
-function fallbackSlots() {
-  return [
-    "08:00", "08:30",
-    "09:00", "09:30",
-    "10:00", "10:30",
-    "11:00", "11:30",
-    "12:00", "12:30",
-    "13:00", "13:30",
-    "14:00", "14:30",
-    "15:00", "15:30",
-    "16:00", "16:30",
-    "17:00", "17:30",
-    "18:00"
-  ].map((time) => ({ time }));
-}
-
 export async function POST(request) {
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object") {
     return NextResponse.json({ ok: false, error: { message: "Invalid payload." } }, { status: 400 });
   }
-  const unknownFieldError = rejectUnknownFields(body, ["baseUrl", "accessToken", "doctorId", "date"]);
+
+  const unknownFieldError = rejectUnknownFields(body, ["baseUrl", "accessToken", "date", "time", "durationMinutes"]);
   if (unknownFieldError) {
     return invalidNextJson(NextResponse, unknownFieldError, "payload");
   }
 
   const baseUrl = asText(body.baseUrl);
-  const accessToken = asText(body.accessToken);
-  const doctorId = sanitizeText(body.doctorId, { max: 80 });
+  const bodyAccessToken = asText(body.accessToken);
   const date = sanitizeText(body.date, { max: 10 });
+  const time = sanitizeText(body.time, { max: 5 });
+  const durationMinutes = Math.max(5, Number.parseInt(body.durationMinutes, 10) || 30);
+  const { baseUrl: resolvedBaseUrl, accessToken } = resolveCustomerSession(request, {
+    baseUrl,
+    accessToken: bodyAccessToken,
+  });
 
-  if (!baseUrl || !accessToken || !doctorId || !date) {
+  if (!resolvedBaseUrl || !date || !time) {
     return NextResponse.json({ ok: false, error: { message: "Missing required fields." } }, { status: 400 });
   }
-  if (!isAllowedUrl(baseUrl)) {
+  if (!isAllowedUrl(resolvedBaseUrl)) {
     return invalidNextJson(NextResponse, "Backend URL is invalid.", "baseUrl");
   }
-  if (!isValidId(doctorId)) {
-    return invalidNextJson(NextResponse, "Doctor is invalid.", "doctorId");
+  if (!accessToken) {
+    return NextResponse.json(customerSessionError().data, { status: 401 });
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return invalidNextJson(NextResponse, "Date is invalid.", "date");
   }
+  if (!/^\d{2}:\d{2}$/.test(time)) {
+    return invalidNextJson(NextResponse, "Time is invalid.", "time");
+  }
 
   try {
-    const endpoint = `${resolveApiBase(baseUrl)}/doctors/${doctorId}/availability?date=${encodeURIComponent(date)}`;
-    const response = await fetch(endpoint, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${accessToken}`
+    const response = await requestUpstreamJson(resolvedBaseUrl, accessToken, "/appointments/availability", {
+      params: {
+        date,
+        time,
+        duration_minutes: durationMinutes,
       }
     });
-    const rawText = await response.text();
-    let payload = null;
-    try {
-      payload = rawText ? JSON.parse(rawText) : null;
-    } catch {
-      payload = null;
-    }
-    const slots = normalizeSlots(payload);
+
     if (!response.ok) {
-      if (response.status >= 500) {
-        return NextResponse.json({
-          ok: true,
-          degraded: true,
-          slots: fallbackSlots(),
-          warning: "Doctor availability could not be loaded from the server. Showing fallback slots.",
-          upstream_status: response.status
-        });
+      if (isUpstreamAuthFailure(response)) {
+        return NextResponse.json(customerSessionError().data, { status: 401 });
       }
       return NextResponse.json(
         {
           ok: false,
-          error: { message: "Unable to load availability." },
+          error: { message: upstreamErrorMessage(response) || "Unable to load availability." },
           upstream_status: response.status,
-          upstream: payload,
-          upstream_raw: rawText?.slice(0, 800) || null
+          upstream: response.data,
+          upstream_raw: response.raw?.slice(0, 800) || null
         },
-        { status: 502 }
+        { status: response.status >= 400 && response.status < 500 ? response.status : 502 }
       );
     }
 
-    // Some upstream handlers omit `success` and return arrays directly.
-    // Treat successful HTTP + parsed slot list as valid.
-    if (payload && payload.success === false) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: { message: "Unable to load availability." },
-          upstream_status: response.status,
-          upstream: payload,
-          upstream_raw: rawText?.slice(0, 800) || null
-        },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json({ ok: true, slots });
-  } catch (error) {
     return NextResponse.json({
       ok: true,
-      degraded: true,
-      slots: fallbackSlots(),
-      warning: "Doctor availability could not be loaded from the server. Showing fallback slots.",
-      detail: String(error?.message || error || "Unknown error")
+      available: Boolean(response.data?.data?.available ?? response.data?.available),
+      doctorCount: Number(response.data?.data?.doctor_count ?? response.data?.doctor_count ?? 0),
+      doctors: normalizeDoctors(response.data),
     });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, error: { message: String(error?.message || error || "Unable to load availability.") } },
+      { status: 502 }
+    );
   }
 }

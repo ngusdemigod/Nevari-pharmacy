@@ -5,6 +5,10 @@ if (!defined('ABSPATH')) {
 
 final class Nevari_Emails {
     private const MAX_ATTEMPTS = 3;
+    private const APPOINTMENT_SENT_COLUMNS = [
+        'customer_confirmation_sent_at',
+        'doctor_confirmation_sent_at',
+    ];
 
     public static function init(): void {
         add_action('nevari_send_queued_email', [__CLASS__, 'send_queued_email'], 10, 1);
@@ -91,7 +95,7 @@ final class Nevari_Emails {
                 }
             }
             $google_meet_link = isset($variables['google_meet_link']) ? esc_url_raw((string) $variables['google_meet_link']) : '';
-            if ($google_meet_link && !preg_match('#^https://meet\.google\.com/[a-z0-9-]+#i', $google_meet_link)) {
+            if ($google_meet_link && !wp_http_validate_url($google_meet_link)) {
                 $google_meet_link = '';
             }
             $appointment_templates_with_meet_links = [
@@ -118,14 +122,14 @@ final class Nevari_Emails {
                         : wp_kses_post((string) $variables['google_meet_link_html']);
                 }
                 if (!$google_meet_link_html) {
-                    $google_meet_link_html = sprintf('<a href="%1$s" target="_blank" rel="noopener noreferrer">Join Google Meet</a>', esc_url($google_meet_link));
+                    $google_meet_link_html = sprintf('<a href="%1$s" target="_blank" rel="noopener noreferrer">Join Appointment</a>', esc_url($google_meet_link));
                 }
                 $body_html .= '<div class="meeting-link-cta" style="margin-top:24px;padding:18px;border:1px solid #d8e0ef;border-radius:16px;background:#f7f9fc;">'
                     . '<p style="margin:0 0 8px;">Join the consultation using the link below.</p>'
                     . $google_meet_link_html
                     . '</div>';
                 if (strpos($body_text, $google_meet_link) === false) {
-                    $body_text .= "\nGoogle Meet: " . $google_meet_link;
+                    $body_text .= "\nJoin appointment: " . $google_meet_link;
                 }
             }
         } else {
@@ -178,7 +182,24 @@ final class Nevari_Emails {
             wp_schedule_single_event(time() + 5, 'nevari_send_queued_email', [$log_id]);
         }
 
+        self::mark_appointment_email_sent_if_requested($args);
+
         return $log_id;
+    }
+
+    private static function mark_appointment_email_sent_if_requested(array $args): void {
+        $related_type = isset($args['related_object_type']) ? sanitize_key((string) $args['related_object_type']) : '';
+        $related_id = isset($args['related_object_id']) ? (int) $args['related_object_id'] : 0;
+        $sent_column = isset($args['appointment_sent_column']) ? sanitize_key((string) $args['appointment_sent_column']) : '';
+        if ($related_type !== 'appointment' || $related_id < 1 || !in_array($sent_column, self::APPOINTMENT_SENT_COLUMNS, true)) {
+            return;
+        }
+
+        global $wpdb;
+        $wpdb->update(Nevari_Helpers::table('appointments'), [
+            $sent_column => Nevari_Helpers::now(),
+            'updated_at' => Nevari_Helpers::now(),
+        ], ['id' => $related_id], ['%s', '%s'], ['%d']);
     }
 
     public static function send_queued_email(int $log_id): void {

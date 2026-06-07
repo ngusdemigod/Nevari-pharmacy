@@ -42,7 +42,7 @@ const pageLabels = {
   profile: "My Profile",
   therapy: "Medical Therapy Management"
 };
-const BOOKING_SLOT_TIMES = [
+const APPOINTMENT_TIMEFRAME_OPTIONS = [
   "09:00",
   "09:30",
   "10:00",
@@ -60,8 +60,9 @@ const BOOKING_SLOT_TIMES = [
   "16:00",
   "16:30",
   "17:00",
-  "17:30",
+  "17:30"
 ];
+const DEFAULT_CONSULTATION_FEE_NGN = 5000;
 
 function resolveUserRoles(user = null) {
   const roles = Array.isArray(user?.roles) ? user.roles : [];
@@ -79,6 +80,29 @@ const emptyCustomerState = {
   doctors: [],
   doctorsUnavailable: false
 };
+
+function forcePatientLogoutToLogin() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const activeSession = hydrateStoredSession("patient");
+  clearDashboardCacheForFrontend("patient", activeSession?.user?.id);
+  window.localStorage.removeItem(CUSTOMER_NURSE_REQUESTS_KEY);
+  clearSessionAuth(FRONTENDS.patient, activeSession);
+  window.location.replace(FRONTENDS.patient.loginPath);
+}
+
+async function readCustomerNextApiResponse(response, fallbackMessage = "Request failed.") {
+  const payload = await response.json().catch(() => ({}));
+  if (response.status === 401 || String(payload?.error?.code || "").trim().toLowerCase() === "session_expired") {
+    forcePatientLogoutToLogin();
+    throw new Error("Session expired.");
+  }
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error?.message || fallbackMessage);
+  }
+  return payload;
+}
 
 async function fetchCustomerDashboardPayload(session, settings, fallbackState = emptyCustomerState) {
   const nowIso = new Date().toISOString();
@@ -488,8 +512,10 @@ export default function CustomerDashboard() {
   const [cacheKey, setCacheKey] = useState(null);
   const [expandedOrderId, setExpandedOrderId] = useState(null);
   const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [appointmentRescheduleTarget, setAppointmentRescheduleTarget] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [appointmentActionBusy, setAppointmentActionBusy] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
   const [orderActionError, setOrderActionError] = useState("");
   const [refillOrderBusy, setRefillOrderBusy] = useState(null);
   const [storeUrl, setStoreUrl] = useState("#");
@@ -696,6 +722,11 @@ export default function CustomerDashboard() {
   const appointmentsLoading = Boolean(customerAppointmentsKey) && appointmentsQuery.isLoading && !Array.isArray(appointmentsQuery.data);
   const doctorsLoading = Boolean(customerDoctorsKey) && doctorsQuery.isLoading && !Array.isArray(doctorsQuery.data);
   const showSkeleton = (isLoading && !hasCustomerDashboardData(state)) || pageQueryLoading;
+  const appointmentPageLoading = page === "appointment"
+    && (
+      appointmentsLoading
+      || (!appointmentsQuery.data && (!Array.isArray(state.appointments) || !state.appointments.length))
+    );
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -778,8 +809,9 @@ export default function CustomerDashboard() {
   async function openDoctorAvailability(doctor) {
     const doctorId = doctor.user_id || doctor.id;
     const nextDate = journey.doctorId === doctorId ? journey.selectedDate : localDateKey(new Date());
-    goToPage("overview");
-    return;
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
     setJourney({
       ...createJourneyState(),
       mode: "slots",
@@ -851,36 +883,53 @@ export default function CustomerDashboard() {
       return { ok: false, error: "Select an appointment time before continuing." };
     }
     const session = hydrateStoredSession("patient");
-    let createdAppointment = null;
     setJourney((current) => ({ ...current, loading: true, error: "" }));
     try {
-      const activeStartDate = new Date(activeSlot.start_at);
-      if (Number.isNaN(activeStartDate.getTime())) {
+      const { date, time } = extractLocalDateTimeParts(activeSlot.start_at);
+      const selectedEpochMs = date && time ? new Date(`${date}T${time}:00`).getTime() : Number.NaN;
+      if (!date || !time || Number.isNaN(selectedEpochMs)) {
         throw new Error("Select a valid appointment date and time.");
       }
-      const normalizedStartAt = activeStartDate.toISOString();
-      const normalizedEndAt = new Date(activeStartDate.getTime() + (normalizeBookingMinutes(activeDuration) * 60_000)).toISOString();
-      const body = {
-        type: settings.preferredConsultationType,
-        start_at: normalizedStartAt,
-        end_at: normalizedEndAt,
-        duration_minutes: activeDuration,
+      const payload = {
+        date,
+        time,
+        durationMinutes: activeDuration,
         reason: activeReason,
-        timezone: settings.timezone || storeTimeZone
-      };
+        selectedEpochMs,
+        clientNowMs: Date.now(),
+          customerEmail: profile.email || settings.email || "",
+          customerName: settings.displayName || profile.display_name || "",
+          baseUrl: session?.baseUrl || "",
+          adminEmail: "careteam@nevarihealth.com",
+          appOrigin: typeof window !== "undefined" ? window.location.origin : ""
+        };
       if (activeDoctorId) {
-        body.doctor_user_id = activeDoctorId;
+        payload.doctorId = String(activeDoctorId);
       }
-      const appointment = await apiRequest(session, "/appointments", {
+      const response = await fetch("/api/customer/appointments/book", {
         method: "POST",
-        body
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
       });
-      createdAppointment = appointment;
-      const checkout = await apiRequest(session, `/appointments/${appointment.id}/checkout`);
-      const resolvedAppointment = checkout?.appointment || appointment;
-      const checkoutPaid = String(checkout?.payment_status || resolvedAppointment?.payment_status || "").toLowerCase() === "paid";
-      if (checkoutPaid && String(resolvedAppointment?.status || "").toLowerCase() === "confirmed") {
-        const confirmation = await apiRequest(session, `/appointments/${appointment.id}/confirmation`);
+      const result = await readCustomerNextApiResponse(response, "Unable to book appointment right now.");
+      const resolvedAppointment = result?.appointment;
+      if (!resolvedAppointment) {
+        throw new Error("Unable to book appointment right now.");
+      }
+      const checkout = result?.checkout || null;
+      const confirmation = result?.confirmation || null;
+      const resolvedPaymentStatus = String(
+        confirmation?.appointment?.payment_status
+        || checkout?.payment_status
+        || resolvedAppointment?.payment_status
+        || ""
+      ).toLowerCase();
+      const isConfirmed = Boolean(
+        confirmation?.is_confirmed
+        || String(confirmation?.appointment?.status || resolvedAppointment?.status || "").toLowerCase() === "confirmed"
+        || resolvedPaymentStatus === "paid"
+      );
+      if (isConfirmed) {
         setJourney((current) => ({
           ...current,
           mode: "confirmation",
@@ -911,27 +960,12 @@ export default function CustomerDashboard() {
       return { ok: true, mode: "checkout", appointment: resolvedAppointment, checkout };
     } catch (error) {
       const nextError = error?.message || "Live checkout could not be created.";
-      if (!createdAppointment?.id) {
-        setJourney((current) => ({
-          ...current,
-          loading: false,
-          error: nextError
-        }));
-        return { ok: false, error: nextError };
-      }
       setJourney((current) => ({
         ...current,
-        mode: "checkout",
-        appointment: createdAppointment,
-        checkout: null,
         loading: false,
         error: nextError
       }));
-      patchCustomerAppointmentCache(createdAppointment);
-      await mutateSummary((current) => current ? { ...current, appointments: upsertById(current.appointments || [], createdAppointment) } : current, { revalidate: false });
-      await appointmentsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, createdAppointment) : current, { revalidate: false });
-      revalidateCustomerGroups(isProxyAppointmentsKey);
-      return { ok: false, error: nextError, mode: "checkout", appointment: createdAppointment };
+      return { ok: false, error: nextError };
     }
   }
 
@@ -960,6 +994,21 @@ export default function CustomerDashboard() {
         loading: false,
         error: ""
       }));
+      fetch("/api/customer/appointments/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          appointmentId: confirmation?.appointment?.id || journey.appointment.id,
+          baseUrl: session?.baseUrl || "",
+          customerEmail: profile.email || settings.email || "",
+          customerName: settings.displayName || profile.display_name || "",
+          adminEmail: "careteam@nevarihealth.com"
+        })
+      }).then((response) => {
+        if (response.status === 401) {
+          forcePatientLogoutToLogin();
+        }
+      }).catch(() => {});
       patchCustomerAppointmentCache(confirmation.appointment);
       await mutateSummary((current) => current ? { ...current, appointments: upsertById(current.appointments || [], confirmation.appointment) } : current, { revalidate: false });
       await appointmentsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, confirmation.appointment) : current, { revalidate: false });
@@ -1047,14 +1096,22 @@ export default function CustomerDashboard() {
     setJourney(createJourneyState());
   }
 
-  function handleLogout() {
-    const activeSession = session || hydrateStoredSession("patient");
-    clearDashboardCacheForFrontend("patient", activeSession?.user?.id);
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(CUSTOMER_NURSE_REQUESTS_KEY);
+  async function handleLogout() {
+    if (logoutBusy) {
+      return;
     }
-    clearSessionAuth(FRONTENDS.patient, activeSession);
-    router.replace("/login");
+    setLogoutBusy(true);
+    const activeSession = session || hydrateStoredSession("patient");
+    try {
+      clearDashboardCacheForFrontend("patient", activeSession?.user?.id);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(CUSTOMER_NURSE_REQUESTS_KEY);
+      }
+      clearSessionAuth(FRONTENDS.patient, activeSession);
+      router.replace("/login");
+    } catch {
+      setLogoutBusy(false);
+    }
   }
 
   async function cancelAppointmentFromDetails(appointmentId) {
@@ -1083,6 +1140,46 @@ export default function CustomerDashboard() {
     } finally {
       setAppointmentActionBusy(false);
     }
+  }
+
+  async function rescheduleAppointmentFromSelection(appointment, selection) {
+    if (!appointment?.id || !selection?.selectedSlot?.start_at) {
+      return { ok: false, error: "Select a valid appointment time before rescheduling." };
+    }
+    try {
+      const activeSession = hydrateStoredSession("patient");
+      const startAt = selection.selectedSlot.start_at;
+      const endAt = appointmentEndForSelection(selection.selectedSlot, selection.durationMinutes || minimumBookingMinutes);
+      const updated = await apiRequest(activeSession, `/appointments/${appointment.id}/reschedule`, {
+        method: "POST",
+        body: {
+          start_at: startAt,
+          end_at: endAt
+        }
+      });
+      if (!updated?.id) {
+        throw new Error("The appointment could not be rescheduled.");
+      }
+      patchCustomerAppointmentCache(updated);
+      await mutateSummary((prev) => prev ? { ...prev, appointments: upsertById(prev.appointments || [], updated) } : prev, { revalidate: false });
+      await appointmentsQuery.mutate((prev) => Array.isArray(prev) ? upsertById(prev, updated) : prev, { revalidate: false });
+      setSelectedAppointment(updated);
+      setAppointmentRescheduleTarget(null);
+      revalidateCustomerGroups(isProxyAppointmentsKey);
+      return { ok: true, mode: "rescheduled", appointment: updated };
+    } catch (error) {
+      return { ok: false, error: error?.message || "The appointment could not be rescheduled." };
+    }
+  }
+
+  function startAppointmentReschedule(appointment) {
+    if (!appointment?.id) {
+      return;
+    }
+    setSelectedAppointment(null);
+    setJourney(createJourneyState());
+    setAppointmentRescheduleTarget(appointment);
+    setPage("appointment");
   }
 
   async function cancelCheckoutAppointment() {
@@ -1140,17 +1237,21 @@ export default function CustomerDashboard() {
       onDurationChange={(durationMinutes) => setJourney((current) => ({ ...current, durationMinutes }))}
       onReasonChange={(reason) => setJourney((current) => ({ ...current, reason }))}
       onCreateAppointmentCheckout={createAppointmentCheckout}
+      onRescheduleAppointmentCheckout={rescheduleAppointmentFromSelection}
       onRefreshConfirmation={refreshConfirmation}
       onCancelCheckoutAppointment={cancelCheckoutAppointment}
       onResetJourney={resetAppointmentJourney}
       onReviewDraftChange={(field, value) => setJourney((current) => ({ ...current, reviewDraft: { ...current.reviewDraft, [field]: value } }))}
       onSubmitReview={submitReview}
+      appointmentRescheduleTarget={appointmentRescheduleTarget}
+      onClearAppointmentRescheduleTarget={() => setAppointmentRescheduleTarget(null)}
       nurseRequestAuth={{
         baseUrl: session?.baseUrl || "",
         accessToken: session?.accessToken || "",
         adminEmail: "careteam@nevarihealth.com"
       }}
       onLogout={handleLogout}
+      logoutBusy={logoutBusy}
     />
     {selectedAppointment ? <AppointmentDetailsModal
       appointment={selectedAppointment}
@@ -1158,6 +1259,7 @@ export default function CustomerDashboard() {
       storeTimeZone={storeTimeZone}
       busy={appointmentActionBusy}
       onCancelAppointment={cancelAppointmentFromDetails}
+      onRescheduleAppointment={startAppointmentReschedule}
       onOpenOrderDocuments={openOrderDocuments}
       onClose={() => setSelectedAppointment(null)}
     /> : null}
@@ -1496,13 +1598,14 @@ function CustomerOverview({ doctors, doctorsUnavailable, orders, appointments, o
   </>;
 }
 
-function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = false, onCancelAppointment, onOpenOrderDocuments, onClose }) {
+function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = false, onCancelAppointment, onRescheduleAppointment, onOpenOrderDocuments, onClose }) {
   const doctor = doctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id)) || appointment.doctor || null;
   const joinUrl = getAppointmentJoinUrl(appointment);
   const paymentUrl = resolveAppointmentCheckoutUrl({ appointment, order: appointment?.order, payment_url: appointment?.payment_url, checkout_url: appointment?.checkout_url });
   const prescriptionOrderId = appointment?.prescription?.order_id || appointment?.prescription_order_id || null;
   const status = String(appointment?.status || "").toLowerCase();
   const paymentStatus = String(appointment?.payment_status || "").toLowerCase();
+  const attendanceStatus = String(appointment?.attendance_status || "").toLowerCase();
   const appointmentStartMs = new Date(appointment?.start_at || 0).getTime();
   const isPastAppointment = Number.isFinite(appointmentStartMs) && appointmentStartMs > 0 && appointmentStartMs < Date.now();
   const isCancelled = status === "cancelled" || status === "canceled";
@@ -1510,6 +1613,22 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
   const isPendingPayment = !isCancelled && !isCompleted && ["pending", "failed", "abandoned"].includes(paymentStatus) && Boolean(paymentUrl);
   const isConfirmedPaid = !isCancelled && !isCompleted && paymentStatus === "paid";
   const canCancel = isConfirmedPaid && typeof onCancelAppointment === "function";
+  const canReschedule = Boolean(appointment?.reschedule_eligible) && typeof onRescheduleAppointment === "function";
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+    const { body, documentElement } = document;
+    const previousBodyOverflow = body.style.overflow;
+    const previousHtmlOverflow = documentElement.style.overflow;
+    body.style.overflow = "hidden";
+    documentElement.style.overflow = "hidden";
+    return () => {
+      body.style.overflow = previousBodyOverflow;
+      documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, []);
 
   const statusTone = appointmentChipTone(appointment);
   const statusLabel = appointmentChipLabel(appointment);
@@ -1564,10 +1683,11 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
         <h3 className="detail-section-title">Prescription</h3>
         <div className="note-card">Order #{prescriptionOrderId}</div>
       </div> : null}
-      {!isPastAppointment ? <div className="action-stack">
+      {(!isPastAppointment || canReschedule || prescriptionOrderId) ? <div className="action-stack">
         {isPendingPayment ? <a className="btn btn-primary btn-wide appointment-link-cta" href={paymentUrl} target="_blank" rel="noreferrer">Pay now</a> : null}
-        {isConfirmedPaid && joinUrl ? <a className="btn btn-primary btn-wide appointment-link-cta" href={joinUrl} target="_blank" rel="noreferrer">Join Google Meet</a> : null}
-        {isConfirmedPaid && !joinUrl ? <div className="appointment-inline-alert">Google Meet link will appear when the appointment is confirmed.</div> : null}
+        {isConfirmedPaid && joinUrl ? <a className="btn btn-primary btn-wide appointment-link-cta" href={joinUrl} target="_blank" rel="noreferrer">Join Appointment</a> : null}
+        {isConfirmedPaid && !joinUrl ? <div className="appointment-inline-alert">The appointment join link will appear when the appointment is ready.</div> : null}
+        {canReschedule ? <button className="btn btn-outline btn-wide" type="button" onClick={() => onRescheduleAppointment(appointment)}>{attendanceStatus === "doctor_absent" ? "Reschedule with doctor" : "Reschedule appointment"}</button> : null}
         {prescriptionOrderId && typeof onOpenOrderDocuments === "function" ? <button className="btn btn-outline btn-wide" type="button" onClick={() => onOpenOrderDocuments({ id: prescriptionOrderId })}>Open prescription order details</button> : null}
         {canCancel ? <button className="btn btn-outline btn-wide" type="button" disabled={busy} onClick={() => onCancelAppointment(appointment.id)}>{busy ? "Cancelling..." : "Cancel appointment"}</button> : null}
         {appointment.calendar?.ics_url ? <a className="btn btn-outline btn-wide appointment-link-cta" href={appointment.calendar.ics_url} target="_blank" rel="noreferrer">Download calendar invite</a> : null}
@@ -1617,7 +1737,7 @@ function DoctorCards({ doctors, doctorsUnavailable, loading = false, onOpenAvail
         </div>
         <div className="booking-stat-split">
           <div className="booking-stat"><strong>{doctor.telehealth_enabled ? "Video consult" : "Clinic consult"}</strong><span>{doctor.accepting_patients ? "Accepting patients" : "Unavailable"}</span></div>
-          <div className="booking-stat"><strong>{money(doctor.consultation_fee || 0, storeCurrency)}</strong><span>Consultation fee</span></div>
+          <div className="booking-stat"><strong>{money(doctorConsultationFee(doctor), storeCurrency)}</strong><span>Consultation fee</span></div>
         </div>
         <div className="doctor-card-actions">
           {showReviewsAction ? <button className="pill-button" type="button" onClick={() => onOpenReviews(doctor)}>Reviews</button> : null}
@@ -1731,11 +1851,13 @@ function AppointmentPage({
   past,
   onOpenAvailability,
   onOpenReviews,
+  onOpenAppointment = null,
   onUpdateAvailabilityDate,
   onSelectSlot,
   onDurationChange,
   onReasonChange,
   onCreateAppointmentCheckout,
+  onRescheduleAppointmentCheckout,
   onRefreshConfirmation,
   onCancelCheckoutAppointment,
   onResetJourney,
@@ -1749,6 +1871,17 @@ function AppointmentPage({
   storefrontSettings,
   minimumBookingMinutes,
   subscriptionState = null,
+  showConsultationQuotaNotice = false,
+  consultationQuotaTitle = "",
+  consultationQuotaBody = "",
+  consultationQuotaResetText = "",
+  consultationQuotaTotal = 0,
+  consultationQuotaUsed = 0,
+  consultationQuotaRemaining = 0,
+  rescheduleTarget = null,
+  onClearRescheduleTarget = null,
+  onShowConsultationQuotaNotice = null,
+  onDismissConsultationQuotaNotice = null,
 }) {
   const [filter, setFilter] = useState("all");
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -1757,19 +1890,19 @@ function AppointmentPage({
   const [bookingReason, setBookingReason] = useState("");
   const [bookingError, setBookingError] = useState("");
   const [bookingMonth, setBookingMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [bookingSlotsLoading, setBookingSlotsLoading] = useState(false);
+  const [bookingMatchedDoctors, setBookingMatchedDoctors] = useState([]);
+  const [bookingValidatedSlotKey, setBookingValidatedSlotKey] = useState("");
   const bookingSectionRef = useRef(null);
   const greetingName = firstName(settings?.displayName || profile?.display_name || "Tee");
   const filters = useMemo(() => buildAppointmentFilters(upcoming, past), [past, upcoming]);
   const allAppointments = useMemo(() => [...upcoming, ...past], [past, upcoming]);
   const visibleAppointments = useMemo(() => filterAppointmentsList(allAppointments, filter), [allAppointments, filter]);
-  const replaceListWithBooking = bookingOpen && visibleAppointments.length === 0;
+  const replaceListWithBooking = bookingOpen;
   const showBookAppointmentPlus = !bookingOpen && visibleAppointments.length > 0;
   const todayBookingDate = localDateInputValue(new Date());
   const currentBookingTime = localTimeInputValue(new Date());
-  const availableBookingTimes = useMemo(() => BOOKING_SLOT_TIMES.map((slot) => ({
-    value: slot,
-    disabled: bookingDate === todayBookingDate && slot <= currentBookingTime
-  })), [bookingDate, currentBookingTime, todayBookingDate]);
+  const availableBookingTimes = useMemo(() => buildConstantTimeframes(bookingDate), [bookingDate]);
   const hasAvailableBookingTimes = availableBookingTimes.some((slot) => !slot.disabled);
 
   if (journey.mode === "slots") {
@@ -1807,35 +1940,73 @@ function AppointmentPage({
   }
 
   function handleNewAppointmentClick() {
-    setBookingOpen(true);
     setBookingError("");
+    onClearRescheduleTarget?.();
+    onShowConsultationQuotaNotice?.();
+    setBookingOpen(true);
     if (typeof window !== "undefined") {
-      window.requestAnimationFrame(() => {
-        if (bookingSectionRef.current && typeof bookingSectionRef.current.scrollIntoView === "function") {
-          bookingSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      window.setTimeout(() => bookingSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 180);
     }
   }
 
   async function handleAutoAssignBooking() {
     const nextReason = sanitizeClientText(bookingReason, { max: 500 }).trim();
-    const selectedTimeInvalid = !bookingTime || availableBookingTimes.some((slot) => slot.value === bookingTime && slot.disabled);
+    const selectedSlot = availableBookingTimes.find((slot) => slot.value === bookingTime) || null;
+    const selectedTimeInvalid = !selectedSlot || selectedSlot.disabled;
     if (!bookingDate || selectedTimeInvalid || !nextReason) {
       setBookingError("Select a date, time, and reason for the appointment.");
       return;
     }
+    const slotKey = `${bookingDate}|${bookingTime}`;
     setBookingError("");
-    const result = await onCreateAppointmentCheckout({
-      doctorId: null,
+    setBookingSlotsLoading(true);
+    try {
+      const activeSession = hydrateStoredSession("patient");
+      const response = await fetch("/api/customer/appointments/availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: bookingDate,
+          time: bookingTime,
+          durationMinutes: 30,
+          baseUrl: storefrontSettings?.apiBase || activeSession?.baseUrl || "",
+        })
+      });
+      const payload = await readCustomerNextApiResponse(response, "Appointment availability could not be loaded.");
+      const doctorsForSlot = Array.isArray(payload?.doctors) ? payload.doctors : [];
+      if (!doctorsForSlot.length) {
+        throw new Error("No doctor is available for the selected date and time.");
+      }
+      setBookingMatchedDoctors(doctorsForSlot);
+      setBookingValidatedSlotKey(slotKey);
+    } catch (error) {
+      setBookingMatchedDoctors([]);
+      setBookingValidatedSlotKey("");
+      setBookingError(error?.message || "No doctor is available for the selected date and time.");
+      setBookingSlotsLoading(false);
+      return;
+    }
+    setBookingSlotsLoading(false);
+    const checkoutPayload = {
       durationMinutes: 30,
       reason: nextReason,
       selectedSlot: {
-        start_at: `${bookingDate}T${bookingTime}:00`,
+        start_at: selectedSlot.start_at || `${bookingDate}T${bookingTime}:00`,
       },
-    });
+      quotaCovered: Boolean(subscriptionState?.subscription?.is_paid) && Number(subscriptionState?.subscription?.free_consultations_remaining || 0) > 0,
+      consultationQuotaRemaining: Number(subscriptionState?.subscription?.free_consultations_remaining || 0),
+    };
+    const result = rescheduleTarget?.id
+      ? await onRescheduleAppointmentCheckout?.(rescheduleTarget, checkoutPayload)
+      : await onCreateAppointmentCheckout(checkoutPayload);
     if (result && result.ok === false && result.error) {
       setBookingError(result.error);
+      return;
+    }
+    if (result?.ok) {
+      setBookingOpen(false);
+      onClearRescheduleTarget?.();
     }
   }
 
@@ -1851,17 +2022,47 @@ function AppointmentPage({
 
   useEffect(() => {
     const selectedSlot = availableBookingTimes.find((slot) => slot.value === bookingTime);
-    if (selectedSlot && !selectedSlot.disabled) {
-      return;
-    }
-    const nextAvailable = availableBookingTimes.find((slot) => !slot.disabled)?.value || "";
-    if (bookingTime !== nextAvailable) {
-      setBookingTime(nextAvailable);
-    }
-    if (bookingDate === todayBookingDate && bookingTime && selectedSlot?.disabled) {
+    if (bookingTime && (!selectedSlot || selectedSlot.disabled)) {
+      setBookingTime("");
+      setBookingMatchedDoctors([]);
+      setBookingValidatedSlotKey("");
       setBookingError("Select a future time for today.");
     }
   }, [availableBookingTimes, bookingDate, bookingTime, todayBookingDate]);
+
+  useEffect(() => {
+    if (!rescheduleTarget?.id) {
+      return;
+    }
+    const { date, time } = extractLocalDateTimeParts(rescheduleTarget.start_at);
+    if (date) {
+      const [year, month] = date.split("-").map(Number);
+      if (year && month) {
+        setBookingMonth(new Date(year, month - 1, 1));
+      }
+      setBookingDate(date);
+    }
+    setBookingTime(time || "");
+    setBookingReason(String(rescheduleTarget.reason || "").trim());
+    setBookingMatchedDoctors([]);
+    setBookingValidatedSlotKey("");
+    setBookingError("");
+    setBookingOpen(true);
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [rescheduleTarget]);
+
+  async function handleBookingTimeSelect(nextTime) {
+    const nextSlot = availableBookingTimes.find((slot) => slot.value === nextTime);
+    if (!nextSlot || nextSlot.disabled || !bookingDate) {
+      return;
+    }
+    setBookingError("");
+    setBookingTime(nextTime);
+    setBookingMatchedDoctors([]);
+    setBookingValidatedSlotKey("");
+  }
 
   return <div className={`customer-dashboard-stack customer-appointment-desktop-shell ${bookingOpen ? "is-booking-open" : ""} ${replaceListWithBooking ? "is-booking-standalone" : ""}`.trim()}>
     <header className="customer-mobile-header is-overview customer-appointment-page-header">
@@ -1895,12 +2096,31 @@ function AppointmentPage({
           loading={appointmentsLoading}
           emptyCtaLabel="Book an appointment"
           onEmptyCta={handleNewAppointmentClick}
+          onOpenAppointment={onOpenAppointment}
         />
       </section> : null}
 
       {bookingOpen ? <section className="customer-list-shell customer-appointment-book-shell customer-appointment-book-panel" ref={bookingSectionRef}>
+        {showConsultationQuotaNotice ? <div className="customer-quota-modal" role="dialog" aria-modal="true" aria-label="Consultation quota notice">
+          <button className="customer-quota-modal-backdrop" type="button" aria-label="Dismiss consultation quota notice" onClick={() => onDismissConsultationQuotaNotice?.()} />
+          <section className="customer-quota-modal-card">
+            <div className="customer-panel-head">
+              <div>
+                <span className="customer-section-kicker">Consultation quota</span>
+                <h2>{consultationQuotaTitle}</h2>
+              </div>
+              <button className="icon-btn" type="button" aria-label="Dismiss consultation quota notice" onClick={() => onDismissConsultationQuotaNotice?.()}>x</button>
+            </div>
+            <p>{consultationQuotaBody}</p>
+            {consultationQuotaResetText ? <p>{consultationQuotaResetText}</p> : null}
+            {!consultationQuotaRemaining && consultationQuotaUsed >= consultationQuotaTotal ? null : <p>{consultationQuotaTotal ? `${consultationQuotaUsed} of ${consultationQuotaTotal} used.` : ""}</p>}
+          </section>
+        </div> : null}
         <div className="customer-mobile-title-row customer-mobile-appointment-book-title">
-          <button className="customer-mobile-back-link" type="button" onClick={() => setBookingOpen(false)}>
+          <button className="customer-mobile-back-link" type="button" onClick={() => {
+            setBookingOpen(false);
+            onClearRescheduleTarget?.();
+          }}>
             <MobileIcon name="arrow-left" />
             <span>Go back</span>
           </button>
@@ -1931,6 +2151,8 @@ function AppointmentPage({
                 onClick={() => {
                   setBookingDate(dateValue);
                   setBookingTime("");
+                  setBookingMatchedDoctors([]);
+                  setBookingValidatedSlotKey("");
                   if (bookingError) setBookingError("");
                 }}
               >
@@ -1940,13 +2162,26 @@ function AppointmentPage({
           </div>
           <div className="customer-mobile-time-row customer-mobile-time-row-shot">
             <strong>Time</strong>
-            <div className="customer-mobile-time-box customer-mobile-time-box-shot">
-              <select value={bookingTime} onChange={(event) => setBookingTime(event.target.value)}>
-                <option value="" disabled>{hasAvailableBookingTimes ? "Select a time" : "No time available"}</option>
-                {availableBookingTimes.map((slot) => <option key={slot.value} value={slot.value} disabled={slot.disabled}>{formatSlotTime(slot.value)}</option>)}
-              </select>
-              
-            </div>
+            <select
+              value={bookingTime}
+              disabled={bookingSlotsLoading || !hasAvailableBookingTimes}
+              onChange={(event) => {
+                const nextTime = event.target.value;
+                if (!nextTime) {
+                  setBookingTime("");
+                  setBookingMatchedDoctors([]);
+                  setBookingValidatedSlotKey("");
+                  if (bookingError) setBookingError("");
+                  return;
+                }
+                handleBookingTimeSelect(nextTime);
+              }}
+            >
+              <option value="">{bookingSlotsLoading ? "Checking availability..." : hasAvailableBookingTimes ? "Select a time" : "No time available"}</option>
+              {availableBookingTimes.map((slot) => <option key={slot.value} value={slot.value} disabled={slot.disabled}>
+                {formatSlotTime(slot.value)}
+              </option>)}
+            </select>
           </div>
           {bookingError ? <p className="customer-mobile-field-error">{bookingError}</p> : null}
         </div>
@@ -1957,8 +2192,8 @@ function AppointmentPage({
             if (bookingError) setBookingError("");
           }} />
         </label>
-        <button className="appointment-primary-cta customer-mobile-appointment-cta" type="button" onClick={handleAutoAssignBooking} disabled={journey.loading || !bookingDate || !bookingTime || !bookingReason.trim() || !hasAvailableBookingTimes}>
-          {journey.loading ? <span className="appointment-cta-spinner" aria-label="Booking appointment" /> : "Book Appointment"}
+        <button className="appointment-primary-cta customer-mobile-appointment-cta" type="button" onClick={handleAutoAssignBooking} disabled={journey.loading || bookingSlotsLoading || !bookingDate || !bookingTime || !bookingReason.trim() || !hasAvailableBookingTimes}>
+          {journey.loading ? <span className="appointment-cta-spinner" aria-label={rescheduleTarget?.id ? "Rescheduling appointment" : "Booking appointment"} /> : (rescheduleTarget?.id ? "Reschedule Appointment" : "Book Appointment")}
         </button>
       </section> : null}
     </div>
@@ -2118,7 +2353,7 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
   const appointmentStatusValue = String(appointment?.status || "").toLowerCase();
   const hasAppointment = Boolean(appointment?.id);
   const paymentPending = hasAppointment && paymentStatusValue !== "paid";
-  const pendingRefreshMessage = journey.error === "Payment has not been confirmed yet. Complete checkout, then refresh.";
+    const pendingRefreshMessage = journey.error === "Payment has not been confirmed yet. Complete checkout, then refresh.";
   const hasError = Boolean(journey.error) && !pendingRefreshMessage;
   const statusTone = hasError ? "error" : paymentPending ? "warning" : "success";
   const paymentStatus = hasError ? "Failed" : paymentPending ? "Pending" : titleCase(paymentStatusValue || "paid");
@@ -2131,15 +2366,33 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
   const canProceedToPayment = canRefreshPayment && Boolean(paymentUrl);
   const heading = hasError ? "Appointment unavailable" : paymentPending ? "Appointment reserved" : "Appointment ready";
   const subtitle = hasError ? "We could not complete this booking step. Review the error below and try again." : paymentPending ? "Complete payment to confirm your consultation." : "Your booking details are ready.";
-  useEffect(() => {
-    if (!paymentPending || !paymentUrl || paymentUrl === "#demo-payment" || journey.loading) {
-      return;
-    }
-    const intervalId = window.setInterval(() => {
-      onRefreshConfirmation();
-    }, 15000);
-    return () => window.clearInterval(intervalId);
-  }, [journey.loading, onRefreshConfirmation, paymentPending, paymentUrl]);
+    useEffect(() => {
+      if (!paymentPending || !appointment?.id || journey.loading) {
+        return;
+      }
+      const eventSource = new EventSource("/api/customer/appointments/events");
+      const handleAppointmentEvent = (event) => {
+        try {
+          const parsed = JSON.parse(event.data || "{}");
+          const payload = parsed?.payload || {};
+          if (String(payload.appointment_id || "") !== String(appointment.id)) {
+            return;
+          }
+          const paymentState = String(payload.payment_status || "").toLowerCase();
+          const appointmentState = String(payload.status || "").toLowerCase();
+          if (paymentState === "paid" || appointmentState === "confirmed") {
+            onRefreshConfirmation();
+          }
+        } catch {
+          // ignore malformed SSE payloads
+        }
+      };
+      eventSource.addEventListener("appointment", handleAppointmentEvent);
+      return () => {
+        eventSource.removeEventListener("appointment", handleAppointmentEvent);
+        eventSource.close();
+      };
+    }, [appointment?.id, journey.loading, onRefreshConfirmation, paymentPending]);
   return <section className="customer-appointment-checkout-page">
     <div className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell customer-appointment-checkout-shell">
       <button className="customer-appointment-checkout-back" type="button" aria-label="Go back" onClick={onBack}>
@@ -2170,8 +2423,8 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
           <div><span>Amount</span><strong>{appointmentAmount}</strong></div>
         </div>
       </div>
-      {paymentPending && !hasError ? <p className="customer-appointment-checkout-note">This booking expires after 10 minutes if payment is not completed.</p> : null}
-      {pendingRefreshMessage ? <p className="customer-appointment-checkout-note">{journey.error}</p> : null}
+        {paymentPending && !hasError ? <p className="customer-appointment-checkout-note">This booking expires after 10 minutes if payment is not completed.</p> : null}
+        {pendingRefreshMessage ? <p className="customer-appointment-checkout-note">Payment confirmation will appear automatically once the gateway webhook is received. You can still check manually if needed.</p> : null}
       {hasError ? <p className="customer-appointment-checkout-error">{journey.error}</p> : null}
       <div className="customer-appointment-confirmation-actions">
         {canProceedToPayment ? <a className="customer-mobile-primary-button customer-appointment-confirmation-link" href={paymentUrl} target="_blank" rel="noreferrer">{!livePaymentsEnabled && paymentUrl === "#demo-payment" ? "Open demo payment" : "Proceed to payment"}</a> : null}
@@ -2305,6 +2558,8 @@ function AppointmentSection({ title, items, doctors, storeTimeZone, loading = fa
     {items.map((appointment) => {
       const doctor = doctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
       const doctorLabel = appointmentDoctorLabel(appointment, doctor);
+      const appointmentStatusTone = appointmentChipTone(appointment);
+      const appointmentStatusLabel = appointmentChipLabel(appointment);
       return <article className="customer-mobile-visit-row customer-mobile-visit-row-shot" key={appointment.id}>
         {onOpenAppointment ? <button className="customer-mobile-row-overlay" type="button" aria-label="Open appointment details" onClick={() => onOpenAppointment(appointment)} /> : null}
         <div className="customer-mobile-clock">
@@ -2312,15 +2567,21 @@ function AppointmentSection({ title, items, doctors, storeTimeZone, loading = fa
         </div>
         <div className="customer-mobile-visit-copy customer-mobile-visit-copy-shot">
           <strong>{appointmentDisplayTitle(appointment, doctor)}</strong>
-          <span>{formatTime(appointment.start_at, storeTimeZone)}</span>
+          <span>{formatAppointmentListDateTime(appointment.start_at, storeTimeZone)}</span>
           <small>{doctorLabel}</small>
+        </div>
+        <div className="customer-mobile-appointment-status">
+          <div className="appointment-status-stack">
+            <span className={`chip ${appointmentStatusTone}`}><span className="chip-dot" />{appointmentStatusLabel}</span>
+            {appointmentHasPrescription(appointment) ? <span className="appointment-prescription-availability">Prescription Available</span> : null}
+          </div>
         </div>
       </article>;
     })}
   </div>;
 }
 
-function SettingsPage({ profile, doctors, orders, appointments, settings, onSettingsChange, onLogout }) {
+function SettingsPage({ profile, doctors, orders, appointments, settings, onSettingsChange, onLogout, logoutBusy = false }) {
   const invoiceCount = orders.filter((order) => ["processing", "completed"].includes(String(order.status || "").toLowerCase())).length;
   return <div className="customer-dashboard-stack">
     <section className="customer-list-shell customer-settings-shell">
@@ -2417,7 +2678,9 @@ function SettingsPage({ profile, doctors, orders, appointments, settings, onSett
           <div className="customer-settings-summary"><span>Two-factor authentication</span><strong>{settings.twoFactorEnabled ? "Enabled" : "Disabled"}</strong></div>
           <SettingsToggle label="Refund tracking" checked={settings.refundTracking} onChange={(checked) => onSettingsChange((current) => ({ ...current, refundTracking: checked }))} />
           <SettingsToggle label="Two-factor authentication" checked={settings.twoFactorEnabled} onChange={(checked) => onSettingsChange((current) => ({ ...current, twoFactorEnabled: checked }))} />
-          <button className="button-primary customer-settings-logout" type="button" onClick={onLogout}>Logout all devices</button>
+          <button className="button-primary customer-settings-logout" type="button" onClick={onLogout} disabled={logoutBusy}>
+            {logoutBusy ? <span className="appointment-cta-spinner" aria-label="Logging out" /> : "Logout all devices"}
+          </button>
         </article>
       </div>
     </section>
@@ -2431,7 +2694,7 @@ function SettingsToggle({ label, checked, onChange }) {
   </label>;
 }
 
-function ProfilePage({ profile, orders, appointments, doctors, settings, onSettingsChange, onLogout }) {
+function ProfilePage({ profile, orders, appointments, doctors, settings, onSettingsChange, onLogout, logoutBusy = false }) {
   return <div className="customer-dashboard-stack">
     <section className="customer-profile-hero">
       <div className="avatar">{initials(settings.displayName || profile.display_name || "Customer")}</div>
@@ -2440,7 +2703,9 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, onSetti
         <h2>{settings.displayName || profile.display_name || "Customer"}</h2>
         <p className="customer-hero-text">Edit your profile inline. Email stays locked to your account.</p>
       </div>
-      <button className="pill-button danger" type="button" onClick={onLogout}>Logout</button>
+      <button className="pill-button danger" type="button" onClick={onLogout} disabled={logoutBusy}>
+        {logoutBusy ? <span className="appointment-cta-spinner" aria-label="Logging out" /> : "Logout"}
+      </button>
     </section>
     <section className="customer-profile-grid customer-profile-grid-editable">
       <article className="customer-profile-card">
@@ -2575,6 +2840,40 @@ function formatSlotTime(value) {
   return new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
+function buildConstantTimeframes(selectedDate, currentDate = new Date()) {
+  const todayKey = localDateInputValue(currentDate);
+  const currentTime = localTimeInputValue(currentDate);
+  return APPOINTMENT_TIMEFRAME_OPTIONS.map((value) => ({
+    value,
+    disabled: selectedDate === todayKey && value <= currentTime
+  }));
+}
+
+function normalizeAvailabilitySlots(slots = []) {
+  return [...new Set((Array.isArray(slots) ? slots : [])
+    .map((slot) => {
+      const startAt = slot?.start_at || slot?.start || slot?.time || "";
+      if (!startAt) return null;
+      const extracted = extractLocalDateTimeParts(startAt);
+      if (extracted.date && extracted.time) {
+        return {
+          value: extracted.time,
+          start_at: slot?.start_at || `${extracted.date}T${extracted.time}:00`,
+          raw: slot
+        };
+      }
+      const match = String(startAt).match(/(\d{2}):(\d{2})/);
+      if (!match) return null;
+      return {
+        value: `${match[1]}:${match[2]}`,
+        start_at: slot?.start_at || `${localDateInputValue(new Date())}T${match[1]}:${match[2]}:00`,
+        raw: slot
+      };
+    })
+    .filter(Boolean)
+    .map((slot) => [slot.value, slot])).values()];
+}
+
 function sanitizeClientText(value, { max = 500, allowMarkup = false } = {}) {
   const text = String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ");
   const cleaned = allowMarkup ? text : text.replace(/[<>`]/g, "");
@@ -2636,6 +2935,22 @@ function isAllowedMedicalFile(file) {
 function normalizeBookingMinutes(value) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed >= 5 ? parsed : 30;
+}
+
+function extractLocalDateTimeParts(value) {
+  const source = String(value || "").trim();
+  const directMatch = source.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/);
+  if (directMatch) {
+    return { date: directMatch[1], time: directMatch[2] };
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return { date: "", time: "" };
+  }
+  return {
+    date: localDateInputValue(date),
+    time: localTimeInputValue(date)
+  };
 }
 
 function consultationDurationOptions(minimumMinutes) {
@@ -2721,6 +3036,11 @@ function buildFallbackDoctors(appointments, orders) {
   return [];
 }
 
+function doctorConsultationFee(doctor) {
+  const value = Number(doctor?.consultation_fee || doctor?.consultationFee || 0);
+  return value > 0 ? value : DEFAULT_CONSULTATION_FEE_NGN;
+}
+
 function buildMockAppointment(journey, selectedDoctor, settings, storeCurrency) {
   return {
     id: `demo-appointment-${Date.now()}`,
@@ -2762,7 +3082,7 @@ function buildMockConfirmation(appointment, selectedDoctor, storeCurrency) {
       google_url: "https://calendar.google.com/calendar/render?action=TEMPLATE",
       outlook_url: "https://outlook.office.com/calendar/0/deeplink/compose"
     },
-    total: Number(selectedDoctor?.consultation_fee || 0),
+    total: doctorConsultationFee(selectedDoctor),
     currency: storeCurrency
   };
 }
@@ -2821,20 +3141,23 @@ function getAppointmentJoinUrl(appointment, confirmation = null) {
     return "";
   }
   const candidates = [
+    appointment?.join_url,
     appointment?.meet_link,
     appointment?.google_meet_link,
     appointment?.meeting_url,
     appointment?.meeting_link,
+    confirmation?.appointment?.join_url,
     confirmation?.appointment?.meet_link,
     confirmation?.appointment?.google_meet_link,
     confirmation?.meet_link,
     confirmation?.google_meet_link,
+    confirmation?.join_url,
     confirmation?.meeting_url,
     confirmation?.meeting_link,
     confirmation?.calendar?.meet_link,
     appointment?.calendar?.meet_link
   ];
-  const match = candidates.find((value) => typeof value === "string" && /https?:\/\/meet\.google\.com\//i.test(value));
+  const match = candidates.find((value) => typeof value === "string" && /^https?:\/\//i.test(value));
   return match || "";
 }
 
@@ -2889,10 +3212,24 @@ function resolveBrandedAppointmentPayUrl(checkout) {
   }
   const invoiceRef = resolveCheckoutInvoiceRef(checkout);
   const paymentToken = String(checkout?.payment_token || checkout?.order?.payment_token || "").trim();
+  const baseUrl = String(
+    checkout?.baseUrl
+    || checkout?.base_url
+    || checkout?.order?.baseUrl
+    || checkout?.order?.base_url
+    || ""
+  ).trim().replace(/\/+$/, "");
   if (!invoiceRef || !paymentToken) {
     return "";
   }
-  return `${window.location.origin}/pay/${encodeURIComponent(invoiceRef)}?role=patient&payment_token=${encodeURIComponent(paymentToken)}`;
+  const params = new URLSearchParams({
+    role: "patient",
+    payment_token: paymentToken
+  });
+  if (baseUrl) {
+    params.set("base_url", baseUrl);
+  }
+  return `${window.location.origin}/pay/${encodeURIComponent(invoiceRef)}?${params.toString()}`;
 }
 
 function resolveCheckoutInvoiceRef(checkout) {
@@ -2973,11 +3310,21 @@ function appointmentHasPrescription(appointment) {
 function appointmentStatusMeta(appointment) {
   const status = String(appointment?.status || "").toLowerCase();
   const paymentStatus = String(appointment?.payment_status || "").toLowerCase();
+  const attendanceStatus = String(appointment?.attendance_status || "").toLowerCase();
   const startMs = new Date(appointment?.start_at || 0).getTime();
   const endMs = new Date(appointment?.end_at || 0).getTime();
   const now = Date.now();
   const minutesToStart = Number.isFinite(startMs) && startMs > now ? Math.max(1, Math.round((startMs - now) / 60000)) : null;
 
+  if (attendanceStatus === "doctor_absent") {
+    return { tone: "warning", label: "Doctor Missed" };
+  }
+  if (attendanceStatus === "patient_absent") {
+    return { tone: "warning", label: "You Missed" };
+  }
+  if (attendanceStatus === "missed") {
+    return { tone: "warning", label: "Missed Session" };
+  }
   if (status === "cancelled" || status === "canceled") {
     return { tone: "canceled", label: "Canceled" };
   }
@@ -2990,7 +3337,7 @@ function appointmentStatusMeta(appointment) {
   if (status === "requested" || status === "awaiting_confirmation") {
     return { tone: "processing", label: "Awaiting Confirmation" };
   }
-  if (status === "checked_in") {
+  if (status === "checked_in" && (!Number.isFinite(endMs) || now < endMs)) {
     return { tone: "processing", label: "In progress" };
   }
   if (Number.isFinite(startMs) && startMs > now && minutesToStart !== null && minutesToStart <= 30) {
@@ -3121,13 +3468,17 @@ function CustomerMobileDashboard({
   onDurationChange,
   onReasonChange,
   onCreateAppointmentCheckout,
+  onRescheduleAppointmentCheckout,
   onRefreshConfirmation,
   onCancelCheckoutAppointment,
   onResetJourney,
   onReviewDraftChange,
   onSubmitReview,
+  appointmentRescheduleTarget = null,
+  onClearAppointmentRescheduleTarget = null,
   nurseRequestAuth,
-  onLogout
+  onLogout,
+  logoutBusy = false
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [previousPage, setPreviousPage] = useState("overview");
@@ -3138,11 +3489,10 @@ function CustomerMobileDashboard({
   const [appointmentComposerMonth, setAppointmentComposerMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [appointmentComposerDate, setAppointmentComposerDate] = useState("");
   const [appointmentComposerDatePicked, setAppointmentComposerDatePicked] = useState(false);
-  const [appointmentComposerDoctorId, setAppointmentComposerDoctorId] = useState("");
-  const [appointmentComposerDoctorMenuOpen, setAppointmentComposerDoctorMenuOpen] = useState(false);
   const [appointmentComposerSelectedSlot, setAppointmentComposerSelectedSlot] = useState("");
   const [appointmentComposerSlotsRefreshing, setAppointmentComposerSlotsRefreshing] = useState(false);
-  const [appointmentComposerLiveSlots, setAppointmentComposerLiveSlots] = useState([]);
+  const [appointmentComposerMatchedDoctors, setAppointmentComposerMatchedDoctors] = useState([]);
+  const [appointmentComposerValidatedSlotKey, setAppointmentComposerValidatedSlotKey] = useState("");
   const [appointmentComposerReason, setAppointmentComposerReason] = useState("");
   const [appointmentComposerErrors, setAppointmentComposerErrors] = useState({});
   const [appointmentComposerSuccess, setAppointmentComposerSuccess] = useState(null);
@@ -3207,6 +3557,10 @@ function CustomerMobileDashboard({
   const [bookCalendarReason, setBookCalendarReason] = useState("");
   const [calendarDay, setCalendarDay] = useState(7);
   const [calendarTime, setCalendarTime] = useState("09:41");
+  const appointmentPageLoading = page === "appointment"
+    && appointmentsLoading
+    && !upcomingAppointments.length
+    && !pastAppointments.length;
   const mtmHistoryRequests = useMemo(() => sortByDateDesc(mtmRequests, ["appointment_start", "scheduled_at", "created_at", "updated_at"]), [mtmRequests]);
   const activeMtmRequest = useMemo(() => {
     const selectedRequest = mtmHistoryRequests.find((request) => String(request?.id || "") === String(mtmSelectedRequestId || ""));
@@ -3292,8 +3646,9 @@ function CustomerMobileDashboard({
       setAppointmentComposerLoading(false);
       setAppointmentComposerDate("");
       setAppointmentComposerDatePicked(false);
-      setAppointmentComposerDoctorMenuOpen(false);
       setAppointmentComposerSelectedSlot("");
+      setAppointmentComposerMatchedDoctors([]);
+      setAppointmentComposerValidatedSlotKey("");
       setAppointmentComposerReason("");
       setAppointmentComposerErrors({});
       setAppointmentComposerSuccess(null);
@@ -3418,89 +3773,9 @@ function CustomerMobileDashboard({
   const pageTransitionClass = page === "search" ? "customer-mobile-page-enter-search" : "customer-mobile-page-enter";
   const showNurseRequestFlow = page === "request";
 
-  const composerDoctors = useMemo(() => {
-    if (visibleDoctors.length) {
-      return visibleDoctors.map((doctor, index) => ({
-        id: String(doctor.user_id || doctor.id || `doc-${index}`),
-        initials: initials(doctor.display_name || "DR"),
-        name: doctor.display_name || `Doctor ${index + 1}`,
-        specialty: doctor.specialties?.[0] || "General Physician"
-      }));
-    }
-    return [
-      { id: "HA", initials: "HA", name: "Dr. Hazidat Ahmed", specialty: "General Physician" },
-      { id: "DS", initials: "DS", name: "Dr. Daniel Smith", specialty: "Cardiologist" },
-      { id: "MP", initials: "MP", name: "Dr. Maria Peters", specialty: "Pediatrician" },
-      { id: "NO", initials: "NO", name: "Dr. Nora Okafor", specialty: "Dermatologist" }
-    ];
-  }, [visibleDoctors]);
-
-  const selectedComposerDoctor = useMemo(
-    () => composerDoctors.find((doctor) => doctor.id === appointmentComposerDoctorId) || composerDoctors[0] || null,
-    [appointmentComposerDoctorId, composerDoctors]
-  );
-
-  useEffect(() => {
-    if (!appointmentComposerDoctorId && composerDoctors.length) {
-      setAppointmentComposerDoctorId(composerDoctors[0].id);
-    }
-  }, [appointmentComposerDoctorId, composerDoctors]);
-
-  const appointmentComposerSlots = useMemo(() => {
-    if (!appointmentComposerDate || !selectedComposerDoctor?.id) return [];
-    const fallbackPool = ["08:00", "08:30", "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30", "18:00"];
-    const pool = appointmentComposerLiveSlots.length ? appointmentComposerLiveSlots : fallbackPool;
-    const todayKey = localDateInputValue(new Date());
-    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
-    return pool.map((time) => {
-      const [hours = "0", minutes = "0"] = time.split(":");
-      const minutesValue = Number(hours) * 60 + Number(minutes);
-      const disabledByToday = appointmentComposerDate === todayKey && minutesValue <= nowMinutes;
-      return { value: time, disabled: disabledByToday };
-    });
-  }, [appointmentComposerDate, selectedComposerDoctor]);
+  const appointmentComposerSlots = useMemo(() => buildConstantTimeframes(appointmentComposerDate), [appointmentComposerDate]);
 
   const appointmentComposerHasAvailableSlots = appointmentComposerSlots.some((slot) => !slot.disabled);
-
-  useEffect(() => {
-    if (!appointmentComposerOpen || !appointmentComposerDatePicked || !appointmentComposerDate || !selectedComposerDoctor?.id) {
-      setAppointmentComposerLiveSlots([]);
-      return;
-    }
-    let ignore = false;
-    setAppointmentComposerSlotsRefreshing(true);
-    const activeSession = hydrateStoredSession("patient");
-    apiRequest(activeSession, `/doctors/${selectedComposerDoctor.id}/availability`, {
-      params: { date: appointmentComposerDate },
-      suppressHttpError: true
-    })
-      .then((payload) => {
-        if (ignore) return;
-        const slots = Array.isArray(payload?.slots) ? payload.slots : [];
-        const normalized = [...new Set(slots
-          .map((slot) => {
-            const startAt = slot?.start_at || slot?.start || slot?.time || "";
-            if (!startAt) return "";
-            const date = new Date(startAt);
-            if (!Number.isNaN(date.getTime())) {
-              return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-            }
-            const match = String(startAt).match(/(\d{2}):(\d{2})/);
-            return match ? `${match[1]}:${match[2]}` : "";
-          })
-          .filter(Boolean))];
-        setAppointmentComposerLiveSlots(normalized);
-      })
-      .catch(() => {
-        if (!ignore) setAppointmentComposerLiveSlots([]);
-      })
-      .finally(() => {
-        if (!ignore) setAppointmentComposerSlotsRefreshing(false);
-      });
-    return () => {
-      ignore = true;
-    };
-  }, [appointmentComposerDate, appointmentComposerDatePicked, appointmentComposerOpen, selectedComposerDoctor]);
 
   useEffect(() => {
     if (!appointmentComposerOpen || appointmentComposerDate) return;
@@ -3510,11 +3785,58 @@ function CustomerMobileDashboard({
   }, [appointmentComposerDate, appointmentComposerOpen]);
 
   useEffect(() => {
-    if (!appointmentComposerOpen || appointmentComposerSelectedSlot) return;
-    if (BOOKING_SLOT_TIMES[0]) {
-      setAppointmentComposerSelectedSlot(BOOKING_SLOT_TIMES[0]);
+    const selectedSlot = appointmentComposerSlots.find((slot) => slot.value === appointmentComposerSelectedSlot);
+    if (appointmentComposerSelectedSlot && (!selectedSlot || selectedSlot.disabled)) {
+      setAppointmentComposerSelectedSlot("");
+      setAppointmentComposerMatchedDoctors([]);
+      setAppointmentComposerValidatedSlotKey("");
+      setAppointmentComposerErrors((current) => ({ ...current, time: "Select a future time for today." }));
     }
-  }, [appointmentComposerOpen, appointmentComposerSelectedSlot, page]);
+  }, [appointmentComposerSelectedSlot, appointmentComposerSlots]);
+
+  async function handleAppointmentComposerTimeSelect(nextTime) {
+    const nextSlot = appointmentComposerSlots.find((slot) => slot.value === nextTime);
+    if (!nextSlot || nextSlot.disabled || !appointmentComposerDate) {
+      return;
+    }
+    setAppointmentComposerSlotsRefreshing(true);
+    setAppointmentComposerErrors((current) => {
+      const next = { ...current };
+      delete next.time;
+      delete next.submit;
+      return next;
+    });
+    try {
+      const activeSession = hydrateStoredSession("patient");
+      const response = await fetch("/api/customer/appointments/availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: appointmentComposerDate,
+          time: nextTime,
+          durationMinutes: 30,
+          baseUrl: nurseRequestAuth?.baseUrl || activeSession?.baseUrl || "",
+        })
+      });
+      const payload = await readCustomerNextApiResponse(response, "Appointment availability could not be loaded.");
+      const doctorsForSlot = Array.isArray(payload?.doctors) ? payload.doctors : [];
+      if (!doctorsForSlot.length) {
+        throw new Error("No doctor is available for the selected date and time.");
+      }
+      setAppointmentComposerSelectedSlot(nextTime);
+      setAppointmentComposerMatchedDoctors(doctorsForSlot);
+      setAppointmentComposerValidatedSlotKey(`${appointmentComposerDate}|${nextTime}`);
+    } catch (error) {
+      setAppointmentComposerMatchedDoctors([]);
+      setAppointmentComposerValidatedSlotKey("");
+      setAppointmentComposerErrors((current) => ({
+        ...current,
+        time: error?.message || "No doctor is available for the selected date and time.",
+      }));
+    } finally {
+      setAppointmentComposerSlotsRefreshing(false);
+    }
+  }
 
   const mergedAppointments = useMemo(
     () => [...localAppointments, ...upcomingAppointments, ...pastAppointments]
@@ -3625,11 +3947,11 @@ function CustomerMobileDashboard({
   const consultationQuotaRemaining = Number(subscription.free_consultations_remaining || 0);
   const consultationQuotaResetLabel = String(subscription.free_consultations_reset_label || "").trim();
   const isProSubscription = String(subscription.plan_key || "").toLowerCase() === "nevari_access_pro" || Boolean(subscription.is_paid);
-  const showConsultationQuotaNotice = page === "therapy" && isProSubscription && !consultationQuotaDismissed;
-  const consultationQuotaTitle = consultationQuotaRemaining <= 0 ? "Free Monthly Consultation Allowance Used" : "Free Consultation Allowance";
+  const showConsultationQuotaNotice = page === "appointment" && isProSubscription && !consultationQuotaDismissed;
+  const consultationQuotaTitle = consultationQuotaRemaining <= 0 ? "Free Monthly Consultation Allowance Used" : "Free Monthly Consultation";
   const consultationQuotaBody = consultationQuotaRemaining <= 0
-    ? "You have used all 5 free consultation bookings included with your Pro membership for this month."
-    : `You have ${consultationQuotaRemaining} of ${consultationQuotaTotal || 5} free consultation bookings remaining in your Pro membership for this cycle.`;
+    ? `You have used all ${consultationQuotaTotal || 5} free consultation bookings included with your Pro membership for the current billing month.`
+    : `You have ${consultationQuotaRemaining} of ${consultationQuotaTotal || 5} free consultation bookings remaining in your Pro membership for the current billing month.`;
   const consultationQuotaResetText = consultationQuotaResetLabel ? `Next reset: ${consultationQuotaResetLabel}` : "";
   function goToPage(nextPage) {
     setPage(nextPage);
@@ -3638,6 +3960,7 @@ function CustomerMobileDashboard({
     setRequestStep3Errors({});
     if (nextPage !== "appointment") {
       setJourney(createJourneyState());
+      setAppointmentRescheduleTarget(null);
     }
   }
 
@@ -3714,6 +4037,9 @@ function CustomerMobileDashboard({
     const errors = {};
     if (!appointmentComposerDate) errors.date = "Select a date.";
     if (!appointmentComposerSelectedSlot) errors.time = "Select a time slot.";
+    if (appointmentComposerSelectedSlot && (appointmentComposerValidatedSlotKey !== `${appointmentComposerDate}|${appointmentComposerSelectedSlot}` || !appointmentComposerMatchedDoctors.length)) {
+      errors.time = "Select an available time slot.";
+    }
     if (!sanitizeClientText(appointmentComposerReason, { max: 500 }).trim()) errors.reason = "Reason for appointment is required.";
     setAppointmentComposerErrors(errors);
     return Object.keys(errors).length === 0;
@@ -3729,26 +4055,23 @@ function CustomerMobileDashboard({
       const payload = {
         date: appointmentComposerDate,
         time: appointmentComposerSelectedSlot,
+        durationMinutes: 30,
         reason: sanitizeClientText(appointmentComposerReason, { max: 500 }).trim(),
         selectedEpochMs: new Date(`${appointmentComposerDate}T${appointmentComposerSelectedSlot}:00`).getTime(),
         clientNowMs: Date.now(),
-        customerEmail: profile.email || settings.email || "",
-        customerName: settings.displayName || profile.display_name || "",
-        baseUrl: nurseRequestAuth?.baseUrl || "",
-        adminEmail: nurseRequestAuth?.adminEmail || "",
-        appOrigin: typeof window !== "undefined" ? window.location.origin : ""
-      };
+          customerEmail: profile.email || settings.email || "",
+          customerName: settings.displayName || profile.display_name || "",
+          baseUrl: nurseRequestAuth?.baseUrl || "",
+          adminEmail: nurseRequestAuth?.adminEmail || "",
+          appOrigin: typeof window !== "undefined" ? window.location.origin : ""
+        };
 
       const response = await fetch("/api/customer/appointments/book", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result?.ok) {
-        setAppointmentComposerErrors({ submit: result?.error?.message || "Unable to book appointment right now." });
-        return;
-      }
+      const result = await readCustomerNextApiResponse(response, "Unable to book appointment right now.");
       const createdAppointment = result?.appointment;
       if (!createdAppointment) {
         setAppointmentComposerErrors({ submit: "Unable to book appointment right now." });
@@ -4233,9 +4556,9 @@ function CustomerMobileDashboard({
               <span>{item.label}</span>
             </button>
           ))}
-          <button className="customer-mobile-drawer-item logout" type="button" onClick={onLogout}>
+          <button className="customer-mobile-drawer-item logout" type="button" onClick={onLogout} disabled={logoutBusy}>
             <MobileIcon name="logout" />
-            <span>Log Out</span>
+            <span>{logoutBusy ? "Logging out..." : "Log Out"}</span>
           </button>
         </nav>
         <div className="customer-mobile-drawer-footer">
@@ -4256,6 +4579,10 @@ function CustomerMobileDashboard({
 
   if (showSkeleton) {
     return <CustomerMobileSkeleton page={page} />;
+  }
+
+  if (appointmentPageLoading) {
+    return <CustomerMobileSkeleton page="appointment" />;
   }
 
   if (journey.mode === "slots") {
@@ -4330,11 +4657,13 @@ function CustomerMobileDashboard({
           past={pastAppointments}
           onOpenAvailability={onOpenAvailability}
           onOpenReviews={onOpenReviews}
+          onOpenAppointment={onOpenAppointment}
           onUpdateAvailabilityDate={onUpdateAvailabilityDate}
           onSelectSlot={onSelectSlot}
           onDurationChange={onDurationChange}
           onReasonChange={onReasonChange}
           onCreateAppointmentCheckout={onCreateAppointmentCheckout}
+          onRescheduleAppointmentCheckout={onRescheduleAppointmentCheckout}
           onRefreshConfirmation={onRefreshConfirmation}
           onCancelCheckoutAppointment={onCancelCheckoutAppointment}
           onResetJourney={onResetJourney}
@@ -4348,6 +4677,17 @@ function CustomerMobileDashboard({
           storefrontSettings={storefrontSettings}
           minimumBookingMinutes={minimumBookingMinutes}
           subscriptionState={subscriptionState}
+          showConsultationQuotaNotice={showConsultationQuotaNotice}
+          consultationQuotaTitle={consultationQuotaTitle}
+          consultationQuotaBody={consultationQuotaBody}
+          consultationQuotaResetText={consultationQuotaResetText}
+          consultationQuotaTotal={consultationQuotaTotal}
+          consultationQuotaUsed={consultationQuotaUsed}
+          consultationQuotaRemaining={consultationQuotaRemaining}
+          rescheduleTarget={appointmentRescheduleTarget}
+          onClearRescheduleTarget={onClearAppointmentRescheduleTarget}
+          onShowConsultationQuotaNotice={() => setConsultationQuotaDismissed(false)}
+          onDismissConsultationQuotaNotice={() => setConsultationQuotaDismissed(true)}
         />
       </main>
     </div>;
@@ -4485,21 +4825,6 @@ function CustomerMobileDashboard({
           }}
         >
           <section className="therapy-content-shell">
-            {showConsultationQuotaNotice ? <div className="customer-quota-modal" role="dialog" aria-modal="true" aria-label="Consultation quota notice">
-              <button className="customer-quota-modal-backdrop" type="button" aria-label="Dismiss consultation quota notice" onClick={() => setConsultationQuotaDismissed(true)} />
-              <section className="customer-quota-modal-card">
-                <div className="customer-panel-head">
-                  <div>
-                    <span className="customer-section-kicker">Consultation quota</span>
-                    <h2>{consultationQuotaTitle}</h2>
-                  </div>
-                  <button className="icon-btn" type="button" aria-label="Dismiss consultation quota notice" onClick={() => setConsultationQuotaDismissed(true)}>x</button>
-                </div>
-                <p>{consultationQuotaBody}</p>
-                {consultationQuotaResetText ? <p>{consultationQuotaResetText}</p> : null}
-                {!consultationQuotaRemaining && consultationQuotaUsed >= consultationQuotaTotal ? null : <p>{consultationQuotaTotal ? `${consultationQuotaUsed} of ${consultationQuotaTotal} used.` : ""}</p>}
-              </section>
-            </div> : null}
             <header className="therapy-page-head">
               <button className="customer-mobile-icon-button" type="button" aria-label="Open menu" onClick={() => setDrawerOpen(true)}>
                 <MobileIcon name="menu" />

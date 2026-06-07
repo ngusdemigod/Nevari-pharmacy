@@ -39,7 +39,7 @@ Act as a senior Next.js + SWR dashboard engineer with expertise in WooCommerce i
     "success": false,
     "error": {
         "code": "upstream_unreachable",
-        "message": "The pharmacy server could not be reached. Verify the site is online and reachable from this storefront.",
+        "message": "Oops.. Connection error, Check your internet connection",
         "details": {
             "status": 502,
             "path": "/wp-json/nevari/v1/doctors/10",

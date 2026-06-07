@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import {
+  escapeHtml,
   invalidNextJson,
   isAllowedUrl,
   isFutureDateTime,
@@ -10,9 +11,24 @@ import {
   rejectUnknownFields,
   sanitizeText
 } from "../../../../lib/inputValidation";
+import {
+  absoluteFrontendUrl,
+  buildEmailLinkVariable,
+  buildBrandedAppointmentPaymentUrl,
+  buildPaymentButtonHtml,
+  customerSessionError,
+  findMeetLink,
+  formatCurrencyAmount,
+  formatAppointmentDateLabel,
+  formatAppointmentTimeLabel,
+  isUpstreamAuthFailure,
+  requestUpstreamJson,
+  resolveCustomerSession,
+  sendUpstreamEmail,
+  upstreamErrorMessage
+} from "../_shared";
 
-const CUSTOMER_FRONTEND_TYPE = "patient_dashboard";
-const CSRF_COOKIE_NAME = "nevari_csrf";
+const DEFAULT_ADMIN_EMAIL = "careteam@nevarihealth.com";
 
 function invalid(message, field) {
   return invalidNextJson(NextResponse, message, field);
@@ -24,50 +40,6 @@ function asText(value) {
 
 function buildIso(date, time) {
   return `${date}T${time}:00`;
-}
-
-function requestCookie(request, name) {
-  const fromNextRequest = request.cookies?.get?.(name)?.value;
-  if (fromNextRequest) {
-    return fromNextRequest;
-  }
-  const match = String(request.headers.get("cookie") || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : "";
-}
-
-async function proxy(request, baseUrl, path, options = {}) {
-  const endpoint = new URL("/api/nevari-proxy", request.url);
-  endpoint.searchParams.set("baseUrl", String(baseUrl || "").replace(/\/+$/, ""));
-  endpoint.searchParams.set("path", path);
-
-  const csrf = request.headers.get("x-nevari-csrf") || requestCookie(request, CSRF_COOKIE_NAME);
-  const headers = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    "X-Nevari-Frontend-Type": CUSTOMER_FRONTEND_TYPE,
-    "X-Nevari-Frontend-Origin": endpoint.origin,
-    Cookie: request.headers.get("cookie") || "",
-    ...(csrf ? { "X-Nevari-CSRF": csrf } : {})
-  };
-
-  const response = await fetch(endpoint, {
-    method: options.method || "GET",
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
-  const raw = await response.text().catch(() => "");
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = null;
-  }
-  return {
-    ok: response.ok && data?.success !== false,
-    status: response.status,
-    data,
-    raw: raw || ""
-  };
 }
 
 function fallbackAppointment({ startAt, endAt, reason }) {
@@ -92,6 +64,187 @@ function fallbackAppointment({ startAt, endAt, reason }) {
   };
 }
 
+async function sendBookingEmails({
+  baseUrl,
+  appOrigin,
+  accessToken,
+  adminEmail,
+  customerEmail,
+  customerName,
+  appointment,
+  checkout,
+  confirmation,
+  quotaCovered = false
+}) {
+  const doctorId = appointment?.doctor_user_id || appointment?.doctor?.id || appointment?.assigned_doctor_id || "";
+  const doctorResponse = doctorId ? await requestUpstreamJson(baseUrl, accessToken, `/doctors/${doctorId}`) : null;
+  const doctor = doctorResponse?.ok ? (doctorResponse.data?.data || doctorResponse.data || {}) : {};
+  const doctorName = appointment?.doctor?.display_name || appointment?.doctor_name || doctor.display_name || "Assigned doctor";
+  const doctorEmail = appointment?.doctor?.email || doctor.email || "";
+  const meetLink = findMeetLink(confirmation?.appointment, confirmation, checkout?.appointment, checkout, appointment);
+  const startValue = appointment?.start_at || confirmation?.appointment?.start_at || "";
+  const durationMinutes = Number(appointment?.duration_minutes || confirmation?.appointment?.duration_minutes || 30) || 30;
+  const dateLabel = formatAppointmentDateLabel(startValue, "Africa/Lagos");
+  const timeLabel = formatAppointmentTimeLabel(startValue, "Africa/Lagos");
+  const appointmentReference = String(
+    appointment?.reference
+    || appointment?.appointment_reference
+    || appointment?.booking_reference
+    || appointment?.id
+    || ""
+  ).trim();
+  const paymentUrl = String(
+    buildBrandedAppointmentPaymentUrl(appOrigin, checkout, appointment, "patient")
+    || checkout?.payment_url
+    || checkout?.checkout_url
+    || appointment?.checkout_url
+    || appointment?.payment_url
+    || ""
+  ).trim();
+  const paymentStatus = String(
+    confirmation?.appointment?.payment_status
+    || checkout?.payment_status
+    || appointment?.payment_status
+    || ""
+  ).trim().toLowerCase();
+  const statusLabel = String(confirmation?.appointment?.status || appointment?.status || (paymentStatus === "paid" ? "confirmed" : "pending")).trim();
+  const patientLoginLink = absoluteFrontendUrl(appOrigin, "/login");
+  const doctorDashboardLink = appOrigin ? `${appOrigin.replace(/\/+$/, "")}/admin/doctor` : "";
+  const orderId = String(checkout?.order_id || checkout?.order?.id || appointment?.order_id || "").trim();
+  const amountPaid = formatCurrencyAmount(
+    confirmation?.amount
+    ?? checkout?.amount
+    ?? checkout?.total
+    ?? checkout?.order?.total
+    ?? "",
+    confirmation?.currency || checkout?.currency || checkout?.order?.currency || "NGN"
+  );
+  const meetMarkup = meetLink ? `<p><strong>Join appointment:</strong> <a href="${escapeHtml(meetLink)}">${escapeHtml(meetLink)}</a></p>` : "<p><strong>Join appointment:</strong> A direct join link will be sent once the appointment is confirmed.</p>";
+  const paymentMarkup = !quotaCovered && paymentStatus !== "paid" && paymentUrl
+    ? `${buildPaymentButtonHtml(paymentUrl, "Pay Now")}<p><strong>Payment link:</strong> <a href="${escapeHtml(paymentUrl)}">${escapeHtml(paymentUrl)}</a></p>`
+    : "";
+  const paymentLinkVariable = !quotaCovered && paymentStatus !== "paid" && paymentUrl
+    ? buildEmailLinkVariable(paymentUrl, "Pay Now", { button: true })
+    : "";
+  const meetLinkVariable = meetLink
+    ? buildEmailLinkVariable(meetLink, "Join Appointment", { button: true })
+    : "";
+  const appointmentVariables = {
+    patient_name: customerName || "Customer",
+    customer_name: customerName || "Customer",
+    doctor_name: doctorName,
+    customer_email: customerEmail || "",
+    customer_phone: "",
+    consultation_type: appointment?.type ? String(appointment.type).replace(/_/g, " ") : "Video Consultation",
+    appointment_start: `${dateLabel} at ${timeLabel}`,
+    appointment_date: dateLabel,
+    appointment_time: timeLabel,
+    appointment_duration: `${durationMinutes} minutes`,
+    appointment_reference: appointmentReference || "Pending",
+    booking_id: String(appointment?.id || confirmation?.appointment?.id || ""),
+    order_id: orderId,
+    invoice_number: String(checkout?.invoice_number || appointment?.invoice_number || ""),
+    patient_note: appointment?.reason || "Consultation booking",
+    reason: appointment?.reason || "Consultation booking",
+    appointment_status: statusLabel || "pending",
+    payment_link: paymentUrl,
+    payment_link_html: paymentLinkVariable,
+    google_meet_link: meetLink,
+    google_meet_link_html: meetLinkVariable,
+    join_link: meetLink,
+    join_link_html: meetLinkVariable,
+    patient_join_link: meetLink,
+    patient_join_link_html: meetLinkVariable,
+    dashboard_link: patientLoginLink,
+    doctor_dashboard_link: doctorDashboardLink,
+    site_url: appOrigin || "",
+    manage_link: patientLoginLink,
+    manage_link_html: patientLoginLink ? buildEmailLinkVariable(patientLoginLink, "Manage appointment") : "",
+    cancel_link: patientLoginLink,
+    reschedule_link: patientLoginLink,
+    amount_paid: amountPaid,
+  };
+  const customerBody = [
+    `<p>Hello ${escapeHtml(customerName || "Customer")},</p>`,
+    `<p>Your consultation booking has been created with ${escapeHtml(doctorName)}.</p>`,
+    `<p><strong>Date:</strong> ${escapeHtml(dateLabel)}<br/>`,
+    `<strong>Time:</strong> ${escapeHtml(timeLabel)}<br/>`,
+    `<strong>Duration:</strong> ${escapeHtml(String(durationMinutes))} minutes<br/>`,
+    `<strong>Reason:</strong> ${escapeHtml(appointment?.reason || "Consultation booking")}<br/>`,
+    `<strong>Reference:</strong> ${escapeHtml(appointmentReference || "Pending")}<br/>`,
+    `<strong>Status:</strong> ${escapeHtml(statusLabel || "pending")}</p>`,
+    meetMarkup,
+    paymentMarkup
+  ].join("");
+  const doctorBody = [
+    `<p>Hello ${escapeHtml(doctorName)},</p>`,
+    `<p>A new consultation booking has been created.</p>`,
+    `<p><strong>Patient:</strong> ${escapeHtml(customerName || "Customer")}<br/>`,
+    `<strong>Email:</strong> ${escapeHtml(customerEmail || "Not provided")}<br/>`,
+    `<strong>Date:</strong> ${escapeHtml(dateLabel)}<br/>`,
+    `<strong>Time:</strong> ${escapeHtml(timeLabel)}<br/>`,
+    `<strong>Duration:</strong> ${escapeHtml(String(durationMinutes))} minutes<br/>`,
+    `<strong>Reason:</strong> ${escapeHtml(appointment?.reason || "Consultation booking")}<br/>`,
+    `<strong>Reference:</strong> ${escapeHtml(appointmentReference || "Pending")}</p>`,
+    meetMarkup
+  ].join("");
+  const adminBody = [
+    "<p>A new customer appointment has been booked.</p>",
+    `<p><strong>Customer:</strong> ${escapeHtml(customerName || "Customer")}<br/>`,
+    `<strong>Doctor:</strong> ${escapeHtml(doctorName)}<br/>`,
+    `<strong>Date:</strong> ${escapeHtml(dateLabel)}<br/>`,
+    `<strong>Time:</strong> ${escapeHtml(timeLabel)}<br/>`,
+    `<strong>Reason:</strong> ${escapeHtml(appointment?.reason || "Consultation booking")}<br/>`,
+    `<strong>Reference:</strong> ${escapeHtml(appointmentReference || "Pending")}<br/>`,
+    `<strong>Status:</strong> ${escapeHtml(statusLabel || "pending")}</p>`,
+    meetMarkup,
+    paymentMarkup
+  ].join("");
+
+  const customerDispatch = customerEmail
+    ? await sendUpstreamEmail(baseUrl, accessToken, {
+      template_key: "appointment_requested",
+      recipient_email: customerEmail,
+      send_now: true,
+      subject: `Your appointment with ${doctorName} is pending payment`,
+      variables: appointmentVariables,
+      body_html: customerBody,
+      body_text: `Hello ${customerName || "Customer"}, your appointment with ${doctorName} has been created for ${dateLabel} at ${timeLabel}. Pay now: ${paymentUrl}`.trim()
+    })
+    : { sent: false, reason: "missing_customer_email" };
+  const doctorDispatchReason = !doctorId ? "missing_doctor_id" : !doctorEmail ? "missing_doctor_email" : "";
+  const doctorDispatch = doctorEmail
+    ? await sendUpstreamEmail(baseUrl, accessToken, {
+      template_key: "appointment_doctor_notification",
+      recipient_email: doctorEmail,
+      send_now: true,
+      subject: `New appointment with ${customerName || "customer"}`,
+      variables: {
+        ...appointmentVariables,
+        dashboard_link: doctorDashboardLink,
+      },
+      body_html: doctorBody,
+      body_text: `Hello ${doctorName}, a new consultation booking has been created for ${customerName || "Customer"} on ${dateLabel} at ${timeLabel}. Reference: ${appointmentReference || "Pending"}.`
+    })
+    : { sent: false, reason: doctorDispatchReason || "missing_doctor_email" };
+  const adminDispatch = adminEmail
+    ? await sendUpstreamEmail(baseUrl, accessToken, {
+      template_key: "admin_notification",
+      recipient_email: adminEmail,
+      send_now: true,
+      subject: `New appointment booked: ${customerName || "Customer"}`,
+      body_html: adminBody
+    })
+    : { sent: false, reason: "missing_admin_email" };
+
+  return {
+    customer: customerDispatch,
+    doctor: doctorDispatch,
+    admin: adminDispatch,
+    meeting_url: meetLink
+  };
+}
+
 export async function POST(request) {
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object") return invalid("Invalid request payload.", "payload");
@@ -102,30 +255,45 @@ export async function POST(request) {
     "doctorSpecialty",
     "date",
     "time",
+    "durationMinutes",
     "reason",
     "selectedEpochMs",
     "clientNowMs",
     "customerEmail",
     "customerName",
     "baseUrl",
+    "accessToken",
     "adminEmail",
-    "appOrigin"
+    "appOrigin",
+    "quotaCovered",
+    "consultationQuotaRemaining"
   ]);
   if (unknownFieldError) return invalid(unknownFieldError, "payload");
 
   const date = asText(body.date);
   const time = asText(body.time);
+  const doctorId = asText(body.doctorId);
+  const durationMinutes = Math.max(5, Number.parseInt(body.durationMinutes, 10) || 30);
   const reason = sanitizeText(body.reason, { max: 500 });
   const customerEmail = sanitizeText(body.customerEmail, { max: 254 });
+  const customerName = sanitizeText(body.customerName, { max: 120 });
   const baseUrl = asText(body.baseUrl);
-  const selectedEpochMs = Number(body.selectedEpochMs);
-  const clientNowMs = Number(body.clientNowMs);
+  const bodyAccessToken = asText(body.accessToken);
+  const adminEmail = sanitizeText(body.adminEmail || DEFAULT_ADMIN_EMAIL, { max: 254 });
+    const selectedEpochMs = Number(body.selectedEpochMs);
+    const clientNowMs = Number(body.clientNowMs);
+  const { baseUrl: resolvedBaseUrl, accessToken } = resolveCustomerSession(request, {
+    baseUrl,
+    accessToken: bodyAccessToken,
+  });
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return invalid("Date is invalid.", "date");
   if (!isValidTimeKey(time)) return invalid("Time is invalid.", "time");
   if (reason.length < 3 || reason.length > 500) return invalid("Reason must be 3 to 500 characters.", "reason");
   if (customerEmail && !isValidEmail(customerEmail)) return invalid("Customer email is invalid.", "customerEmail");
-  if (!isAllowedUrl(baseUrl)) return invalid("Backend URL is invalid.", "baseUrl");
+  if (!accessToken) return NextResponse.json(customerSessionError().data, { status: 401 });
+  if (!isAllowedUrl(resolvedBaseUrl)) return invalid("Backend URL is invalid.", "baseUrl");
+  if (adminEmail && !isValidEmail(adminEmail)) return invalid("Admin email is invalid.", "adminEmail");
 
   const startAt = buildIso(date, time);
   const startDate = new Date(startAt);
@@ -142,34 +310,49 @@ export async function POST(request) {
     return invalid("Past date/time is not allowed.", "time");
   }
 
-  const endDate = new Date(startDate.getTime() + (30 * 60 * 1000));
+  const endDate = new Date(startDate.getTime() + (durationMinutes * 60 * 1000));
   const endAt = `${date}T${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}:00`;
 
-  let createResponse = await proxy(request, baseUrl, "/appointments", {
+  const bookingBody = {
+    start_at: startAt,
+    end_at: endAt,
+    duration_minutes: durationMinutes,
+    reason,
+    type: "video",
+    timezone: "Africa/Lagos"
+  };
+  if (doctorId) {
+    bookingBody.doctor_user_id = Number(doctorId) || doctorId;
+    bookingBody.doctor_id = Number(doctorId) || doctorId;
+  }
+
+  let createResponse = await requestUpstreamJson(resolvedBaseUrl, accessToken, "/appointments", {
     method: "POST",
-    body: {
-      start_at: startAt,
-      end_at: endAt,
-      duration_minutes: 30,
-      reason,
-      type: "video",
-      timezone: "Africa/Lagos"
-    }
+    body: bookingBody
   });
 
   if (!createResponse.ok) {
-    createResponse = await proxy(request, baseUrl, "/appointments", {
+    const fallbackBody = {
+      start_at: startAt,
+      end_at: endAt,
+      duration_minutes: durationMinutes,
+      reason,
+      type: "video"
+    };
+    if (doctorId) {
+      fallbackBody.doctor_user_id = Number(doctorId) || doctorId;
+      fallbackBody.doctor_id = Number(doctorId) || doctorId;
+    }
+    createResponse = await requestUpstreamJson(resolvedBaseUrl, accessToken, "/appointments", {
       method: "POST",
-      body: {
-        start_at: startAt,
-        end_at: endAt,
-        reason,
-        type: "video"
-      }
+      body: fallbackBody
     });
   }
 
   if (!createResponse.ok) {
+    if (isUpstreamAuthFailure(createResponse)) {
+      return NextResponse.json(customerSessionError().data, { status: 401 });
+    }
     if (createResponse.status >= 500) {
       return NextResponse.json({
         ok: true,
@@ -188,11 +371,11 @@ export async function POST(request) {
 
     return NextResponse.json({
       ok: false,
-      error: { message: "Unable to create appointment." },
+      error: { message: upstreamErrorMessage(createResponse) || "Unable to create appointment." },
       upstream: createResponse.data,
       upstream_status: createResponse.status,
       upstream_raw: createResponse.raw?.slice(0, 1200) || null
-    }, { status: 502 });
+    }, { status: createResponse.status >= 400 && createResponse.status < 500 ? createResponse.status : 502 });
   }
 
   const created = createResponse.data?.appointment || createResponse.data?.data || createResponse.data;
@@ -200,25 +383,53 @@ export async function POST(request) {
 
   let checkoutData = null;
   if (appointmentId) {
-    const checkout = await proxy(request, baseUrl, `/appointments/${appointmentId}/checkout`);
+    const checkout = await requestUpstreamJson(resolvedBaseUrl, accessToken, `/appointments/${appointmentId}/checkout`);
     if (checkout.ok) {
-      checkoutData = checkout.data;
+      checkoutData = checkout.data?.data || checkout.data;
     }
   }
+  let confirmationData = null;
+  if (appointmentId) {
+    const confirmation = await requestUpstreamJson(resolvedBaseUrl, accessToken, `/appointments/${appointmentId}/confirmation`);
+    if (confirmation.ok) {
+      confirmationData = confirmation.data?.data || confirmation.data;
+    }
+  }
+  const normalizedCheckoutData = checkoutData
+    ? {
+      ...checkoutData,
+      baseUrl: checkoutData.baseUrl || checkoutData.base_url || resolvedBaseUrl,
+      base_url: checkoutData.base_url || checkoutData.baseUrl || resolvedBaseUrl
+    }
+    : null;
+  const resolvedAppointment = {
+    ...created,
+    checkout_url: buildBrandedAppointmentPaymentUrl(body.appOrigin || new URL(request.url).origin, normalizedCheckoutData, created, "patient") || normalizedCheckoutData?.payment_url || normalizedCheckoutData?.checkout_url || created?.checkout_url || "",
+    payment_status: confirmationData?.appointment?.payment_status || normalizedCheckoutData?.payment_status || created?.payment_status || "pending",
+    status: confirmationData?.appointment?.status || (String(confirmationData?.appointment?.payment_status || normalizedCheckoutData?.payment_status || created?.payment_status || "").toLowerCase() === "paid" ? "confirmed" : (created?.status || "awaiting_payment"))
+  };
+  const quotaCovered = String(resolvedAppointment.payment_status || "").toLowerCase() === "paid";
+  const meetingUrl = findMeetLink(confirmationData?.appointment, confirmationData, checkoutData?.appointment, checkoutData, resolvedAppointment);
+  const emailDispatch = await sendBookingEmails({
+    baseUrl: resolvedBaseUrl,
+    appOrigin: body.appOrigin || new URL(request.url).origin,
+    accessToken,
+    adminEmail,
+    customerEmail,
+    customerName,
+    appointment: resolvedAppointment,
+    checkout: normalizedCheckoutData,
+    confirmation: confirmationData,
+    quotaCovered
+  });
 
   return NextResponse.json({
     ok: true,
-    appointment: {
-      ...created,
-      checkout_url: checkoutData?.payment_url || created?.checkout_url || "",
-      payment_status: checkoutData?.payment_status || created?.payment_status || "pending",
-      status: created?.status || "awaiting_payment"
-    },
-    meeting: { url: "" },
-    emailDispatch: {
-      customer: { sent: false, status: 0, deferred: true },
-      admin: { sent: false, status: 0, deferred: true },
-      reminders: []
-    }
+    appointment: resolvedAppointment,
+    checkout: normalizedCheckoutData,
+    confirmation: confirmationData,
+    quotaCovered,
+    meeting: { url: meetingUrl || "" },
+    emailDispatch
   });
 }
