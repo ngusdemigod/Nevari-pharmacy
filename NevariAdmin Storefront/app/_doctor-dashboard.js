@@ -1,21 +1,30 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import useSWR, { mutate as mutateSWRKey, useSWRConfig } from "swr";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { AddCircleIcon, Calendar03Icon, Doctor01Icon, Home01Icon, Package01Icon, Settings01Icon, ShoppingCart01Icon, StarIcon } from "@hugeicons/core-free-icons";
+import { AddCircleIcon, Calendar03Icon, Doctor01Icon, Home01Icon, Settings01Icon, ShoppingCart01Icon } from "@hugeicons/core-free-icons";
 import { replaceById, updateListPayload, upsertById } from "../lib/fetcher";
 import { isProxyAppointmentsKey, isProxyDashboardDoctorKey, isProxyDoctorPathKey, isProxyOrdersKey, swrKeys, withBaseUrl } from "../lib/swrKeys";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
-import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, describeDashboardFetchError, fitTextToContainer, getOrderTypeMeta, hydrateStoredSession, isSessionUsable, money, monthGrid, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
+import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, describeDashboardFetchError, fitTextToContainer, hydrateStoredSession, isSessionUsable, money, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
 import { clearSessionAuth } from "./components/role-session";
 
 const DOCTOR_SETTINGS_KEY = "nevari_doctor_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
 const DOCTOR_DASHBOARD_CACHE_SCOPE = "doctor-dashboard";
-const pages = ["overview", "consultations", "availability", "profile", "settings"];
+const DOCTOR_MOBILE_BREAKPOINT = 720;
+const pages = ["overview", "consultations", "availability", "settings"];
+const doctorPageLabels = {
+  overview: "Overview",
+  consultations: "Consultations",
+  availability: "Availability",
+  settings: "Settings"
+};
 const DEFAULT_CONSULTATION_FEE_NGN = 5000;
 const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const DOCTOR_DASHBOARD_REFRESH_MS = 45_000;
@@ -117,6 +126,20 @@ function hasDoctorRole(user) {
   return normalized.includes("doctor") || normalized.includes("administrator");
 }
 
+function useAutoClearSnackbar(initialValue = null, timeoutMs = 3200) {
+  const [snackbar, setSnackbar] = useState(initialValue);
+
+  useEffect(() => {
+    if (!snackbar?.message) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setSnackbar(null), timeoutMs);
+    return () => window.clearTimeout(timer);
+  }, [snackbar, timeoutMs]);
+
+  return [snackbar, setSnackbar];
+}
+
 export default function DoctorDashboard() {
   const router = useRouter();
   const { mutate: globalMutate } = useSWRConfig();
@@ -128,14 +151,22 @@ export default function DoctorDashboard() {
   const [cacheKey, setCacheKey] = useState(null);
   const [availabilityDraft, setAvailabilityDraft] = useState({});
   const [savingAvailability, setSavingAvailability] = useState(false);
-  const [availabilityFeedback, setAvailabilityFeedback] = useState("");
-  const [appointmentFeedback, setAppointmentFeedback] = useState("");
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [completionModal, setCompletionModal] = useState({ open: false, appointmentId: null });
   const [completionDraft, setCompletionDraft] = useState({ doctorNotes: "", diagnosis: "", productQuantities: {} });
   const [completionSubmitting, setCompletionSubmitting] = useState(false);
   const [doctorSettings, setDoctorSettings] = useState(() => loadDoctorSettings());
   const [bookingIntervalMinutes, setBookingIntervalMinutes] = useState(() => loadBookingIntervalMinutes());
+  const [snackbar, setSnackbar] = useAutoClearSnackbar(null);
+  const [isDoctorMobile, setIsDoctorMobile] = useState(false);
+  const [mobileSearchTerm, setMobileSearchTerm] = useState("");
+
+  function showDoctorNotice(message, tone = "warning") {
+    if (!message) {
+      return;
+    }
+    setSnackbar({ tone, message });
+  }
 
   useEffect(() => {
     if (!pages.includes(page)) {
@@ -149,22 +180,6 @@ export default function DoctorDashboard() {
   }, [page]);
 
   useEffect(() => {
-    const syncDoctorViewportMode = () => {
-      if (window.innerWidth <= 1024) {
-        document.body.classList.add("doctor-mobile-mode");
-      } else {
-        document.body.classList.remove("doctor-mobile-mode");
-      }
-    };
-    syncDoctorViewportMode();
-    window.addEventListener("resize", syncDoctorViewportMode);
-    return () => {
-      document.body.classList.remove("doctor-mobile-mode");
-      window.removeEventListener("resize", syncDoctorViewportMode);
-    };
-  }, []);
-
-  useEffect(() => {
     persistDoctorSettings(doctorSettings);
   }, [doctorSettings]);
 
@@ -174,6 +189,34 @@ export default function DoctorDashboard() {
     window.addEventListener("storage", syncBookingInterval);
     return () => window.removeEventListener("storage", syncBookingInterval);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia(`(max-width: ${DOCTOR_MOBILE_BREAKPOINT}px)`);
+    const syncDoctorMobile = (event) => setIsDoctorMobile(event.matches);
+    syncDoctorMobile(mediaQuery);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncDoctorMobile);
+      return () => mediaQuery.removeEventListener("change", syncDoctorMobile);
+    }
+    mediaQuery.addListener(syncDoctorMobile);
+    return () => mediaQuery.removeListener(syncDoctorMobile);
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+    const { body } = document;
+    if (isDoctorMobile) {
+      body.classList.add("doctor-mobile-mode");
+      return () => body.classList.remove("doctor-mobile-mode");
+    }
+    body.classList.remove("doctor-mobile-mode");
+    return undefined;
+  }, [isDoctorMobile]);
 
   useEffect(() => {
     const hydratedSession = hydrateStoredSession("doctor");
@@ -199,19 +242,19 @@ export default function DoctorDashboard() {
   const doctorSummaryKey = session && doctorId
     ? swrKeys.proxy.path("/dashboard/doctor", withBaseUrl(session, { doctor_id: doctorId }))
     : null;
-  const doctorAppointmentsKey = session && doctorId && ["consultations", "settings"].includes(page)
+  const doctorAppointmentsKey = session && doctorId && ["overview", "consultations", "settings"].includes(page)
     ? swrKeys.proxy.path("/appointments", withBaseUrl(session, { per_page: 40, page: 1, doctor_id: doctorId }))
     : null;
-  const doctorOrdersKey = session && doctorId && page === "orders"
+  const doctorOrdersKey = session && doctorId && page === "overview"
     ? swrKeys.proxy.path("/orders", withBaseUrl(session, { per_page: 40, page: 1, doctor_id: doctorId }))
     : null;
-  const doctorProductsKey = session && doctorId && page === "products"
+  const doctorProductsKey = session && doctorId && page === "consultations"
     ? swrKeys.proxy.path(`/doctors/${doctorId}/products`, withBaseUrl(session, { per_page: 40, page: 1 }))
     : null;
   const doctorPatientsKey = session && doctorId && page === "patients"
     ? swrKeys.proxy.path(`/doctors/${doctorId}/patients`, withBaseUrl(session, { per_page: 40, page: 1 }))
     : null;
-  const doctorReviewsKey = session && doctorId && page === "reviews"
+  const doctorReviewsKey = session && doctorId && ["overview", "reviews"].includes(page)
     ? swrKeys.proxy.path(`/doctors/${doctorId}/reviews`, withBaseUrl(session))
     : null;
   const doctorAvailabilityKey = session && doctorId && ["availability", "settings"].includes(page)
@@ -312,7 +355,6 @@ export default function DoctorDashboard() {
   }, [state.availability]);
 
   async function handleAppointmentAction(appointmentId, action, body = {}) {
-    setAppointmentFeedback("");
     const currentAppointment = state.appointments.find((item) => String(item.id) === String(appointmentId));
     const optimisticStatus = action === "confirm" ? "confirmed" : action === "complete" ? "completed" : currentAppointment?.status;
     const optimisticAppointment = currentAppointment ? { ...currentAppointment, ...body, status: optimisticStatus || currentAppointment.status } : null;
@@ -331,7 +373,7 @@ export default function DoctorDashboard() {
         await appointmentsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, nextAppointment) : current, { revalidate: false });
         patchDoctorAppointmentCache(nextAppointment);
       }
-      setAppointmentFeedback(action === "confirm" ? "Appointment confirmed." : "Appointment completed.");
+      showDoctorNotice(action === "confirm" ? "Appointment confirmed." : "Appointment completed.", "success");
       revalidateDoctorGroups(isProxyAppointmentsKey, isProxyDashboardDoctorKey, isProxyOrdersKey);
       await autoRefreshDoctorLists(doctorSummaryKey, doctorAppointmentsKey, doctorOrdersKey);
     } catch (error) {
@@ -340,7 +382,7 @@ export default function DoctorDashboard() {
         await appointmentsQuery.mutate((current) => Array.isArray(current) ? replaceById(current, currentAppointment) : current, { revalidate: false });
         patchDoctorAppointmentCache(currentAppointment);
       }
-      setAppointmentFeedback(error?.message || "The appointment update failed.");
+      showDoctorNotice(error?.message || "The appointment update failed.", "error");
     }
   }
 
@@ -352,7 +394,6 @@ export default function DoctorDashboard() {
       productQuantities: {}
     });
     setCompletionModal({ open: true, appointmentId });
-    setAppointmentFeedback("");
   }
 
   function closeCompleteAppointmentModal() {
@@ -364,12 +405,12 @@ export default function DoctorDashboard() {
   async function submitAppointmentCompletion() {
     const appointment = state.appointments.find((item) => String(item.id) === String(completionModal.appointmentId));
     if (!appointment) {
-      setAppointmentFeedback("The appointment could not be found.");
+      showDoctorNotice("The appointment could not be found.", "error");
       return;
     }
     const doctorNotes = String(completionDraft.doctorNotes || "").trim();
     if (!doctorNotes) {
-      setAppointmentFeedback("Doctor remarks are required before completion.");
+      showDoctorNotice("Doctor remarks are required before completion.", "error");
       return;
     }
 
@@ -378,7 +419,6 @@ export default function DoctorDashboard() {
       .filter((item) => item.product_id > 0 && item.quantity > 0);
 
     setCompletionSubmitting(true);
-    setAppointmentFeedback("");
     try {
       if (selectedItems.length) {
         const patient = appointment?.patient || {};
@@ -438,7 +478,6 @@ export default function DoctorDashboard() {
       return;
     }
     setSavingAvailability(true);
-    setAvailabilityFeedback("");
     try {
       const sanitized = normalizeAvailability(availabilityDraft);
       await mutateSummary((current) => current ? { ...current, availability: sanitized } : current, { revalidate: false });
@@ -448,13 +487,13 @@ export default function DoctorDashboard() {
         method: "PUT",
         body: { availability: sanitized }
       });
-      setAvailabilityFeedback("Availability updated.");
+      showDoctorNotice("Availability updated.", "success");
       revalidateDoctorGroups(isProxyDoctorPathKey, isProxyAppointmentsKey);
       await autoRefreshDoctorLists(doctorSummaryKey, doctorAvailabilityKey, doctorAppointmentsKey);
     } catch (error) {
       await availabilityQuery.mutate();
       await mutateSummary();
-      setAvailabilityFeedback(error?.message || "Availability could not be saved.");
+      showDoctorNotice(error?.message || "Availability could not be saved.", "error");
     } finally {
       setSavingAvailability(false);
     }
@@ -473,11 +512,6 @@ export default function DoctorDashboard() {
     }
   }
 
-  const appointmentDates = useMemo(() => new Set(state.appointments.map((item) => String(item.start_at || "").slice(0, 10))), [state.appointments]);
-  const visibleAppointments = useMemo(
-    () => state.appointments.filter((item) => String(item.start_at || "").slice(0, 10) === selectedDate.toISOString().slice(0, 10)),
-    [selectedDate, state.appointments]
-  );
   const sortedAppointments = useMemo(
     () => [...state.appointments].sort((left, right) => new Date(left.start_at || 0) - new Date(right.start_at || 0)),
     [state.appointments]
@@ -491,15 +525,19 @@ export default function DoctorDashboard() {
     rememberStoreContext(state.dashboard || state.doctor || {});
   }, [state.dashboard, state.doctor]);
   const pageQueryLoading = (
-    (page === "consultations" && appointmentsQuery.isLoading && !appointmentsQuery.data) ||
-    (page === "orders" && ordersQuery.isLoading && !ordersQuery.data) ||
-    (page === "products" && productsQuery.isLoading && !productsQuery.data) ||
-    (page === "patients" && patientsQuery.isLoading && !patientsQuery.data) ||
-    (page === "reviews" && reviewsQuery.isLoading && !reviewsQuery.data) ||
+    ((page === "overview" || page === "consultations") && appointmentsQuery.isLoading && !appointmentsQuery.data) ||
+    (page === "overview" && ordersQuery.isLoading && !ordersQuery.data) ||
+    ((page === "overview" || page === "reviews") && reviewsQuery.isLoading && !reviewsQuery.data) ||
     (page === "availability" && availabilityQuery.isLoading && !availabilityQuery.data) ||
     (page === "settings" && ((appointmentsQuery.isLoading && !appointmentsQuery.data) || (availabilityQuery.isLoading && !availabilityQuery.data)))
   );
   const showSkeleton = (isLoading && !hasDoctorDashboardData(state)) || pageQueryLoading;
+
+  useEffect(() => {
+    if (state.error) {
+      showDoctorNotice(state.error, "warning");
+    }
+  }, [state.error]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -517,8 +555,11 @@ export default function DoctorDashboard() {
     return null;
   }
 
-  return <RoleShell title="Nevari Doctor" pages={pages} active={page} onPageChange={setPage} renderNavIcon={renderDoctorNavIcon}>
-    {state.error ? <p className="receipt-feedback">{state.error}</p> : null}
+  const dashboardContent = <>
+    {snackbar ? <div className={`snackbar ${snackbar.tone || "warning"}`} role="status" aria-live="polite">
+      <strong className="snackbar-title">{snackbar.tone === "success" ? "Success" : snackbar.tone === "error" ? "Error" : snackbar.tone === "warning" ? "Warning" : "Notice"}</strong>
+      <span className="snackbar-message">{snackbar.message}</span>
+    </div> : null}
     {showSkeleton ? <DoctorDashboardSkeleton page={page} /> : null}
     {!showSkeleton && page === "overview" ? <DoctorOverview
       doctor={state.doctor}
@@ -531,26 +572,18 @@ export default function DoctorDashboard() {
       estimatedRevenue={estimatedRevenue}
       storeCurrency={storeCurrency}
       onOpenConsultations={() => setPage("consultations")}
-      onOpenReviews={() => setPage("reviews")}
-      onOpenProfile={() => setPage("profile")}
     /> : null}
     {!showSkeleton && page === "consultations" ? <ConsultationsPage
-      selectedDate={selectedDate}
-      onSelectDate={setSelectedDate}
-      markedDates={appointmentDates}
-      rows={visibleAppointments}
-      appointmentFeedback={appointmentFeedback}
+      appointments={state.appointments}
       onConfirm={(appointmentId) => handleAppointmentAction(appointmentId, "confirm")}
       onComplete={openCompleteAppointmentModal}
       /> : null}
-    {!showSkeleton && page === "reviews" ? <ReviewsPage doctor={state.doctor} summary={reviewSummary} reviews={reviews} /> : null}
     {!showSkeleton && page === "availability" ? <AvailabilityPage
       availabilityDraft={availabilityDraft}
       bookingIntervalMinutes={bookingIntervalMinutes}
       onChange={setAvailabilityDraft}
       onSave={saveAvailability}
       saving={savingAvailability}
-      feedback={availabilityFeedback}
     /> : null}
     {!showSkeleton && page === "settings" ? <DoctorSettingsPage
       doctor={state.doctor}
@@ -562,20 +595,6 @@ export default function DoctorDashboard() {
       estimatedRevenue={estimatedRevenue}
       storeCurrency={storeCurrency}
     /> : null}
-    {!showSkeleton && page === "orders" ? <TablePanel title="Assigned Orders" rows={state.orders} columns={["Order", "Type", "Customer", "Total", "Status", "Documents"]} render={(item) => {
-      const typeMeta = getOrderTypeMeta(item);
-      return [
-      `#${item.number}`,
-      <span className={`status-badge ${typeMeta.tone}`}>{typeMeta.label}</span>,
-      item.customer_id || "Guest",
-      money(item.total, storeCurrency),
-      titleCase(item.status),
-      <a href={`/admin/orders/${item.id}/documents?role=doctor`} target="_blank" rel="noreferrer">Open</a>
-    ];
-    }} /> : null}
-    {!showSkeleton && page === "products" ? <TablePanel title="Assigned Products" rows={state.products} columns={["Product", "Categories", "Price", "Stock"]} render={(item) => [item.name, (item.categories || []).join(", "), money(item.price, storeCurrency), item.stock_quantity ?? "n/a"]} /> : null}
-    {!showSkeleton && page === "patients" ? <TablePanel title="Customers" rows={state.patients} columns={["Customer", "Email", "First linked", "Last interaction"]} render={(item) => [item.display_name, item.email, shortDate(item.first_linked_at), shortDate(item.last_interaction_at)]} /> : null}
-    {!showSkeleton && page === "profile" ? <ProfilePage doctor={state.doctor} estimatedRevenue={estimatedRevenue} storeCurrency={storeCurrency} onLogout={handleLogout} logoutBusy={logoutBusy} /> : null}
     {completionModal.open ? <AppointmentCompletionModal
       appointment={state.appointments.find((item) => String(item.id) === String(completionModal.appointmentId)) || null}
       products={state.products}
@@ -585,63 +604,463 @@ export default function DoctorDashboard() {
       onSubmit={submitAppointmentCompletion}
       submitting={completionSubmitting}
     /> : null}
+  </>;
+
+  const mobileDashboardContent = <>
+    {snackbar ? <div className={`snackbar ${snackbar.tone || "warning"}`} role="status" aria-live="polite">
+      <strong className="snackbar-title">{snackbar.tone === "success" ? "Success" : snackbar.tone === "error" ? "Error" : snackbar.tone === "warning" ? "Warning" : "Notice"}</strong>
+      <span className="snackbar-message">{snackbar.message}</span>
+    </div> : null}
+    {showSkeleton ? <DoctorDashboardSkeleton page={page} /> : null}
+    {!showSkeleton && page === "overview" ? <DoctorMobileOverview
+      doctor={state.doctor}
+      dashboard={state.dashboard}
+      appointments={state.appointments}
+      orders={state.orders}
+      estimatedRevenue={estimatedRevenue}
+      storeCurrency={storeCurrency}
+      searchTerm={mobileSearchTerm}
+      onOpenConsultations={() => setPage("consultations")}
+    /> : null}
+    {!showSkeleton && page === "consultations" ? <DoctorMobileConsultationsPage
+      appointments={state.appointments}
+      searchTerm={mobileSearchTerm}
+      onComplete={openCompleteAppointmentModal}
+    /> : null}
+    {!showSkeleton && page === "availability" ? <DoctorMobileAvailabilityPage
+      availabilityDraft={availabilityDraft}
+      bookingIntervalMinutes={bookingIntervalMinutes}
+      onChange={setAvailabilityDraft}
+      onSave={saveAvailability}
+      saving={savingAvailability}
+    /> : null}
+    {!showSkeleton && page === "settings" ? <DoctorMobileSettingsPage
+      doctor={state.doctor}
+      appointments={state.appointments}
+      settings={doctorSettings}
+      onSettingsChange={setDoctorSettings}
+      availabilityDraft={availabilityDraft}
+      onOpenAvailability={() => setPage("availability")}
+      estimatedRevenue={estimatedRevenue}
+      storeCurrency={storeCurrency}
+    /> : null}
+    {completionModal.open ? <AppointmentCompletionModal
+      appointment={state.appointments.find((item) => String(item.id) === String(completionModal.appointmentId)) || null}
+      products={state.products}
+      draft={completionDraft}
+      onChange={setCompletionDraft}
+      onClose={closeCompleteAppointmentModal}
+      onSubmit={submitAppointmentCompletion}
+      submitting={completionSubmitting}
+    /> : null}
+  </>;
+
+  if (isDoctorMobile) {
+    return <DoctorMobileShell
+      doctor={state.doctor}
+      pages={pages}
+      active={page}
+      onPageChange={setPage}
+      pageLabels={doctorPageLabels}
+      renderNavIcon={renderDoctorNavIcon}
+      searchTerm={mobileSearchTerm}
+      onSearchTermChange={setMobileSearchTerm}
+      onLogout={handleLogout}
+      logoutBusy={logoutBusy}
+    >
+      {mobileDashboardContent}
+    </DoctorMobileShell>;
+  }
+
+  return <RoleShell
+    title="Nevari Doctor"
+    pages={pages}
+    active={page}
+    onPageChange={setPage}
+    renderNavIcon={renderDoctorNavIcon}
+    pageLabels={doctorPageLabels}
+    onLogout={handleLogout}
+    logoutBusy={logoutBusy}
+    showHeader={false}
+  >
+    {dashboardContent}
   </RoleShell>;
 }
 
-function ConsultationsPage({ selectedDate, onSelectDate, markedDates, rows, appointmentFeedback, onConfirm, onComplete }) {
-  return <section className="doctor-consultation-layout">
-    <aside className="panel role-calendar-panel">
-      <div className="panel-header"><h2>{selectedDate.toLocaleString("en-US", { month: "long", year: "numeric" })}</h2></div>
-      <div className="calendar-widget">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span className="calendar-weekday" key={day}>{day}</span>)}
-        {monthGrid(selectedDate, markedDates).map((day) => <button className={`calendar-day ${day.muted ? "muted-day" : ""} ${day.selected ? "active" : ""} ${day.marked ? "has-appointment" : ""}`} key={day.key} onClick={() => onSelectDate(new Date(`${day.key}T12:00:00`))}>{day.day}</button>)}
-      </div>
-    </aside>
-    <section className="doctor-appointment-stack">
-      <div className="panel-header"><h2>Appointments</h2></div>
-      {appointmentFeedback ? <p className="receipt-feedback">{appointmentFeedback}</p> : null}
-      {rows.length ? rows.map((item) => <AppointmentDetailCard key={item.id} appointment={item} onConfirm={onConfirm} onComplete={onComplete} />) : <div className="empty-card compact-empty"><div className="card-title">No appointments on this date.</div></div>}
+function ConsultationsPage({ appointments, onConfirm, onComplete }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [pageNumber, setPageNumber] = useState(1);
+  const [detailAppointment, setDetailAppointment] = useState(null);
+  const sortedAppointments = useMemo(() => {
+    return [...appointments].sort((left, right) => {
+      const rightStart = new Date(right?.start_at || 0).getTime();
+      const leftStart = new Date(left?.start_at || 0).getTime();
+      if (rightStart !== leftStart) {
+        return rightStart - leftStart;
+      }
+      const rightCreated = new Date(right?.created_at || 0).getTime();
+      const leftCreated = new Date(left?.created_at || 0).getTime();
+      return rightCreated - leftCreated;
+    });
+  }, [appointments]);
+  const filteredAppointments = useMemo(() => {
+    return sortedAppointments.filter((appointment) => {
+      const patientName = String(appointment.patient?.display_name || "").toLowerCase();
+      const reason = String(appointment.reason || "").toLowerCase();
+      const paymentStatus = String(appointment.payment_status || "").toLowerCase();
+      const bookingStatus = String(appointment.status || "").toLowerCase();
+      const matchesSearch = !searchTerm.trim()
+        || patientName.includes(searchTerm.trim().toLowerCase())
+        || reason.includes(searchTerm.trim().toLowerCase())
+        || paymentStatus.includes(searchTerm.trim().toLowerCase())
+        || bookingStatus.includes(searchTerm.trim().toLowerCase());
+
+      if (!matchesSearch) {
+        return false;
+      }
+      if (filter === "confirmed") {
+        return bookingStatus === "confirmed";
+      }
+      if (filter === "pending") {
+        return ["requested", "pending_review", "awaiting_payment"].includes(bookingStatus) || paymentStatus !== "paid";
+      }
+      if (filter === "payment-issue") {
+        return ["failed", "unpaid"].includes(paymentStatus) || bookingStatus === "awaiting_payment";
+      }
+      return true;
+    });
+  }, [sortedAppointments, filter, searchTerm]);
+
+  const stats = useMemo(() => ({
+    total: sortedAppointments.length,
+    paid: sortedAppointments.filter((item) => String(item.payment_status || "").toLowerCase() === "paid").length,
+    confirmed: sortedAppointments.filter((item) => String(item.status || "").toLowerCase() === "confirmed").length,
+    pending: sortedAppointments.filter((item) => ["requested", "awaiting_payment", "pending_review"].includes(String(item.status || "").toLowerCase())).length,
+    failed: sortedAppointments.filter((item) => ["failed", "unpaid"].includes(String(item.payment_status || "").toLowerCase())).length
+  }), [sortedAppointments]);
+  const pageSize = 20;
+  const pageCount = Math.max(1, Math.ceil(filteredAppointments.length / pageSize));
+  const paginatedAppointments = useMemo(() => {
+    const startIndex = (pageNumber - 1) * pageSize;
+    return filteredAppointments.slice(startIndex, startIndex + pageSize);
+  }, [filteredAppointments, pageNumber]);
+
+  useEffect(() => {
+    setPageNumber(1);
+  }, [filter, searchTerm]);
+
+  useEffect(() => {
+    if (pageNumber > pageCount) {
+      setPageNumber(pageCount);
+    }
+  }, [pageCount, pageNumber]);
+
+  return <section className="page-view active" data-page-panel="consultations">
+    <section className="consultations-panel consultation-table-page" aria-label="Consultations workspace">
+      <section className="consultation-filter-card">
+        <div className="consultation-pane-head">
+          <div>
+            <h2 className="consultation-pane-title">All appointments</h2>
+            <p className="consultation-subcopy">Search, filter, and open any doctor appointment from the full booking history.</p>
+          </div>
+          <div className="consultation-filter-controls">
+            <label className="consultation-search" aria-label="Search appointments">
+              <svg className="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10.8 18.1a7.3 7.3 0 1 1 0-14.6 7.3 7.3 0 0 1 0 14.6Zm5.3-2 4.4 4.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+              <input type="search" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search patient, status or reason" />
+            </label>
+          </div>
+        </div>
+        <div className="consultation-summary-grid">
+          <div className="consultation-day-summary" aria-label="Selected day appointment summary">
+            <div className="summary-row"><span>Total appointments</span><strong>{stats.total}</strong></div>
+            <div className="summary-row"><span>Filtered results</span><strong>{filteredAppointments.length}</strong></div>
+            <div className="summary-row"><span>Confirmed</span><strong>{stats.confirmed}</strong></div>
+            <div className="summary-row"><span>Requires review</span><strong>{stats.pending}</strong></div>
+          </div>
+          <div className="consultation-table-side">
+            <div className="consultation-stats" aria-label="Appointment statistics">
+              <div className="consultation-stat-card"><span className="consultation-stat-label">Paid</span><span className="consultation-stat-value">{stats.paid}</span></div>
+              <div className="consultation-stat-card"><span className="consultation-stat-label">Confirmed</span><span className="consultation-stat-value">{stats.confirmed}</span></div>
+              <div className="consultation-stat-card"><span className="consultation-stat-label">Pending</span><span className="consultation-stat-value">{stats.pending}</span></div>
+              <div className="consultation-stat-card"><span className="consultation-stat-label">Failed</span><span className="consultation-stat-value">{stats.failed}</span></div>
+            </div>
+            <div className="consultation-filters" aria-label="Appointment filters">
+              {[
+                ["all", "All appointments"],
+                ["confirmed", "Confirmed"],
+                ["pending", "Pending review"],
+                ["payment-issue", "Payment issue"]
+              ].map(([value, label]) => <button className={`filter-pill ${filter === value ? "active" : ""}`.trim()} key={value} type="button" onClick={() => setFilter(value)}>{label}</button>)}
+            </div>
+          </div>
+        </div>
+      </section>
+      <DoctorAppointmentsTable
+        appointments={paginatedAppointments}
+        totalAppointments={filteredAppointments.length}
+        page={pageNumber}
+        pageCount={pageCount}
+        onPageChange={setPageNumber}
+        onConfirm={onConfirm}
+        onComplete={onComplete}
+        onOpenDetails={setDetailAppointment}
+      />
     </section>
+    {detailAppointment ? <DoctorAppointmentDetailsModal
+      appointment={detailAppointment}
+      onConfirm={onConfirm}
+      onComplete={onComplete}
+      onClose={() => setDetailAppointment(null)}
+    /> : null}
   </section>;
 }
 
-function AppointmentDetailCard({ appointment, onConfirm, onComplete }) {
+function DoctorAppointmentsTable({ appointments, totalAppointments, page, pageCount, onPageChange, onConfirm, onComplete, onOpenDetails }) {
+  function renderActions(appointment) {
+    const joinUrl = resolveDoctorDashboardJoinUrl(appointment);
+    const canComplete = canDoctorAppointmentComplete(appointment);
+    const stopRowClick = (event, action) => {
+      event.stopPropagation();
+      action();
+    };
+
+    return <div className="doctor-table-actions">
+      {joinUrl ? <a className="btn primary small" href={joinUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Join now</a> : null}
+      {canComplete ? <button className="btn soft small" type="button" onClick={(event) => stopRowClick(event, () => onComplete(appointment.id))}>Complete</button> : null}
+    </div>;
+  }
+
+  return <section className="table-panel doctor-appointments-panel">
+    <div className="panel-header">
+      <h2>Appointments list</h2>
+      <span className="doctor-table-count">{totalAppointments} {totalAppointments === 1 ? "appointment" : "appointments"}</span>
+    </div>
+    <div className="table-scroll doctor-appointments-table-wrap">
+      <table className="doctor-appointments-table">
+        <thead>
+          <tr>
+            {["Patient", "Reason", "Scheduled", "Payment", "Status", "Contact", "Actions"].map((column) => <th key={column}>{column}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {appointments.length ? appointments.map((appointment) => {
+            const patientName = appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`;
+            return <tr
+              key={appointment.id}
+              className="doctor-appointment-row"
+              role="button"
+              tabIndex={0}
+              aria-label={`Open appointment details for ${patientName}`}
+              onClick={() => onOpenDetails(appointment)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onOpenDetails(appointment);
+                }
+              }}
+            >
+              <td><div className="doctor-table-meta"><strong className="doctor-table-cell-name">{patientName}</strong><span>{appointment.timezone || "UTC"}</span></div></td>
+              <td><div className="doctor-table-meta"><strong className="doctor-table-cell-strong">{titleCase(appointment.type || "consultation")}</strong><span>{appointment.reason || "Consultation booking"}</span></div></td>
+              <td><div className="doctor-table-meta"><strong className="doctor-table-cell-strong">{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</strong><span>{appointment.created_at ? `Booked ${formatDoctorDateTimeCompact(appointment.created_at)}` : "Booked time unavailable"}</span></div></td>
+              <td><span className={`status-pill ${appointment.payment_status === "paid" ? "success" : "warning"}`}>{titleCase(appointment.payment_status || "pending")}</span></td>
+              <td><span className={`status-pill ${["confirmed", "completed"].includes(String(appointment.status || "").toLowerCase()) ? "success" : "warning"}`}>{titleCase(appointment.status || "pending")}</span></td>
+              <td><div className="doctor-table-meta"><strong className="doctor-table-cell-strong">{appointment.patient?.email || "Not available"}</strong><span>{appointment.order_id ? `Order #${appointment.order_id}` : "Order not linked"}</span></div></td>
+              <td>{renderActions(appointment)}</td>
+            </tr>;
+          }) : <tr><td colSpan={7} className="muted doctor-table-empty">No appointments match the active filters.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+    <div className="doctor-mobile-appointment-list">
+      {appointments.length ? appointments.map((appointment) => {
+        const patientName = appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`;
+        return <article
+          className="doctor-mobile-appointment-card"
+          key={`mobile-${appointment.id}`}
+          role="button"
+          tabIndex={0}
+          aria-label={`Open appointment details for ${patientName}`}
+          onClick={() => onOpenDetails(appointment)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onOpenDetails(appointment);
+            }
+          }}
+        >
+          <div className="doctor-mobile-appointment-top">
+            <div>
+              <strong>{patientName}</strong>
+              <span>{titleCase(appointment.type || "consultation")}</span>
+            </div>
+            <span className={`status-pill ${["confirmed", "completed"].includes(String(appointment.status || "").toLowerCase()) ? "success" : "warning"}`}>{titleCase(appointment.status || "pending")}</span>
+          </div>
+          <div className="doctor-mobile-appointment-grid">
+            <div><span>Scheduled</span><strong>{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</strong></div>
+            <div><span>Payment</span><strong>{titleCase(appointment.payment_status || "pending")}</strong></div>
+            <div><span>Contact</span><strong>{appointment.patient?.email || "Not available"}</strong></div>
+            <div><span>Order</span><strong>{appointment.order_id ? `#${appointment.order_id}` : "Not linked"}</strong></div>
+          </div>
+          {appointment.reason ? <p className="doctor-mobile-appointment-note">{appointment.reason}</p> : null}
+          {renderActions(appointment)}
+        </article>;
+      }) : <div className="doctor-flow-empty">No appointments match the active filters.</div>}
+    </div>
+    {pageCount > 1 ? <DoctorAppointmentsPagination page={page} pageCount={pageCount} onPageChange={onPageChange} /> : null}
+  </section>;
+}
+
+function DoctorAppointmentsPagination({ page, pageCount, onPageChange }) {
+  return <div className="doctor-pagination" aria-label="Appointments pagination">
+    <button className="btn secondary small" type="button" disabled={page <= 1} onClick={() => onPageChange(Math.max(1, page - 1))}>Previous</button>
+    <div className="doctor-pagination-status">
+      <strong>Page {page}</strong>
+      <span>of {pageCount}</span>
+    </div>
+    <button className="btn secondary small" type="button" disabled={page >= pageCount} onClick={() => onPageChange(Math.min(pageCount, page + 1))}>Next</button>
+  </div>;
+}
+
+function DoctorAppointmentDetailsModal({ appointment, onConfirm, onComplete, onClose }) {
   const session = hydrateStoredSession("doctor");
-  const canConfirm = appointment.status === "awaiting_payment" ? false : appointment.status === "requested";
-  const canComplete = appointment.status === "confirmed";
+  const canConfirm = appointment?.status === "requested" && typeof onConfirm === "function";
+  const canComplete = canDoctorAppointmentComplete(appointment) && typeof onComplete === "function";
+  const patientName = appointment?.patient?.display_name || `Patient #${appointment?.patient_user_id || ""}`;
+  const paymentStatus = titleCase(appointment?.payment_status || "pending");
+  const bookingStatus = titleCase(appointment?.status || "pending");
+  const singleStatusPill = appointment?.detailStatusMode === "single";
+  const primaryStatusTone = ["confirmed", "completed"].includes(String(appointment?.status || "").toLowerCase()) ? "success" : "warning";
+  const calendarUrl = buildUrl(session, `/appointments/${appointment?.id}/calendar`);
+  const joinUrl = resolveDoctorDashboardJoinUrl(appointment);
+  const detailRows = [
+    ["Patient", patientName],
+    ["Email", appointment?.patient?.email || "Not available"],
+    ["Reason", appointment?.reason || "Consultation booking"],
+    ["Type", titleCase(appointment?.type || "consultation")],
+    ["Scheduled", formatDoctorAppointmentWindow(appointment?.start_at, appointment?.end_at)],
+    ["Booked", appointment?.created_at ? formatDoctorDateTimeCompact(appointment.created_at) : "Not available"],
+    ["Time zone", appointment?.timezone || "UTC"],
+    ["Payment", paymentStatus],
+    ["Status", bookingStatus],
+    ["Order", appointment?.order_id ? `#${appointment.order_id}` : "Not linked"],
+    ["Appointment ID", `#${appointment?.id || ""}`]
+  ];
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+    const { body, documentElement } = document;
+    const previousBodyOverflow = body.style.overflow;
+    const previousHtmlOverflow = documentElement.style.overflow;
+    body.style.overflow = "hidden";
+    documentElement.style.overflow = "hidden";
+    return () => {
+      body.style.overflow = previousBodyOverflow;
+      documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, []);
+
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(<div className="customer-appointment-modal" role="dialog" aria-modal="true" aria-label="Appointment details">
+    <button className="customer-appointment-modal-backdrop" type="button" aria-label="Close appointment details" onClick={onClose} />
+    <section className="customer-appointment-detail-card doctor-appointment-detail-popup">
+      <div className="customer-panel-head">
+        <div>
+          <span className="customer-section-kicker">Appointment details</span>
+          <h2>{patientName}</h2>
+        </div>
+        <button className="icon-btn" type="button" aria-label="Close appointment details" onClick={onClose}>x</button>
+      </div>
+      <div className="customer-detail-summary-panel">
+        <div className="customer-detail-summary-head">
+          <span className="customer-detail-summary-icon"><HugeiconsIcon icon={Calendar03Icon} size={18} strokeWidth={1.8} /></span>
+          <div>
+            <div className="customer-detail-summary-title">{formatDoctorDateLong(appointment?.start_at)}</div>
+            <div className="customer-detail-summary-sub">{formatDoctorTime(appointment?.start_at)} • {appointment?.timezone || "UTC"}</div>
+          </div>
+          <div className="doctor-detail-pill-stack">
+            {singleStatusPill ? <span className={`doctor-detail-pill ${primaryStatusTone}`}>{bookingStatus}</span> : <>
+              <span className={`doctor-detail-pill ${appointment?.payment_status === "paid" ? "success" : "warning"}`}>{paymentStatus}</span>
+              <span className={`doctor-detail-pill ${["confirmed", "completed"].includes(String(appointment?.status || "").toLowerCase()) ? "success" : "warning"}`}>{bookingStatus}</span>
+            </>}
+          </div>
+        </div>
+      </div>
+      <div className="detail-section">
+        <h3 className="detail-section-title">Appointment information</h3>
+        <div className="detail-card info-list">
+          {detailRows.map(([label, value]) => <div className="info-row" key={label}>
+            <span className="info-label">{label}</span>
+            <strong className="info-value">{value}</strong>
+          </div>)}
+        </div>
+      </div>
+      {appointment?.doctor_notes ? <div className="detail-section">
+        <h3 className="detail-section-title">Doctor notes</h3>
+        <div className="note-card">{appointment.doctor_notes}</div>
+      </div> : null}
+      <div className="action-stack">
+        {joinUrl ? <a className="btn btn-primary btn-wide" href={joinUrl} target="_blank" rel="noreferrer">Join appointment</a> : null}
+        <a className="btn btn-outline btn-wide" href={calendarUrl} target="_blank" rel="noreferrer">Download calendar file</a>
+        {canConfirm ? <button className="btn btn-outline btn-wide" type="button" onClick={() => onConfirm(appointment.id)}>Confirm appointment</button> : null}
+        {canComplete ? <button className="btn btn-primary btn-wide" type="button" onClick={() => onComplete(appointment.id)}>Complete appointment</button> : null}
+      </div>
+    </section>
+  </div>, document.body);
+}
+
+function AppointmentDetailCard({ appointment, onConfirm, onComplete, featured = false }) {
+  const session = hydrateStoredSession("doctor");
+  const canConfirm = appointment.status === "requested";
+  const canComplete = canDoctorAppointmentComplete(appointment);
   const calendarUrl = buildUrl(session, `/appointments/${appointment.id}/calendar`);
   const joinUrl = [appointment?.join_url, appointment?.meet_link, appointment?.google_meet_link, appointment?.meeting_link, appointment?.meeting_url]
     .find((value) => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
-  return <article className="doctor-appointment-detail-card">
-    <div className="doctor-appointment-detail-head">
+  const patientName = appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`;
+  const paymentStatus = titleCase(appointment.payment_status || "pending");
+  const bookingStatus = titleCase(appointment.status || "pending");
+
+  return <details className={`appointment-card ${featured ? "featured" : ""}`.trim()} open={featured}>
+    <summary className="appointment-top" aria-label={`Toggle appointment details for ${patientName}`}>
       <div>
-        <h3>{appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`}</h3>
-        <p>{titleCase(appointment.type || "consultation")} · {shortDate(appointment.start_at, true)}</p>
+        <h3 className="patient-name">{patientName}</h3>
+        <p className="appointment-meta">{titleCase(appointment.type || "consultation")} - {formatDoctorDateTimeCompact(appointment.start_at)}</p>
       </div>
-      <div className="doctor-appointment-status-group">
-        <span className={`status-badge ${appointment.payment_status === "paid" ? "success" : "warning"}`}>{titleCase(appointment.payment_status || "pending")}</span>
-        <span className={`status-badge ${appointment.status === "completed" || appointment.status === "confirmed" ? "success" : "warning"}`}>{titleCase(appointment.status)}</span>
+      <div className="consultation-badge-row" aria-label="Appointment status">
+        <span className={`consultation-badge ${appointment.payment_status === "paid" ? "success" : ["failed", "unpaid"].includes(String(appointment.payment_status || "").toLowerCase()) ? "danger" : "warning"}`}>{paymentStatus}</span>
+        <span className={`consultation-badge ${["confirmed", "completed"].includes(String(appointment.status || "").toLowerCase()) ? "success" : "warning"}`}>{bookingStatus}</span>
       </div>
-    </div>
-      <div className="doctor-appointment-grid">
-        <div><span>Patient</span><strong>{appointment.patient?.display_name || appointment.patient_user_id}</strong></div>
-        <div><span>Email</span><strong>{appointment.patient?.email || "n/a"}</strong></div>
-        <div><span>Reason</span><strong>{appointment.reason || "Consultation booking"}</strong></div>
-        <div><span>Time zone</span><strong>{appointment.timezone || "UTC"}</strong></div>
-        <div><span>Booked time</span><strong>{appointment.created_at ? shortDate(appointment.created_at, true) : "n/a"}</strong></div>
-        <div><span>Consultation time</span><strong>{appointment.start_at ? `${shortDate(appointment.start_at, true)}${appointment.end_at ? ` - ${new Date(appointment.end_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}` : "n/a"}</strong></div>
-        <div><span>Review</span><strong>{appointment.review ? `${appointment.review.rating}/5` : "Pending"}</strong></div>
-        <div><span>Order</span><strong>{appointment.order_id ? `#${appointment.order_id}` : "n/a"}</strong></div>
+      <span className="appointment-collapse" aria-hidden="true">
+        <svg className="appointment-chevron" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </span>
+    </summary>
+
+    <div className="appointment-body">
+      <div className="consultation-detail-grid">
+        <DoctorDetailBox label="Patient" value={patientName} />
+        <DoctorDetailBox label="Email" value={appointment.patient?.email || "Not available"} />
+        <DoctorDetailBox label="Reason" value={appointment.reason || "Consultation booking"} />
+        <DoctorDetailBox label="Time zone" value={appointment.timezone || "UTC"} />
+        <DoctorDetailBox label="Booked time" value={appointment.created_at ? formatDoctorDateTimeCompact(appointment.created_at) : "Not available"} />
+        <DoctorDetailBox label="Consultation time" value={formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)} />
+        <DoctorDetailBox label="Review" value={appointment.review ? `${Number(appointment.review.rating || 0).toFixed(1)} / 5` : "Pending"} />
+        <DoctorDetailBox label="Order" value={appointment.order_id ? `#${appointment.order_id}` : "Not linked"} />
       </div>
       {appointment.doctor_notes ? <div className="doctor-appointment-note"><span>Doctor remarks</span><p>{appointment.doctor_notes}</p></div> : null}
-      <div className="doctor-appointment-actions">
-      {joinUrl ? <a className="pill-button" href={joinUrl} target="_blank" rel="noreferrer">Join Appointment</a> : null}
-      <a className="pill-button" href={calendarUrl} target="_blank" rel="noreferrer">Calendar file</a>
-      {canConfirm ? <button className="pill-button" type="button" onClick={() => onConfirm(appointment.id)}>Confirm</button> : null}
-      {canComplete ? <button className="pill-button" type="button" onClick={() => onComplete(appointment.id)}>Mark complete</button> : null}
+      <div className="appointment-actions">
+        {joinUrl ? <a className="btn primary small" href={joinUrl} target="_blank" rel="noreferrer">Join appointment</a> : null}
+        <a className="btn secondary small" href={calendarUrl} target="_blank" rel="noreferrer">Calendar file</a>
+        {canConfirm ? <button className="btn secondary small" type="button" onClick={() => onConfirm(appointment.id)}>Confirm</button> : null}
+        {canComplete ? <button className="btn soft small" type="button" onClick={() => onComplete(appointment.id)}>Mark complete</button> : null}
+      </div>
     </div>
-    </article>;
-  }
+  </details>;
+}
 
 function AppointmentCompletionModal({ appointment, products, draft, onChange, onClose, onSubmit, submitting }) {
   const patientName = appointment?.patient?.display_name || `Patient #${appointment?.patient_user_id || ""}`;
@@ -753,7 +1172,7 @@ function MtmQueuePage({ requests, selectedRequestId, onSelectRequest, onApprove,
         <div className="doctor-appointment-detail-head">
           <div>
             <h3>{selectedRequest.patient?.name || "Patient"}</h3>
-            <p>MTM request · {shortDate(selectedRequest.created_at)} · {titleCase(selectedRequest.status)}</p>
+            <p>MTM request - {shortDate(selectedRequest.created_at)} - {titleCase(selectedRequest.status)}</p>
           </div>
           <div className="doctor-appointment-status-group">
             <span className={`status-badge ${selectedRequest.status === "approved" ? "success" : "warning"}`}>{titleCase(selectedRequest.status)}</span>
@@ -799,175 +1218,233 @@ function MtmQueuePage({ requests, selectedRequestId, onSelectRequest, onApprove,
   </section>;
 }
 
-function ReviewsPage({ doctor, summary, reviews }) {
-  return <section className="doctor-reviews-layout">
-    <div className="appointment-surface-card">
-      <div className="doctor-review-summary-head">
-        <div>
-          <span className="customer-section-kicker">Review summary</span>
-          <h2>{doctor?.display_name || "Doctor"}</h2>
-        </div>
-        <div className="doctor-review-average">
-          <strong>{Number(summary.average || 0).toFixed(1)}</strong>
-          <span>{summary.count || 0} reviews</span>
-        </div>
-      </div>
-      {[5, 4, 3, 2, 1].map((rating) => {
-        const count = summary.distribution?.[rating] || 0;
-        const fill = summary.count ? `${(count / summary.count) * 100}%` : "0%";
-        return <div className="review-bar-row" key={rating}>
-          <div className="review-bar-label"><span>{rating}</span><small>★</small></div>
-          <div className="review-bar-track"><span style={{ width: fill }} /></div>
-          <div className="review-bar-text">{count}</div>
-        </div>;
-      })}
-    </div>
-    <div className="review-list-stack">
-      {reviews.length ? reviews.map((review) => <article className="review-entry-card" key={review.id}>
-        <div className="review-entry-head">
-          <div className="review-entry-avatar">{initials(review.patient?.display_name || "Patient")}</div>
-          <div>
-            <div className="card-title">{review.patient?.display_name || "Patient"}</div>
-            <div className="card-desc">{shortDate(review.created_at)}</div>
-          </div>
-          <div className="review-rating-pill">★ {Number(review.rating || 0).toFixed(1)}</div>
-        </div>
-        <p>{review.review_text || "Verified completed appointment."}</p>
-      </article>) : <div className="empty-card compact-empty"><div className="card-title">No patient reviews yet.</div></div>}
-    </div>
-  </section>;
-}
-
-function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange, onSave, saving, feedback }) {
+function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange, onSave, saving }) {
   const timeFrames = useMemo(() => buildAvailabilityTimeFrames(bookingIntervalMinutes), [bookingIntervalMinutes]);
-  return <section className="doctor-availability-shell">
-    <div className="appointment-surface-card">
-      <div className="panel-header">
-        <div>
-          <span className="customer-section-kicker">Availability</span>
-          <h2>Weekly schedule</h2>
-        </div>
-        <button className="pill-button" type="button" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save"}</button>
-      </div>
-      {feedback ? <p className="receipt-feedback">{feedback}</p> : null}
-      <p className="doctor-availability-note">Select the time pills that should stay bookable. Slots follow the admin minimum booking time of {bookingIntervalMinutes} minutes.</p>
-      <div className="doctor-availability-grid">
-        {weekdays.map((day) => {
-          const enabled = Boolean(availabilityDraft[day]?.length);
-          const selectedFrames = new Set(getSelectedAvailabilityFrames(availabilityDraft[day], bookingIntervalMinutes, timeFrames));
-          return <article className="doctor-availability-card" key={day}>
-            <div className="doctor-availability-head">
-              <strong>{titleCase(day)}</strong>
-              <label className="doctor-switch">
-                <input type="checkbox" checked={enabled} onChange={(event) => onChange((current) => toggleAvailabilityDay(current, day, event.target.checked, bookingIntervalMinutes))} />
-                <span />
-              </label>
-            </div>
-            <div className={`doctor-availability-pill-grid ${enabled ? "" : "is-disabled"}`.trim()}>
-              {timeFrames.map((time) => {
-                const active = selectedFrames.has(time);
-                return <button
-                  className={`doctor-availability-pill ${active ? "active" : ""}`.trim()}
-                  key={`${day}-${time}`}
-                  type="button"
-                  disabled={!enabled}
-                  aria-pressed={active}
-                  onClick={() => onChange((current) => toggleAvailabilityFrame(current, day, time, bookingIntervalMinutes))}
-                >
-                  {formatAvailabilityLabel(time)}
-                </button>;
-              })}
-            </div>
-          </article>;
-        })}
-      </div>
-    </div>
-  </section>;
-}
+  const selectedFramesByDay = useMemo(() => {
+    return weekdays.reduce((accumulator, day) => ({
+      ...accumulator,
+      [day]: getSelectedAvailabilityFrames(availabilityDraft[day], bookingIntervalMinutes, timeFrames)
+    }), {});
+  }, [availabilityDraft, bookingIntervalMinutes, timeFrames]);
+  const activeDays = weekdays.filter((day) => selectedFramesByDay[day].length).length;
+  const totalSlots = weekdays.reduce((sum, day) => sum + selectedFramesByDay[day].length, 0);
+  const morningFrames = timeFrames.filter((time) => timeStringToMinutes(time) < 12 * 60);
+  const afternoonFrames = timeFrames.filter((time) => timeStringToMinutes(time) >= 12 * 60 && timeStringToMinutes(time) < 17 * 60);
+  const eveningFrames = timeFrames.filter((time) => timeStringToMinutes(time) >= 17 * 60);
 
-function ProfilePage({ doctor, estimatedRevenue, storeCurrency, onLogout, logoutBusy = false }) {
-  return <section className="panel role-profile">
-    <div className="panel-header">
-      <div>
-        <h2>{doctor?.display_name || "Doctor profile"}</h2>
-        <p>{doctor?.email || "No email available"}</p>
+  function applyPreset(day, preset) {
+    onChange((current) => {
+      const next = normalizeAvailability(current);
+      if (preset === "clear") {
+        next[day] = [];
+        return next;
+      }
+      const frames = preset === "morning" ? morningFrames : preset === "afternoon" ? afternoonFrames : timeFrames;
+      next[day] = buildAvailabilityRangesFromFrames(frames, bookingIntervalMinutes);
+      return next;
+    });
+  }
+
+  function setWeekdaysPreset() {
+    onChange((current) => {
+      const next = normalizeAvailability(current);
+      weekdays.forEach((day) => {
+        next[day] = ["saturday", "sunday"].includes(day) ? [] : buildAvailabilityRangesFromFrames(afternoonFrames.length ? [...morningFrames, ...afternoonFrames] : timeFrames, bookingIntervalMinutes);
+      });
+      return next;
+    });
+  }
+
+  function clearWeekends() {
+    onChange((current) => {
+      const next = normalizeAvailability(current);
+      next.saturday = [];
+      next.sunday = [];
+      return next;
+    });
+  }
+
+  function clearAll() {
+    onChange(() => normalizeAvailability({}));
+  }
+
+  function copyMonday() {
+    onChange((current) => {
+      const next = normalizeAvailability(current);
+      const monday = [...selectedFramesByDay.monday];
+      weekdays.forEach((day) => {
+        if (!["saturday", "sunday"].includes(day)) {
+          next[day] = buildAvailabilityRangesFromFrames(monday, bookingIntervalMinutes);
+        }
+      });
+      return next;
+    });
+  }
+
+  return <section className="page-view active" data-page-panel="availability">
+    <div className="setup-bar" aria-label="Sticky availability setup controls">
+      <div className="setup-meta">
+        <span className="meta-chip"><strong>{activeDays}</strong> active days</span>
+        <span className="meta-chip"><strong>{totalSlots}</strong> live slots</span>
+        <span className="meta-chip"><strong>{bookingIntervalMinutes}</strong> min interval</span>
       </div>
-      <button className="pill-button danger" type="button" onClick={onLogout} disabled={logoutBusy}>
-        {logoutBusy ? <span className="appointment-cta-spinner" aria-label="Logging out" /> : "Logout"}
-      </button>
+      <button className="btn primary" type="button" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save changes"}</button>
+      <span className="save-state">{saving ? "Saving doctor availability" : "Changes are stored when you save"}</span>
     </div>
-    <div className="doctor-profile-metrics">
-      <article>
-        <span>Specialties</span>
-        <strong>{(doctor?.specialties || []).join(", ") || "General practice"}</strong>
-      </article>
-      <article>
-        <span>Languages</span>
-        <strong>{(doctor?.languages || []).join(", ") || "n/a"}</strong>
-      </article>
-      <article>
-        <span>Consultation fee</span>
-        <strong>{money(doctorConsultationFee(doctor), storeCurrency)}</strong>
-      </article>
-      <article>
-        <span>Estimated revenue</span>
-        <strong>{money(estimatedRevenue, storeCurrency)}</strong>
-      </article>
+    <div className="availability-layout">
+      <aside className="summary-column">
+        <section className="section-card pad">
+          <div className="card-title-row">
+            <div>
+              <h2 className="card-title">Weekly summary</h2>
+              <p className="card-copy">A quick view of what patients can book this week.</p>
+            </div>
+            <span className={`status-pill ${activeDays ? "success" : "warning"}`}>{activeDays ? "Live schedule" : "Needs setup"}</span>
+          </div>
+          <div className="stat-grid" aria-label="Weekly availability statistics">
+            <div className="stat"><span className="stat-label">Active days</span><strong className="stat-value">{activeDays}</strong></div>
+            <div className="stat"><span className="stat-label">Bookable slots</span><strong className="stat-value">{totalSlots}</strong></div>
+            <div className="stat"><span className="stat-label">First slot</span><strong className="stat-value">{totalSlots ? formatAvailabilityLabel(timeFrames[0]) : "None"}</strong></div>
+            <div className="stat"><span className="stat-label">Last slot</span><strong className="stat-value">{totalSlots ? formatAvailabilityLabel(timeFrames[timeFrames.length - 1]) : "None"}</strong></div>
+          </div>
+        </section>
+        <section className="section-card pad">
+          <div className="card-title-row">
+            <div>
+              <h3 className="card-title">Weekly actions</h3>
+              <p className="card-copy">Apply fast schedule patterns before adjusting individual days.</p>
+            </div>
+          </div>
+          <div className="action-list">
+            <button className="btn secondary" type="button" onClick={setWeekdaysPreset}>Select weekdays</button>
+            <button className="btn secondary" type="button" onClick={copyMonday}>Copy Monday to weekdays</button>
+            <button className="btn secondary" type="button" onClick={clearWeekends}>Clear weekends</button>
+            <button className="btn danger" type="button" onClick={clearAll}>Clear all</button>
+          </div>
+        </section>
+      </aside>
+      <section className="schedule-column">
+        <div className="schedule-intro">
+          <div>
+            <h2>Daily slot editor</h2>
+            <p>Open a day, turn it on or off, then choose the time slots patients can book.</p>
+          </div>
+        </div>
+        {weekdays.map((day) => {
+          const enabled = Boolean(selectedFramesByDay[day].length);
+          const firstSlot = selectedFramesByDay[day][0];
+          return <details className={`day-card ${enabled ? "" : "closed"}`.trim()} key={day} open>
+            <summary className="day-summary">
+              <div className="day-heading">
+                <div>
+                  <h3 className="day-name">{titleCase(day)}</h3>
+                  <p className="day-note"><span>{selectedFramesByDay[day].length}</span> selected slots - {enabled && firstSlot ? `starts ${formatAvailabilityLabel(firstSlot)}` : "patients cannot book this day"}</p>
+                </div>
+              </div>
+              <div className="summary-right">
+                <label
+                  className="switch day-summary-switch"
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    aria-label={`Allow bookings on ${titleCase(day)}`}
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => onChange((current) => toggleAvailabilityDay(current, day, event.target.checked, bookingIntervalMinutes))}
+                  />
+                  <span className="switch-ui" aria-hidden="true" />
+                </label>
+                <span className={`status-pill ${enabled ? "success" : "warning"}`}>{enabled ? "Bookable" : "Unavailable"}</span>
+                <span className="chevron"><svg className="icon" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
+              </div>
+            </summary>
+            <div className="day-body">
+              <div className="day-controls">
+                
+              
+                <div className="quick-card">
+                  <span className="toggle-title">Quick select</span>
+                  <span className="toggle-copy">Use presets, then adjust individual slots below.</span>
+                  <div className="quick-actions">
+                    <button className="btn soft" type="button" onClick={() => applyPreset(day, "morning")}>Morning</button>
+                    <button className="btn soft" type="button" onClick={() => applyPreset(day, "afternoon")}>Afternoon</button>
+                    <button className="btn soft" type="button" onClick={() => applyPreset(day, "full")}>Full day</button>
+                    <button className="btn soft" type="button" onClick={() => applyPreset(day, "clear")}>Clear</button>
+                  </div>
+                </div>
+              </div>
+              <div className="closed-message">This day is currently unavailable. Turn it back on to allow patients to book selected slots.</div>
+              <div className="day-body-content">
+                {[
+                  ["Morning", "8:00 AM - 11:30 AM", morningFrames],
+                  ["Afternoon", "12:00 PM - 4:30 PM", afternoonFrames],
+                  ["Evening", "5:00 PM - 7:30 PM", eveningFrames]
+                ].map(([label, caption, frames]) => <section className="slot-section" key={`${day}-${label}`}>
+                  <div className="slot-section-head"><h4 className="slot-section-title">{label}</h4><span className="slot-section-caption">{caption}</span></div>
+                  <div className="slot-grid">
+                    {frames.map((time) => {
+                      const active = selectedFramesByDay[day].includes(time);
+                      return <button
+                        className={`slot-chip ${active ? "active" : ""}`.trim()}
+                        key={`${day}-${time}`}
+                        type="button"
+                        disabled={!enabled}
+                        aria-pressed={active}
+                        onClick={() => onChange((current) => toggleAvailabilityFrame(current, day, time, bookingIntervalMinutes))}
+                      >
+                        {formatAvailabilityLabel(time)}
+                      </button>;
+                    })}
+                  </div>
+                </section>)}
+              </div>
+            </div>
+          </details>;
+        })}
+      </section>
     </div>
   </section>;
 }
 
 function DoctorSettingsPage({ doctor, appointments, settings, onSettingsChange, availabilityDraft, onOpenAvailability, estimatedRevenue, storeCurrency }) {
   const activeDays = weekdays.filter((day) => availabilityDraft[day]?.length).length;
-  return <section className="doctor-settings-shell">
-    <div className="appointment-surface-card">
-      <div className="panel-header">
-        <div>
-          <span className="customer-section-kicker">Doctor settings</span>
-          <h2>Booking and notification controls</h2>
+  return <section className="page-view active" data-page-panel="settings">
+    <section className="doctor-settings-grid flow-settings-grid">
+      <article className="profile-details-card">
+        <div className="profile-card-header">
+          <div>
+            <p className="profile-helper">Identity settings</p>
+            <h2 className="profile-card-title">Doctor profile preferences</h2>
+          </div>
         </div>
-        <button className="pill-button" type="button" onClick={onOpenAvailability}>Open schedule</button>
-      </div>
-      <div className="doctor-settings-grid">
-        <article className="doctor-settings-card">
-          <h3>Profile</h3>
-          <label><span>Display name</span><input value={settings.displayName} placeholder={doctor?.display_name || "Doctor"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: event.target.value }))} /></label>
-          <label><span>Specialization</span><input value={settings.specialization} placeholder={(doctor?.specialties || []).join(", ") || "General practice"} onChange={(event) => onSettingsChange((current) => ({ ...current, specialization: event.target.value }))} /></label>
-          <label><span>Bio</span><textarea rows={3} value={settings.bio} onChange={(event) => onSettingsChange((current) => ({ ...current, bio: event.target.value }))} /></label>
-          <label><span>License number</span><input value={settings.licenseNumber} onChange={(event) => onSettingsChange((current) => ({ ...current, licenseNumber: event.target.value }))} /></label>
-        </article>
-
-        <article className="doctor-settings-card">
-          <h3>Consultation controls</h3>
-          <div className="doctor-settings-summary"><span>Consultation fee</span><strong>{money(doctorConsultationFee(doctor), storeCurrency)}</strong></div>
-          <div className="doctor-settings-summary"><span>Working days</span><strong>{activeDays}</strong></div>
-          <SettingsToggle label="Auto-accept appointments" checked={settings.autoAcceptAppointments} onChange={(checked) => onSettingsChange((current) => ({ ...current, autoAcceptAppointments: checked, manualApprovalMode: checked ? false : current.manualApprovalMode }))} />
-          <SettingsToggle label="Manual approval mode" checked={settings.manualApprovalMode} onChange={(checked) => onSettingsChange((current) => ({ ...current, manualApprovalMode: checked, autoAcceptAppointments: checked ? false : current.autoAcceptAppointments }))} />
-          <SettingsToggle label="Emergency availability" checked={settings.emergencyAvailability} onChange={(checked) => onSettingsChange((current) => ({ ...current, emergencyAvailability: checked }))} />
-          <SettingsToggle label="Online consultations" checked={settings.onlineConsultations} onChange={(checked) => onSettingsChange((current) => ({ ...current, onlineConsultations: checked }))} />
-          <label><span>Buffer time between sessions (mins)</span><input type="number" min="0" value={settings.bufferMinutes} onChange={(event) => onSettingsChange((current) => ({ ...current, bufferMinutes: event.target.value }))} /></label>
-          <label><span>Max daily appointments</span><input type="number" min="1" value={settings.maxDailyAppointments} onChange={(event) => onSettingsChange((current) => ({ ...current, maxDailyAppointments: event.target.value }))} /></label>
-          <label><span>Break time notes</span><input value={settings.breakWindow} placeholder="1:00 PM - 2:00 PM" onChange={(event) => onSettingsChange((current) => ({ ...current, breakWindow: event.target.value }))} /></label>
-        </article>
-
-        <article className="doctor-settings-card">
-          <h3>Notifications</h3>
-          <SettingsToggle label="Email notifications" checked={settings.emailNotifications} onChange={(checked) => onSettingsChange((current) => ({ ...current, emailNotifications: checked }))} />
-          <SettingsToggle label="Instant appointment alerts" checked={settings.instantAlerts} onChange={(checked) => onSettingsChange((current) => ({ ...current, instantAlerts: checked }))} />
-          <SettingsToggle label="Reminder notifications" checked={settings.reminderNotifications} onChange={(checked) => onSettingsChange((current) => ({ ...current, reminderNotifications: checked }))} />
-          <SettingsToggle label="Prescription builder visible" checked={settings.prescriptionBuilderEnabled} onChange={(checked) => onSettingsChange((current) => ({ ...current, prescriptionBuilderEnabled: checked }))} />
-          <small>{appointments.filter((item) => item.status === "requested").length} requested consultations currently need review.</small>
-        </article>
-
-        <article className="doctor-settings-card">
-          <h3>Payments</h3>
-          <div className="doctor-settings-summary"><span>Earnings overview</span><strong>{money(estimatedRevenue, storeCurrency)}</strong></div>
-          <div className="doctor-settings-summary"><span>Paid appointments</span><strong>{appointments.filter((item) => item.payment_status === "paid").length}</strong></div>
-          <div className="doctor-settings-summary"><span>Pricing control</span><strong>Admin managed</strong></div>
-          <p className="muted">Consultation pricing is read-only for doctors. The global consultation fee and customer billing remain under admin control.</p>
-        </article>
-      </div>
-    </div>
+        <div className="profile-form-grid">
+          <label className="profile-field"><span className="profile-label">Display name</span><input className="profile-input" value={settings.displayName} placeholder={doctor?.display_name || "Doctor"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: event.target.value }))} /></label>
+          <label className="profile-field"><span className="profile-label">Specialization</span><input className="profile-input" value={settings.specialization} placeholder={(doctor?.specialties || []).join(", ") || "General practice"} onChange={(event) => onSettingsChange((current) => ({ ...current, specialization: event.target.value }))} /></label>
+          <label className="profile-field full"><span className="profile-label">Bio</span><textarea className="profile-textarea" rows={4} value={settings.bio} onChange={(event) => onSettingsChange((current) => ({ ...current, bio: event.target.value }))} /></label>
+          <label className="profile-field"><span className="profile-label">License number</span><input className="profile-input" value={settings.licenseNumber} onChange={(event) => onSettingsChange((current) => ({ ...current, licenseNumber: event.target.value }))} /></label>
+          
+        </div>
+      </article>
+      
+      <article className="profile-details-card">
+        <div className="profile-card-header">
+          <div>
+            <p className="profile-helper">Notifications</p>
+            <h2 className="profile-card-title">Doctor alerts</h2>
+          </div>
+        </div>
+        <div className="flow-settings-stack">
+          <DoctorSettingToggle label="Email notifications" checked={settings.emailNotifications} onChange={(checked) => onSettingsChange((current) => ({ ...current, emailNotifications: checked }))} />
+          <DoctorSettingToggle label="Instant appointment alerts" checked={settings.instantAlerts} onChange={(checked) => onSettingsChange((current) => ({ ...current, instantAlerts: checked }))} />
+          <DoctorSettingToggle label="Reminder notifications" checked={settings.reminderNotifications} onChange={(checked) => onSettingsChange((current) => ({ ...current, reminderNotifications: checked }))} />
+          <DoctorSettingToggle label="Prescription builder visible" checked={settings.prescriptionBuilderEnabled} onChange={(checked) => onSettingsChange((current) => ({ ...current, prescriptionBuilderEnabled: checked }))} />
+          <p className="profile-helper">{appointments.filter((item) => item.status === "requested").length} requested consultations currently need review.</p>
+        </div>
+      </article>
+      
+    </section>
   </section>;
 }
 
@@ -1243,123 +1720,140 @@ function DoctorProfileSkeleton() {
   </section>;
 }
 
-function DoctorOverview({ doctor, dashboard, appointments, orders, patients, reviews, reviewSummary, estimatedRevenue, storeCurrency, onOpenConsultations, onOpenReviews, onOpenProfile }) {
+function DoctorOverview({ doctor, dashboard, appointments, orders, patients, reviews, reviewSummary, estimatedRevenue, storeCurrency, onOpenConsultations }) {
   const upcoming = appointments.filter((item) => ["requested", "confirmed", "awaiting_payment"].includes(item.status)).slice(0, 3);
-  const categories = doctor?.product_categories || [];
   const todayKey = new Date().toISOString().slice(0, 10);
   const appointmentsToday = appointments.filter((item) => String(item.start_at || "").slice(0, 10) === todayKey).length;
-
-  return <>
-    <div className="app-header">
-      <div className="profile-mini">
-        <div className="avatar doctor-one">{initials(doctor?.display_name || "Doctor")}</div>
-        <div>
-          <div className="small muted">Welcome back,</div>
-          <div className="card-title">{doctor?.display_name || "Doctor"}</div>
-        </div>
-      </div>
-      <div className="cluster mobile-icon-cluster">
-        <button className="icon-btn small" type="button" onClick={onOpenReviews}><span>★</span></button>
-      </div>
-    </div>
-
-    <OverviewActions
-      appointmentsTotal={appointments.length}
-      appointmentsToday={appointmentsToday}
-      ordersTotal={orders.length}
-      availableDoctors={Number(dashboard?.available_doctors ?? 4)}
-    />
-
-    <div className="tiny-title doctor-clinical-title">Clinical profile</div>
-    <div className="plan-card purple doctor-clinical-card" role="button" tabIndex={0} onClick={onOpenProfile} onKeyDown={(event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        onOpenProfile();
-      }
-    }}>
-      <div className="mini-person">
-        <div className="avatar doctor-one">{initials(doctor?.display_name || "Doctor")}</div>
-        <div><h4>{doctor?.display_name || "Doctor"}</h4><p>{doctor?.email || "No email available"}</p></div>
-      </div>
-      <h3 className="plan-title">{(doctor?.specialties || []).join(", ") || "General practice"}</h3>
-      <div className="plan-footer">
-        <span className="price">{categories.length} categories</span>
-        <span className="register-pill"><span className="round">★</span>Open profile</span>
-      </div>
-      <div className="doctor-figure female" />
-    </div>
-    <div className="doctor-overview-insights">
-      <article className="doctor-insight-card">
-        <span>Estimated revenue</span>
-        <strong>{money(estimatedRevenue, storeCurrency)}</strong>
-        <small>Paid appointments using the admin-managed global consultation fee.</small>
-      </article>
-      <article className="doctor-insight-card">
-        <span>Rating</span>
-        <strong>{Number(reviewSummary.average || 0).toFixed(1)} / 5</strong>
-        <small>{reviews.length} completed-appointment reviews.</small>
-      </article>
-      <article className="doctor-insight-card">
-        <span>Orders assigned</span>
-        <strong>{orders.length}</strong>
-        <small>{categories.length} linked product categories.</small>
-      </article>
-    </div>
-    <div className="tiny-title">Upcoming consultations</div>
-    <div className="doctor-list">
-      {upcoming.length ? upcoming.map((item, index) => <div className="doctor-card doctor-card-clickable" key={item.id} onClick={onOpenConsultations} role="button" tabIndex={0} onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          onOpenConsultations();
-        }
-      }}>
-        <div className="doctor-head">
-          <div className={`avatar doctor-${["one", "two", "three"][index]}`}>{initials(item.patient?.display_name || "Customer")}</div>
-          <div>
-            <h4>{item.patient?.display_name || "Customer"}</h4>
-            <p>{titleCase(item.type || "consultation")}</p>
+  return <section className="page-view active" data-page-panel="overview">
+    <section className="overview-panel" aria-label="Doctor overview dashboard">
+      <div className="overview-card">
+        <div className="overview-welcome-strip">
+          <div className="overview-profile">
+            <div className="overview-avatar" aria-hidden="true">{initials(doctor?.display_name || "Doctor")}</div>
+            <div>
+              <p className="overview-label">Welcome back,</p>
+              <p className="overview-name">{doctor?.display_name || "Doctor"}</p>
+              <p className="overview-helper">{doctor?.email || "No email linked yet."}</p>
+            </div>
           </div>
-          <span className={`status-badge ${item.payment_status === "paid" ? "success" : "warning"} mobile-push`}>{titleCase(item.payment_status || "pending")}</span>
+          <button className="btn primary" type="button" onClick={onOpenConsultations}>Start consultation</button>
         </div>
-        <div className="info-line"><span className="icon-wrap"><span className="mobile-icon-calendar" /></span>{shortDate(item.start_at, true)}</div>
-      </div>) : <div className="empty-card compact-empty"><div className="card-title">No upcoming consultations</div></div>}
-    </div>
-  </>;
+        <OverviewActions
+          appointmentsTotal={appointments.length}
+          appointmentsToday={appointmentsToday}
+          ordersTotal={orders.length}
+          availableDoctors={Number(dashboard?.available_doctors ?? 0)}
+        />
+        <div className="doctor-flow-grid-two">
+          <section className="overview-section-block" aria-labelledby="overview-consultations-title">
+            <div className="overview-section-head">
+              <div>
+                <h2 className="overview-section-title" id="overview-consultations-title">Upcoming consultations</h2>
+                <p className="overview-helper">The next patient bookings requiring attention.</p>
+              </div>
+              <button className="btn text" type="button" onClick={onOpenConsultations}>View all</button>
+            </div>
+            {upcoming.length ? upcoming.map((item) => <article className="overview-row" key={item.id}>
+              <div className="overview-avatar" aria-hidden="true">{initials(item.patient?.display_name || "Customer")}</div>
+              <div>
+                <p className="overview-patient-name">{item.patient?.display_name || `Patient #${item.patient_user_id}`}</p>
+                <p className="overview-helper">{titleCase(item.type || "consultation")} - {formatDoctorDateTimeCompact(item.start_at)}</p>
+              </div>
+              <div className="overview-row-actions">
+                <span className={`consultation-badge ${item.payment_status === "paid" ? "success" : "warning"}`}>{titleCase(item.payment_status || "pending")}</span>
+                <button className="btn secondary" type="button" onClick={onOpenConsultations}>Open</button>
+              </div>
+            </article>) : <div className="doctor-flow-empty">No upcoming consultations are waiting for action.</div>}
+          </section>
+          
+        </div>
+      </div>
+    </section>
+  </section>;
 }
 
 function OverviewActions({ appointmentsTotal, appointmentsToday, ordersTotal, availableDoctors }) {
-  const valueRefs = useRef([]);
   const cards = [
-    { key: "appointments-total", label: "Appointments", value: appointmentsTotal, icon: "appointments" },
-    { key: "appointments-today", label: "Appointments", value: appointmentsToday, icon: "appointments" },
-    { key: "orders", label: "Orders", value: ordersTotal, icon: "shopping-basket" },
-    { key: "available-doctors", label: "Available Doctors", value: availableDoctors, icon: "doctor" }
+    { key: "appointments-today", label: "Today's consultations", value: appointmentsToday, helper: "Scheduled for today", icon: "appointments" },
+    { key: "appointments-total", label: "Upcoming consultations", value: appointmentsTotal, helper: "Current doctor bookings", icon: "appointments" },
+    { key: "orders", label: "Orders", value: ordersTotal, helper: "Follow-up customer orders", icon: "shopping-basket" },
+    { key: "available-doctors", label: "Available doctors", value: availableDoctors, helper: "Currently visible in the network", icon: "doctor" }
   ];
 
-  useEffect(() => {
-    const fit = () => cards.forEach((card, index) => {
-      fitTextToContainer(valueRefs.current[index], { minFontSize: 14 });
-    });
-    fit();
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
-  }, [appointmentsTotal, appointmentsToday, ordersTotal, availableDoctors]);
-
-  return <section className="overview-actions" aria-label="Overview metrics">
-    {cards.map((card, index) => <article className="overview-action-card" key={card.key}>
-      <div className="overview-action-icon">
-        <OverviewIcon name={card.icon} />
+  return <section className="overview-metric-grid" aria-label="Dashboard summary metrics">
+    {cards.map((card) => <article className="overview-metric-card" key={card.key}>
+      <div className="overview-metric-top">
+        <p className="overview-metric-label">{card.label}</p>
+        <span className="overview-metric-icon" aria-hidden="true"><OverviewIcon name={card.icon} /></span>
       </div>
-      <div className="overview-action-info">
-        <p>{card.label}</p>
-        <strong ref={(node) => { valueRefs.current[index] = node; }} className="overview-action-value">{card.value}</strong>
+      <div>
+        <p className="overview-metric-value">{card.value}</p>
+        <p className="overview-helper">{card.helper}</p>
       </div>
     </article>)}
   </section>;
 }
 
 function OverviewIcon({ name }) {
-  if (name === "shopping-basket") return <HugeiconsIcon icon={ShoppingBasket01Icon} size={20} strokeWidth={1.7} />;
-  if (name === "doctor") return <HugeiconsIcon icon={Doctor01Icon} size={20} strokeWidth={1.7} />;
-  return <HugeiconsIcon icon={Calendar03Icon} size={20} strokeWidth={1.7} />;
+  if (name === "shopping-basket") return <HugeiconsIcon icon={ShoppingCart01Icon} size={18} strokeWidth={1.8} />;
+  if (name === "doctor") return <HugeiconsIcon icon={Doctor01Icon} size={18} strokeWidth={1.8} />;
+  return <HugeiconsIcon icon={Calendar03Icon} size={18} strokeWidth={1.8} />;
+}
+
+function DoctorDetailBox({ label, value }) {
+  return <div className="consultation-detail-box"><p className="consultation-detail-label">{label}</p><p className="consultation-detail-value">{value}</p></div>;
+}
+
+function canDoctorAppointmentComplete(appointment) {
+  return String(appointment?.status || "").toLowerCase() === "confirmed"
+    && Boolean(appointment?.doctor_checked_in_at)
+    && Boolean(appointment?.patient_checked_in_at)
+    && !appointment?.missed_attendance_at;
+}
+
+function DoctorSettingToggle({ label, checked, onChange }) {
+  return <div className="doctor-setting-toggle">
+    <span>{label}</span>
+    <label className="switch">
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <span className="switch-ui" aria-hidden="true" />
+    </label>
+  </div>;
+}
+
+function formatDoctorDateLong(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Not available";
+  }
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatDoctorTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Not available";
+  }
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function formatDoctorDateTimeCompact(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Not available";
+  }
+  return `${formatDoctorDateLong(date)}, ${formatDoctorTime(date)}`;
+}
+
+function formatDoctorAppointmentWindow(startAt, endAt) {
+  if (!startAt) {
+    return "Not available";
+  }
+  const startLabel = formatDoctorDateTimeCompact(startAt);
+  if (!endAt) {
+    return startLabel;
+  }
+  return `${startLabel} - ${formatDoctorTime(endAt)}`;
 }
 
 function initials(value) {
@@ -1521,22 +2015,11 @@ function formatAvailabilityLabel(time) {
   return `${normalizedHours}:${String(minutes).padStart(2, "0")} ${period}`;
 }
 
-function SettingsToggle({ label, checked, onChange }) {
-  return <label className="customer-toggle-row">
-    <span>{label}</span>
-    <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
-  </label>;
-}
-
 function renderDoctorNavIcon(page) {
   if (page === "overview") return <HugeiconsIcon icon={Home01Icon} size={20} strokeWidth={1.7} />;
   if (page === "consultations") return <HugeiconsIcon icon={Calendar03Icon} size={20} strokeWidth={1.7} />;
-  if (page === "reviews") return <HugeiconsIcon icon={StarIcon} size={20} strokeWidth={1.7} />;
   if (page === "availability") return <HugeiconsIcon icon={AddCircleIcon} size={20} strokeWidth={1.7} />;
   if (page === "settings") return <HugeiconsIcon icon={Settings01Icon} size={20} strokeWidth={1.7} />;
-  if (page === "orders") return <HugeiconsIcon icon={ShoppingCart01Icon} size={20} strokeWidth={1.7} />;
-  if (page === "products") return <HugeiconsIcon icon={Package01Icon} size={20} strokeWidth={1.7} />;
-  if (page === "profile") return <HugeiconsIcon icon={Doctor01Icon} size={20} strokeWidth={1.7} />;
   return null;
 }
 
@@ -1621,64 +2104,649 @@ export function RoleShell({
   showHeader = true,
   topContent = null,
   pageLabels = {},
-  renderNavIcon = null
+  renderNavIcon = null,
+  onLogout = null,
+  logoutBusy = false
 }) {
   const roleLabel = title.replace(/^Nevari\s+/i, "");
   const visibleNavPages = navPages;
   const labelFor = (page) => pageLabels[page] || titleCase(page);
   const [sideNavOpen, setSideNavOpen] = useState(false);
-  return <div className="desktop-dashboard-page role-shell-exact doctor-mobile-shell">
-    <section className="desktop-dashboard-shell">
+  return <div className="doctor-flow-shell">
+    <section className="app-shell">
       {sideNavOpen ? <button className="dashboard-side-nav-backdrop" type="button" aria-label="Close navigation" onClick={() => setSideNavOpen(false)} /> : null}
-      <aside className={`dashboard-side-nav ${sideNavOpen ? "is-open" : ""}`} aria-label={`${roleLabel} sections`}>
-        <div className="dashboard-side-nav-header">
-          <img className="dashboard-side-nav-mark" src="/ne.webp" alt="" aria-hidden="true" />
-          <div>
-            <strong>Nevari Health</strong>
-            <span>{roleLabel} Dashboard</span>
+      <aside className={`sidebar dashboard-side-nav ${sideNavOpen ? "is-open" : ""}`} aria-label={`${roleLabel} sections`}>
+        <div>
+          <div className="brand">
+            <div className="brand-mark">
+              <Image src="/ne.webp" alt="Nevari Health" width={48} height={48} />
+            </div>
+            <div>
+              <p className="brand-title">Nevari Health</p>
+              <span className="brand-subtitle">{roleLabel} Dashboard</span>
+            </div>
           </div>
-        </div>
-        <p className="dashboard-side-nav-label">Navigation</p>
-        <div className="dashboard-side-nav-list">
-          {navPages.map((item, index) => <button className={`dashboard-side-nav-item ${active === item ? "active" : ""}`} key={item} type="button" onClick={() => {
-            onPageChange(item);
-            setSideNavOpen(false);
-          }}>
-            <span className="dashboard-side-nav-icon" aria-hidden="true">
-              {renderNavIcon ? renderNavIcon(item, index) : <span className={`mobile-nav-glyph glyph-${(index % 4) + 1}`} />}
+          <p className="nav-label">Navigation</p>
+          <div className="nav-list">
+            {navPages.map((item, index) => <button className={`nav-item ${active === item ? "active" : ""}`} key={item} type="button" onClick={() => {
+              onPageChange(item);
+              setSideNavOpen(false);
+            }}>
+              <span className="nav-icon" aria-hidden="true">
+                {renderNavIcon ? renderNavIcon(item, index) : <span className={`mobile-nav-glyph glyph-${(index % 4) + 1}`} />}
+              </span>
+              <span>{labelFor(item)}</span>
+            </button>)}
+          </div>
+          {onLogout ? <button className="nav-item nav-logout" type="button" onClick={onLogout} disabled={logoutBusy}>
+            <span className="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M15 17.5 20 12l-5-5.5M20 12H9m5 7H7a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </span>
-            <span>{labelFor(item)}</span>
-          </button>)}
+            <span>{logoutBusy ? "Logging out..." : "Logout"}</span>
+          </button> : null}
         </div>
       </aside>
-      <div className="dashboard-tablet-toolbar">
-        <button className="dashboard-menu-button" type="button" aria-label="Open navigation" onClick={() => setSideNavOpen(true)}>
-          <span />
-          <span />
-          <span />
-        </button>
-      </div>
-      {topContent ? <div className="desktop-dashboard-top-content">{topContent}</div> : null}
-      {showHeader ? <header className="desktop-dashboard-header">
-        <div>
-          <p className="desktop-dashboard-kicker">{roleLabel}</p>
-          <h1 className="desktop-dashboard-title">{labelFor(active)}</h1>
+      <main className="main">
+        <div className="dashboard-tablet-toolbar">
+          <button className="dashboard-menu-button" type="button" aria-label="Open navigation" onClick={() => setSideNavOpen(true)}>
+            <span />
+            <span />
+            <span />
+          </button>
         </div>
-        {headerAction}
-      </header> : null}
-      <div className="desktop-dashboard-screen">
-        <div className="screen-scroll">
+        {topContent}
+        
+        <div className="page-body">
           {children}
         </div>
-      </div>
-      <nav className="bottom-nav desktop-bottom-nav" aria-label={`${roleLabel} dashboard navigation`}>
-        {visibleNavPages.map((item, index) => <button className={`nav-item ${active === item ? "active green-active" : ""}`} key={item} type="button" onClick={() => onPageChange(item)}>
-          <span className="dashboard-mobile-nav-icon" aria-hidden="true">
-            {renderNavIcon ? renderNavIcon(item, index) : <span className={`mobile-nav-glyph glyph-${index + 1}`} />}
-          </span>
-          {active === item ? labelFor(item) : null}
-        </button>)}
-      </nav>
+        <nav className="bottom-nav desktop-bottom-nav" aria-label={`${roleLabel} dashboard navigation`}>
+          {visibleNavPages.map((item, index) => <button className={`nav-item ${active === item ? "active" : ""}`} key={item} type="button" onClick={() => onPageChange(item)}>
+            <span className="nav-icon" aria-hidden="true">
+              {renderNavIcon ? renderNavIcon(item, index) : <span className={`mobile-nav-glyph glyph-${index + 1}`} />}
+            </span>
+            {active === item ? labelFor(item) : null}
+          </button>)}
+        </nav>
+      </main>
     </section>
   </div>;
+}
+
+function DoctorMobileShell({
+  doctor,
+  pages: navPages,
+  active,
+  onPageChange,
+  children,
+  pageLabels = {},
+  renderNavIcon = null,
+  onLogout = null,
+  logoutBusy = false,
+  searchTerm = "",
+  onSearchTermChange
+}) {
+  const [sideNavOpen, setSideNavOpen] = useState(false);
+  const doctorName = String(doctor?.display_name || "Doctor").trim();
+  const welcomeName = doctorName.split(/\s+/).filter(Boolean)[0] || doctorName;
+
+  return <div className="customer-mobile-app doctor-mobile-shell">
+    <div className={`customer-mobile-drawer-layer ${sideNavOpen ? "open" : ""}`.trim()}>
+      <button className="customer-mobile-drawer-backdrop" type="button" aria-label="Close navigation" onClick={() => setSideNavOpen(false)} />
+      <aside className="customer-mobile-drawer doctor-mobile-drawer" aria-label="Doctor navigation">
+        <div className="doctor-mobile-brand customer-mobile-drawer-brand">
+          <div className="doctor-mobile-brand-mark">
+            <Image src="/ne.webp" alt="Nevari Health" width={44} height={44} />
+          </div>
+          <div>
+            <p className="doctor-mobile-brand-title">Nevari Health</p>
+            <p className="doctor-mobile-brand-copy">Doctor Dashboard</p>
+          </div>
+        </div>
+        <nav className="customer-mobile-drawer-nav doctor-mobile-nav-list" aria-label="Doctor menu">
+          {navPages.map((item, index) => <button
+            className={`customer-mobile-drawer-item doctor-mobile-nav-item ${active === item ? "active" : ""}`.trim()}
+            key={item}
+            type="button"
+            onClick={() => {
+              onPageChange(item);
+              setSideNavOpen(false);
+            }}
+          >
+            <span className="doctor-mobile-nav-icon" aria-hidden="true">{renderNavIcon ? renderNavIcon(item, index) : null}</span>
+            <span>{pageLabels[item] || titleCase(item)}</span>
+          </button>)}
+          {onLogout ? <button className="customer-mobile-drawer-item doctor-mobile-nav-item logout" type="button" onClick={() => {
+            setSideNavOpen(false);
+            onLogout();
+          }} disabled={logoutBusy}>
+            <span className="doctor-mobile-nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M15 17.5 20 12l-5-5.5M20 12H9m5 7H7a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </span>
+            <span>{logoutBusy ? "Logging out..." : "Logout"}</span>
+          </button> : null}
+        </nav>
+        <div className="doctor-mobile-drawer-footer customer-mobile-drawer-footer">
+          <div className="doctor-mobile-drawer-profile customer-mobile-drawer-profile">
+            <div className="customer-mobile-avatar">{initials(doctorName || "Doctor")}</div>
+            <div>
+              <strong>{doctorName || "Doctor"}</strong>
+              <span>{doctor?.email || "Doctor account"}</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+    <header className="customer-mobile-header doctor-mobile-header">
+      <div className="doctor-mobile-header-inner">
+        <label className="doctor-mobile-search customer-mobile-searchbar" aria-label="Search doctor dashboard">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10.8 18.1a7.3 7.3 0 1 1 0-14.6 7.3 7.3 0 0 1 0 14.6Zm5.3-2 4.4 4.4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" /></svg>
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(event) => onSearchTermChange?.(event.target.value)}
+            placeholder="Search here for orders, appointments etc"
+          />
+        </label>
+        <div className="doctor-mobile-header-row customer-mobile-greeting-row">
+          <button className="doctor-mobile-menu-button customer-mobile-icon-button" type="button" aria-label="Open navigation" onClick={() => setSideNavOpen(true)}>
+            <span />
+            <span />
+            <span />
+          </button>
+          <p className="doctor-mobile-welcome">Welcome back, {welcomeName}</p>
+        </div>
+      </div>
+    </header>
+    <div className="doctor-mobile-header-spacer customer-mobile-header-spacer is-overview" aria-hidden="true" />
+    <main className="customer-mobile-frame doctor-mobile-content">{children}</main>
+  </div>;
+}
+
+function DoctorMobilePageSection({ title, children, action = null }) {
+  return <section className="doctor-mobile-page-section">
+    <div className="doctor-mobile-page-head">
+      <h1 className="doctor-mobile-page-title">{title}</h1>
+      {action}
+    </div>
+    {children}
+  </section>;
+}
+
+function DoctorMobileOverview({ doctor, dashboard, appointments, orders, estimatedRevenue, storeCurrency, searchTerm, onOpenConsultations }) {
+  const [detailAppointment, setDetailAppointment] = useState(null);
+  const filteredAppointments = useMemo(() => {
+    const query = String(searchTerm || "").trim().toLowerCase();
+    const sorted = sortDoctorAppointments(appointments);
+    if (!query) {
+      return sorted.slice(0, 4);
+    }
+    return sorted.filter((appointment) => doctorAppointmentMatchesSearch(appointment, query)).slice(0, 4);
+  }, [appointments, searchTerm]);
+
+  const metrics = [
+    {
+      key: "spent",
+      label: "Spent this month",
+      value: money(estimatedRevenue, storeCurrency),
+      icon: <HugeiconsIcon icon={ShoppingCart01Icon} size={18} strokeWidth={1.8} />
+    },
+    {
+      key: "appointments",
+      label: "Appointments",
+      value: appointments.length,
+      icon: <HugeiconsIcon icon={Calendar03Icon} size={18} strokeWidth={1.8} />
+    },
+    {
+      key: "orders",
+      label: "Orders",
+      value: orders.length,
+      icon: <HugeiconsIcon icon={ShoppingCart01Icon} size={18} strokeWidth={1.8} />
+    },
+    {
+      key: "available-doctors",
+      label: "Available Doctors",
+      value: Number(dashboard?.available_doctors ?? 0),
+      icon: <HugeiconsIcon icon={Doctor01Icon} size={18} strokeWidth={1.8} />
+    }
+  ];
+
+  return <div className="doctor-mobile-page doctor-mobile-overview">
+    <DoctorMobilePageSection title="Overview">
+      <div className="doctor-mobile-metric-grid">
+        {metrics.map((metric) => <article className="doctor-mobile-metric-card" key={metric.key}>
+          <span className="doctor-mobile-metric-icon" aria-hidden="true">{metric.icon}</span>
+          <span className="doctor-mobile-metric-label">{metric.label}</span>
+          <strong className="doctor-mobile-metric-value">{metric.value}</strong>
+        </article>)}
+      </div>
+    </DoctorMobilePageSection>
+    <DoctorMobilePageSection
+      title="Appointments"
+      action={<button className="doctor-mobile-inline-link" type="button" onClick={onOpenConsultations}>View all</button>}
+    >
+      <div className="doctor-mobile-appointment-listing">
+        {filteredAppointments.length ? filteredAppointments.map((appointment) => {
+          const statusTone = mobileDoctorStatusTone(appointment);
+          const title = appointment.reason || appointment.patient?.display_name || `Appointment #${appointment.id}`;
+          return <article
+            className="doctor-mobile-overview-item"
+            key={appointment.id}
+            role="button"
+            tabIndex={0}
+            aria-label={`Open appointment details for ${appointment.patient?.display_name || `Appointment #${appointment.id}`}`}
+            onClick={() => setDetailAppointment({ ...appointment, detailStatusMode: "single" })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setDetailAppointment({ ...appointment, detailStatusMode: "single" });
+              }
+            }}
+          >
+            <span className="doctor-mobile-overview-icon" aria-hidden="true">
+              <HugeiconsIcon icon={Calendar03Icon} size={18} strokeWidth={1.8} />
+            </span>
+            <div className="doctor-mobile-overview-copy">
+              <strong>{title}</strong>
+              <span>{formatDoctorDateTimeCompact(appointment.start_at)}</span>
+              <span>{appointment.patient?.display_name || doctor?.display_name || "Patient record"}</span>
+            </div>
+            <span className={`doctor-mobile-status-pill ${statusTone}`.trim()}>{mobileDoctorStatusLabel(appointment)}</span>
+          </article>;
+        }) : <div className="doctor-mobile-empty-card">No appointments match the current search.</div>}
+      </div>
+    </DoctorMobilePageSection>
+    {detailAppointment ? <DoctorAppointmentDetailsModal
+      appointment={detailAppointment}
+      onConfirm={null}
+      onComplete={null}
+      onClose={() => setDetailAppointment(null)}
+    /> : null}
+  </div>;
+}
+
+function DoctorMobileConsultationsPage({ appointments, searchTerm, onComplete }) {
+  const [filter, setFilter] = useState("all");
+  const [pageNumber, setPageNumber] = useState(1);
+  const [detailAppointment, setDetailAppointment] = useState(null);
+  const sortedAppointments = useMemo(() => sortDoctorAppointments(appointments), [appointments]);
+  const filteredAppointments = useMemo(
+    () => filterDoctorAppointments(sortedAppointments, searchTerm, filter),
+    [filter, searchTerm, sortedAppointments]
+  );
+  const pageSize = 20;
+  const pageCount = Math.max(1, Math.ceil(filteredAppointments.length / pageSize));
+  const paginatedAppointments = useMemo(() => {
+    const startIndex = (pageNumber - 1) * pageSize;
+    return filteredAppointments.slice(startIndex, startIndex + pageSize);
+  }, [filteredAppointments, pageNumber]);
+
+  useEffect(() => {
+    setPageNumber(1);
+  }, [filter, searchTerm]);
+
+  useEffect(() => {
+    if (pageNumber > pageCount) {
+      setPageNumber(pageCount);
+    }
+  }, [pageCount, pageNumber]);
+
+  return <div className="doctor-mobile-page doctor-mobile-consultations">
+    <DoctorMobilePageSection title="Appointments">
+      <div className="doctor-mobile-filter-strip">
+        {[
+          ["all", "All"],
+          ["confirmed", "Confirmed"],
+          ["pending", "Pending"],
+          ["payment-issue", "Payment issue"]
+        ].map(([value, label]) => <button
+          className={`doctor-mobile-filter-pill ${filter === value ? "active" : ""}`.trim()}
+          key={value}
+          type="button"
+          onClick={() => setFilter(value)}
+        >
+          {label}
+        </button>)}
+      </div>
+      <div className="doctor-mobile-appointment-listing">
+        {paginatedAppointments.length ? paginatedAppointments.map((appointment) => {
+          const joinUrl = resolveDoctorDashboardJoinUrl(appointment);
+          const canComplete = canDoctorAppointmentComplete(appointment);
+          return <article
+            className="doctor-mobile-consultation-card"
+            key={appointment.id}
+            role="button"
+            tabIndex={0}
+            aria-label={`Open appointment details for ${appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`}`}
+            onClick={() => setDetailAppointment(appointment)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setDetailAppointment(appointment);
+              }
+            }}
+          >
+            <div className="doctor-mobile-consultation-top">
+              <div>
+                <strong>{appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`}</strong>
+                <span>{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</span>
+                <span>{appointment.reason || titleCase(appointment.type || "consultation")}</span>
+              </div>
+              <span className={`doctor-mobile-status-pill ${mobileDoctorStatusTone(appointment)}`.trim()}>{mobileDoctorStatusLabel(appointment)}</span>
+            </div>
+            <div className="doctor-mobile-consultation-meta">
+              <span>{appointment.patient?.email || "No email available"}</span>
+              <span>{appointment.timezone || "UTC"}</span>
+            </div>
+            <div className="doctor-mobile-card-actions">
+              {joinUrl ? <a className="doctor-mobile-action-button primary" href={joinUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Join now</a> : null}
+              {canComplete ? <button className="doctor-mobile-action-button secondary" type="button" onClick={(event) => {
+                event.stopPropagation();
+                onComplete(appointment.id);
+              }}>Complete</button> : null}
+            </div>
+          </article>;
+        }) : <div className="doctor-mobile-empty-card">No appointments match the active filters.</div>}
+      </div>
+      {pageCount > 1 ? <DoctorAppointmentsPagination page={pageNumber} pageCount={pageCount} onPageChange={setPageNumber} /> : null}
+    </DoctorMobilePageSection>
+    {detailAppointment ? <DoctorAppointmentDetailsModal
+      appointment={{ ...detailAppointment, detailStatusMode: "single" }}
+      onConfirm={null}
+      onComplete={onComplete}
+      onClose={() => setDetailAppointment(null)}
+    /> : null}
+  </div>;
+}
+
+function DoctorMobileAvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange, onSave, saving }) {
+  const timeFrames = useMemo(() => buildAvailabilityTimeFrames(bookingIntervalMinutes), [bookingIntervalMinutes]);
+  const selectedFramesByDay = useMemo(() => weekdays.reduce((accumulator, day) => ({
+    ...accumulator,
+    [day]: getSelectedAvailabilityFrames(availabilityDraft[day], bookingIntervalMinutes, timeFrames)
+  }), {}), [availabilityDraft, bookingIntervalMinutes, timeFrames]);
+  const activeDays = weekdays.filter((day) => selectedFramesByDay[day].length).length;
+  const totalSlots = weekdays.reduce((sum, day) => sum + selectedFramesByDay[day].length, 0);
+  const morningFrames = timeFrames.filter((time) => timeStringToMinutes(time) < 12 * 60);
+  const afternoonFrames = timeFrames.filter((time) => timeStringToMinutes(time) >= 12 * 60 && timeStringToMinutes(time) < 17 * 60);
+  const eveningFrames = timeFrames.filter((time) => timeStringToMinutes(time) >= 17 * 60);
+
+  function applyPreset(day, preset) {
+    onChange((current) => {
+      const next = normalizeAvailability(current);
+      if (preset === "clear") {
+        next[day] = [];
+        return next;
+      }
+      const frames = preset === "morning" ? morningFrames : preset === "afternoon" ? afternoonFrames : timeFrames;
+      next[day] = buildAvailabilityRangesFromFrames(frames, bookingIntervalMinutes);
+      return next;
+    });
+  }
+
+  function setWeekdaysPreset() {
+    onChange((current) => {
+      const next = normalizeAvailability(current);
+      weekdays.forEach((day) => {
+        next[day] = ["saturday", "sunday"].includes(day) ? [] : buildAvailabilityRangesFromFrames(afternoonFrames.length ? [...morningFrames, ...afternoonFrames] : timeFrames, bookingIntervalMinutes);
+      });
+      return next;
+    });
+  }
+
+  function clearWeekends() {
+    onChange((current) => {
+      const next = normalizeAvailability(current);
+      next.saturday = [];
+      next.sunday = [];
+      return next;
+    });
+  }
+
+  function clearAll() {
+    onChange(() => normalizeAvailability({}));
+  }
+
+  function copyMonday() {
+    onChange((current) => {
+      const next = normalizeAvailability(current);
+      const monday = [...selectedFramesByDay.monday];
+      weekdays.forEach((day) => {
+        if (!["saturday", "sunday"].includes(day)) {
+          next[day] = buildAvailabilityRangesFromFrames(monday, bookingIntervalMinutes);
+        }
+      });
+      return next;
+    });
+  }
+
+  return <div className="doctor-mobile-page doctor-mobile-availability">
+    <DoctorMobilePageSection
+      title="Availability"
+      action={<button className="doctor-mobile-save-button" type="button" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save"}</button>}
+    >
+      <div className="doctor-mobile-metric-grid compact">
+        <article className="doctor-mobile-metric-card"><span className="doctor-mobile-metric-label">Active days</span><strong className="doctor-mobile-metric-value">{activeDays}</strong></article>
+        <article className="doctor-mobile-metric-card"><span className="doctor-mobile-metric-label">Live slots</span><strong className="doctor-mobile-metric-value">{totalSlots}</strong></article>
+      </div>
+      <div className="doctor-mobile-card-stack">
+        <article className="doctor-mobile-surface-card">
+          <div className="doctor-mobile-surface-head">
+            <h2>Weekly actions</h2>
+            <p>Apply schedule presets, then fine-tune each day below.</p>
+          </div>
+          <div className="doctor-mobile-stacked-actions">
+            <button className="doctor-mobile-action-button secondary" type="button" onClick={setWeekdaysPreset}>Select weekdays</button>
+            <button className="doctor-mobile-action-button secondary" type="button" onClick={copyMonday}>Copy Monday to weekdays</button>
+            <button className="doctor-mobile-action-button secondary" type="button" onClick={clearWeekends}>Clear weekends</button>
+            <button className="doctor-mobile-action-button danger" type="button" onClick={clearAll}>Clear all</button>
+          </div>
+        </article>
+        {weekdays.map((day) => {
+          const enabled = Boolean(selectedFramesByDay[day].length);
+          return <details className={`doctor-mobile-day-card ${enabled ? "" : "closed"}`.trim()} key={day}>
+            <summary className="doctor-mobile-day-summary">
+              <div>
+                <strong>{titleCase(day)}</strong>
+                <span>{selectedFramesByDay[day].length} slots selected</span>
+              </div>
+              <div className="doctor-mobile-day-controls">
+                <label className="switch" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    aria-label={`Allow bookings on ${titleCase(day)}`}
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => onChange((current) => toggleAvailabilityDay(current, day, event.target.checked, bookingIntervalMinutes))}
+                  />
+                  <span className="switch-ui" aria-hidden="true" />
+                </label>
+                <span className={`doctor-mobile-status-pill ${enabled ? "success" : "warning"}`.trim()}>{enabled ? "Bookable" : "Closed"}</span>
+              </div>
+            </summary>
+            <div className="doctor-mobile-day-body">
+              <div className="doctor-mobile-filter-strip schedule">
+                <button className="doctor-mobile-filter-pill" type="button" onClick={() => applyPreset(day, "morning")}>Morning</button>
+                <button className="doctor-mobile-filter-pill" type="button" onClick={() => applyPreset(day, "afternoon")}>Afternoon</button>
+                <button className="doctor-mobile-filter-pill" type="button" onClick={() => applyPreset(day, "full")}>Full day</button>
+                <button className="doctor-mobile-filter-pill" type="button" onClick={() => applyPreset(day, "clear")}>Clear</button>
+              </div>
+              {[["Morning", morningFrames], ["Afternoon", afternoonFrames], ["Evening", eveningFrames]].map(([label, frames]) => <section className="doctor-mobile-slot-group" key={`${day}-${label}`}>
+                <div className="doctor-mobile-slot-head">
+                  <strong>{label}</strong>
+                </div>
+                <div className="doctor-mobile-slot-grid">
+                  {frames.map((time) => {
+                    const active = selectedFramesByDay[day].includes(time);
+                    return <button
+                      className={`doctor-mobile-slot-chip ${active ? "active" : ""}`.trim()}
+                      key={`${day}-${time}`}
+                      type="button"
+                      disabled={!enabled}
+                      onClick={() => onChange((current) => toggleAvailabilityFrame(current, day, time, bookingIntervalMinutes))}
+                    >
+                      {formatAvailabilityLabel(time)}
+                    </button>;
+                  })}
+                </div>
+              </section>)}
+            </div>
+          </details>;
+        })}
+      </div>
+    </DoctorMobilePageSection>
+  </div>;
+}
+
+function DoctorMobileSettingsPage({ doctor, appointments, settings, onSettingsChange, availabilityDraft, onOpenAvailability, estimatedRevenue, storeCurrency }) {
+  const activeDays = weekdays.filter((day) => availabilityDraft[day]?.length).length;
+
+  return <div className="doctor-mobile-page doctor-mobile-settings">
+    <DoctorMobilePageSection title="Settings">
+      <div className="doctor-mobile-card-stack">
+        <article className="doctor-mobile-surface-card">
+          <div className="doctor-mobile-surface-head">
+            <h2>Profile preferences</h2>
+            <p>Update the doctor information shown across the dashboard.</p>
+          </div>
+          <div className="doctor-mobile-form-stack">
+            <label className="doctor-mobile-form-field"><span>Display name</span><input value={settings.displayName} placeholder={doctor?.display_name || "Doctor"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: event.target.value }))} /></label>
+            <label className="doctor-mobile-form-field"><span>Specialization</span><input value={settings.specialization} placeholder={(doctor?.specialties || []).join(", ") || "General practice"} onChange={(event) => onSettingsChange((current) => ({ ...current, specialization: event.target.value }))} /></label>
+            <label className="doctor-mobile-form-field"><span>License number</span><input value={settings.licenseNumber} onChange={(event) => onSettingsChange((current) => ({ ...current, licenseNumber: event.target.value }))} /></label>
+            <label className="doctor-mobile-form-field"><span>Bio</span><textarea rows={4} value={settings.bio} onChange={(event) => onSettingsChange((current) => ({ ...current, bio: event.target.value }))} /></label>
+          </div>
+        </article>
+        <article className="doctor-mobile-surface-card">
+          <div className="doctor-mobile-surface-head">
+            <h2>Activity snapshot</h2>
+            <p>Use the current booking totals to keep your profile operational.</p>
+          </div>
+          <div className="doctor-mobile-metric-grid compact">
+            <article className="doctor-mobile-metric-card"><span className="doctor-mobile-metric-label">Revenue</span><strong className="doctor-mobile-metric-value">{money(estimatedRevenue, storeCurrency)}</strong></article>
+            <article className="doctor-mobile-metric-card"><span className="doctor-mobile-metric-label">Active days</span><strong className="doctor-mobile-metric-value">{activeDays}</strong></article>
+          </div>
+          <button className="doctor-mobile-action-button secondary wide" type="button" onClick={onOpenAvailability}>Open availability</button>
+        </article>
+        <article className="doctor-mobile-surface-card">
+          <div className="doctor-mobile-surface-head">
+            <h2>Notifications</h2>
+            <p>{appointments.filter((item) => item.status === "requested").length} requested consultations currently need review.</p>
+          </div>
+          <div className="doctor-mobile-toggle-stack">
+            <DoctorSettingToggle label="Email notifications" checked={settings.emailNotifications} onChange={(checked) => onSettingsChange((current) => ({ ...current, emailNotifications: checked }))} />
+            <DoctorSettingToggle label="Instant appointment alerts" checked={settings.instantAlerts} onChange={(checked) => onSettingsChange((current) => ({ ...current, instantAlerts: checked }))} />
+            <DoctorSettingToggle label="Reminder notifications" checked={settings.reminderNotifications} onChange={(checked) => onSettingsChange((current) => ({ ...current, reminderNotifications: checked }))} />
+            <DoctorSettingToggle label="Prescription builder visible" checked={settings.prescriptionBuilderEnabled} onChange={(checked) => onSettingsChange((current) => ({ ...current, prescriptionBuilderEnabled: checked }))} />
+          </div>
+        </article>
+      </div>
+    </DoctorMobilePageSection>
+  </div>;
+}
+
+function sortDoctorAppointments(appointments) {
+  return [...appointments].sort((left, right) => {
+    const rightStart = new Date(right?.start_at || 0).getTime();
+    const leftStart = new Date(left?.start_at || 0).getTime();
+    if (rightStart !== leftStart) {
+      return rightStart - leftStart;
+    }
+    const rightCreated = new Date(right?.created_at || 0).getTime();
+    const leftCreated = new Date(left?.created_at || 0).getTime();
+    return rightCreated - leftCreated;
+  });
+}
+
+function resolveDoctorDashboardJoinUrl(appointment) {
+  const candidates = [
+    appointment?.join_url,
+    appointment?.meet_link,
+    appointment?.google_meet_link,
+    appointment?.meeting_link,
+    appointment?.meeting_url
+  ].filter((value) => typeof value === "string" && /^https?:\/\//i.test(value));
+
+  const upstreamUrl = candidates[0] || "";
+  if (!upstreamUrl) {
+    return "";
+  }
+  if (typeof window === "undefined") {
+    return upstreamUrl;
+  }
+
+  const joinToken = extractDoctorJoinToken(upstreamUrl);
+  if (!joinToken) {
+    return upstreamUrl;
+  }
+
+  return `${window.location.origin.replace(/\/+$/, "")}/appointment/join/${encodeURIComponent(joinToken)}`;
+}
+
+function extractDoctorJoinToken(url) {
+  try {
+    const parsed = new URL(String(url || "").trim());
+    const pathMatch = parsed.pathname.match(/\/appointment\/join\/([^/?#]+)/i);
+    if (pathMatch?.[1]) {
+      return decodeURIComponent(pathMatch[1]);
+    }
+    const fallbackToken = parsed.searchParams.get("token") || parsed.searchParams.get("join_token");
+    return String(fallbackToken || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function doctorAppointmentMatchesSearch(appointment, query) {
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  if (!normalizedQuery) {
+    return true;
+  }
+  return [
+    appointment?.patient?.display_name,
+    appointment?.patient?.email,
+    appointment?.reason,
+    appointment?.payment_status,
+    appointment?.status,
+    appointment?.type
+  ].some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
+}
+
+function filterDoctorAppointments(sortedAppointments, searchTerm, filter) {
+  const query = String(searchTerm || "").trim().toLowerCase();
+  return sortedAppointments.filter((appointment) => {
+    const paymentStatus = String(appointment.payment_status || "").toLowerCase();
+    const bookingStatus = String(appointment.status || "").toLowerCase();
+    if (!doctorAppointmentMatchesSearch(appointment, query)) {
+      return false;
+    }
+    if (filter === "confirmed") {
+      return bookingStatus === "confirmed";
+    }
+    if (filter === "pending") {
+      return ["requested", "pending_review", "awaiting_payment"].includes(bookingStatus) || paymentStatus !== "paid";
+    }
+    if (filter === "payment-issue") {
+      return ["failed", "unpaid", "cancelled"].includes(paymentStatus) || bookingStatus === "awaiting_payment";
+    }
+    return true;
+  });
+}
+
+function mobileDoctorStatusLabel(appointment) {
+  const paymentStatus = String(appointment?.payment_status || "").toLowerCase();
+  if (["failed", "unpaid", "cancelled"].includes(paymentStatus)) {
+    return titleCase(paymentStatus);
+  }
+  return titleCase(appointment?.status || appointment?.payment_status || "pending");
+}
+
+function mobileDoctorStatusTone(appointment) {
+  const paymentStatus = String(appointment?.payment_status || "").toLowerCase();
+  const bookingStatus = String(appointment?.status || "").toLowerCase();
+  if (["failed", "unpaid", "cancelled"].includes(paymentStatus) || ["cancelled", "failed"].includes(bookingStatus)) {
+    return "danger";
+  }
+  if (["confirmed", "completed"].includes(bookingStatus) && paymentStatus === "paid") {
+    return "success";
+  }
+  return "warning";
 }

@@ -296,6 +296,14 @@ function isValidEmailAddress(value) {
   return email === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function exactLengthError(label, length) {
+  return `${label} must be ${length} characters long.`;
+}
+
+function minLengthError(label, length) {
+  return `${label} must be at least ${length} characters long.`;
+}
+
 function isFutureDate(value) {
   if (!value) return false;
   const parsed = new Date(`${value}T00:00:00`);
@@ -308,6 +316,8 @@ function isFutureDate(value) {
 function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
   const medicationEntries = Array.isArray(options?.medicationEntries) ? options.medicationEntries : [];
   const requireMedicationDraft = options?.requireMedicationDraft === true;
+  const includeRequired = options?.includeRequired !== false;
+  const activeKeys = Array.isArray(options?.activeKeys) ? new Set(options.activeKeys) : null;
   const errors = {};
   const patient = mtmForm?.patient || {};
   const emergencyContact = mtmForm?.emergencyContact || {};
@@ -335,98 +345,133 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
     5: adherenceAssessment,
   };
 
+  const shouldValidateKey = (key) => !activeKeys || activeKeys.has(key);
+
   const validateRequiredSet = (stepNumber) => {
     required[stepNumber].forEach((key) => {
       const section = stepSections[stepNumber];
-      if (!String(section?.[key] || "").trim()) {
+      if (shouldValidateKey(key) && !String(section?.[key] || "").trim()) {
         errors[key] = "This field is required.";
       }
     });
   };
 
-  if (step >= 1) validateRequiredSet(1);
-  if (step >= 2) validateRequiredSet(2);
-  if (step >= 3) validateRequiredSet(3);
-  if (step >= 4 && requireMedicationDraft) validateRequiredSet(4);
-  if (step >= 5) validateRequiredSet(5);
+  if (includeRequired) {
+    if (step >= 1) validateRequiredSet(1);
+    if (step >= 2) validateRequiredSet(2);
+    if (step >= 3) validateRequiredSet(3);
+    if (step >= 4 && requireMedicationDraft) validateRequiredSet(4);
+    if (step >= 5) validateRequiredSet(5);
+  }
 
   if (step >= 1) {
-    if (!/^\d{1,3}$/.test(String(patient.age || "").trim())) {
-      errors.age = "Enter a valid age.";
+    if (shouldValidateKey("age") && String(patient.age || "").trim() && !/^\d{1,3}$/.test(String(patient.age || "").trim())) {
+      errors.age = "Age must be 1 to 3 digits long.";
     }
-    if (!/^[a-zA-Z\s'.-]{2,120}$/.test(String(patient.name || "").trim())) {
-      errors.name = "Enter a valid full name.";
+    if (shouldValidateKey("name") && String(patient.name || "").trim() && !/^[a-zA-Z\s'.-]{2,120}$/.test(String(patient.name || "").trim())) {
+      errors.name = minLengthError("Full name", 2);
     }
-    if (isFutureDate(String(patient.dob || "").trim())) {
+    if (shouldValidateKey("dob") && String(patient.dob || "").trim() && isFutureDate(String(patient.dob || "").trim())) {
       errors.dob = "DOB cannot be in the future.";
     }
-    if (!phonePattern.test(String(patient.phoneNumber || "").trim()) || normalizeMtmPhoneNumber(patient.phoneNumber).length !== 11) {
-      errors.phoneNumber = "Enter a valid 11-digit phone number.";
+    if (shouldValidateKey("phoneNumber") && String(patient.phoneNumber || "").trim()) {
+      if (!phonePattern.test(String(patient.phoneNumber || "").trim()) || normalizeMtmPhoneNumber(patient.phoneNumber).length !== 11) {
+        errors.phoneNumber = exactLengthError("Phone number", 11);
+      }
     }
-    if (String(patient.emergencyContact || "").trim() && (!phonePattern.test(String(patient.emergencyContact || "").trim()) || normalizeMtmPhoneNumber(patient.emergencyContact).length !== 11)) {
-      errors.emergencyContact = "Enter a valid 11-digit emergency contact number.";
+    if (shouldValidateKey("emergencyContact") && String(patient.emergencyContact || "").trim() && (!phonePattern.test(String(patient.emergencyContact || "").trim()) || normalizeMtmPhoneNumber(patient.emergencyContact).length !== 11)) {
+      errors.emergencyContact = exactLengthError("Emergency contact number", 11);
     }
-    if (!["Female", "Male", "Other", "Prefer not to say"].includes(String(patient.gender || ""))) {
+    if (shouldValidateKey("gender") && String(patient.gender || "").trim() && !["Female", "Male", "Other", "Prefer not to say"].includes(String(patient.gender || ""))) {
       errors.gender = "Select a valid gender.";
     }
-    if (!["Phone", "WhatsApp", "Email"].includes(String(patient.preferredContactMethod || ""))) {
+    if (shouldValidateKey("preferredContactMethod") && String(patient.preferredContactMethod || "").trim() && !["Phone", "WhatsApp", "Email"].includes(String(patient.preferredContactMethod || ""))) {
       errors.preferredContactMethod = "Select a contact method.";
     }
   }
 
   if (step >= 2) {
-    if (!/^[a-zA-Z\s'.-]{2,120}$/.test(String(emergencyContact.caregiverName || "").trim())) {
-      errors.caregiverName = "Enter a valid caregiver name.";
+    if (shouldValidateKey("caregiverName") && String(emergencyContact.caregiverName || "").trim() && !/^[a-zA-Z\s'.-]{2,120}$/.test(String(emergencyContact.caregiverName || "").trim())) {
+      errors.caregiverName = minLengthError("Caregiver name", 2);
     }
-    if (!MTM_RELATIONSHIP_OPTIONS.includes(String(emergencyContact.relationship || ""))) {
+    if (shouldValidateKey("relationship") && String(emergencyContact.relationship || "").trim() && !MTM_RELATIONSHIP_OPTIONS.includes(String(emergencyContact.relationship || ""))) {
       errors.relationship = "Select a valid relationship.";
     }
-    if (!phonePattern.test(String(emergencyContact.phoneNumber || "").trim()) || normalizeMtmPhoneNumber(emergencyContact.phoneNumber).length !== 11) {
-      errors.phoneNumber = "Enter a valid 11-digit phone number.";
+    if (shouldValidateKey("phoneNumber") && String(emergencyContact.phoneNumber || "").trim()) {
+      if (!phonePattern.test(String(emergencyContact.phoneNumber || "").trim()) || normalizeMtmPhoneNumber(emergencyContact.phoneNumber).length !== 11) {
+        errors.phoneNumber = exactLengthError("Phone number", 11);
+      }
     }
-    if (!isValidEmailAddress(emergencyContact.emailAddress)) {
+    if (shouldValidateKey("emailAddress") && String(emergencyContact.emailAddress || "").trim() && !isValidEmailAddress(emergencyContact.emailAddress)) {
       errors.emailAddress = "Enter a valid email address.";
     }
-    if (!["Yes", "No"].includes(String(emergencyContact.livesWithPatient || ""))) {
+    if (shouldValidateKey("livesWithPatient") && String(emergencyContact.livesWithPatient || "").trim() && !["Yes", "No"].includes(String(emergencyContact.livesWithPatient || ""))) {
       errors.livesWithPatient = "Select Yes or No.";
     }
-    if (!["Yes", "No"].includes(String(emergencyContact.consentToDiscussCare || ""))) {
+    if (shouldValidateKey("consentToDiscussCare") && String(emergencyContact.consentToDiscussCare || "").trim() && !["Yes", "No"].includes(String(emergencyContact.consentToDiscussCare || ""))) {
       errors.consentToDiscussCare = "Select Yes or No.";
     }
   }
 
   if (step >= 3) {
-    if (!String(medicalHistory.primaryDiagnosis || "").trim()) errors.primaryDiagnosis = "This field is required.";
-    if (!String(medicalHistory.chronicConditions || "").trim()) errors.chronicConditions = "This field is required.";
-    if (!String(medicalHistory.pastMedicalHistory || "").trim()) errors.pastMedicalHistory = "This field is required.";
-    if (!String(medicalHistory.drugAllergies || "").trim()) errors.drugAllergies = "This field is required.";
-    if (fileList.some((file) => !isAllowedMedicalFile(file))) {
+    if (includeRequired && shouldValidateKey("primaryDiagnosis") && !String(medicalHistory.primaryDiagnosis || "").trim()) errors.primaryDiagnosis = "This field is required.";
+    if (includeRequired && shouldValidateKey("chronicConditions") && !String(medicalHistory.chronicConditions || "").trim()) errors.chronicConditions = "This field is required.";
+    if (includeRequired && shouldValidateKey("pastMedicalHistory") && !String(medicalHistory.pastMedicalHistory || "").trim()) errors.pastMedicalHistory = "This field is required.";
+    if (includeRequired && shouldValidateKey("drugAllergies") && !String(medicalHistory.drugAllergies || "").trim()) errors.drugAllergies = "This field is required.";
+    if (shouldValidateKey("relevantLabResults") && fileList.some((file) => !isAllowedMedicalFile(file))) {
       errors.relevantLabResults = "Upload PDF, image, or document files up to 20MB each.";
     }
   }
 
   if (step >= 4 && requireMedicationDraft) {
-    if (!String(medicationProfile.medicationName || "").trim()) errors.medicationName = "This field is required.";
-    if (!String(medicationProfile.dosage || "").trim()) errors.dosage = "This field is required.";
-    if (!MTM_FREQUENCY_OPTIONS.includes(String(medicationProfile.frequency || ""))) errors.frequency = "Select a valid frequency.";
-    if (!MTM_ROUTE_OPTIONS.includes(String(medicationProfile.route || ""))) errors.route = "Select a valid route.";
-    if (!String(medicationProfile.indication || "").trim()) errors.indication = "This field is required.";
-    if (!String(medicationProfile.prescribingDoctor || "").trim()) errors.prescribingDoctor = "This field is required.";
-    if (!String(medicationProfile.startDate || "").trim()) {
+    if (includeRequired && shouldValidateKey("medicationName") && !String(medicationProfile.medicationName || "").trim()) errors.medicationName = "This field is required.";
+    if (includeRequired && shouldValidateKey("dosage") && !String(medicationProfile.dosage || "").trim()) errors.dosage = "This field is required.";
+    if (shouldValidateKey("frequency") && String(medicationProfile.frequency || "").trim() && !MTM_FREQUENCY_OPTIONS.includes(String(medicationProfile.frequency || ""))) errors.frequency = "Select a valid frequency.";
+    if (shouldValidateKey("route") && String(medicationProfile.route || "").trim() && !MTM_ROUTE_OPTIONS.includes(String(medicationProfile.route || ""))) errors.route = "Select a valid route.";
+    if (includeRequired && shouldValidateKey("indication") && !String(medicationProfile.indication || "").trim()) errors.indication = "This field is required.";
+    if (includeRequired && shouldValidateKey("prescribingDoctor") && !String(medicationProfile.prescribingDoctor || "").trim()) errors.prescribingDoctor = "This field is required.";
+    if (shouldValidateKey("startDate") && !String(medicationProfile.startDate || "").trim() && includeRequired) {
       errors.startDate = "This field is required.";
-    } else if (isFutureDate(String(medicationProfile.startDate || "").trim())) {
+    } else if (shouldValidateKey("startDate") && String(medicationProfile.startDate || "").trim() && isFutureDate(String(medicationProfile.startDate || "").trim())) {
       errors.startDate = "Start date cannot be in the future.";
     }
   }
-  if (step >= 4 && !requireMedicationDraft && !medicationEntries.length) {
+  if (step >= 4 && !requireMedicationDraft && includeRequired && shouldValidateKey("medications") && !medicationEntries.length) {
     errors.medications = "Add at least one medication before you continue.";
   }
 
-  if (step >= 5 && !Array.isArray(adherenceAssessment.barriers)) {
+  if (step >= 5 && includeRequired && shouldValidateKey("barriers") && !Array.isArray(adherenceAssessment.barriers)) {
     errors.barriers = "Select at least one barrier.";
   }
-  if (step >= 5 && Array.isArray(adherenceAssessment.barriers) && !adherenceAssessment.barriers.length) {
+  if (step >= 5 && includeRequired && shouldValidateKey("barriers") && Array.isArray(adherenceAssessment.barriers) && !adherenceAssessment.barriers.length) {
     errors.barriers = "Select at least one barrier.";
+  }
+
+  return errors;
+}
+
+function getCustomerSettingsFieldErrors(settings) {
+  const errors = {};
+  const displayName = sanitizeClientText(settings?.displayName || "", { max: 120 }).trim();
+  const email = sanitizeClientText(settings?.email || "", { max: 254 }).replace(/\s+/g, "");
+  const phone = String(settings?.phone || "").replace(/\D/g, "");
+  const address = sanitizeClientText(settings?.address || "", { max: 200 }).trim();
+  const timezone = sanitizeClientText(settings?.timezone || "", { max: 80 }).trim();
+
+  if (displayName && !/^[a-zA-Z\s'.-]{2,120}$/.test(displayName)) {
+    errors.displayName = minLengthError("Display name", 2);
+  }
+  if (email && !isValidEmailAddress(email)) {
+    errors.email = "Enter a valid email address.";
+  }
+  if (String(settings?.phone || "").trim() && phone.length !== 11) {
+    errors.phone = exactLengthError("Phone number", 11);
+  }
+  if (address && address.length < 5) {
+    errors.address = minLengthError("Address", 5);
+  }
+  if (timezone && timezone.length < 2) {
+    errors.timezone = minLengthError("Timezone", 2);
   }
 
   return errors;
@@ -2454,49 +2499,64 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
         eventSource.close();
       };
     }, [appointment?.id, journey.loading, onRefreshConfirmation, paymentPending]);
-  return <section className="customer-appointment-checkout-page">
-    <div className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell customer-appointment-checkout-shell">
-      <button className="customer-appointment-checkout-back" type="button" aria-label="Go back" onClick={onBack}>
+  return <section className={`customer-flow-status-page customer-flow-status-page-${statusTone}`}>
+    <div className={`customer-flow-status-card customer-flow-status-card-checkout is-${statusTone}`}>
+      <button className="customer-flow-status-back" type="button" aria-label="Go back" onClick={onBack}>
         <MobileIcon name="arrow-left" />
       </button>
-      <div className={`customer-confirmation-icon customer-appointment-checkout-icon is-${statusTone}`} aria-hidden="true">
-        {statusTone === "error" ? <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" /><path d="M18 18L30 30" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /><path d="M30 18L18 30" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /></svg> : null}
-        {statusTone === "warning" ? <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" /><path d="M24 14V25" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /><circle cx="24" cy="31.5" r="1.8" fill="currentColor" /></svg> : null}
-        {statusTone === "success" ? <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg> : null}
-      </div>
-      <h2>{heading}</h2>
-      <p>{subtitle}</p>
-      <div className="customer-confirmation-next customer-appointment-checkout-summary">
-        <div className="customer-appointment-checkout-summary-head">
-          <div className="customer-appointment-checkout-row-icon" aria-hidden="true">
+      <header className="customer-flow-status-head">
+        <CustomerStatusIcon tone={statusTone} type={hasError ? "error" : paymentPending ? "warning" : "check"} />
+        <h2>{heading}</h2>
+        <p>{subtitle}</p>
+      </header>
+
+      {paymentPending && !hasError ? <section className="customer-flow-amount-card" aria-label="Amount due">
+        <div>
+          <span className="customer-flow-amount-label">Amount due</span>
+          <strong className="customer-flow-amount-value">{appointmentAmount}</strong>
+        </div>
+        <CustomerStatusPill tone="warning">Pending payment</CustomerStatusPill>
+      </section> : null}
+
+      <section className="customer-flow-status-panel customer-flow-status-panel-soft" aria-label="Appointment details">
+        <div className="customer-flow-status-panel-head">
+          <div className="customer-flow-status-panel-icon" aria-hidden="true">
             <MobileIcon name="calendar" />
           </div>
-          <div className="customer-appointment-checkout-summary-copy">
-            <span>Status</span>
-            <strong>{paymentStatus}</strong>
-          </div>
-          <em className={`is-${statusTone}`}>{hasError ? "Failed" : paymentPending ? "Pending" : appointmentStatusValue === "confirmed" ? "Confirmed" : "Paid"}</em>
+          
+          
+          <CustomerStatusPill tone={statusTone}>
+            {hasError ? "Failed" : paymentPending ? "Pending" : appointmentStatusValue === "confirmed" ? "Confirmed" : "Paid"}
+          </CustomerStatusPill>
         </div>
-        <div className="customer-appointment-checkout-meta">
-          <div><span>Doctor</span><strong>{doctorName}</strong></div>
-          <div><span>Date</span><strong>{appointmentDate}</strong></div>
-          <div><span>Time</span><strong>{appointmentTime}</strong></div>
-          <div><span>Amount</span><strong>{appointmentAmount}</strong></div>
-        </div>
-      </div>
-        {paymentPending && !hasError ? <p className="customer-appointment-checkout-note">This booking expires after 10 minutes if payment is not completed.</p> : null}
-        {pendingRefreshMessage ? <p className="customer-appointment-checkout-note">Payment confirmation will appear automatically once the gateway webhook is received. You can still check manually if needed.</p> : null}
-      {hasError ? <p className="customer-appointment-checkout-error">{journey.error}</p> : null}
-      <div className="customer-appointment-confirmation-actions">
-        {canProceedToPayment ? <a className="customer-mobile-primary-button customer-appointment-confirmation-link" href={paymentUrl} target="_blank" rel="noreferrer">{!livePaymentsEnabled && paymentUrl === "#demo-payment" ? "Open demo payment" : "Proceed to payment"}</a> : null}
-        {canRefreshPayment ? <button className="customer-mobile-primary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? "Checking..." : "Check payment status"}</button> : null}
+        <CustomerStatusKeyValueList rows={[
+          { label: "Doctor", value: doctorName },
+          { label: "Date", value: appointmentDate },
+          { label: "Time", value: appointmentTime },
+          { label: "Amount", value: appointmentAmount },
+        ]} />
+      </section>
+
+      {paymentPending && !hasError ? <div className="customer-flow-status-note is-warning">
+        <p>This booking expires after 10 minutes if payment is not completed.</p>
+      </div> : null}
+      {pendingRefreshMessage ? <div className="customer-flow-status-note">
+        <p>Payment confirmation will appear automatically once the gateway webhook is received. You can still check manually if needed.</p>
+      </div> : null}
+      {hasError ? <div className="customer-flow-status-alert">
+        <p>{journey.error}</p>
+      </div> : null}
+
+      <CustomerStatusActions>
+        {canProceedToPayment ? <a className="customer-mobile-primary-button customer-flow-status-link" href={paymentUrl} target="_blank" rel="noreferrer">{!livePaymentsEnabled && paymentUrl === "#demo-payment" ? "Open demo payment" : "Proceed to payment"}</a> : null}
+        {canRefreshPayment ? <button className="customer-mobile-secondary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? "Checking..." : "Check payment status"}</button> : null}
         {!paymentPending && hasAppointment ? <button className="customer-mobile-primary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? "Loading..." : "View confirmation"}</button> : null}
-        {canCancelAppointment ? <button className="customer-mobile-secondary-button" type="button" onClick={onCancelCheckoutAppointment} disabled={journey.loading}>Cancel appointment</button> : null}
-      </div>
-      <div className="customer-appointment-confirmation-secure">
-        <span aria-hidden="true" />
-        <p>Your appointment information is secure and only used for your consultation.</p>
-      </div>
+        {canCancelAppointment ? <button className="customer-mobile-secondary-button customer-flow-status-danger-button" type="button" onClick={onCancelCheckoutAppointment} disabled={journey.loading}>Cancel appointment</button> : null}
+      </CustomerStatusActions>
+
+      <CustomerStatusSecurityNote tone={statusTone === "error" ? "warning" : "success"}>
+        Your appointment information is secure and only used for your consultation.
+      </CustomerStatusSecurityNote>
     </div>
   </section>;
   
@@ -2507,32 +2567,39 @@ function ConfirmationPage({ journey, doctor, onBack, calendarDownloadUrl, storeT
   const appointment = confirmation?.appointment || journey.appointment;
   const joinUrl = getAppointmentJoinUrl(appointment, confirmation);
   const doctorName = doctor?.display_name || appointment?.doctor?.display_name || "Assigned doctor";
-  return <section className="customer-appointment-confirmation-page">
-    <div className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell customer-appointment-confirmation-shell">
-      <div className="customer-confirmation-icon" aria-hidden="true">
-        <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#22A06B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#22A06B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      </div>
-      <h2>Appointment confirmed</h2>
-      <p>Your consultation is booked and the appointment details are ready.</p>
-      <div className="customer-confirmation-next customer-appointment-confirmation-summary">
-        <div className="customer-appointment-confirmation-head">
-          <span>Status</span>
-          <strong className="badge">Confirmed</strong>
+  return <section className="customer-flow-status-page customer-flow-status-page-success">
+    <div className="customer-flow-status-card customer-flow-status-card-confirmed is-success">
+      <header className="customer-flow-status-head">
+        <CustomerStatusIcon tone="success" type="check" />
+        <h2>Appointment confirmed</h2>
+        <p>Your consultation is booked and the appointment details are ready.</p>
+      </header>
+
+      <section className="customer-flow-status-panel customer-flow-status-panel-soft" aria-label="Confirmed appointment details">
+        <div className="customer-flow-status-panel-head">
+          <div className="customer-flow-status-panel-copy">
+            <span>Status</span>
+            <strong>Appointment confirmed</strong>
+          </div>
+          <CustomerStatusPill tone="success">Confirmed</CustomerStatusPill>
         </div>
-        <div className="customer-confirmation-next-row"><span>Doctor</span><strong>{doctorName}</strong></div>
-        <div className="customer-confirmation-next-row"><span>Date</span><strong>{friendlyDate(appointment?.start_at, storeTimeZone)}</strong></div>
-        <div className="customer-confirmation-next-row"><span>Time</span><strong>{formatTime(appointment?.start_at, storeTimeZone)}</strong></div>
-        <div className="customer-confirmation-next-row"><span>Order</span><strong>{confirmation?.order_number || "Paid"}</strong></div>
-      </div>
-      <div className="customer-appointment-confirmation-actions">
-        {joinUrl ? <a className="customer-mobile-primary-button customer-appointment-confirmation-link" href={joinUrl} target="_blank" rel="noreferrer">Join meeting</a> : <button className="customer-mobile-primary-button" type="button" onClick={onBack}>View appointments</button>}
-        {calendarDownloadUrl ? <a className="customer-mobile-secondary-button customer-appointment-confirmation-link" href={calendarDownloadUrl} target="_blank" rel="noreferrer">Add to Apple Calendar</a> : null}
-        {confirmation?.calendar?.outlook_url ? <a className="customer-mobile-secondary-button customer-appointment-confirmation-link" href={confirmation.calendar.outlook_url} target="_blank" rel="noreferrer">Add to Outlook</a> : null}
-      </div>
-      <div className="customer-appointment-confirmation-secure">
-        <span aria-hidden="true" />
-        <p>Your appointment information is secure and only used for your consultation.</p>
-      </div>
+        <CustomerStatusKeyValueList rows={[
+          { label: "Doctor", value: doctorName },
+          { label: "Date", value: friendlyDate(appointment?.start_at, storeTimeZone) },
+          { label: "Time", value: formatTime(appointment?.start_at, storeTimeZone) },
+          { label: "Order", value: confirmation?.order_number || "Paid" },
+        ]} />
+      </section>
+
+      <CustomerStatusActions>
+        {joinUrl ? <a className="customer-mobile-primary-button customer-flow-status-link" href={joinUrl} target="_blank" rel="noreferrer">Join meeting</a> : <button className="customer-mobile-primary-button" type="button" onClick={onBack}>View appointments</button>}
+        {calendarDownloadUrl ? <a className="customer-mobile-secondary-button customer-flow-status-link" href={calendarDownloadUrl} target="_blank" rel="noreferrer">Add to Apple Calendar</a> : null}
+        {confirmation?.calendar?.outlook_url ? <a className="customer-mobile-secondary-button customer-flow-status-link" href={confirmation.calendar.outlook_url} target="_blank" rel="noreferrer">Add to Outlook</a> : null}
+      </CustomerStatusActions>
+
+      <CustomerStatusSecurityNote tone="success">
+        Your appointment information is secure and only used for your consultation.
+      </CustomerStatusSecurityNote>
     </div>
   </section>;
 }
@@ -2642,7 +2709,42 @@ function AppointmentSection({ title, items, doctors, storeTimeZone, loading = fa
   </div>;
 }
 
-function SettingsPage({ profile, doctors, orders, appointments, settings, onSettingsChange, onLogout, logoutBusy = false }) {
+function CustomerStatusIcon({ tone = "success", type = "check" }) {
+  return <div className={`customer-flow-status-icon is-${tone}`} aria-hidden="true">
+    {type === "warning" ? <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" /><path d="M24 14V25" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /><circle cx="24" cy="31.5" r="1.8" fill="currentColor" /></svg> : null}
+    {type === "error" ? <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" /><path d="M18 18L30 30" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /><path d="M30 18L18 30" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /></svg> : null}
+    {type === "calendar" ? <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg> : null}
+    {type === "check" ? <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg> : null}
+  </div>;
+}
+
+function CustomerStatusPill({ tone = "info", children }) {
+  return <span className={`customer-flow-status-pill is-${tone}`}>{children}</span>;
+}
+
+function CustomerStatusKeyValueList({ rows = [] }) {
+  return <div className="customer-flow-kv-list">
+    {rows.map((row) => <div className="customer-flow-kv-row" key={row.label}>
+      <span className="customer-flow-kv-key">{row.label}</span>
+      <span className="customer-flow-kv-value">{row.value}</span>
+    </div>)}
+  </div>;
+}
+
+function CustomerStatusSecurityNote({ tone = "success", children }) {
+  return <div className={`customer-flow-security-note is-${tone}`}>
+    <span className="customer-flow-security-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><path d="m7.5 12.2 3 3 6-7" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" /></svg>
+    </span>
+    <p>{children}</p>
+  </div>;
+}
+
+function CustomerStatusActions({ children }) {
+  return <div className="customer-flow-status-actions">{children}</div>;
+}
+
+function SettingsPage({ profile, doctors, orders, appointments, settings, validationErrors = {}, onSettingsChange, onLogout, logoutBusy = false }) {
   const invoiceCount = orders.filter((order) => ["processing", "completed"].includes(String(order.status || "").toLowerCase())).length;
   return <div className="customer-dashboard-stack">
     <section className="customer-list-shell customer-settings-shell">
@@ -2686,10 +2788,10 @@ function SettingsPage({ profile, doctors, orders, appointments, settings, onSett
             <div className="card-desc">Identity and delivery information</div>
           </div>
           <div className="customer-settings-form-grid">
-            <label><span>Display name</span><input value={settings.displayName} placeholder={profile.display_name || "Customer"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} /></label>
-            <label><span>Email</span><input value={settings.email} placeholder={profile.email || "customer@email.com"} onChange={(event) => onSettingsChange((current) => ({ ...current, email: sanitizeClientText(event.target.value, { max: 254 }) }))} /></label>
-            <label><span>Phone number</span><input value={settings.phone} placeholder="+234 ..." onChange={(event) => onSettingsChange((current) => ({ ...current, phone: sanitizeClientText(event.target.value, { max: 24 }) }))} /></label>
-            <label><span>Address</span><textarea rows={3} value={settings.address} onChange={(event) => onSettingsChange((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} /></label>
+              <label><span>Display name</span><input value={settings.displayName} className={validationErrors.displayName ? "has-error" : ""} placeholder={profile.display_name || "Customer"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />{validationErrors.displayName ? <small className="customer-mobile-field-error">{validationErrors.displayName}</small> : null}</label>
+              <label><span>Email</span><input type="email" inputMode="email" value={settings.email} className={validationErrors.email ? "has-error" : ""} placeholder={profile.email || "customer@email.com"} onChange={(event) => onSettingsChange((current) => ({ ...current, email: sanitizeClientText(event.target.value, { max: 254 }).replace(/\s+/g, "") }))} />{validationErrors.email ? <small className="customer-mobile-field-error">{validationErrors.email}</small> : null}</label>
+              <label><span>Phone number</span><input type="tel" inputMode="tel" maxLength={11} value={settings.phone} className={validationErrors.phone ? "has-error" : ""} placeholder="+234 ..." onChange={(event) => onSettingsChange((current) => ({ ...current, phone: normalizeMtmPhoneNumber(event.target.value) }))} />{validationErrors.phone ? <small className="customer-mobile-field-error">{validationErrors.phone}</small> : null}</label>
+              <label><span>Address</span><textarea rows={3} className={validationErrors.address ? "has-error" : ""} value={settings.address} onChange={(event) => onSettingsChange((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />{validationErrors.address ? <small className="customer-mobile-field-error">{validationErrors.address}</small> : null}</label>
           </div>
         </article>
 
@@ -2706,7 +2808,7 @@ function SettingsPage({ profile, doctors, orders, appointments, settings, onSett
                 <option value="in_person">In person</option>
               </select>
             </label>
-            <label><span>Timezone</span><input value={settings.timezone} onChange={(event) => onSettingsChange((current) => ({ ...current, timezone: sanitizeClientText(event.target.value, { max: 80 }) }))} /></label>
+              <label><span>Timezone</span><input value={settings.timezone} className={validationErrors.timezone ? "has-error" : ""} onChange={(event) => onSettingsChange((current) => ({ ...current, timezone: sanitizeClientText(event.target.value, { max: 80 }) }))} />{validationErrors.timezone ? <small className="customer-mobile-field-error">{validationErrors.timezone}</small> : null}</label>
           </div>
           <div className="customer-tag-list">
             {doctors.length ? doctors.map((doctor) => {
@@ -2755,7 +2857,7 @@ function SettingsToggle({ label, checked, onChange }) {
   </label>;
 }
 
-function ProfilePage({ profile, orders, appointments, doctors, settings, onSettingsChange, onLogout, logoutBusy = false }) {
+function ProfilePage({ profile, orders, appointments, doctors, settings, validationErrors = {}, onSettingsChange, onLogout, logoutBusy = false }) {
   return <div className="customer-dashboard-stack">
     <section className="customer-profile-hero">
       <div className="avatar">{initials(settings.displayName || profile.display_name || "Customer")}</div>
@@ -2771,7 +2873,8 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, onSetti
     <section className="customer-profile-grid customer-profile-grid-editable">
       <article className="customer-profile-card">
         <span>Display name</span>
-        <input value={settings.displayName} placeholder={profile.display_name || "Customer"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />
+          <input value={settings.displayName} className={validationErrors.displayName ? "has-error" : ""} placeholder={profile.display_name || "Customer"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />
+          {validationErrors.displayName ? <small className="customer-mobile-field-error">{validationErrors.displayName}</small> : null}
       </article>
       <article className="customer-profile-card">
         <span>Email address</span>
@@ -2779,11 +2882,13 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, onSetti
       </article>
       <article className="customer-profile-card">
         <span>Phone number</span>
-        <input value={settings.phone} placeholder="+234 ..." onChange={(event) => onSettingsChange((current) => ({ ...current, phone: sanitizeClientText(event.target.value, { max: 24 }) }))} />
+          <input type="tel" inputMode="tel" maxLength={11} value={settings.phone} className={validationErrors.phone ? "has-error" : ""} placeholder="+234 ..." onChange={(event) => onSettingsChange((current) => ({ ...current, phone: normalizeMtmPhoneNumber(event.target.value) }))} />
+          {validationErrors.phone ? <small className="customer-mobile-field-error">{validationErrors.phone}</small> : null}
       </article>
       <article className="customer-profile-card customer-profile-card-wide">
         <span>Address</span>
-        <textarea rows={3} value={settings.address} onChange={(event) => onSettingsChange((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
+          <textarea rows={3} className={validationErrors.address ? "has-error" : ""} value={settings.address} onChange={(event) => onSettingsChange((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
+          {validationErrors.address ? <small className="customer-mobile-field-error">{validationErrors.address}</small> : null}
       </article>
       <article className="customer-profile-card">
         <span>Orders placed</span>
@@ -3578,6 +3683,8 @@ function CustomerMobileDashboard({
     currentMedication: ""
   });
   const [requestStep2Errors, setRequestStep2Errors] = useState({});
+  const [requestStep2Touched, setRequestStep2Touched] = useState({});
+  const [requestStep2ShowErrors, setRequestStep2ShowErrors] = useState(false);
   const [careDetails, setCareDetails] = useState({
     visitType: "",
     preferredDate: "",
@@ -3591,6 +3698,8 @@ function CustomerMobileDashboard({
     infectiousDisease: ""
   });
   const [requestStep3Errors, setRequestStep3Errors] = useState({});
+  const [requestStep3Touched, setRequestStep3Touched] = useState({});
+  const [requestStep3ShowErrors, setRequestStep3ShowErrors] = useState(false);
   const [clinicalRequirements, setClinicalRequirements] = useState([]);
   const [uploadedMedicalFiles, setUploadedMedicalFiles] = useState({});
   const uploadInputRefs = useRef({});
@@ -3608,6 +3717,8 @@ function CustomerMobileDashboard({
   const [mtmSelectedRequestId, setMtmSelectedRequestId] = useState(String(initialMtmRequestId || ""));
   const [mtmHistoryModalRequestId, setMtmHistoryModalRequestId] = useState(String(initialMtmRequestId || ""));
   const [mtmStepErrors, setMtmStepErrors] = useState({});
+  const [mtmTouchedFields, setMtmTouchedFields] = useState({});
+  const [mtmShowErrors, setMtmShowErrors] = useState(false);
   const [mtmLabResultsFiles, setMtmLabResultsFiles] = useState([]);
   const [mtmMedicationEntries, setMtmMedicationEntries] = useState([]);
   const [mtmSnackbar, setMtmSnackbar] = useState("");
@@ -3623,6 +3734,7 @@ function CustomerMobileDashboard({
   const [bookCalendarReason, setBookCalendarReason] = useState("");
   const [calendarDay, setCalendarDay] = useState(7);
   const [calendarTime, setCalendarTime] = useState("09:41");
+  const [customerSettingsTouched, setCustomerSettingsTouched] = useState({});
   const appointmentPageLoading = page === "appointment"
     && appointmentsLoading
     && !upcomingAppointments.length
@@ -3735,6 +3847,10 @@ function CustomerMobileDashboard({
       setAppointmentComposerSuccess(null);
       setRequestStep2Errors({});
       setRequestStep3Errors({});
+      setRequestStep2Touched({});
+      setRequestStep3Touched({});
+      setRequestStep2ShowErrors(false);
+      setRequestStep3ShowErrors(false);
     }
   }, [page]);
 
@@ -4028,6 +4144,7 @@ function CustomerMobileDashboard({
   const consultationQuotaRemaining = Number(subscription.free_consultations_remaining || 0);
   const consultationQuotaResetLabel = String(subscription.free_consultations_reset_label || "").trim();
   const isProSubscription = String(subscription.plan_key || "").toLowerCase() === "nevari_access_pro" || Boolean(subscription.is_paid);
+  const customerSettingsErrors = useMemo(() => getCustomerSettingsFieldErrors(settings), [settings]);
   const showConsultationQuotaNotice = page === "appointment" && isProSubscription && !consultationQuotaDismissed;
   const consultationQuotaTitle = consultationQuotaRemaining <= 0 ? "Free Monthly Consultation Allowance Used" : "Free Monthly Consultation";
   const consultationQuotaBody = consultationQuotaRemaining <= 0
@@ -4035,11 +4152,15 @@ function CustomerMobileDashboard({
     : `You have ${consultationQuotaRemaining} of ${consultationQuotaTotal || 5} free consultation bookings remaining in your Pro membership for the current billing month.`;
   const consultationQuotaResetText = consultationQuotaResetLabel ? `Next reset: ${consultationQuotaResetLabel}` : "";
   function goToPage(nextPage) {
-    setPage(nextPage);
-    setDrawerOpen(false);
-    setRequestStep2Errors({});
-    setRequestStep3Errors({});
-    if (nextPage !== "appointment") {
+      setPage(nextPage);
+      setDrawerOpen(false);
+      setRequestStep2Errors({});
+      setRequestStep3Errors({});
+      setRequestStep2Touched({});
+      setRequestStep3Touched({});
+      setRequestStep2ShowErrors(false);
+      setRequestStep3ShowErrors(false);
+      if (nextPage !== "appointment") {
       setJourney(createJourneyState());
       onClearAppointmentRescheduleTarget?.();
     }
@@ -4122,10 +4243,14 @@ function CustomerMobileDashboard({
   }
 
   function transitionToRequestStep(nextStep) {
-    setRequestSubmitError("");
-    setRequestStep2Errors({});
-    setRequestStep3Errors({});
-    setRequestStepAnimatingOut(true);
+      setRequestSubmitError("");
+      setRequestStep2Errors({});
+      setRequestStep3Errors({});
+      setRequestStep2Touched({});
+      setRequestStep3Touched({});
+      setRequestStep2ShowErrors(false);
+      setRequestStep3ShowErrors(false);
+      setRequestStepAnimatingOut(true);
     window.setTimeout(() => {
       setRequestStep(nextStep);
       setRequestStepAnimatingOut(false);
@@ -4196,7 +4321,11 @@ function CustomerMobileDashboard({
     }
   }
 
-  function getRequestStep2Errors() {
+  function getRequestStep2Errors(options = {}) {
+    const source = options?.source || requestForm;
+    const includeRequired = options?.includeRequired !== false;
+    const activeKeys = Array.isArray(options?.activeKeys) ? new Set(options.activeKeys) : null;
+    const shouldValidateKey = (key) => !activeKeys || activeKeys.has(key);
     const requiredFields = [
       ["name", "Name is required."],
       ["age", "Age is required."],
@@ -4207,42 +4336,49 @@ function CustomerMobileDashboard({
     ];
     const errors = {};
     requiredFields.forEach(([key, message]) => {
-      if (!String(requestForm[key] || "").trim()) errors[key] = message;
+      if (includeRequired && shouldValidateKey(key) && !String(source[key] || "").trim()) errors[key] = message;
     });
-    const name = sanitizeRequestFieldValue("name", requestForm.name).trim();
-    const age = sanitizeRequestFieldValue("age", requestForm.age).trim();
-    const gender = String(requestForm.gender || "").trim();
-    const address = sanitizeRequestFieldValue("address", requestForm.address).trim();
-    const emergencyContact = sanitizeRequestFieldValue("emergencyContact", requestForm.emergencyContact).trim();
-    const mobilityStatus = sanitizeRequestFieldValue("mobilityStatus", requestForm.mobilityStatus).trim();
-    if (!errors.name && !/^[a-zA-Z\s'.-]{2,120}$/.test(name)) {
-      errors.name = "Enter a valid name (letters only).";
+    const name = sanitizeRequestFieldValue("name", source.name).trim();
+    const age = sanitizeRequestFieldValue("age", source.age).trim();
+    const gender = String(source.gender || "").trim();
+    const address = sanitizeRequestFieldValue("address", source.address).trim();
+    const emergencyContact = sanitizeRequestFieldValue("emergencyContact", source.emergencyContact).trim();
+    const mobilityStatus = sanitizeRequestFieldValue("mobilityStatus", source.mobilityStatus).trim();
+    if (shouldValidateKey("name") && name && !/^[a-zA-Z\s'.-]{2,120}$/.test(name)) {
+      errors.name = minLengthError("Name", 2);
     }
-    if (!errors.age && !/^\d{1,3}$/.test(age)) {
-      errors.age = "Age must be numbers only (max 3 digits).";
+    if (shouldValidateKey("age") && age && !/^\d{1,3}$/.test(age)) {
+      errors.age = "Age must be 1 to 3 digits long.";
     }
-    if (!errors.gender && !["Male", "Female"].includes(gender)) {
+    if (shouldValidateKey("gender") && gender && !["Male", "Female"].includes(gender)) {
       errors.gender = "Select Male or Female.";
     }
-    if (!errors.emergencyContact && !/^[0-9+\-()\s]{7,20}$/.test(emergencyContact)) {
-      errors.emergencyContact = "Enter a valid phone number.";
+    if (shouldValidateKey("emergencyContact") && emergencyContact) {
+      if (!/^[0-9+\-()\s]{7,20}$/.test(emergencyContact) || emergencyContact.replace(/\D/g, "").length !== 11) {
+        errors.emergencyContact = exactLengthError("Emergency contact number", 11);
+      }
     }
-    if (!errors.address && (address.length < 5 || address.length > 200)) {
-      errors.address = "Enter a valid address.";
+    if (shouldValidateKey("address") && address && (address.length < 5 || address.length > 200)) {
+      errors.address = minLengthError("Address", 5);
     }
-    if (!errors.mobilityStatus && !/^[a-zA-Z\s'.-]{2,120}$/.test(mobilityStatus)) {
-      errors.mobilityStatus = "Enter a valid mobility status.";
+    if (shouldValidateKey("mobilityStatus") && mobilityStatus && !/^[a-zA-Z\s'.-]{2,120}$/.test(mobilityStatus)) {
+      errors.mobilityStatus = minLengthError("Mobility status", 2);
     }
     return errors;
   }
 
   function validateRequestStep2() {
+    setRequestStep2ShowErrors(true);
     const errors = getRequestStep2Errors();
     setRequestStep2Errors(errors);
     return Object.keys(errors).length === 0;
   }
 
-  function getRequestStep3Errors() {
+  function getRequestStep3Errors(options = {}) {
+    const source = options?.source || careDetails;
+    const includeRequired = options?.includeRequired !== false;
+    const activeKeys = Array.isArray(options?.activeKeys) ? new Set(options.activeKeys) : null;
+    const shouldValidateKey = (key) => !activeKeys || activeKeys.has(key);
     const requiredFields = [
       ["visitType", "Select visit type."],
       ["preferredDate", "Preferred visit date is required."],
@@ -4257,34 +4393,34 @@ function CustomerMobileDashboard({
     ];
     const errors = {};
     requiredFields.forEach(([key, message]) => {
-      if (!String(careDetails[key] || "").trim()) errors[key] = message;
+      if (includeRequired && shouldValidateKey(key) && !String(source[key] || "").trim()) errors[key] = message;
     });
-    if (!errors.visitType && !NURSE_REQUEST_VISIT_TYPES.includes(String(careDetails.visitType || "").trim())) {
+    if (shouldValidateKey("visitType") && String(source.visitType || "").trim() && !NURSE_REQUEST_VISIT_TYPES.includes(String(source.visitType || "").trim())) {
       errors.visitType = "Select a valid visit type.";
     }
-    if (!errors.duration && !NURSE_REQUEST_DURATIONS.includes(String(careDetails.duration || "").trim())) {
+    if (shouldValidateKey("duration") && String(source.duration || "").trim() && !NURSE_REQUEST_DURATIONS.includes(String(source.duration || "").trim())) {
       errors.duration = "Select a valid duration.";
     }
-    if (!errors.careShift && !NURSE_REQUEST_CARE_SHIFTS.includes(String(careDetails.careShift || "").trim())) {
+    if (shouldValidateKey("careShift") && String(source.careShift || "").trim() && !NURSE_REQUEST_CARE_SHIFTS.includes(String(source.careShift || "").trim())) {
       errors.careShift = "Select day or night care.";
     }
     NURSE_REQUEST_YES_NO_FIELDS.forEach((key) => {
-      if (!errors[key] && !NURSE_REQUEST_YES_NO_OPTIONS.includes(String(careDetails[key] || "").trim())) {
+      if (shouldValidateKey(key) && String(source[key] || "").trim() && !NURSE_REQUEST_YES_NO_OPTIONS.includes(String(source[key] || "").trim())) {
         errors[key] = "Select yes or no.";
       }
     });
     const today = localDateInputValue(new Date());
-    if (!errors.preferredDate && !/^\d{4}-\d{2}-\d{2}$/.test(String(careDetails.preferredDate || "").trim())) {
+    if (shouldValidateKey("preferredDate") && String(source.preferredDate || "").trim() && !/^\d{4}-\d{2}-\d{2}$/.test(String(source.preferredDate || "").trim())) {
       errors.preferredDate = "Enter a valid date.";
     }
-    if (!errors.preferredTime && !/^\d{2}:\d{2}$/.test(String(careDetails.preferredTime || "").trim())) {
+    if (shouldValidateKey("preferredTime") && String(source.preferredTime || "").trim() && !/^\d{2}:\d{2}$/.test(String(source.preferredTime || "").trim())) {
       errors.preferredTime = "Enter a valid time.";
     }
-    if (!errors.preferredDate && careDetails.preferredDate < today) {
+    if (shouldValidateKey("preferredDate") && String(source.preferredDate || "").trim() && source.preferredDate < today) {
       errors.preferredDate = "Past dates are not allowed.";
     }
-    if (!errors.preferredDate && !errors.preferredTime && careDetails.preferredDate === today) {
-      const [hh = "0", mm = "0"] = String(careDetails.preferredTime || "").split(":");
+    if (shouldValidateKey("preferredTime") && String(source.preferredDate || "").trim() && String(source.preferredTime || "").trim() && !errors.preferredDate && !errors.preferredTime && source.preferredDate === today) {
+      const [hh = "0", mm = "0"] = String(source.preferredTime || "").split(":");
       const selected = new Date();
       selected.setHours(Number(hh), Number(mm), 0, 0);
       if (selected.getTime() < Date.now()) {
@@ -4295,15 +4431,73 @@ function CustomerMobileDashboard({
   }
 
   function validateRequestStep3() {
+    setRequestStep3ShowErrors(true);
     const errors = getRequestStep3Errors();
     setRequestStep3Errors(errors);
     return Object.keys(errors).length === 0;
   }
 
+  function updateRequestFormField(key, rawValue) {
+    const value = sanitizeRequestFieldValue(key, rawValue);
+    const nextForm = { ...requestForm, [key]: value };
+    setRequestForm(nextForm);
+    const liveErrors = getRequestStep2Errors({ includeRequired: false, activeKeys: [key], source: nextForm });
+    setRequestStep2Errors((current) => {
+      const next = { ...current };
+      delete next[key];
+      if ((requestStep2Touched[key] || requestStep2ShowErrors) && String(value || "").trim() && liveErrors[key]) {
+        next[key] = liveErrors[key];
+      }
+      return next;
+    });
+  }
+
+  function updateCareDetailField(key, value) {
+    const nextDetails = { ...careDetails, [key]: value };
+    setCareDetails(nextDetails);
+    const liveErrors = getRequestStep3Errors({ includeRequired: false, activeKeys: [key], source: nextDetails });
+    setRequestStep3Errors((current) => {
+      const next = { ...current };
+      delete next[key];
+      if ((requestStep3Touched[key] || requestStep3ShowErrors) && String(value || "").trim() && liveErrors[key]) {
+        next[key] = liveErrors[key];
+      }
+      return next;
+    });
+  }
+
+  function markRequestStep2FieldBlurred(key) {
+    setRequestStep2Touched((current) => ({ ...current, [key]: true }));
+    const errors = getRequestStep2Errors({ includeRequired: false, activeKeys: [key] });
+    setRequestStep2Errors((current) => {
+      const next = { ...current };
+      const value = sanitizeRequestFieldValue(key, requestForm[key] || "");
+      delete next[key];
+      if (String(value || "").trim() && errors[key]) {
+        next[key] = errors[key];
+      }
+      return next;
+    });
+  }
+
+  function markRequestStep3FieldBlurred(key) {
+    setRequestStep3Touched((current) => ({ ...current, [key]: true }));
+    const errors = getRequestStep3Errors({ includeRequired: false, activeKeys: [key] });
+    setRequestStep3Errors((current) => {
+      const next = { ...current };
+      const value = careDetails[key] || "";
+      delete next[key];
+      if (String(value || "").trim() && errors[key]) {
+        next[key] = errors[key];
+      }
+      return next;
+    });
+  }
+
   const requestContinueDisabled = requestSubmitting
-    || (requestStep === 1 && !NURSE_REQUEST_CARE_TYPES.includes(selectedCareType))
-    || (requestStep === 2 && Object.keys(getRequestStep2Errors()).length > 0)
-    || (requestStep === 3 && Object.keys(getRequestStep3Errors()).length > 0);
+      || (requestStep === 1 && !NURSE_REQUEST_CARE_TYPES.includes(selectedCareType))
+      || (requestStep === 2 && Object.keys(getRequestStep2Errors()).length > 0)
+      || (requestStep === 3 && Object.keys(getRequestStep3Errors()).length > 0);
 
   async function handleRequestContinue() {
     if (requestStep === 1) {
@@ -4374,9 +4568,11 @@ function CustomerMobileDashboard({
   }
 
   function transitionToMtmStep(nextStep) {
-    setMtmSubmitError("");
-    setMtmStepErrors({});
-    setMtmAnimatingOut(true);
+      setMtmSubmitError("");
+      setMtmStepErrors({});
+      setMtmTouchedFields({});
+      setMtmShowErrors(false);
+      setMtmAnimatingOut(true);
     window.setTimeout(() => {
       setMtmStep(nextStep);
       setMtmAnimatingOut(false);
@@ -4388,20 +4584,58 @@ function CustomerMobileDashboard({
 
   function updateMtmField(section, key, value) {
     const normalizedValue = sanitizeMtmFieldValue(section, key, value);
-    setMtmForm((current) => ({
-      ...current,
+    const nextForm = {
+      ...mtmForm,
       [section]: {
-        ...current[section],
+        ...mtmForm[section],
         [key]: normalizedValue,
       }
-    }));
-    if (mtmStepErrors[key] && String(normalizedValue || "").trim()) {
-      setMtmStepErrors((current) => {
-        const next = { ...current };
-        delete next[key];
-        return next;
-      });
-    }
+    };
+    setMtmForm(nextForm);
+    const liveErrors = buildMtmStepErrors(mtmStep, nextForm, mtmLabResultsFiles, {
+      medicationEntries: mtmMedicationEntries,
+      requireMedicationDraft: false,
+      includeRequired: false,
+      activeKeys: [key],
+    });
+    setMtmStepErrors((current) => {
+      const next = { ...current };
+      delete next[key];
+      if ((mtmTouchedFields[key] || mtmShowErrors) && liveErrors[key]) {
+        next[key] = liveErrors[key];
+      }
+      return next;
+    });
+  }
+
+  function markMtmFieldBlurred(section, key) {
+    const normalizedValue = sanitizeMtmFieldValue(section, key, mtmForm?.[section]?.[key] || "");
+    const nextForm = {
+      ...mtmForm,
+      [section]: {
+        ...mtmForm[section],
+        [key]: normalizedValue,
+      }
+    };
+    setMtmTouchedFields((current) => ({ ...current, [key]: true }));
+    const errors = buildMtmStepErrors(mtmStep, nextForm, mtmLabResultsFiles, {
+      medicationEntries: mtmMedicationEntries,
+      requireMedicationDraft: false,
+      includeRequired: false,
+      activeKeys: [key],
+    });
+    setMtmStepErrors((current) => {
+      const next = { ...current };
+      delete next[key];
+      if (String(normalizedValue || "").trim() && errors[key]) {
+        next[key] = errors[key];
+      }
+      return next;
+    });
+  }
+
+  function markCustomerSettingsFieldBlurred(key) {
+    setCustomerSettingsTouched((current) => ({ ...current, [key]: true }));
   }
 
   function toggleMtmBarrier(option) {
@@ -4422,6 +4656,7 @@ function CustomerMobileDashboard({
   }
 
   function validateMtmStep(step) {
+    setMtmShowErrors(true);
     const errors = buildMtmStepErrors(step, mtmForm, mtmLabResultsFiles, {
       medicationEntries: mtmMedicationEntries,
       requireMedicationDraft: false,
@@ -4435,9 +4670,14 @@ function CustomerMobileDashboard({
     requireMedicationDraft: false,
   })).length === 0, [mtmStep, mtmForm, mtmLabResultsFiles, mtmMedicationEntries]);
   const mtmCanSubmit = useMemo(() => Object.keys(buildMtmStepErrors(6, mtmForm, mtmLabResultsFiles, {
-    medicationEntries: mtmMedicationEntries,
-    requireMedicationDraft: false,
-  })).length === 0, [mtmForm, mtmLabResultsFiles, mtmMedicationEntries]);
+      medicationEntries: mtmMedicationEntries,
+      requireMedicationDraft: false,
+    })).length === 0, [mtmForm, mtmLabResultsFiles, mtmMedicationEntries]);
+
+  const showRequestStep2FieldError = (key) => Boolean(requestStep2Errors[key]) && (requestStep2Touched[key] || requestStep2ShowErrors);
+  const showRequestStep3FieldError = (key) => Boolean(requestStep3Errors[key]) && (requestStep3Touched[key] || requestStep3ShowErrors);
+  const showMtmFieldError = (key) => Boolean(mtmStepErrors[key]) && (mtmTouchedFields[key] || mtmShowErrors);
+  const showCustomerSettingsFieldError = (key) => Boolean(customerSettingsErrors[key]) && customerSettingsTouched[key];
 
   async function submitMtmRequest() {
     if (mtmSubmitting) return;
@@ -4955,10 +5195,11 @@ function CustomerMobileDashboard({
                     ["Preferred Contact Method", "preferredContactMethod", "select", ""],
                   ].map(([label, key, type, placeholder]) => <label className="customer-mobile-field" key={label}>
                     <span>{label}:</span>
-                    {type === "select" ? <select
-                      value={mtmForm.patient[key]}
-                      className={mtmStepErrors[key] ? "has-error" : ""}
-                      onChange={(event) => updateMtmField("patient", key, event.target.value)}
+                      {type === "select" ? <select
+                        value={mtmForm.patient[key]}
+                        className={showMtmFieldError(key) ? "has-error" : ""}
+                        onBlur={() => markMtmFieldBlurred("patient", key)}
+                        onChange={(event) => updateMtmField("patient", key, event.target.value)}
                     >
                       <option value="">Select an option</option>
                       {(key === "gender" ? MTM_GENDER_OPTIONS : key === "maritalStatus" ? MTM_MARITAL_STATUS_OPTIONS : MTM_CONTACT_METHOD_OPTIONS).map((option) => (
@@ -4970,12 +5211,13 @@ function CustomerMobileDashboard({
                       maxLength={key === "age" ? 3 : ["phoneNumber", "emergencyContact"].includes(key) ? 11 : 500}
                       max={key === "dob" ? todayInputDate() : undefined}
                       pattern={key === "age" ? "\\d{1,3}" : ["phoneNumber", "emergencyContact"].includes(key) ? "\\d{11}" : undefined}
-                      value={mtmForm.patient[key]}
-                      placeholder={placeholder}
-                      className={mtmStepErrors[key] ? "has-error" : ""}
-                      onChange={(event) => updateMtmField("patient", key, event.target.value)}
-                    />}
-                    {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                        value={mtmForm.patient[key]}
+                        placeholder={placeholder}
+                        className={showMtmFieldError(key) ? "has-error" : ""}
+                        onBlur={() => markMtmFieldBlurred("patient", key)}
+                        onChange={(event) => updateMtmField("patient", key, event.target.value)}
+                      />}
+                      {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                   </label>)}
                 </div> : null}
                 {mtmStep === 2 ? <div className="customer-mobile-form-stack">
@@ -4989,10 +5231,11 @@ function CustomerMobileDashboard({
                     ["Consent to Discuss Care?", "consentToDiscussCare"],
                   ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
                     <span>{label}:</span>
-                    {key === "relationship" || key === "livesWithPatient" || key === "consentToDiscussCare" ? <select
-                      value={mtmForm.emergencyContact[key]}
-                      className={mtmStepErrors[key] ? "has-error" : ""}
-                      onChange={(event) => updateMtmField("emergencyContact", key, event.target.value)}
+                      {key === "relationship" || key === "livesWithPatient" || key === "consentToDiscussCare" ? <select
+                        value={mtmForm.emergencyContact[key]}
+                        className={showMtmFieldError(key) ? "has-error" : ""}
+                        onBlur={() => markMtmFieldBlurred("emergencyContact", key)}
+                        onChange={(event) => updateMtmField("emergencyContact", key, event.target.value)}
                     >
                       <option value="">Select an option</option>
                       {(key === "relationship" ? MTM_RELATIONSHIP_OPTIONS : MTM_YES_NO_OPTIONS).map((option) => (
@@ -5003,11 +5246,12 @@ function CustomerMobileDashboard({
                       inputMode={key === "phoneNumber" ? "tel" : undefined}
                       maxLength={key === "phoneNumber" ? 11 : key === "emailAddress" ? 254 : 500}
                       pattern={key === "phoneNumber" ? "\\d{11}" : undefined}
-                      value={mtmForm.emergencyContact[key]}
-                      className={mtmStepErrors[key] ? "has-error" : ""}
-                      onChange={(event) => updateMtmField("emergencyContact", key, event.target.value)}
-                    />}
-                    {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                        value={mtmForm.emergencyContact[key]}
+                        className={showMtmFieldError(key) ? "has-error" : ""}
+                        onBlur={() => markMtmFieldBlurred("emergencyContact", key)}
+                        onChange={(event) => updateMtmField("emergencyContact", key, event.target.value)}
+                      />}
+                      {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                   </label>)}
                 </div> : null}
                 {mtmStep === 3 ? <div className="customer-mobile-form-stack">
@@ -5020,8 +5264,8 @@ function CustomerMobileDashboard({
                       ["Blood Glucose/HbA1c", "bloodGlucoseHbA1c"],
                     ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
                       <span>{label}:</span>
-                      <input type="text" value={mtmForm.medicalHistory[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
-                      {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                        <input type="text" value={mtmForm.medicalHistory[key]} className={showMtmFieldError(key) ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("medicalHistory", key)} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
+                        {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                     </label>)}
                   </section>
                   <section className="customer-mobile-form-group">
@@ -5032,8 +5276,8 @@ function CustomerMobileDashboard({
                       ["Chronic Conditions", "chronicConditions"],
                     ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
                       <span>{label}:</span>
-                      <input type="text" value={mtmForm.medicalHistory[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
-                      {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                        <input type="text" value={mtmForm.medicalHistory[key]} className={showMtmFieldError(key) ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("medicalHistory", key)} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
+                        {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                     </label>)}
                   </section>
                   <section className="customer-mobile-form-group">
@@ -5043,8 +5287,8 @@ function CustomerMobileDashboard({
                       ["Past Surgical History", "pastSurgicalHistory"],
                     ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
                       <span>{label}:</span>
-                      <input type="text" value={mtmForm.medicalHistory[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
-                      {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                        <input type="text" value={mtmForm.medicalHistory[key]} className={showMtmFieldError(key) ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("medicalHistory", key)} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
+                        {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                     </label>)}
                   </section>
                   <section className="customer-mobile-form-group">
@@ -5054,8 +5298,8 @@ function CustomerMobileDashboard({
                       ["Drug Intolerances", "drugIntolerances"],
                     ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
                       <span>{label}:</span>
-                      <input type="text" value={mtmForm.medicalHistory[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
-                      {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                        <input type="text" value={mtmForm.medicalHistory[key]} className={showMtmFieldError(key) ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("medicalHistory", key)} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
+                        {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                     </label>)}
                   </section>
                   <section className="customer-mobile-form-group">
@@ -5093,12 +5337,12 @@ function CustomerMobileDashboard({
                       {mtmLabResultsFiles.length ? <div className="customer-mobile-file-list">
                         {mtmLabResultsFiles.map((file) => <div key={`${file.name}-${file.size}`} className="customer-mobile-file-chip">{file.name}</div>)}
                       </div> : null}
-                      {mtmStepErrors.relevantLabResults ? <small className="customer-mobile-field-error">{mtmStepErrors.relevantLabResults}</small> : null}
+                        {showMtmFieldError("relevantLabResults") ? <small className="customer-mobile-field-error">{mtmStepErrors.relevantLabResults}</small> : null}
                     </label>
                     <label className="customer-mobile-field">
                       <span>Clinical Monitoring Parameters:</span>
-                      <input type="text" value={mtmForm.medicalHistory.clinicalMonitoringParameters} className={mtmStepErrors.clinicalMonitoringParameters ? "has-error" : ""} onChange={(event) => updateMtmField("medicalHistory", "clinicalMonitoringParameters", event.target.value)} />
-                      {mtmStepErrors.clinicalMonitoringParameters ? <small className="customer-mobile-field-error">{mtmStepErrors.clinicalMonitoringParameters}</small> : null}
+                        <input type="text" value={mtmForm.medicalHistory.clinicalMonitoringParameters} className={showMtmFieldError("clinicalMonitoringParameters") ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("medicalHistory", "clinicalMonitoringParameters")} onChange={(event) => updateMtmField("medicalHistory", "clinicalMonitoringParameters", event.target.value)} />
+                        {showMtmFieldError("clinicalMonitoringParameters") ? <small className="customer-mobile-field-error">{mtmStepErrors.clinicalMonitoringParameters}</small> : null}
                     </label>
                   </section>
                 </div> : null}
@@ -5144,20 +5388,21 @@ function CustomerMobileDashboard({
                     ["Notes", "notes"],
                   ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
                     <span>{label}:</span>
-                    {key === "frequency" || key === "route" ? <select
-                      value={mtmForm.medicationProfile[key]}
-                      className={mtmStepErrors[key] ? "has-error" : ""}
-                      onChange={(event) => updateMtmField("medicationProfile", key, event.target.value)}
+                      {key === "frequency" || key === "route" ? <select
+                        value={mtmForm.medicationProfile[key]}
+                        className={showMtmFieldError(key) ? "has-error" : ""}
+                        onBlur={() => markMtmFieldBlurred("medicationProfile", key)}
+                        onChange={(event) => updateMtmField("medicationProfile", key, event.target.value)}
                     >
                       <option value="">Select an option</option>
                       {(key === "frequency" ? MTM_FREQUENCY_OPTIONS : MTM_ROUTE_OPTIONS).map((option) => (
                         <option key={option} value={option}>{option}</option>
                       ))}
-                    </select> : <input type={key === "startDate" ? "date" : "text"} max={key === "startDate" ? todayInputDate() : undefined} value={mtmForm.medicationProfile[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("medicationProfile", key, event.target.value)} />}
-                    {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                      </select> : <input type={key === "startDate" ? "date" : "text"} max={key === "startDate" ? todayInputDate() : undefined} value={mtmForm.medicationProfile[key]} className={showMtmFieldError(key) ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("medicationProfile", key)} onChange={(event) => updateMtmField("medicationProfile", key, event.target.value)} />}
+                      {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                   </label>)}
                   <button className="customer-mobile-add-medication-button" type="button" onClick={addMtmMedicationEntry}><span aria-hidden="true">+</span> Add Medication</button>
-                  {mtmStepErrors.medications ? <small className="customer-mobile-field-error">{mtmStepErrors.medications}</small> : null}
+                    {showMtmFieldError("medications") ? <small className="customer-mobile-field-error">{mtmStepErrors.medications}</small> : null}
                   <div className="customer-mobile-subsection-title">
                     <strong>Additional Medication Information</strong>
                     <small>Answer where relevant</small>
@@ -5171,8 +5416,8 @@ function CustomerMobileDashboard({
                     ["Supplements", "supplements"],
                   ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
                     <span>{label}</span>
-                    <textarea rows={4} value={mtmForm.additionalInformation[key]} className={mtmStepErrors[key] ? "has-error" : ""} onChange={(event) => updateMtmField("additionalInformation", key, event.target.value)} />
-                    {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                      <textarea rows={4} value={mtmForm.additionalInformation[key]} className={showMtmFieldError(key) ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("additionalInformation", key)} onChange={(event) => updateMtmField("additionalInformation", key, event.target.value)} />
+                      {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                   </label>)}
                 </div> : null}
                 {mtmStep === 5 ? <div className="customer-mobile-flow-stack">
@@ -5190,7 +5435,7 @@ function CustomerMobileDashboard({
                   })}
                   {mtmForm.adherenceAssessment.barriers.includes("Other") ? <label className="customer-mobile-field">
                     <span>Other barrier:</span>
-                    <input type="text" value={mtmForm.adherenceAssessment.other} onChange={(event) => updateMtmField("adherenceAssessment", "other", event.target.value)} />
+                      <input type="text" value={mtmForm.adherenceAssessment.other} className={showMtmFieldError("other") ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("adherenceAssessment", "other")} onChange={(event) => updateMtmField("adherenceAssessment", "other", event.target.value)} />
                   </label> : null}
                 </div> : null}
                 {mtmStep === 6 ? <div className="customer-mobile-form-stack">
@@ -5202,8 +5447,8 @@ function CustomerMobileDashboard({
                   </div>
                 </div> : null}
               </div>
-              {mtmStepErrors.barriers ? <small className="customer-mobile-field-error">{mtmStepErrors.barriers}</small> : null}
-              {mtmStepErrors.reasonForDiscontinuation ? <small className="customer-mobile-field-error">{mtmStepErrors.reasonForDiscontinuation}</small> : null}
+                {showMtmFieldError("barriers") ? <small className="customer-mobile-field-error">{mtmStepErrors.barriers}</small> : null}
+                {showMtmFieldError("reasonForDiscontinuation") ? <small className="customer-mobile-field-error">{mtmStepErrors.reasonForDiscontinuation}</small> : null}
               {mtmSnackbar ? <div className="customer-mobile-snackbar" role="status" aria-live="polite">{mtmSnackbar}</div> : null}
               <button className="customer-mobile-primary-button" type="button" disabled={mtmSubmitting || (mtmStep < 6 ? !mtmStepIsValid : !mtmCanSubmit)} onClick={() => {
                 if (mtmStep < 6) {
@@ -5215,27 +5460,49 @@ function CustomerMobileDashboard({
               }}>{mtmSubmitting ? "Submitting..." : (mtmStep < 6 ? "Continue" : "Submit MTM Assessment")}</button>
               {mtmStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToMtmStep(Math.max(1, mtmStep - 1))}>Go Back</button> : null}
             </section> : null}
-            {mtmTab === "request" && showMtmSuccessState ? <section className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell customer-mobile-full-therapy-shell">
-              <div className="customer-confirmation-icon" aria-hidden="true">
-                <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#B68A2B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#B68A2B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              </div>
-              <h2>{mtmLoadingState ? "Submitting MTM assessment..." : "Thank you for completing the MTM Patient Assessment Form."}</h2>
-              {!mtmLoadingState ? <p>Your information has been received. A NevariHealth pharmacist will review your submission and contact you within 24 hours.</p> : null}
-              {!mtmLoadingState ? <div className="detail-card info-list">
-                <div className="info-row"><span className="info-label">Request</span><span className="info-value">{activeMtm?.request_reference || `MTM-${String(activeMtm?.id || "").padStart(6, "0")}`}</span></div>
-                <div className="info-row"><span className="info-label">Status</span><span className="info-value">{titleCase(activeMtmStatus || "submitted")}</span></div>
-                <div className="info-row"><span className="info-label">Assigned Pharmacist</span><span className="info-value">{activeMtm?.assigned_pharmacist_user_id ? `Pharmacist #${activeMtm.assigned_pharmacist_user_id}` : "Pending assignment"}</span></div>
+            {mtmTab === "request" && showMtmSuccessState ? <section className="customer-flow-status-card customer-flow-status-card-mtm is-success customer-mobile-full-therapy-shell">
+              <header className="customer-flow-status-head">
+                <CustomerStatusIcon tone="success" type="check" />
+                <h2>{mtmLoadingState ? "Submitting MTM assessment..." : "MTM assessment submitted successfully"}</h2>
+                {!mtmLoadingState ? <p>Thank you for completing the MTM Patient Assessment Form. A NevariHealth pharmacist will review your submission and contact you within 24 hours.</p> : null}
+              </header>
+              {!mtmLoadingState ? <section className="customer-flow-status-panel customer-flow-status-panel-accent" aria-label="MTM request summary">
+                <div className="customer-flow-status-panel-head customer-flow-status-panel-head-mtm">
+                  <div className="customer-flow-status-panel-icon is-success" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none"><path d="m7.5 12.2 3 3 6-7" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </div>
+                  <div className="customer-flow-status-panel-copy">
+                    <span>Assessment received</span>
+                    <strong>Your request is now in the pharmacist review queue.</strong>
+                  </div>
+                  <CustomerStatusPill tone="success">Received</CustomerStatusPill>
+                </div>
+                <CustomerStatusKeyValueList rows={[
+                  { label: "Request ID", value: activeMtm?.request_reference || `MTM-${String(activeMtm?.id || "").padStart(6, "0")}` },
+                  { label: "Status", value: titleCase(activeMtmStatus || "submitted") },
+                  { label: "Assigned Pharmacist", value: activeMtm?.assigned_pharmacist_name || (activeMtm?.assigned_pharmacist_user_id ? `Pharmacist #${activeMtm.assigned_pharmacist_user_id}` : "Pending assignment") },
+                  { label: "Response Time", value: "Within 24 hours" },
+                ]} />
+              </section> : null}
+              {!mtmLoadingState ? <div className="customer-flow-status-note">
+                <p><strong>Next step:</strong> your pharmacist will review your medication details and follow up if extra information is needed.</p>
               </div> : null}
-              <button className="customer-mobile-secondary-button" type="button" onClick={async () => {
-                await mtmRequestsQuery.mutate();
-                const nextHistoryRequestId = activeMtm?.id || mtmLatestRequest?.id;
-                if (nextHistoryRequestId) {
-                  openMtmHistoryRequest(nextHistoryRequestId);
-                } else {
-                  setMtmSubmitted(false);
-                  setMtmStep(1);
-                }
-              }}>View Request Status</button>
+              {!mtmLoadingState ? <CustomerStatusActions>
+                <button className="customer-mobile-primary-button" type="button" onClick={async () => {
+                  await mtmRequestsQuery.mutate();
+                  const nextHistoryRequestId = activeMtm?.id || mtmLatestRequest?.id;
+                  if (nextHistoryRequestId) {
+                    openMtmHistoryRequest(nextHistoryRequestId);
+                  } else {
+                    setMtmSubmitted(false);
+                    setMtmStep(1);
+                  }
+                }}>View Request Status</button>
+                <button className="customer-mobile-secondary-button" type="button" onClick={() => goToPage("overview")}>Back to Dashboard</button>
+              </CustomerStatusActions> : null}
+              {!mtmLoadingState ? <CustomerStatusSecurityNote tone="success">
+                Your submission is secure and only used to process your MTM request.
+              </CustomerStatusSecurityNote> : null}
             </section> : null}
             {mtmTab === "history" ? <section className="customer-mobile-list-section customer-mobile-appointment-pane">
               {mtmRequestsQuery.isLoading ? Array.from({ length: 3 }, (_, index) => <article className="customer-mobile-visit-row skeleton-panel" key={`customer-mobile-mtm-skeleton-${index}`}>
@@ -5342,7 +5609,8 @@ function CustomerMobileDashboard({
           />
           <label className="customer-mobile-field">
             <span>Display Name:</span>
-            <input value={settings.displayName} placeholder={profile.display_name || "Tee Godwin"} onChange={(event) => setSettings((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />
+            <input value={settings.displayName} className={showCustomerSettingsFieldError("displayName") ? "has-error" : ""} placeholder={profile.display_name || "Tee Godwin"} onBlur={() => markCustomerSettingsFieldBlurred("displayName")} onChange={(event) => setSettings((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />
+            {showCustomerSettingsFieldError("displayName") ? <small className="customer-mobile-field-error">{customerSettingsErrors.displayName}</small> : null}
           </label>
           <label className="customer-mobile-field">
             <span>Email:</span>
@@ -5350,15 +5618,18 @@ function CustomerMobileDashboard({
           </label>
           <label className="customer-mobile-field">
             <span>Phone Number:</span>
-            <input value={settings.phone} placeholder="+234 000 000 0000" onChange={(event) => setSettings((current) => ({ ...current, phone: sanitizeClientText(event.target.value, { max: 24 }) }))} />
+            <input type="tel" inputMode="tel" maxLength={11} value={settings.phone} className={showCustomerSettingsFieldError("phone") ? "has-error" : ""} placeholder="+234 000 000 0000" onBlur={() => markCustomerSettingsFieldBlurred("phone")} onChange={(event) => setSettings((current) => ({ ...current, phone: normalizeMtmPhoneNumber(event.target.value) }))} />
+            {showCustomerSettingsFieldError("phone") ? <small className="customer-mobile-field-error">{customerSettingsErrors.phone}</small> : null}
           </label>
           <label className="customer-mobile-field">
             <span>Address:</span>
-            <input value={settings.address} placeholder="No. 1, Example Street" onChange={(event) => setSettings((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
+            <input value={settings.address} className={showCustomerSettingsFieldError("address") ? "has-error" : ""} placeholder="No. 1, Example Street" onBlur={() => markCustomerSettingsFieldBlurred("address")} onChange={(event) => setSettings((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
+            {showCustomerSettingsFieldError("address") ? <small className="customer-mobile-field-error">{customerSettingsErrors.address}</small> : null}
           </label>
           <label className="customer-mobile-field">
             <span>Address:</span>
-            <input value={settings.address} placeholder="example@domain.com" onChange={(event) => setSettings((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
+            <input type="email" inputMode="email" value={settings.email} className={showCustomerSettingsFieldError("email") ? "has-error" : ""} placeholder="example@domain.com" onBlur={() => markCustomerSettingsFieldBlurred("email")} onChange={(event) => setSettings((current) => ({ ...current, email: sanitizeClientText(event.target.value, { max: 254 }).replace(/\s+/g, "") }))} />
+            {showCustomerSettingsFieldError("email") ? <small className="customer-mobile-field-error">{customerSettingsErrors.email}</small> : null}
           </label>
           <div className="customer-mobile-upload-group">
             <div>
@@ -5453,18 +5724,9 @@ function CustomerMobileDashboard({
                   <span>{label}</span>
                   {key === "gender" ? <select
                     value={requestForm[key]}
-                    className={requestStep2Errors[key] ? "has-error" : ""}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setRequestForm((current) => ({ ...current, [key]: value }));
-                      if (requestStep2Errors[key] && value.trim()) {
-                        setRequestStep2Errors((current) => {
-                          const next = { ...current };
-                          delete next[key];
-                          return next;
-                        });
-                      }
-                    }}
+                    className={showRequestStep2FieldError(key) ? "has-error" : ""}
+                    onBlur={() => markRequestStep2FieldBlurred(key)}
+                        onChange={(event) => updateRequestFormField(key, event.target.value)}
                   >
                     <option value="">Select gender</option>
                     <option value="Male">Male</option>
@@ -5476,20 +5738,11 @@ function CustomerMobileDashboard({
                     pattern={key === "age" ? "\\d{1,3}" : key === "emergencyContact" ? "[0-9+\\-()\\s]{7,20}" : undefined}
                     value={requestForm[key]}
                     placeholder={placeholder}
-                    className={requestStep2Errors[key] ? "has-error" : ""}
-                    onChange={(event) => {
-                      const value = sanitizeRequestFieldValue(key, event.target.value);
-                      setRequestForm((current) => ({ ...current, [key]: value }));
-                      if (requestStep2Errors[key] && value.trim()) {
-                        setRequestStep2Errors((current) => {
-                          const next = { ...current };
-                          delete next[key];
-                          return next;
-                        });
-                      }
-                    }}
+                    className={showRequestStep2FieldError(key) ? "has-error" : ""}
+                    onBlur={() => markRequestStep2FieldBlurred(key)}
+                      onChange={(event) => updateRequestFormField(key, event.target.value)}
                   />}
-                  {required && requestStep2Errors[key] ? <small className="customer-mobile-field-error">{requestStep2Errors[key]}</small> : null}
+                  {required && showRequestStep2FieldError(key) ? <small className="customer-mobile-field-error">{requestStep2Errors[key]}</small> : null}
                 </label>)}
                 {[
                   ["Existing Conditions (If any):", "conditions", "Enter existing conditions"],
@@ -5510,70 +5763,39 @@ function CustomerMobileDashboard({
                         name="visitType"
                         checked={careDetails.visitType === label}
                         onChange={() => {
-                          setCareDetails((current) => ({ ...current, visitType: label }));
-                          if (requestStep3Errors.visitType) {
-                            setRequestStep3Errors((current) => {
-                              const next = { ...current };
-                              delete next.visitType;
-                              return next;
-                            });
-                          }
+                          updateCareDetailField("visitType", label);
                         }}
                       />
                       <span className="customer-mobile-radio" aria-hidden="true" />
                       {label}
                     </label>)}
                   </div>
-                  {requestStep3Errors.visitType ? <small className="customer-mobile-field-error">{requestStep3Errors.visitType}</small> : null}
+                  {showRequestStep3FieldError("visitType") ? <small className="customer-mobile-field-error">{requestStep3Errors.visitType}</small> : null}
                 </div>
 
                 <label className="customer-mobile-field">
                   <span>Preferred Visit Date:</span>
-                  <input type="date" min={localDateInputValue(new Date())} value={careDetails.preferredDate} className={requestStep3Errors.preferredDate ? "has-error" : ""} onChange={(event) => {
-                    const value = event.target.value;
-                    setCareDetails((current) => ({ ...current, preferredDate: value }));
-                    if (requestStep3Errors.preferredDate && value.trim()) {
-                      setRequestStep3Errors((current) => {
-                        const next = { ...current };
-                        delete next.preferredDate;
-                        return next;
-                      });
-                    }
+                  <input type="date" min={localDateInputValue(new Date())} value={careDetails.preferredDate} className={showRequestStep3FieldError("preferredDate") ? "has-error" : ""} onBlur={() => markRequestStep3FieldBlurred("preferredDate")} onChange={(event) => {
+                      updateCareDetailField("preferredDate", event.target.value);
                   }} />
-                  {requestStep3Errors.preferredDate ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredDate}</small> : null}
+                  {showRequestStep3FieldError("preferredDate") ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredDate}</small> : null}
                 </label>
                 <label className="customer-mobile-field">
                   <span>Preferred Time:</span>
-                  <input type="time" min={careDetails.preferredDate === localDateInputValue(new Date()) ? new Date(Date.now() + 60000).toTimeString().slice(0, 5) : undefined} value={careDetails.preferredTime} className={requestStep3Errors.preferredTime ? "has-error" : ""} onChange={(event) => {
-                    const value = event.target.value;
-                    setCareDetails((current) => ({ ...current, preferredTime: value }));
-                    if (requestStep3Errors.preferredTime && value.trim()) {
-                      setRequestStep3Errors((current) => {
-                        const next = { ...current };
-                        delete next.preferredTime;
-                        return next;
-                      });
-                    }
+                  <input type="time" min={careDetails.preferredDate === localDateInputValue(new Date()) ? new Date(Date.now() + 60000).toTimeString().slice(0, 5) : undefined} value={careDetails.preferredTime} className={showRequestStep3FieldError("preferredTime") ? "has-error" : ""} onBlur={() => markRequestStep3FieldBlurred("preferredTime")} onChange={(event) => {
+                      updateCareDetailField("preferredTime", event.target.value);
                   }} />
-                  {requestStep3Errors.preferredTime ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredTime}</small> : null}
+                  {showRequestStep3FieldError("preferredTime") ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredTime}</small> : null}
                 </label>
                 <label className="customer-mobile-field">
                   <span>Duration needed:</span>
-                  <select value={careDetails.duration} className={requestStep3Errors.duration ? "has-error" : ""} onChange={(event) => {
-                    const value = event.target.value;
-                    setCareDetails((current) => ({ ...current, duration: value }));
-                    if (requestStep3Errors.duration && value.trim()) {
-                      setRequestStep3Errors((current) => {
-                        const next = { ...current };
-                        delete next.duration;
-                        return next;
-                      });
-                    }
+                  <select value={careDetails.duration} className={showRequestStep3FieldError("duration") ? "has-error" : ""} onBlur={() => markRequestStep3FieldBlurred("duration")} onChange={(event) => {
+                      updateCareDetailField("duration", event.target.value);
                   }}>
                     <option value="">Select duration</option>
                     {NURSE_REQUEST_DURATIONS.map((duration) => <option value={duration} key={duration}>{duration}</option>)}
                   </select>
-                  {requestStep3Errors.duration ? <small className="customer-mobile-field-error">{requestStep3Errors.duration}</small> : null}
+                  {showRequestStep3FieldError("duration") ? <small className="customer-mobile-field-error">{requestStep3Errors.duration}</small> : null}
                 </label>
 
                 <div className="customer-mobile-radio-group">
@@ -5581,20 +5803,13 @@ function CustomerMobileDashboard({
                   <div className="customer-mobile-inline-radios">
                     {NURSE_REQUEST_CARE_SHIFTS.map((choice) => <label key={choice}>
                       <input type="radio" name="careShift" checked={careDetails.careShift === choice} onChange={() => {
-                        setCareDetails((current) => ({ ...current, careShift: choice }));
-                        if (requestStep3Errors.careShift) {
-                          setRequestStep3Errors((current) => {
-                            const next = { ...current };
-                            delete next.careShift;
-                            return next;
-                          });
-                        }
+                          updateCareDetailField("careShift", choice);
                       }} />
                       <span className="customer-mobile-radio" aria-hidden="true" />
                       {choice}
                     </label>)}
                   </div>
-                  {requestStep3Errors.careShift ? <small className="customer-mobile-field-error">{requestStep3Errors.careShift}</small> : null}
+                  {showRequestStep3FieldError("careShift") ? <small className="customer-mobile-field-error">{requestStep3Errors.careShift}</small> : null}
                 </div>
 
                 {[
@@ -5609,20 +5824,13 @@ function CustomerMobileDashboard({
                     <div className="customer-mobile-inline-radios">
                       {NURSE_REQUEST_YES_NO_OPTIONS.map((choice) => <label key={choice}>
                         <input type="radio" name={key} checked={careDetails[key] === choice} onChange={() => {
-                          setCareDetails((current) => ({ ...current, [key]: choice }));
-                          if (requestStep3Errors[key]) {
-                            setRequestStep3Errors((current) => {
-                              const next = { ...current };
-                              delete next[key];
-                              return next;
-                            });
-                          }
+                            updateCareDetailField(key, choice);
                         }} />
                         <span className="customer-mobile-radio" aria-hidden="true" />
                         {choice}
                       </label>)}
                     </div>
-                    {requestStep3Errors[key] ? <small className="customer-mobile-field-error">{requestStep3Errors[key]}</small> : null}
+                    {showRequestStep3FieldError(key) ? <small className="customer-mobile-field-error">{requestStep3Errors[key]}</small> : null}
                   </div>
                 ))}
               </div> : null}
@@ -5715,18 +5923,9 @@ function CustomerMobileDashboard({
                   <span>{label}</span>
                   {key === "gender" ? <select
                     value={requestForm[key]}
-                    className={requestStep2Errors[key] ? "has-error" : ""}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setRequestForm((current) => ({ ...current, [key]: value }));
-                      if (requestStep2Errors[key] && value.trim()) {
-                        setRequestStep2Errors((current) => {
-                          const next = { ...current };
-                          delete next[key];
-                          return next;
-                        });
-                      }
-                    }}
+                    className={showRequestStep2FieldError(key) ? "has-error" : ""}
+                    onBlur={() => markRequestStep2FieldBlurred(key)}
+                        onChange={(event) => updateRequestFormField(key, event.target.value)}
                   >
                     <option value="">Select gender</option>
                     <option value="Male">Male</option>
@@ -5738,20 +5937,11 @@ function CustomerMobileDashboard({
                     pattern={key === "age" ? "\\d{1,3}" : key === "emergencyContact" ? "[0-9+\\-()\\s]{7,20}" : undefined}
                     value={requestForm[key]}
                     placeholder={placeholder}
-                    className={requestStep2Errors[key] ? "has-error" : ""}
-                    onChange={(event) => {
-                      const value = sanitizeRequestFieldValue(key, event.target.value);
-                      setRequestForm((current) => ({ ...current, [key]: value }));
-                      if (requestStep2Errors[key] && value.trim()) {
-                        setRequestStep2Errors((current) => {
-                          const next = { ...current };
-                          delete next[key];
-                          return next;
-                        });
-                      }
-                    }}
+                    className={showRequestStep2FieldError(key) ? "has-error" : ""}
+                    onBlur={() => markRequestStep2FieldBlurred(key)}
+                      onChange={(event) => updateRequestFormField(key, event.target.value)}
                   />}
-                  {required && requestStep2Errors[key] ? <small className="customer-mobile-field-error">{requestStep2Errors[key]}</small> : null}
+                  {required && showRequestStep2FieldError(key) ? <small className="customer-mobile-field-error">{requestStep2Errors[key]}</small> : null}
                 </label>)}
                 {[
                   ["Existing Conditions (If any):", "conditions", "Enter existing conditions"],
@@ -5778,70 +5968,39 @@ function CustomerMobileDashboard({
                         name="visitType"
                         checked={careDetails.visitType === label}
                         onChange={() => {
-                          setCareDetails((current) => ({ ...current, visitType: label }));
-                          if (requestStep3Errors.visitType) {
-                            setRequestStep3Errors((current) => {
-                              const next = { ...current };
-                              delete next.visitType;
-                              return next;
-                            });
-                          }
+                          updateCareDetailField("visitType", label);
                         }}
                       />
                       <span className="customer-mobile-radio" aria-hidden="true" />
                       {label}
                     </label>)}
                   </div>
-                  {requestStep3Errors.visitType ? <small className="customer-mobile-field-error">{requestStep3Errors.visitType}</small> : null}
+                  {showRequestStep3FieldError("visitType") ? <small className="customer-mobile-field-error">{requestStep3Errors.visitType}</small> : null}
                 </div>
 
                 <label className="customer-mobile-field">
                   <span>Preferred Visit Date:</span>
-                  <input type="date" min={localDateInputValue(new Date())} value={careDetails.preferredDate} className={requestStep3Errors.preferredDate ? "has-error" : ""} onChange={(event) => {
-                    const value = event.target.value;
-                    setCareDetails((current) => ({ ...current, preferredDate: value }));
-                    if (requestStep3Errors.preferredDate && value.trim()) {
-                      setRequestStep3Errors((current) => {
-                        const next = { ...current };
-                        delete next.preferredDate;
-                        return next;
-                      });
-                    }
+                  <input type="date" min={localDateInputValue(new Date())} value={careDetails.preferredDate} className={showRequestStep3FieldError("preferredDate") ? "has-error" : ""} onBlur={() => markRequestStep3FieldBlurred("preferredDate")} onChange={(event) => {
+                      updateCareDetailField("preferredDate", event.target.value);
                   }} />
-                  {requestStep3Errors.preferredDate ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredDate}</small> : null}
+                  {showRequestStep3FieldError("preferredDate") ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredDate}</small> : null}
                 </label>
                 <label className="customer-mobile-field">
                   <span>Preferred Time:</span>
-                  <input type="time" min={careDetails.preferredDate === localDateInputValue(new Date()) ? new Date(Date.now() + 60000).toTimeString().slice(0, 5) : undefined} value={careDetails.preferredTime} className={requestStep3Errors.preferredTime ? "has-error" : ""} onChange={(event) => {
-                    const value = event.target.value;
-                    setCareDetails((current) => ({ ...current, preferredTime: value }));
-                    if (requestStep3Errors.preferredTime && value.trim()) {
-                      setRequestStep3Errors((current) => {
-                        const next = { ...current };
-                        delete next.preferredTime;
-                        return next;
-                      });
-                    }
+                  <input type="time" min={careDetails.preferredDate === localDateInputValue(new Date()) ? new Date(Date.now() + 60000).toTimeString().slice(0, 5) : undefined} value={careDetails.preferredTime} className={showRequestStep3FieldError("preferredTime") ? "has-error" : ""} onBlur={() => markRequestStep3FieldBlurred("preferredTime")} onChange={(event) => {
+                      updateCareDetailField("preferredTime", event.target.value);
                   }} />
-                  {requestStep3Errors.preferredTime ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredTime}</small> : null}
+                  {showRequestStep3FieldError("preferredTime") ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredTime}</small> : null}
                 </label>
                 <label className="customer-mobile-field">
                   <span>Duration needed:</span>
-                  <select value={careDetails.duration} className={requestStep3Errors.duration ? "has-error" : ""} onChange={(event) => {
-                    const value = event.target.value;
-                    setCareDetails((current) => ({ ...current, duration: value }));
-                    if (requestStep3Errors.duration && value.trim()) {
-                      setRequestStep3Errors((current) => {
-                        const next = { ...current };
-                        delete next.duration;
-                        return next;
-                      });
-                    }
+                  <select value={careDetails.duration} className={showRequestStep3FieldError("duration") ? "has-error" : ""} onBlur={() => markRequestStep3FieldBlurred("duration")} onChange={(event) => {
+                      updateCareDetailField("duration", event.target.value);
                   }}>
                     <option value="">Select duration</option>
                     {NURSE_REQUEST_DURATIONS.map((duration) => <option value={duration} key={duration}>{duration}</option>)}
                   </select>
-                  {requestStep3Errors.duration ? <small className="customer-mobile-field-error">{requestStep3Errors.duration}</small> : null}
+                  {showRequestStep3FieldError("duration") ? <small className="customer-mobile-field-error">{requestStep3Errors.duration}</small> : null}
                 </label>
 
                 <div className="customer-mobile-radio-group">
@@ -5849,20 +6008,13 @@ function CustomerMobileDashboard({
                   <div className="customer-mobile-inline-radios">
                     {NURSE_REQUEST_CARE_SHIFTS.map((choice) => <label key={choice}>
                       <input type="radio" name="careShift" checked={careDetails.careShift === choice} onChange={() => {
-                        setCareDetails((current) => ({ ...current, careShift: choice }));
-                        if (requestStep3Errors.careShift) {
-                          setRequestStep3Errors((current) => {
-                            const next = { ...current };
-                            delete next.careShift;
-                            return next;
-                          });
-                        }
+                          updateCareDetailField("careShift", choice);
                       }} />
                       <span className="customer-mobile-radio" aria-hidden="true" />
                       {choice}
                     </label>)}
                   </div>
-                  {requestStep3Errors.careShift ? <small className="customer-mobile-field-error">{requestStep3Errors.careShift}</small> : null}
+                  {showRequestStep3FieldError("careShift") ? <small className="customer-mobile-field-error">{requestStep3Errors.careShift}</small> : null}
                 </div>
 
                 {[
@@ -5877,20 +6029,13 @@ function CustomerMobileDashboard({
                     <div className="customer-mobile-inline-radios">
                       {NURSE_REQUEST_YES_NO_OPTIONS.map((choice) => <label key={choice}>
                         <input type="radio" name={key} checked={careDetails[key] === choice} onChange={() => {
-                          setCareDetails((current) => ({ ...current, [key]: choice }));
-                          if (requestStep3Errors[key]) {
-                            setRequestStep3Errors((current) => {
-                              const next = { ...current };
-                              delete next[key];
-                              return next;
-                            });
-                          }
+                            updateCareDetailField(key, choice);
                         }} />
                         <span className="customer-mobile-radio" aria-hidden="true" />
                         {choice}
                       </label>)}
                     </div>
-                    {requestStep3Errors[key] ? <small className="customer-mobile-field-error">{requestStep3Errors[key]}</small> : null}
+                    {showRequestStep3FieldError(key) ? <small className="customer-mobile-field-error">{requestStep3Errors[key]}</small> : null}
                   </div>
                 ))}
               </div> : null}

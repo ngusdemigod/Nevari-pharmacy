@@ -542,7 +542,7 @@ export default function PharmacistDashboard() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Download Prefilled MTM PDF
+                  Download Request PDF
                 </a> : null}
                 <button type="button" className="pill-button" disabled={requestActionLocked && busyAction === "complete"} onClick={() => runMtmAction("complete", {}, "MTM case completed.")}>{requestActionLocked && busyAction === "complete" ? "Completing..." : "Complete"}</button>
               </div>
