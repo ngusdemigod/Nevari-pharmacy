@@ -1,6 +1,7 @@
 "use client";
 
 import { apiRequest } from "../components/role-dashboard-utils";
+import { bytesToBase64, generateBrowserMtmPdf } from "./mtmPdfBrowser";
 
 const STORAGE_PREFIX = "nevari_subscription_state";
 const SUBSCRIPTION_UI_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -275,6 +276,60 @@ export async function createMtmRequest(session, body) {
   return payload?.request || null;
 }
 
+async function parseLocalMtmResponse(response, fallbackMessage) {
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.success) {
+    throw new Error(payload?.error?.message || fallbackMessage);
+  }
+  return payload?.data || {};
+}
+
+export async function submitCustomerMtmRequest(session, body) {
+  const params = new URLSearchParams({
+    baseUrl: String(session?.baseUrl || ""),
+    frontendType: String(session?.frontendType || "patient"),
+  });
+  const requestHeaders = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "X-Nevari-Frontend-Type": session?.frontendType || "patient",
+    "X-Nevari-Frontend-Origin": typeof window !== "undefined" ? window.location.origin : "",
+  };
+
+  const createResponse = await fetch(`/api/mtm/submit?${params.toString()}`, {
+    method: "POST",
+    headers: requestHeaders,
+    body: JSON.stringify(body),
+  });
+  const createPayload = await parseLocalMtmResponse(createResponse, "Unable to submit the MTM request.");
+  const createdRequest = createPayload?.request || null;
+  const pdfSnapshot = createPayload?.pdf_snapshot || null;
+  if (!createdRequest?.id || !pdfSnapshot?.token || !pdfSnapshot?.fingerprint) {
+    throw new Error("MTM request snapshot could not be created.");
+  }
+
+  const pdfBytes = await generateBrowserMtmPdf(createdRequest);
+  const uploadResponse = await fetch(`/api/mtm/${encodeURIComponent(String(createdRequest.id))}/submission-pdf?${params.toString()}`, {
+    method: "POST",
+    headers: requestHeaders,
+    body: JSON.stringify({
+      base64: bytesToBase64(pdfBytes),
+      fingerprint: pdfSnapshot.fingerprint,
+      snapshotToken: pdfSnapshot.token,
+    }),
+  });
+  const uploadPayload = await parseLocalMtmResponse(uploadResponse, "Unable to verify the MTM PDF upload.");
+  return uploadPayload?.request || createdRequest;
+}
+
+export async function requestMtmReschedule(session, id) {
+  const payload = await apiRequest(session, `/mtm-requests/${id}/reschedule`, {
+    method: "POST",
+    body: {},
+  });
+  return payload?.request || null;
+}
+
 export async function fetchDoctorMtmRequests(session) {
   const payload = await apiRequest(session, "/doctor/mtm-requests", { suppressHttpError: true });
   return Array.isArray(payload?.items) ? payload.items : [];
@@ -319,6 +374,26 @@ export async function updatePharmacistMtmRequest(session, id, action, body = {})
   return payload?.request || null;
 }
 
+export async function approvePharmacistMtmRequest(session, id) {
+  const params = new URLSearchParams({
+    baseUrl: String(session?.baseUrl || ""),
+    frontendType: String(session?.frontendType || "pharmacist_dashboard"),
+  });
+  const response = await fetch(`/api/pharmacist/mtm/${encodeURIComponent(String(id || ""))}/approve?${params.toString()}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "X-Nevari-Frontend-Type": session?.frontendType || "pharmacist_dashboard",
+      "X-Nevari-Frontend-Origin": typeof window !== "undefined" ? window.location.origin : "",
+    },
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.success) {
+    throw new Error(payload?.error?.message || "Unable to approve the MTM request.");
+  }
+  return payload?.data?.request || null;
+}
+
 export async function fetchPharmacistProducts(session, search = "") {
   const payload = await apiRequest(session, "/pharmacist/pharmacy-products", {
     params: search ? { search } : {},
@@ -332,6 +407,23 @@ export async function fetchManagedProducts(session, params = {}) {
     params,
     suppressHttpError: true,
   });
+  return {
+    items: Array.isArray(payload?.items) ? payload.items : [],
+    total: Number(payload?.total || 0),
+  };
+}
+
+export async function fetchManagedOrders(session, params = {}) {
+  const payload = await apiRequest(session, "/orders", {
+    params,
+    suppressHttpError: true,
+  });
+  if (Array.isArray(payload)) {
+    return {
+      items: payload,
+      total: payload.length,
+    };
+  }
   return {
     items: Array.isArray(payload?.items) ? payload.items : [],
     total: Number(payload?.total || 0),

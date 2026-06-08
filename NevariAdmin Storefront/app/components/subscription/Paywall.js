@@ -28,7 +28,7 @@ export default function Paywall({
   onSubscribe,
   busy = false,
   error = "",
-  heading = "Access more on Nevari Access Pro",
+  heading = "Access more on Nevari Access",
 }) {
   return (
     <section className="subscription-shell">

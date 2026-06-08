@@ -42,6 +42,22 @@ final class Nevari_Mtm {
             ],
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/mtm-requests/(?P<id>\d+)/reschedule', [
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'customer_reschedule_request'],
+                'permission_callback' => [__CLASS__, 'customer_permission'],
+            ],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/mtm-requests/(?P<id>\d+)/submission-pdf', [
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'customer_submission_pdf'],
+                'permission_callback' => [__CLASS__, 'customer_permission'],
+            ],
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/mtm-requests/(?P<id>\d+)/booking-context', [
             [
                 'methods' => WP_REST_Server::READABLE,
@@ -50,8 +66,15 @@ final class Nevari_Mtm {
             ],
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/mtm-requests/join/(?P<token>[A-Za-z0-9\-_\.]+)', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'join_access'],
+                'permission_callback' => '__return_true',
+            ],
+        ]);
+
         self::register_pharmacist_routes('/pharmacist/mtm-requests', 'pharmacist_permission');
-        self::register_pharmacist_routes('/doctor/mtm-requests', 'pharmacist_permission');
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/pharmacist/pharmacy-products', [
             [
@@ -145,6 +168,212 @@ final class Nevari_Mtm {
         return Nevari_Helpers::now();
     }
 
+    private static function store_timezone(): string {
+        $timezone = function_exists('wp_timezone_string') ? wp_timezone_string() : '';
+        $timezone = is_string($timezone) ? trim($timezone) : '';
+        return $timezone !== '' ? $timezone : 'UTC';
+    }
+
+    private static function public_request_reference(int $id): string {
+        return sprintf('MTM-%06d', max(1, $id));
+    }
+
+    private static function ensure_request_reference(int $id): string {
+        global $wpdb;
+        $row = self::get_request($id);
+        if (!$row) {
+            return '';
+        }
+        $reference = sanitize_text_field((string) ($row->request_reference ?? ''));
+        if ($reference !== '') {
+            return $reference;
+        }
+        $reference = self::public_request_reference($id);
+        $wpdb->update(self::table(), ['request_reference' => $reference], ['id' => $id], ['%s'], ['%d']);
+        return $reference;
+    }
+
+    private static function is_google_meet_url(string $value): bool {
+        return (bool) preg_match('#^https://meet\.google\.com/[a-z0-9-]+#i', trim($value));
+    }
+
+    private static function raw_meeting_link(object $row): string {
+        $link = esc_url_raw((string) ($row->google_meet_link ?? ''));
+        return self::is_google_meet_url($link) ? $link : '';
+    }
+
+    private static function meeting_state(object $row): string {
+        if (!empty($row->google_meet_ended_at)) {
+            return 'ended';
+        }
+        if (self::raw_meeting_link($row) !== '' && !empty($row->scheduled_at)) {
+            return 'active';
+        }
+        return 'pending';
+    }
+
+    private static function attendance_status(object $row): string {
+        $missed_role = strtolower((string) ($row->missed_attendance_role ?? ''));
+        if (!empty($row->missed_attendance_at) || $missed_role !== '') {
+            if ($missed_role === 'pharmacist') {
+                return 'pharmacist_absent';
+            }
+            if ($missed_role === 'customer') {
+                return 'customer_absent';
+            }
+            return 'missed';
+        }
+        $customer_checked_in = !empty($row->customer_checked_in_at);
+        $pharmacist_checked_in = !empty($row->pharmacist_checked_in_at);
+        if ($customer_checked_in && $pharmacist_checked_in) {
+            return 'attended';
+        }
+        if ($customer_checked_in || $pharmacist_checked_in) {
+            return 'partial';
+        }
+        return '';
+    }
+
+    private static function reschedule_eligible(object $row): bool {
+        return !empty($row->scheduled_at)
+            && (
+                !empty($row->missed_attendance_at)
+                || (!empty($row->google_meet_ended_at) && (empty($row->customer_checked_in_at) || empty($row->pharmacist_checked_in_at)))
+            )
+            && !in_array(self::normalize_status((string) ($row->status ?? '')), [self::STATUS_COMPLETED], true);
+    }
+
+    private static function frontend_origin(string $frontend_type, string $default_path = ''): string {
+        return rtrim(Nevari_Helpers::frontend_dashboard_url($default_path ?: '/'), '/');
+    }
+
+    private static function customer_detail_link(int $request_id): string {
+        return self::frontend_origin('patient_dashboard', '/dashboard') . '/therapy/' . rawurlencode((string) $request_id);
+    }
+
+    private static function pharmacist_queue_link(int $request_id): string {
+        return add_query_arg([
+            'mtm_request_id' => $request_id,
+        ], self::frontend_dashboard_url('pharmacist_dashboard', '/admin/pharmacist'));
+    }
+
+    private static function join_valid_from_at(object $row): string {
+        $start_ts = strtotime((string) ($row->scheduled_at ?? '') . ' UTC');
+        if (!$start_ts) {
+            return '';
+        }
+        return gmdate('Y-m-d H:i:s', max(0, $start_ts - (5 * MINUTE_IN_SECONDS)));
+    }
+
+    private static function join_expires_at(object $row): string {
+        $start_ts = strtotime((string) ($row->scheduled_at ?? '') . ' UTC');
+        if (!$start_ts) {
+            return '';
+        }
+        return gmdate('Y-m-d H:i:s', $start_ts + ((self::MTM_DURATION_MINUTES + 15) * MINUTE_IN_SECONDS));
+    }
+
+    private static function join_token(object $row, string $role): string {
+        $role = $role === 'pharmacist' ? 'pharmacist' : 'customer';
+        $valid_from_at = (string) ($row->join_valid_from_at ?? '') ?: self::join_valid_from_at($row);
+        $expires_at = (string) ($row->join_expires_at ?? '') ?: self::join_expires_at($row);
+        if (empty($row->id) || $valid_from_at === '' || $expires_at === '') {
+            return '';
+        }
+        $payload = [
+            'purpose' => 'mtm_join',
+            'mtm_request_id' => (int) $row->id,
+            'role' => $role,
+            'valid_from' => strtotime($valid_from_at . ' UTC'),
+            'exp' => strtotime($expires_at . ' UTC'),
+        ];
+        if (empty($payload['valid_from']) || empty($payload['exp'])) {
+            return '';
+        }
+        $encoded = Nevari_Helpers::base64url_encode(wp_json_encode($payload));
+        $signature = Nevari_Helpers::base64url_encode(hash_hmac('sha256', $encoded, Nevari_Helpers::jwt_secret(), true));
+        return $encoded . '.' . $signature;
+    }
+
+    private static function ensure_join_access(object $row): object {
+        global $wpdb;
+        $updates = [];
+        $valid_from_at = (string) ($row->join_valid_from_at ?? '');
+        $expires_at = (string) ($row->join_expires_at ?? '');
+        if ($valid_from_at === '') {
+            $valid_from_at = self::join_valid_from_at($row);
+            $updates['join_valid_from_at'] = $valid_from_at;
+        }
+        if ($expires_at === '') {
+            $expires_at = self::join_expires_at($row);
+            $updates['join_expires_at'] = $expires_at;
+        }
+        $customer_token = self::join_token($row, 'customer');
+        $pharmacist_token = self::join_token($row, 'pharmacist');
+        $customer_hash = $customer_token ? hash('sha256', $customer_token) : '';
+        $pharmacist_hash = $pharmacist_token ? hash('sha256', $pharmacist_token) : '';
+        if ($customer_hash !== '' && (string) ($row->customer_join_token_hash ?? '') !== $customer_hash) {
+            $updates['customer_join_token_hash'] = $customer_hash;
+        }
+        if ($pharmacist_hash !== '' && (string) ($row->pharmacist_join_token_hash ?? '') !== $pharmacist_hash) {
+            $updates['pharmacist_join_token_hash'] = $pharmacist_hash;
+        }
+        if ($updates) {
+            $updates['updated_at'] = self::now();
+            $wpdb->update(self::table(), $updates, ['id' => (int) $row->id], array_fill(0, count($updates), '%s'), ['%d']);
+            $row = self::get_request((int) $row->id) ?: $row;
+        }
+        return $row;
+    }
+
+    private static function join_url(object $row, string $role): string {
+        if (self::raw_meeting_link($row) === '' || empty($row->scheduled_at)) {
+            return '';
+        }
+        $row = self::ensure_join_access($row);
+        $token = self::join_token($row, $role);
+        if ($token === '') {
+            return '';
+        }
+        $stored_hash = (string) ($role === 'pharmacist' ? ($row->pharmacist_join_token_hash ?? '') : ($row->customer_join_token_hash ?? ''));
+        if ($stored_hash === '' || !hash_equals($stored_hash, hash('sha256', $token))) {
+            return '';
+        }
+        return self::frontend_origin('patient_dashboard', '/dashboard') . '/therapy/join/' . rawurlencode($token);
+    }
+
+    private static function decode_join_token(string $token): array {
+        $parts = explode('.', trim($token));
+        if (count($parts) !== 2) {
+            return ['valid' => false, 'code' => 'invalid_token'];
+        }
+        [$encoded, $signature] = $parts;
+        $expected = Nevari_Helpers::base64url_encode(hash_hmac('sha256', $encoded, Nevari_Helpers::jwt_secret(), true));
+        if (!hash_equals($expected, $signature)) {
+            return ['valid' => false, 'code' => 'invalid_signature'];
+        }
+        $payload = json_decode(Nevari_Helpers::base64url_decode($encoded), true);
+        if (!is_array($payload) || ($payload['purpose'] ?? '') !== 'mtm_join') {
+            return ['valid' => false, 'code' => 'invalid_payload'];
+        }
+        return ['valid' => true, 'payload' => $payload];
+    }
+
+    private static function site_datetime_to_utc_mysql(string $value, string $timezone = ''): ?string {
+        $raw = trim((string) $value);
+        if ($raw === '') {
+            return null;
+        }
+        try {
+            $site_timezone = new DateTimeZone($timezone !== '' ? $timezone : self::store_timezone());
+            $datetime = new DateTimeImmutable($raw, $site_timezone);
+            return $datetime->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        } catch (Exception $exception) {
+            $timestamp = strtotime($raw);
+            return $timestamp ? gmdate('Y-m-d H:i:s', $timestamp) : null;
+        }
+    }
+
     private static function get_request(int $id): ?object {
         global $wpdb;
         return $wpdb->get_row($wpdb->prepare("SELECT * FROM " . self::table() . " WHERE id = %d LIMIT 1", $id));
@@ -207,7 +436,101 @@ final class Nevari_Mtm {
         return sanitize_textarea_field((string) $value);
     }
 
+    private static function pdf_signing_secret(): string {
+        if (defined('NEVARI_MTM_PDF_SIGNING_SECRET') && is_string(NEVARI_MTM_PDF_SIGNING_SECRET) && trim(NEVARI_MTM_PDF_SIGNING_SECRET) !== '') {
+            return trim(NEVARI_MTM_PDF_SIGNING_SECRET);
+        }
+        if (defined('NEVARI_PROXY_SIGNING_SECRET') && is_string(NEVARI_PROXY_SIGNING_SECRET) && trim(NEVARI_PROXY_SIGNING_SECRET) !== '') {
+            return trim(NEVARI_PROXY_SIGNING_SECRET);
+        }
+        $env = getenv('NEVARI_MTM_PDF_SIGNING_SECRET');
+        if (is_string($env) && trim($env) !== '') {
+            return trim($env);
+        }
+        $proxy_env = getenv('NEVARI_PROXY_SIGNING_SECRET');
+        if (is_string($proxy_env) && trim($proxy_env) !== '') {
+            return trim($proxy_env);
+        }
+        return Nevari_Helpers::jwt_secret();
+    }
+
+    private static function normalize_email_attachments(array $attachments): array {
+        $normalized = [];
+        foreach ($attachments as $attachment) {
+            if (!is_array($attachment)) {
+                continue;
+            }
+            $filename = sanitize_file_name((string) ($attachment['filename'] ?? ''));
+            $base64 = trim((string) ($attachment['base64'] ?? $attachment['content'] ?? $attachment['content_base64'] ?? ''));
+            if ($base64 !== '' && strpos($base64, 'base64,') !== false) {
+                $parts = explode('base64,', $base64, 2);
+                $base64 = isset($parts[1]) ? trim((string) $parts[1]) : '';
+            }
+            if ($base64 !== '') {
+                $base64 = preg_replace('/\s+/', '', $base64) ?? '';
+            }
+            if ($filename === '' || $base64 === '') {
+                continue;
+            }
+            $normalized[] = [
+                'filename' => $filename,
+                'content_type' => sanitize_text_field((string) ($attachment['content_type'] ?? 'application/pdf')),
+                'mime_type' => sanitize_text_field((string) ($attachment['mime_type'] ?? 'application/pdf')),
+                'base64' => $base64,
+                'content' => $base64,
+            ];
+        }
+        return $normalized;
+    }
+
+    private static function decode_pdf_snapshot_token(string $token): array {
+        $parts = explode('.', trim($token));
+        if (count($parts) !== 2) {
+            return ['valid' => false, 'code' => 'invalid_token'];
+        }
+        [$encoded, $signature] = $parts;
+        if ($signature !== 'unsigned') {
+            $expected = Nevari_Helpers::base64url_encode(hash_hmac('sha256', $encoded, self::pdf_signing_secret(), true));
+            if (!hash_equals($expected, $signature)) {
+                $signature = 'unsigned';
+            }
+        }
+        $payload = json_decode(Nevari_Helpers::base64url_decode($encoded), true);
+        if (!is_array($payload) || ($payload['purpose'] ?? '') !== 'mtm_submission_pdf') {
+            return ['valid' => false, 'code' => 'invalid_payload'];
+        }
+        return ['valid' => true, 'payload' => $payload];
+    }
+
+    private static function verify_submission_snapshot_token(object $row, string $token, string $fingerprint): bool {
+        $decoded = self::decode_pdf_snapshot_token($token);
+        if (empty($decoded['valid'])) {
+            return false;
+        }
+        $payload = is_array($decoded['payload'] ?? null) ? $decoded['payload'] : [];
+        $request_id = (int) ($payload['requestId'] ?? 0);
+        $customer_user_id = (int) ($payload['customerUserId'] ?? 0);
+        $reference = sanitize_text_field((string) ($payload['requestReference'] ?? ''));
+        $token_fingerprint = sanitize_text_field((string) ($payload['fingerprint'] ?? ''));
+        $expires_at = (int) ($payload['exp'] ?? 0);
+        if ($expires_at <= time()) {
+            return false;
+        }
+        return $request_id === (int) $row->id
+            && $customer_user_id === (int) $row->customer_user_id
+            && $reference === self::ensure_request_reference((int) $row->id)
+            && $token_fingerprint !== ''
+            && hash_equals($token_fingerprint, $fingerprint);
+    }
+
+    private static function submission_dispatch_option_key(int $request_id): string {
+        return '_nevari_mtm_submission_dispatch_' . max(1, $request_id);
+    }
+
     private static function payload_from_request(object $row): array {
+        $reference = sanitize_text_field((string) ($row->request_reference ?? '')) ?: self::public_request_reference((int) $row->id);
+        $customer_join_url = self::join_url($row, 'customer');
+        $pharmacist_join_url = self::join_url($row, 'pharmacist');
         $assigned_pharmacist_id = (int) ($row->assigned_pharmacist_user_id ?? $row->assigned_doctor_user_id ?? 0);
         $reviewed_by_pharmacist_id = (int) ($row->reviewed_by_pharmacist_user_id ?? $row->reviewed_by_doctor_user_id ?? 0);
         $status = self::normalize_status((string) ($row->status ?? self::STATUS_SUBMITTED));
@@ -221,13 +544,14 @@ final class Nevari_Mtm {
         ];
         return [
             'id' => (int) $row->id,
+            'request_reference' => $reference,
+            'title' => $reference,
             'customer_user_id' => (int) $row->customer_user_id,
             'assigned_pharmacist_id' => $assigned_pharmacist_id,
             'assigned_pharmacist_user_id' => $assigned_pharmacist_id,
+            'assigned_pharmacist_name' => self::user_name($assigned_pharmacist_id),
             'reviewed_by_pharmacist_id' => $reviewed_by_pharmacist_id,
             'reviewed_by_pharmacist_user_id' => $reviewed_by_pharmacist_id,
-            'assigned_doctor_user_id' => (int) ($row->assigned_doctor_user_id ?? 0),
-            'reviewed_by_doctor_user_id' => (int) ($row->reviewed_by_doctor_user_id ?? 0),
             'status' => $status,
             'status_label' => self::status_label($status),
             'patient' => self::decode_json($row->patient_data ?? '[]'),
@@ -248,7 +572,22 @@ final class Nevari_Mtm {
             'timezone' => (string) ($row->timezone ?? 'UTC'),
             'consultation_method' => (string) ($row->consultation_method ?? 'Google Meet'),
             'google_meet' => $meet,
-            'google_meet_link' => $meet['meeting_uri'],
+            'google_meet_link' => $customer_join_url,
+            'meet_link' => $customer_join_url,
+            'join_url' => $customer_join_url,
+            'customer_join_url' => $customer_join_url,
+            'pharmacist_join_url' => $pharmacist_join_url,
+            'meeting_link' => $customer_join_url,
+            'raw_google_meet_link' => $meet['meeting_uri'],
+            'meeting_state' => self::meeting_state($row),
+            'attendance_status' => self::attendance_status($row),
+            'can_reschedule' => self::reschedule_eligible($row),
+            'customer_checked_in_at' => !empty($row->customer_checked_in_at) ? (string) $row->customer_checked_in_at : null,
+            'pharmacist_checked_in_at' => !empty($row->pharmacist_checked_in_at) ? (string) $row->pharmacist_checked_in_at : null,
+            'join_valid_from_at' => !empty($row->join_valid_from_at) ? (string) $row->join_valid_from_at : null,
+            'join_expires_at' => !empty($row->join_expires_at) ? (string) $row->join_expires_at : null,
+            'missed_attendance_at' => !empty($row->missed_attendance_at) ? (string) $row->missed_attendance_at : null,
+            'missed_attendance_role' => !empty($row->missed_attendance_role) ? (string) $row->missed_attendance_role : null,
             'follow_up_at' => !empty($row->follow_up_at) ? (string) $row->follow_up_at : null,
             'completed_at' => !empty($row->completed_at) ? (string) $row->completed_at : null,
             'assigned_at' => !empty($row->assigned_at) ? (string) $row->assigned_at : null,
@@ -307,6 +646,7 @@ final class Nevari_Mtm {
         $assigned = (int) ($payload['assigned_pharmacist_user_id'] ?? 0);
         $wpdb->insert(self::table(), [
             'customer_user_id' => $customer_id,
+            'request_reference' => null,
             'assigned_pharmacist_user_id' => $assigned,
             'reviewed_by_pharmacist_user_id' => 0,
             'assigned_doctor_user_id' => 0,
@@ -326,8 +666,16 @@ final class Nevari_Mtm {
             'outcome_tracking_json' => wp_json_encode([]),
             'scheduled_at' => null,
             'duration_minutes' => self::MTM_DURATION_MINUTES,
-            'timezone' => 'UTC',
+            'timezone' => sanitize_text_field((string) ($payload['timezone'] ?? self::store_timezone())) ?: self::store_timezone(),
             'consultation_method' => 'Google Meet',
+            'customer_join_token_hash' => null,
+            'pharmacist_join_token_hash' => null,
+            'join_valid_from_at' => null,
+            'join_expires_at' => null,
+            'customer_checked_in_at' => null,
+            'pharmacist_checked_in_at' => null,
+            'missed_attendance_at' => null,
+            'missed_attendance_role' => null,
             'follow_up_at' => null,
             'completed_at' => null,
             'assigned_at' => $assigned > 0 ? $now : null,
@@ -338,7 +686,11 @@ final class Nevari_Mtm {
             'created_at' => $now,
             'updated_at' => $now,
         ]);
-        return (int) $wpdb->insert_id;
+        $request_id = (int) $wpdb->insert_id;
+        if ($request_id > 0) {
+            self::ensure_request_reference($request_id);
+        }
+        return $request_id;
     }
 
     private static function update_request(int $id, array $data): ?object {
@@ -383,10 +735,12 @@ final class Nevari_Mtm {
         }
         $user_id = Nevari_Auth::api_session_user_id();
         $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];
+        $defer_submission_notifications = !empty($body['defer_submission_notifications']);
         $assigned = self::select_pharmacist();
         $request_id = self::insert_request($user_id, [
             'status' => $assigned > 0 ? self::STATUS_UNDER_REVIEW : self::STATUS_SUBMITTED,
             'assigned_pharmacist_user_id' => $assigned,
+            'timezone' => sanitize_text_field((string) ($body['timezone'] ?? self::store_timezone())) ?: self::store_timezone(),
             'patient' => self::sanitize_deep(is_array($body['patient'] ?? null) ? $body['patient'] : []),
             'emergency_contact' => self::sanitize_deep(is_array($body['emergency_contact'] ?? null) ? $body['emergency_contact'] : []),
             'medical_history' => self::sanitize_deep(is_array($body['medical_history'] ?? null) ? $body['medical_history'] : []),
@@ -396,12 +750,65 @@ final class Nevari_Mtm {
             'attachments' => self::sanitize_deep(is_array($body['attachments'] ?? null) ? $body['attachments'] : []),
         ]);
         $row = self::get_request($request_id);
-        if ($row) {
+        if ($row && !$defer_submission_notifications) {
             self::dispatch_request_submission_notifications($row);
         }
         return Nevari_Helpers::success([
             'request' => self::payload_from_request($row),
             'status' => (string) ($row->status ?? self::STATUS_SUBMITTED),
+        ]);
+    }
+
+    public static function customer_submission_pdf(WP_REST_Request $request): WP_REST_Response {
+        if (!self::table_ready()) {
+            return Nevari_Helpers::error('mtm_unavailable', 'MTM requests are temporarily unavailable. Please contact support.', 503);
+        }
+        $row = self::get_request((int) $request['id']);
+        if (!$row) {
+            return Nevari_Helpers::error('mtm_request_not_found', 'MTM request not found.', 404);
+        }
+        $user_id = Nevari_Auth::api_session_user_id();
+        if ((int) $row->customer_user_id !== $user_id) {
+            return Nevari_Helpers::error('forbidden', 'You cannot manage this MTM request.', 403);
+        }
+        $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];
+        $snapshot_token = sanitize_text_field((string) ($body['snapshot_token'] ?? ''));
+        $snapshot_fingerprint = sanitize_text_field((string) ($body['snapshot_fingerprint'] ?? ''));
+        if ($snapshot_token === '' || $snapshot_fingerprint === '') {
+            return Nevari_Helpers::error('validation_error', 'Snapshot token and fingerprint are required.', 422);
+        }
+        if (!self::verify_submission_snapshot_token($row, $snapshot_token, $snapshot_fingerprint)) {
+            return Nevari_Helpers::error('invalid_snapshot_token', 'The MTM PDF snapshot token is invalid or expired.', 403);
+        }
+
+        $attachments = self::normalize_email_attachments(
+            isset($body['submission_email_attachments']) && is_array($body['submission_email_attachments'])
+                ? $body['submission_email_attachments']
+                : []
+        );
+        if (!$attachments) {
+            return Nevari_Helpers::error('validation_error', 'A verified PDF attachment is required.', 422);
+        }
+
+        $dispatch_key = self::submission_dispatch_option_key((int) $row->id);
+        if (!empty(get_option($dispatch_key))) {
+            return Nevari_Helpers::success([
+                'request' => self::payload_from_request($row),
+                'status' => (string) ($row->status ?? self::STATUS_SUBMITTED),
+                'notifications' => 'already_dispatched',
+            ]);
+        }
+
+        self::dispatch_request_submission_notifications($row, [
+            'customer_attachments' => $attachments,
+            'pharmacist_attachments' => $attachments,
+        ]);
+        update_option($dispatch_key, self::now(), false);
+
+        return Nevari_Helpers::success([
+            'request' => self::payload_from_request($row),
+            'status' => (string) ($row->status ?? self::STATUS_SUBMITTED),
+            'notifications' => 'queued',
         ]);
     }
 
@@ -420,6 +827,54 @@ final class Nevari_Mtm {
         return Nevari_Helpers::success(['request' => self::payload_from_request($row)]);
     }
 
+    public static function customer_reschedule_request(WP_REST_Request $request): WP_REST_Response {
+        if (!self::table_ready()) {
+            return Nevari_Helpers::error('mtm_unavailable', 'MTM requests are temporarily unavailable. Please contact support.', 503);
+        }
+        $row = self::get_request((int) $request['id']);
+        if (!$row) {
+            return Nevari_Helpers::error('mtm_request_not_found', 'MTM request not found.', 404);
+        }
+        $user_id = Nevari_Auth::api_session_user_id();
+        if ((int) $row->customer_user_id !== $user_id) {
+            return Nevari_Helpers::error('forbidden', 'You cannot reschedule this MTM request.', 403);
+        }
+        if (!self::reschedule_eligible($row)) {
+            return Nevari_Helpers::error('reschedule_unavailable', 'This MTM request is not eligible for rescheduling.', 409);
+        }
+
+        $updates = [
+            'status' => self::STATUS_APPROVED,
+            'scheduled_at' => null,
+            'google_calendar_event_id' => null,
+            'google_meet_space_name' => null,
+            'google_meet_code' => null,
+            'google_meet_link' => null,
+            'google_meet_error' => null,
+            'google_meet_created_at' => null,
+            'google_meet_ended_at' => null,
+            'customer_join_token_hash' => null,
+            'pharmacist_join_token_hash' => null,
+            'join_valid_from_at' => null,
+            'join_expires_at' => null,
+            'customer_checked_in_at' => null,
+            'pharmacist_checked_in_at' => null,
+            'missed_attendance_at' => null,
+            'missed_attendance_role' => null,
+            'updated_by' => $user_id,
+        ];
+
+        $updated = self::update_request((int) $row->id, $updates);
+        if ($updated) {
+            self::dispatch_request_update_notifications($row, $updated);
+        }
+
+        return Nevari_Helpers::success([
+            'request' => self::payload_from_request($updated),
+            'message' => 'Your MTM consultation has been returned for pharmacist rescheduling.',
+        ]);
+    }
+
     public static function booking_context(WP_REST_Request $request): WP_REST_Response {
         if (!self::table_ready()) {
             return Nevari_Helpers::error('mtm_unavailable', 'MTM requests are temporarily unavailable. Please contact support.', 503);
@@ -434,12 +889,13 @@ final class Nevari_Mtm {
         }
         return Nevari_Helpers::success([
             'mtm_request_id' => (int) $row->id,
+            'request_reference' => self::ensure_request_reference((int) $row->id),
             'status' => self::normalize_status((string) $row->status),
             'pharmacist_id' => (int) ($row->assigned_pharmacist_user_id ?? 0),
             'pharmacist_name' => self::user_name((int) ($row->assigned_pharmacist_user_id ?? 0)),
             'duration_minutes' => self::MTM_DURATION_MINUTES,
             'payment_required' => false,
-            'google_meet_link' => (string) ($row->google_meet_link ?? ''),
+            'google_meet_link' => self::join_url($row, 'customer'),
         ]);
     }
 
@@ -464,6 +920,12 @@ final class Nevari_Mtm {
         if ($row instanceof WP_REST_Response) {
             return $row;
         }
+        $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];
+        $approvalAttachments = self::normalize_email_attachments(
+            isset($body['approval_email_attachments']) && is_array($body['approval_email_attachments'])
+                ? $body['approval_email_attachments']
+                : []
+        );
         $actor = Nevari_Auth::api_session_user_id();
         $updated = self::update_request((int) $row->id, [
             'status' => self::STATUS_APPROVED,
@@ -473,7 +935,9 @@ final class Nevari_Mtm {
             'updated_by' => $actor,
         ]);
         if ($updated) {
-            self::dispatch_request_update_notifications($row, $updated);
+            self::dispatch_request_update_notifications($row, $updated, [
+                'approved_customer_attachments' => $approvalAttachments,
+            ]);
         }
         return Nevari_Helpers::success(['request' => self::payload_from_request($updated)]);
     }
@@ -491,17 +955,24 @@ final class Nevari_Mtm {
         if ($start === '' || strtotime($start) === false) {
             return Nevari_Helpers::error('missing_schedule', 'A valid appointment start time is required.', 422);
         }
-        $start_mysql = gmdate('Y-m-d H:i:s', strtotime($start));
+        $timezone = sanitize_text_field((string) ($body['timezone'] ?? ($row->timezone ?? self::store_timezone()))) ?: self::store_timezone();
+        $start_mysql = self::site_datetime_to_utc_mysql($start, $timezone);
+        if ($start_mysql === null) {
+            return Nevari_Helpers::error('missing_schedule', 'A valid appointment start time is required.', 422);
+        }
         $end_mysql = gmdate('Y-m-d H:i:s', strtotime($start_mysql . ' UTC +' . self::MTM_DURATION_MINUTES . ' minutes'));
-        $timezone = sanitize_text_field((string) ($body['timezone'] ?? 'UTC'));
         $meet = self::create_meet_space_for_request($row, $start_mysql, $end_mysql);
         $actor = Nevari_Auth::api_session_user_id();
         $data = [
             'status' => self::STATUS_SCHEDULED,
             'scheduled_at' => $start_mysql,
             'duration_minutes' => self::MTM_DURATION_MINUTES,
-            'timezone' => $timezone ?: 'UTC',
+            'timezone' => $timezone,
             'consultation_method' => 'Google Meet',
+            'customer_checked_in_at' => null,
+            'pharmacist_checked_in_at' => null,
+            'missed_attendance_at' => null,
+            'missed_attendance_role' => null,
             'updated_by' => $actor,
         ];
         if (!empty($meet['success'])) {
@@ -511,6 +982,11 @@ final class Nevari_Mtm {
             $data['google_meet_link'] = (string) ($meet['meet_link'] ?? '');
             $data['google_meet_error'] = null;
             $data['google_meet_created_at'] = self::now();
+            $data['google_meet_ended_at'] = null;
+            $data['join_valid_from_at'] = self::join_valid_from_at((object) ['scheduled_at' => $start_mysql]);
+            $data['join_expires_at'] = self::join_expires_at((object) ['scheduled_at' => $start_mysql]);
+            $data['customer_join_token_hash'] = null;
+            $data['pharmacist_join_token_hash'] = null;
             if (!empty($data['google_meet_space_name'])) {
                 wp_schedule_single_event(strtotime($end_mysql . ' UTC'), 'nevari_mtm_end_meet_space', [(int) $row->id]);
             }
@@ -673,8 +1149,13 @@ final class Nevari_Mtm {
         if ($follow_at === '' || strtotime($follow_at) === false) {
             return Nevari_Helpers::error('missing_follow_up', 'A valid follow-up time is required.', 422);
         }
+        $timezone = sanitize_text_field((string) ($body['timezone'] ?? ($row->timezone ?? self::store_timezone()))) ?: self::store_timezone();
+        $follow_up_at = self::site_datetime_to_utc_mysql($follow_at, $timezone);
+        if ($follow_up_at === null) {
+            return Nevari_Helpers::error('missing_follow_up', 'A valid follow-up time is required.', 422);
+        }
         $follow_up = self::sanitize_deep([
-            'follow_up_at' => gmdate('Y-m-d H:i:s', strtotime($follow_at)),
+            'follow_up_at' => $follow_up_at,
             'purpose' => $body['purpose'] ?? $body['follow_up_purpose'] ?? '',
             'note' => $body['note'] ?? $body['follow_up_note'] ?? '',
         ]);
@@ -724,6 +1205,91 @@ final class Nevari_Mtm {
         return Nevari_Helpers::success(['request' => self::payload_from_request($updated)]);
     }
 
+    public static function join_access(WP_REST_Request $request): WP_REST_Response {
+        $token = sanitize_text_field((string) $request['token']);
+        if ($token === '') {
+            return Nevari_Helpers::error('invalid_token', 'The MTM join link is invalid.', 404);
+        }
+
+        $decoded = self::decode_join_token($token);
+        if (empty($decoded['valid'])) {
+            return Nevari_Helpers::error('invalid_token', 'The MTM join link is invalid.', 404);
+        }
+
+        $payload = is_array($decoded['payload'] ?? null) ? $decoded['payload'] : [];
+        $request_id = (int) ($payload['mtm_request_id'] ?? 0);
+        $role = ($payload['role'] ?? '') === 'pharmacist' ? 'pharmacist' : 'customer';
+        $row = self::get_request($request_id);
+        if (!$row) {
+            return Nevari_Helpers::error('mtm_request_not_found', 'MTM request not found.', 404);
+        }
+
+        $row = self::ensure_join_access($row);
+        $stored_hash = (string) ($role === 'pharmacist' ? ($row->pharmacist_join_token_hash ?? '') : ($row->customer_join_token_hash ?? ''));
+        if ($stored_hash === '' || !hash_equals($stored_hash, hash('sha256', $token))) {
+            return Nevari_Helpers::error('mtm_link_expired', 'This meeting link has expired.', 410);
+        }
+
+        $valid_from_at = (string) ($row->join_valid_from_at ?? '') ?: self::join_valid_from_at($row);
+        $expires_at = (string) ($row->join_expires_at ?? '') ?: self::join_expires_at($row);
+        $valid_from_ts = $valid_from_at ? (int) strtotime($valid_from_at . ' UTC') : 0;
+        $expires_ts = $expires_at ? (int) strtotime($expires_at . ' UTC') : 0;
+        $now = time();
+        $book_url = self::customer_detail_link((int) $row->id);
+        $raw_meet_link = self::raw_meeting_link($row);
+
+        if (
+            self::normalize_status((string) ($row->status ?? '')) === self::STATUS_COMPLETED
+            || !empty($row->google_meet_ended_at)
+            || ($expires_ts > 0 && $now > $expires_ts)
+        ) {
+            return Nevari_Helpers::success([
+                'state' => 'ended',
+                'role' => $role,
+                'mtm_request_id' => $request_id,
+                'message' => 'Meeting has ended',
+                'book_url' => $book_url,
+            ]);
+        }
+
+        if ($raw_meet_link === '' || empty($row->scheduled_at)) {
+            return Nevari_Helpers::success([
+                'state' => 'unavailable',
+                'role' => $role,
+                'mtm_request_id' => $request_id,
+                'message' => 'Kindly check back on your appointment time',
+                'book_url' => $book_url,
+            ]);
+        }
+
+        if ($valid_from_ts > 0 && $now < $valid_from_ts) {
+            return Nevari_Helpers::success([
+                'state' => 'unavailable',
+                'role' => $role,
+                'mtm_request_id' => $request_id,
+                'message' => 'Kindly check back on your appointment time',
+                'book_url' => $book_url,
+                'available_at' => !empty($valid_from_at) ? Nevari_Helpers::iso_datetime($valid_from_at) : null,
+            ]);
+        }
+
+        global $wpdb;
+        $checked_column = $role === 'pharmacist' ? 'pharmacist_checked_in_at' : 'customer_checked_in_at';
+        $update = ['updated_at' => self::now()];
+        if (empty($row->{$checked_column})) {
+            $update[$checked_column] = self::now();
+        }
+        $wpdb->update(self::table(), $update, ['id' => $request_id], array_fill(0, count($update), '%s'), ['%d']);
+
+        return Nevari_Helpers::success([
+            'state' => 'active',
+            'role' => $role,
+            'mtm_request_id' => $request_id,
+            'redirect_url' => $raw_meet_link,
+            'book_url' => $book_url,
+        ]);
+    }
+
     public static function pharmacy_products(WP_REST_Request $request): WP_REST_Response {
         if (!function_exists('wc_get_products')) {
             return Nevari_Helpers::success(['items' => []]);
@@ -759,6 +1325,10 @@ final class Nevari_Mtm {
         }
         $result = Nevari_Helpers::google_meet_end_active_conference($space_name);
         $data = ['google_meet_ended_at' => self::now()];
+        if (empty($row->customer_checked_in_at) || empty($row->pharmacist_checked_in_at)) {
+            $data['missed_attendance_at'] = self::now();
+            $data['missed_attendance_role'] = empty($row->pharmacist_checked_in_at) ? 'pharmacist' : 'customer';
+        }
         if (empty($result['success'])) {
             $data['google_meet_error'] = sanitize_text_field((string) ($result['message'] ?? 'Google Meet active conference could not be ended.'));
         }
@@ -774,35 +1344,15 @@ final class Nevari_Mtm {
     }
 
     private static function frontend_dashboard_url(string $frontend_type, string $default_path): string {
-        if (class_exists('Nevari_Connections')) {
-            foreach (Nevari_Connections::trusted_frontends() as $connection) {
-                if (($connection['trust_status'] ?? '') !== 'trusted') {
-                    continue;
-                }
-                if (($connection['frontend_type'] ?? '') !== $frontend_type && ($connection['frontend_type'] ?? '') !== 'custom_frontend') {
-                    continue;
-                }
-                $origin = !empty($connection['frontend_origin']) ? rtrim((string) $connection['frontend_origin'], '/') : '';
-                if ($origin !== '') {
-                    return $origin . $default_path;
-                }
-            }
-        }
-
-        return home_url($default_path);
+        return Nevari_Helpers::frontend_dashboard_url($default_path);
     }
 
     private static function customer_dashboard_link(int $request_id): string {
-        return add_query_arg([
-            'mtm_request_id' => $request_id,
-            'mtm_tab' => 'history',
-        ], self::frontend_dashboard_url('patient_dashboard', '/dashboard'));
+        return self::customer_detail_link($request_id);
     }
 
     private static function pharmacist_dashboard_link(int $request_id): string {
-        return add_query_arg([
-            'mtm_request_id' => $request_id,
-        ], self::frontend_dashboard_url('doctors_dashboard', '/admin/doctor'));
+        return self::pharmacist_queue_link($request_id);
     }
 
     private static function safe_email_link(string $url, string $label): array {
@@ -853,13 +1403,13 @@ final class Nevari_Mtm {
         $follow_up = self::email_datetime_parts($payload['follow_up_at'] ?? null, (string) ($payload['timezone'] ?? 'UTC'));
         $request_link = self::customer_dashboard_link($request_id);
         $pharmacist_link = self::pharmacist_dashboard_link($request_id);
-        $meet_link = esc_url_raw((string) ($payload['google_meet_link'] ?? ''));
+        $meet_link = esc_url_raw((string) ($payload['customer_join_url'] ?? ''));
 
         $variables = [
             'patient_name' => $patient instanceof WP_User ? ($patient->display_name ?: $patient->user_login) : ((string) ($payload['patient']['name'] ?? 'Customer') ?: 'Customer'),
             'customer_name' => $patient instanceof WP_User ? ($patient->display_name ?: $patient->user_login) : ((string) ($payload['patient']['name'] ?? 'Customer') ?: 'Customer'),
             'pharmacist_name' => $pharmacist instanceof WP_User ? ($pharmacist->display_name ?: $pharmacist->user_login) : 'Assigned pharmacist',
-            'request_reference' => 'MTM #' . $request_id,
+            'request_reference' => (string) ($payload['request_reference'] ?? self::public_request_reference($request_id)),
             'mtm_request_id' => $request_id,
             'current_status' => $status_label,
             'request_status' => $status_label,
@@ -872,7 +1422,10 @@ final class Nevari_Mtm {
             'timezone' => (string) ($payload['timezone'] ?: 'UTC'),
             'consultation_method' => (string) ($payload['consultation_method'] ?: 'Google Meet'),
             'google_meet_link' => $meet_link,
-            'google_meet_link_html' => $meet_link ? self::safe_email_link($meet_link, 'Join Google Meet') : '',
+            'google_meet_link_html' => $meet_link ? [
+                'html' => '<a href="' . esc_url($meet_link) . '" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:12px 22px;border-radius:999px;background:#0E2955;color:#ffffff;text-decoration:none;font-weight:700;">Join Meeting</a>',
+                'text' => $meet_link,
+            ] : '',
             'mtm_request_link' => $request_link,
             'mtm_request_link_html' => self::safe_email_link($request_link, 'View MTM request'),
             'dashboard_link' => $request_link,
@@ -892,7 +1445,7 @@ final class Nevari_Mtm {
         return !empty(self::decode_json($row->{$column} ?? '[]'));
     }
 
-    private static function queue_mtm_email(string $template_key, ?WP_User $recipient, object $row, array $variables, string $recipient_role): void {
+    private static function queue_mtm_email(string $template_key, ?WP_User $recipient, object $row, array $variables, string $recipient_role, array $attachments = []): void {
         if (!($recipient instanceof WP_User) || empty($recipient->user_email) || !is_email($recipient->user_email)) {
             self::log_missing_notification_recipient($row, $recipient_role, $template_key);
             return;
@@ -905,6 +1458,7 @@ final class Nevari_Mtm {
             'related_object_type' => 'mtm_request',
             'related_object_id' => (int) $row->id,
             'variables' => $variables,
+            'attachments' => $attachments,
         ], false);
 
         if (is_wp_error($result)) {
@@ -930,32 +1484,47 @@ final class Nevari_Mtm {
         ]);
     }
 
-    private static function dispatch_request_submission_notifications(object $row): void {
+    private static function dispatch_request_submission_notifications(object $row, array $options = []): void {
         $patient = get_userdata((int) $row->customer_user_id);
         $pharmacist = get_userdata((int) ($row->assigned_pharmacist_user_id ?? 0));
         $variables = self::mtm_email_variables($row);
+        $customer_attachments = isset($options['customer_attachments']) && is_array($options['customer_attachments'])
+            ? array_values($options['customer_attachments'])
+            : [];
+        $pharmacist_attachments = isset($options['pharmacist_attachments']) && is_array($options['pharmacist_attachments'])
+            ? array_values($options['pharmacist_attachments'])
+            : [];
 
-        self::queue_mtm_email('mtm_request_submitted_customer', $patient instanceof WP_User ? $patient : null, $row, $variables, 'customer');
-        self::queue_mtm_email('mtm_request_submitted_pharmacist', $pharmacist instanceof WP_User ? $pharmacist : null, $row, $variables, 'pharmacist');
+        self::queue_mtm_email('mtm_request_submitted_customer', $patient instanceof WP_User ? $patient : null, $row, $variables, 'customer', $customer_attachments);
+        self::queue_mtm_email('mtm_request_submitted_pharmacist', $pharmacist instanceof WP_User ? $pharmacist : null, $row, $variables, 'pharmacist', $pharmacist_attachments);
     }
 
-    private static function dispatch_request_update_notifications(object $before, object $after): void {
+    private static function dispatch_request_update_notifications(object $before, object $after, array $options = []): void {
         $patient = get_userdata((int) $after->customer_user_id);
         $pharmacist = get_userdata((int) ($after->assigned_pharmacist_user_id ?? 0));
         $before_status = self::normalize_status((string) ($before->status ?? self::STATUS_SUBMITTED));
         $after_status = self::normalize_status((string) ($after->status ?? self::STATUS_SUBMITTED));
+        $approvedCustomerAttachments = isset($options['approved_customer_attachments']) && is_array($options['approved_customer_attachments'])
+            ? array_values($options['approved_customer_attachments'])
+            : [];
         $base_variables = self::mtm_email_variables($after, [
             'previous_status' => self::status_label($before_status),
             'current_status' => self::status_label($after_status),
         ]);
 
         if ($before_status !== $after_status) {
-            self::queue_mtm_email('mtm_request_status_changed_customer', $patient instanceof WP_User ? $patient : null, $after, $base_variables, 'customer');
-            self::queue_mtm_email('mtm_request_status_changed_pharmacist', $pharmacist instanceof WP_User ? $pharmacist : null, $after, $base_variables, 'pharmacist');
-
+            $approvalTemplate = Nevari_Emails::get_active_template('mtm_request_approved_customer');
+            $approvalTemplateActive = is_object($approvalTemplate) && !empty($approvalTemplate->template_key);
             if ($after_status === self::STATUS_APPROVED) {
-                self::queue_mtm_email('mtm_request_approved_customer', $patient instanceof WP_User ? $patient : null, $after, $base_variables, 'customer');
+                if ($approvalTemplateActive) {
+                    self::queue_mtm_email('mtm_request_approved_customer', $patient instanceof WP_User ? $patient : null, $after, $base_variables, 'customer', $approvedCustomerAttachments);
+                } else {
+                    self::queue_mtm_email('mtm_request_status_changed_customer', $patient instanceof WP_User ? $patient : null, $after, $base_variables, 'customer', $approvedCustomerAttachments);
+                }
+            } else {
+                self::queue_mtm_email('mtm_request_status_changed_customer', $patient instanceof WP_User ? $patient : null, $after, $base_variables, 'customer');
             }
+            self::queue_mtm_email('mtm_request_status_changed_pharmacist', $pharmacist instanceof WP_User ? $pharmacist : null, $after, $base_variables, 'pharmacist');
         }
 
         $schedule_changed = (

@@ -4,19 +4,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR, { mutate as mutateSWRKey, useSWRConfig } from "swr";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { AddCircleIcon, Calendar03Icon, Doctor01Icon, Home01Icon, Package01Icon, Settings01Icon, ShoppingCart01Icon, ShoppingBasket01Icon, StarIcon } from "@hugeicons/core-free-icons";
+import { AddCircleIcon, Calendar03Icon, Doctor01Icon, Home01Icon, Package01Icon, Settings01Icon, ShoppingCart01Icon, StarIcon } from "@hugeicons/core-free-icons";
 import { replaceById, updateListPayload, upsertById } from "../lib/fetcher";
 import { isProxyAppointmentsKey, isProxyDashboardDoctorKey, isProxyDoctorPathKey, isProxyOrdersKey, swrKeys, withBaseUrl } from "../lib/swrKeys";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
 import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, describeDashboardFetchError, fitTextToContainer, getOrderTypeMeta, hydrateStoredSession, isSessionUsable, money, monthGrid, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
 import { clearSessionAuth } from "./components/role-session";
-import { fetchDoctorMtmRequests, saveMtmActionPlan, updateDoctorMtmRequest } from "./lib/nevari-api";
 
 const DOCTOR_SETTINGS_KEY = "nevari_doctor_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
 const DOCTOR_DASHBOARD_CACHE_SCOPE = "doctor-dashboard";
-const pages = ["overview", "consultations", "mtm", "availability", "profile", "settings"];
+const pages = ["overview", "consultations", "availability", "profile", "settings"];
 const DEFAULT_CONSULTATION_FEE_NGN = 5000;
 const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const DOCTOR_DASHBOARD_REFRESH_MS = 45_000;
@@ -30,7 +29,6 @@ const emptyDoctorState = {
   orders: [],
   products: [],
   patients: [],
-  mtmRequests: [],
   doctor: null,
   reviews: null,
   availability: {}
@@ -132,12 +130,10 @@ export default function DoctorDashboard() {
   const [savingAvailability, setSavingAvailability] = useState(false);
   const [availabilityFeedback, setAvailabilityFeedback] = useState("");
   const [appointmentFeedback, setAppointmentFeedback] = useState("");
-  const [mtmFeedback, setMtmFeedback] = useState("");
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [completionModal, setCompletionModal] = useState({ open: false, appointmentId: null });
   const [completionDraft, setCompletionDraft] = useState({ doctorNotes: "", diagnosis: "", productQuantities: {} });
   const [completionSubmitting, setCompletionSubmitting] = useState(false);
-  const [selectedMtmRequestId, setSelectedMtmRequestId] = useState(null);
   const [doctorSettings, setDoctorSettings] = useState(() => loadDoctorSettings());
   const [bookingIntervalMinutes, setBookingIntervalMinutes] = useState(() => loadBookingIntervalMinutes());
 
@@ -193,31 +189,6 @@ export default function DoctorDashboard() {
     setAuthResolved(true);
   }, [router]);
 
-  useEffect(() => {
-    if (!session || typeof window === "undefined") {
-      return;
-    }
-    const params = new URLSearchParams(window.location.search);
-    const mtmRequestId = params.get("mtm_request_id") || params.get("mtmRequestId");
-    if (!mtmRequestId) {
-      return;
-    }
-    if (page !== "mtm") {
-      setPage("mtm");
-      return;
-    }
-    setSelectedMtmRequestId(String(mtmRequestId));
-  }, [page, session]);
-
-  useEffect(() => {
-    if (page !== "mtm" || !selectedMtmRequestId || typeof window === "undefined") {
-      return;
-    }
-    const url = new URL(window.location.href);
-    url.searchParams.set("mtm_request_id", String(selectedMtmRequestId));
-    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-  }, [page, selectedMtmRequestId]);
-
   const cachedDoctorState = (cacheKey && isSessionUsable(session))
     ? readDashboardCache(cacheKey, DASHBOARD_CACHE_TTL_MS)?.state
     : null;
@@ -239,9 +210,6 @@ export default function DoctorDashboard() {
     : null;
   const doctorPatientsKey = session && doctorId && page === "patients"
     ? swrKeys.proxy.path(`/doctors/${doctorId}/patients`, withBaseUrl(session, { per_page: 40, page: 1 }))
-    : null;
-  const doctorMtmKey = session && doctorId && page === "mtm"
-    ? swrKeys.proxy.path("/doctor/mtm-requests", withBaseUrl(session))
     : null;
   const doctorReviewsKey = session && doctorId && page === "reviews"
     ? swrKeys.proxy.path(`/doctors/${doctorId}/reviews`, withBaseUrl(session))
@@ -286,11 +254,6 @@ export default function DoctorDashboard() {
     () => fetchDoctorPatients(session, doctorId),
     { revalidateOnFocus: false, dedupingInterval: 120_000, keepPreviousData: true }
   );
-  const mtmQuery = useSWR(
-    doctorMtmKey,
-    () => fetchDoctorMtmRequests(session),
-    { revalidateOnFocus: false, dedupingInterval: 30_000, keepPreviousData: true }
-  );
   const reviewsQuery = useSWR(
     doctorReviewsKey,
     () => fetchDoctorReviews(session, doctorId),
@@ -308,17 +271,13 @@ export default function DoctorDashboard() {
     orders: ordersQuery.data || summaryState.orders || [],
     products: productsQuery.data || summaryState.products || [],
     patients: patientsQuery.data || summaryState.patients || [],
-    mtmRequests: mtmQuery.data || summaryState.mtmRequests || [],
     reviews: reviewsQuery.data || summaryState.reviews || null,
     availability: availabilityQuery.data || summaryState.availability || {}
-  }), [appointmentsQuery.data, availabilityQuery.data, mtmQuery.data, ordersQuery.data, patientsQuery.data, productsQuery.data, reviewsQuery.data, summaryState]);
+  }), [appointmentsQuery.data, availabilityQuery.data, ordersQuery.data, patientsQuery.data, productsQuery.data, reviewsQuery.data, summaryState]);
   const mutate = async () => {
     await mutateSummary();
     if (page === "consultations") {
       await appointmentsQuery.mutate();
-    }
-    if (page === "mtm") {
-      await mtmQuery.mutate();
     }
     if (page === "availability") {
       await availabilityQuery.mutate();
@@ -501,36 +460,6 @@ export default function DoctorDashboard() {
     }
   }
 
-  async function handleMtmAction(requestId, action, body = {}) {
-    setMtmFeedback("");
-    try {
-      const next = await updateDoctorMtmRequest(session, requestId, action, body);
-      if (next) {
-        await mtmQuery.mutate((current) => Array.isArray(current) ? replaceById(current, next) : current, { revalidate: false });
-      }
-      setMtmFeedback(action === "approve" ? "MTM request approved." : action === "follow-up" ? "Follow-up added." : "MTM request completed.");
-      await mtmQuery.mutate();
-      await mutateSummary();
-    } catch (error) {
-      setMtmFeedback(error?.message || "The MTM request could not be updated.");
-    }
-  }
-
-  async function handleSaveMtmActionPlan(requestId, body = {}) {
-    setMtmFeedback("");
-    try {
-      const next = await saveMtmActionPlan(session, requestId, body);
-      if (next) {
-        await mtmQuery.mutate((current) => Array.isArray(current) ? replaceById(current, next) : current, { revalidate: false });
-        setSelectedMtmRequestId(requestId);
-      }
-      setMtmFeedback("Medication Action Plan saved.");
-      await mtmQuery.mutate();
-    } catch (error) {
-      setMtmFeedback(error?.message || "The MTM action plan could not be saved.");
-    }
-  }
-
   async function handleLogout() {
     if (logoutBusy) {
       return;
@@ -563,7 +492,6 @@ export default function DoctorDashboard() {
   }, [state.dashboard, state.doctor]);
   const pageQueryLoading = (
     (page === "consultations" && appointmentsQuery.isLoading && !appointmentsQuery.data) ||
-    (page === "mtm" && mtmQuery.isLoading && !mtmQuery.data) ||
     (page === "orders" && ordersQuery.isLoading && !ordersQuery.data) ||
     (page === "products" && productsQuery.isLoading && !productsQuery.data) ||
     (page === "patients" && patientsQuery.isLoading && !patientsQuery.data) ||
@@ -586,7 +514,7 @@ export default function DoctorDashboard() {
   }, [showSkeleton, page, state.appointments.length, state.orders.length, state.products.length, state.patients.length]);
 
   if (!authResolved) {
-    return <DoctorDashboardBootSkeleton />;
+    return null;
   }
 
   return <RoleShell title="Nevari Doctor" pages={pages} active={page} onPageChange={setPage} renderNavIcon={renderDoctorNavIcon}>
@@ -615,16 +543,6 @@ export default function DoctorDashboard() {
       onConfirm={(appointmentId) => handleAppointmentAction(appointmentId, "confirm")}
       onComplete={openCompleteAppointmentModal}
       /> : null}
-    {!showSkeleton && page === "mtm" ? <MtmQueuePage
-      requests={state.mtmRequests}
-      selectedRequestId={selectedMtmRequestId}
-      onSelectRequest={setSelectedMtmRequestId}
-      onApprove={(requestId) => handleMtmAction(requestId, "approve")}
-      onFollowUp={(requestId) => handleMtmAction(requestId, "follow-up")}
-      onComplete={(requestId) => handleMtmAction(requestId, "complete")}
-      onSaveActionPlan={handleSaveMtmActionPlan}
-      feedback={mtmFeedback}
-    /> : null}
     {!showSkeleton && page === "reviews" ? <ReviewsPage doctor={state.doctor} summary={reviewSummary} reviews={reviews} /> : null}
     {!showSkeleton && page === "availability" ? <AvailabilityPage
       availabilityDraft={availabilityDraft}
@@ -1094,7 +1012,6 @@ function hasDoctorDashboardData(state) {
     || state.orders.length
     || state.products.length
     || state.patients.length
-    || state.mtmRequests.length
     || state.reviews
   );
 }
@@ -1111,9 +1028,6 @@ function DoctorDashboardSkeleton({ page }) {
   }
   if (page === "consultations") {
     return <DoctorConsultationsSkeleton />;
-  }
-  if (page === "mtm") {
-    return <section className="doctor-consultation-layout"><SkeletonTablePanel title="MTM Requests" columns={2} rows={5} /><SkeletonTablePanel title="MTM Detail" columns={2} rows={4} /></section>;
   }
   if (page === "reviews") {
     return <DoctorReviewsSkeleton />;
@@ -1617,7 +1531,6 @@ function SettingsToggle({ label, checked, onChange }) {
 function renderDoctorNavIcon(page) {
   if (page === "overview") return <HugeiconsIcon icon={Home01Icon} size={20} strokeWidth={1.7} />;
   if (page === "consultations") return <HugeiconsIcon icon={Calendar03Icon} size={20} strokeWidth={1.7} />;
-  if (page === "mtm") return <HugeiconsIcon icon={ShoppingBasket01Icon} size={20} strokeWidth={1.7} />;
   if (page === "reviews") return <HugeiconsIcon icon={StarIcon} size={20} strokeWidth={1.7} />;
   if (page === "availability") return <HugeiconsIcon icon={AddCircleIcon} size={20} strokeWidth={1.7} />;
   if (page === "settings") return <HugeiconsIcon icon={Settings01Icon} size={20} strokeWidth={1.7} />;

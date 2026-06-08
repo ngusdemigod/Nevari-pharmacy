@@ -1,7 +1,8 @@
 "use client";
 
+import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowLeft01Icon, ArrowRight01Icon, ArrowUpRight01Icon, BatteryFullIcon, Calendar03Icon, Clock01Icon, Doctor01Icon, FileUploadIcon, Home01Icon, Logout01Icon, MedicalMaskIcon, Medicine01Icon, Menu01Icon, MoreHorizontalIcon, Search01Icon, Settings01Icon, ShoppingBasket01Icon, ShoppingCart01Icon, SignalFull01Icon, Upload01Icon, UserIcon, Wallet01Icon, Wifi01Icon } from "@hugeicons/core-free-icons";
@@ -15,7 +16,7 @@ import { clearSessionAuth } from "./components/role-session";
 import SubscriptionGate from "./components/subscription/SubscriptionGate";
 import { useSubscription } from "./hooks/use-subscription";
 import { SkeletonBox } from "./_doctor-dashboard";
-import { createMtmRequest, fetchCustomerMtmRequests, scheduleMtmRequest } from "./lib/nevari-api";
+import { fetchCustomerMtmRequests, requestMtmReschedule, submitCustomerMtmRequest } from "./lib/nevari-api";
 
 const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
@@ -304,7 +305,9 @@ function isFutureDate(value) {
   return parsed.getTime() > today.getTime();
 }
 
-function buildMtmStepErrors(step, mtmForm, labResultsFiles = []) {
+function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
+  const medicationEntries = Array.isArray(options?.medicationEntries) ? options.medicationEntries : [];
+  const requireMedicationDraft = options?.requireMedicationDraft === true;
   const errors = {};
   const patient = mtmForm?.patient || {};
   const emergencyContact = mtmForm?.emergencyContact || {};
@@ -344,7 +347,7 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = []) {
   if (step >= 1) validateRequiredSet(1);
   if (step >= 2) validateRequiredSet(2);
   if (step >= 3) validateRequiredSet(3);
-  if (step >= 4) validateRequiredSet(4);
+  if (step >= 4 && requireMedicationDraft) validateRequiredSet(4);
   if (step >= 5) validateRequiredSet(5);
 
   if (step >= 1) {
@@ -402,7 +405,7 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = []) {
     }
   }
 
-  if (step >= 4) {
+  if (step >= 4 && requireMedicationDraft) {
     if (!String(medicationProfile.medicationName || "").trim()) errors.medicationName = "This field is required.";
     if (!String(medicationProfile.dosage || "").trim()) errors.dosage = "This field is required.";
     if (!MTM_FREQUENCY_OPTIONS.includes(String(medicationProfile.frequency || ""))) errors.frequency = "Select a valid frequency.";
@@ -414,6 +417,9 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = []) {
     } else if (isFutureDate(String(medicationProfile.startDate || "").trim())) {
       errors.startDate = "Start date cannot be in the future.";
     }
+  }
+  if (step >= 4 && !requireMedicationDraft && !medicationEntries.length) {
+    errors.medications = "Add at least one medication before you continue.";
   }
 
   if (step >= 5 && !Array.isArray(adherenceAssessment.barriers)) {
@@ -503,10 +509,11 @@ function persistCustomerSettings(settings) {
   window.localStorage.setItem(CUSTOMER_SETTINGS_KEY, JSON.stringify(settings));
 }
 
-export default function CustomerDashboard() {
+export default function CustomerDashboard({ initialPage = "overview", initialMtmRequestId = "" } = {}) {
   const router = useRouter();
+  const pathname = usePathname();
   const { mutate: globalMutate } = useSWRConfig();
-  const [page, setPage] = useState("overview");
+  const [page, setPage] = useState(pages.includes(initialPage) ? initialPage : "overview");
   const [session, setSession] = useState(null);
   const [authResolved, setAuthResolved] = useState(false);
   const [cacheKey, setCacheKey] = useState(null);
@@ -741,7 +748,7 @@ export default function CustomerDashboard() {
   }, [showSkeleton, page, orderCounts.total, spentThisMonth, state.appointments.length, state.orders.length]);
 
   if (!authResolved) {
-    return <CustomerMobileSkeleton page={page} />;
+    return null;
   }
 
   function openOrderDocuments(order) {
@@ -1225,6 +1232,9 @@ export default function CustomerDashboard() {
       subscriptionState={subscriptionState}
       mtmRequests={mtmRequests}
       mtmRequestsQuery={mtmRequestsQuery}
+      initialMtmRequestId={initialMtmRequestId}
+      initialPage={initialPage}
+      pathname={pathname}
       onOpenAvailability={openDoctorAvailability}
       onOpenReviews={openDoctorReviews}
       onOpenAppointment={setSelectedAppointment}
@@ -1694,6 +1704,57 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
       </div> : null}
     </section>
   </div>;
+}
+
+function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false, onRequestReschedule, onClose }) {
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+    const { body, documentElement } = document;
+    const previousBodyOverflow = body.style.overflow;
+    const previousHtmlOverflow = documentElement.style.overflow;
+    body.style.overflow = "hidden";
+    documentElement.style.overflow = "hidden";
+    return () => {
+      body.style.overflow = previousBodyOverflow;
+      documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, []);
+
+  const requestId = String(request?.id || "");
+  const downloadHref = requestId
+    ? `/api/mtm/${encodeURIComponent(requestId)}/pdf?baseUrl=${encodeURIComponent(session?.baseUrl || "")}&frontendType=${encodeURIComponent(session?.frontendType || "patient")}`
+    : "";
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(<div className="customer-appointment-modal" role="dialog" aria-modal="true" aria-label="MTM request details">
+    <button className="customer-appointment-modal-backdrop" type="button" aria-label="Close MTM request details" onClick={onClose} />
+    <section className="customer-appointment-detail-card">
+      <div className="customer-panel-head">
+        <div>
+          <span className="customer-section-kicker">MTM request</span>
+          <h2>{request?.request_reference || `MTM-${String(request?.id || "").padStart(6, "0")}`}</h2>
+        </div>
+        <button className="icon-btn" type="button" aria-label="Close MTM request details" onClick={onClose}>x</button>
+      </div>
+      <div className="detail-card info-list">
+        <div className="info-row"><span className="info-label">Status</span><strong className="info-value">{titleCase(request?.status_label || request?.status || "submitted")}</strong></div>
+        <div className="info-row"><span className="info-label">Submitted</span><strong className="info-value">{formatAppointmentListDateTime(request?.created_at, storeTimeZone)}</strong></div>
+        <div className="info-row"><span className="info-label">Scheduled For</span><strong className="info-value">{request?.scheduled_at ? formatAppointmentListDateTime(request?.scheduled_at, storeTimeZone) : "Not scheduled yet"}</strong></div>
+        <div className="info-row"><span className="info-label">Assigned Pharmacist</span><strong className="info-value">{request?.assigned_pharmacist_name || (request?.assigned_pharmacist_user_id ? `Pharmacist #${request.assigned_pharmacist_user_id}` : "Pending assignment")}</strong></div>
+        <div className="info-row"><span className="info-label">Attendance</span><strong className="info-value">{titleCase(request?.attendance_status || "pending")}</strong></div>
+        <div className="info-row"><span className="info-label">Medication Count</span><strong className="info-value">{Array.isArray(request?.medication_profile?.medications) ? request.medication_profile.medications.length : 0}</strong></div>
+      </div>
+      <div className="stacked-order-popup-actions">
+        {request?.customer_join_url || request?.join_url ? <a className="pill-button" href={request.customer_join_url || request.join_url} target="_blank" rel="noreferrer">Join MTM Meeting</a> : null}
+        {downloadHref ? <a className="pill-button" href={downloadHref} target="_blank" rel="noreferrer">Download Request PDF</a> : null}
+        {request?.can_reschedule ? <button className="button-primary" type="button" disabled={busy} onClick={() => onRequestReschedule?.(request.id)}>{busy ? "Requesting..." : "Request reschedule"}</button> : null}
+      </div>
+    </section>
+  </div>, document.body);
 }
 
 function DoctorCards({ doctors, doctorsUnavailable, loading = false, onOpenAvailability, onOpenReviews, showReviewsAction = false, storeCurrency, className = "" }) {
@@ -3456,6 +3517,9 @@ function CustomerMobileDashboard({
   subscriptionState,
   mtmRequests = [],
   mtmRequestsQuery,
+  initialMtmRequestId = "",
+  initialPage = "overview",
+  pathname = "",
   onOpenAvailability,
   onOpenReviews,
   onOpenAppointment,
@@ -3541,11 +3605,13 @@ function CustomerMobileDashboard({
   const [mtmSubmitError, setMtmSubmitError] = useState("");
   const [mtmLoadingState, setMtmLoadingState] = useState(false);
   const [mtmLatestRequest, setMtmLatestRequest] = useState(null);
-  const [mtmSelectedRequestId, setMtmSelectedRequestId] = useState("");
+  const [mtmSelectedRequestId, setMtmSelectedRequestId] = useState(String(initialMtmRequestId || ""));
+  const [mtmHistoryModalRequestId, setMtmHistoryModalRequestId] = useState(String(initialMtmRequestId || ""));
   const [mtmStepErrors, setMtmStepErrors] = useState({});
   const [mtmLabResultsFiles, setMtmLabResultsFiles] = useState([]);
   const [mtmMedicationEntries, setMtmMedicationEntries] = useState([]);
   const [mtmSnackbar, setMtmSnackbar] = useState("");
+  const [mtmRescheduleBusyId, setMtmRescheduleBusyId] = useState("");
   const mtmLabResultsInputRef = useRef(null);
   const mtmHistoryRequestRefs = useRef(new Map());
   const [requestSubmitted, setRequestSubmitted] = useState(false);
@@ -3572,13 +3638,28 @@ function CustomerMobileDashboard({
     }
     return mtmLatestRequest || mtmHistoryRequests[0] || null;
   }, [mtmHistoryRequests, mtmLatestRequest, mtmSelectedRequestId]);
+  const mtmModalRequest = useMemo(
+    () => mtmHistoryRequests.find((request) => String(request?.id || "") === String(mtmHistoryModalRequestId || "")) || null,
+    [mtmHistoryModalRequestId, mtmHistoryRequests]
+  );
+
+  useEffect(() => {
+    if (initialPage !== "therapy") {
+      return;
+    }
+    setPage("therapy");
+    setMtmTab("history");
+    if (initialMtmRequestId) {
+      setMtmSelectedRequestId(String(initialMtmRequestId));
+    }
+  }, [initialMtmRequestId, initialPage]);
 
   useEffect(() => {
     if (!session || typeof window === "undefined") {
       return;
     }
     const params = new URLSearchParams(window.location.search);
-    const mtmRequestId = params.get("mtm_request_id") || params.get("mtmRequestId");
+    const mtmRequestId = params.get("mtm_request_id") || params.get("mtmRequestId") || (pathname?.startsWith("/dashboard/therapy/") ? String(initialMtmRequestId || "") : "");
     if (!mtmRequestId) {
       return;
     }
@@ -3588,7 +3669,7 @@ function CustomerMobileDashboard({
     }
     setMtmTab("history");
     setMtmSelectedRequestId(String(mtmRequestId));
-  }, [page, session]);
+  }, [initialMtmRequestId, page, pathname, session]);
 
   useEffect(() => {
     if (page !== "therapy" || mtmTab !== "history" || !mtmHistoryRequests.length) {
@@ -3960,7 +4041,7 @@ function CustomerMobileDashboard({
     setRequestStep3Errors({});
     if (nextPage !== "appointment") {
       setJourney(createJourneyState());
-      setAppointmentRescheduleTarget(null);
+      onClearAppointmentRescheduleTarget?.();
     }
   }
 
@@ -3979,11 +4060,29 @@ function CustomerMobileDashboard({
     setMtmSubmitted(false);
     setMtmTab("history");
     setMtmSelectedRequestId(nextRequestId);
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.set("mtm_request_id", nextRequestId);
-      url.searchParams.set("mtm_tab", "history");
-      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    setMtmHistoryModalRequestId(nextRequestId);
+  }
+
+  async function handleMtmRescheduleRequest(requestId) {
+    const nextRequestId = String(requestId || "").trim();
+    if (!nextRequestId || mtmRescheduleBusyId === nextRequestId) {
+      return;
+    }
+    setMtmRescheduleBusyId(nextRequestId);
+    setMtmSubmitError("");
+    try {
+      const nextRequest = await requestMtmReschedule(session, nextRequestId);
+      if (nextRequest) {
+        await mtmRequestsQuery.mutate((current) => Array.isArray(current) ? replaceById(current, nextRequest) : current, { revalidate: false });
+        setMtmLatestRequest((current) => (String(current?.id || "") === nextRequestId ? nextRequest : current));
+        setMtmSelectedRequestId(nextRequestId);
+      }
+      await mtmRequestsQuery.mutate();
+      setMtmSnackbar("Reschedule request sent. Your pharmacist can now book a new consultation.");
+    } catch (error) {
+      setMtmSubmitError(error?.message || "Unable to request an MTM reschedule.");
+    } finally {
+      setMtmRescheduleBusyId("");
     }
   }
 
@@ -4323,13 +4422,22 @@ function CustomerMobileDashboard({
   }
 
   function validateMtmStep(step) {
-    const errors = buildMtmStepErrors(step, mtmForm, mtmLabResultsFiles);
+    const errors = buildMtmStepErrors(step, mtmForm, mtmLabResultsFiles, {
+      medicationEntries: mtmMedicationEntries,
+      requireMedicationDraft: false,
+    });
     setMtmStepErrors(errors);
     return Object.keys(errors).length === 0;
   }
 
-  const mtmStepIsValid = useMemo(() => Object.keys(buildMtmStepErrors(mtmStep, mtmForm, mtmLabResultsFiles)).length === 0, [mtmStep, mtmForm, mtmLabResultsFiles]);
-  const mtmCanSubmit = useMemo(() => Object.keys(buildMtmStepErrors(6, mtmForm, mtmLabResultsFiles)).length === 0, [mtmForm, mtmLabResultsFiles]);
+  const mtmStepIsValid = useMemo(() => Object.keys(buildMtmStepErrors(mtmStep, mtmForm, mtmLabResultsFiles, {
+    medicationEntries: mtmMedicationEntries,
+    requireMedicationDraft: false,
+  })).length === 0, [mtmStep, mtmForm, mtmLabResultsFiles, mtmMedicationEntries]);
+  const mtmCanSubmit = useMemo(() => Object.keys(buildMtmStepErrors(6, mtmForm, mtmLabResultsFiles, {
+    medicationEntries: mtmMedicationEntries,
+    requireMedicationDraft: false,
+  })).length === 0, [mtmForm, mtmLabResultsFiles, mtmMedicationEntries]);
 
   async function submitMtmRequest() {
     if (mtmSubmitting) return;
@@ -4341,15 +4449,15 @@ function CustomerMobileDashboard({
     setMtmSubmitting(true);
     setMtmLoadingState(true);
     setMtmSubmitError("");
-    const currentMedicationDraft = String(mtmForm.medicationProfile.medicationName || "").trim()
-      ? [{ ...mtmForm.medicationProfile }]
-      : [];
-    const submittedMedications = [
-      ...mtmMedicationEntries,
-      ...currentMedicationDraft.filter((draft) => !mtmMedicationEntries.some((item) => item.medicationName === draft.medicationName && item.dosage === draft.dosage)),
-    ];
+    const submittedMedications = [...mtmMedicationEntries];
+    if (!submittedMedications.length) {
+      setMtmStepErrors({ medications: "Add at least one medication before you submit." });
+      setMtmSubmitting(false);
+      setMtmLoadingState(false);
+      return;
+    }
     try {
-      const request = await createMtmRequest(session, {
+      const request = await submitCustomerMtmRequest(session, {
         patient: mtmForm.patient,
         emergency_contact: mtmForm.emergencyContact,
         medical_history: mtmForm.medicalHistory,
@@ -4365,6 +4473,7 @@ function CustomerMobileDashboard({
           type: file.type || "",
         })),
         duration_minutes: 30,
+        timezone: storeTimeZone,
       });
       const nextRequest = request || null;
       setMtmLatestRequest(nextRequest);
@@ -4378,30 +4487,6 @@ function CustomerMobileDashboard({
     } finally {
       window.setTimeout(() => setMtmLoadingState(false), 240);
       setMtmSubmitting(false);
-    }
-  }
-
-  async function scheduleMtmAppointment() {
-    if (!activeMtmRequest?.id) return;
-    if (!session) {
-      setMtmSubmitError("Session is not available.");
-      return;
-    }
-    setMtmLoadingState(true);
-    setMtmSubmitError("");
-    try {
-      const next = await scheduleMtmRequest(session, activeMtmRequest.id, {
-        scheduled_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
-      if (next) {
-        setMtmLatestRequest(next);
-        setMtmSelectedRequestId(String(next.id || activeMtmRequest.id));
-      }
-      await mtmRequestsQuery.mutate();
-    } catch (error) {
-      setMtmSubmitError(error?.message || "Unable to schedule the MTM appointment.");
-    } finally {
-      setMtmLoadingState(false);
     }
   }
 
@@ -4439,7 +4524,10 @@ function CustomerMobileDashboard({
 
   function addMtmMedicationEntry() {
     const draft = mtmForm.medicationProfile;
-    const errors = buildMtmStepErrors(4, mtmForm, mtmLabResultsFiles);
+    const errors = buildMtmStepErrors(4, mtmForm, mtmLabResultsFiles, {
+      medicationEntries: mtmMedicationEntries,
+      requireMedicationDraft: true,
+    });
     if (Object.keys(errors).length > 0) {
       setMtmStepErrors(errors);
       return;
@@ -4806,7 +4894,6 @@ function CustomerMobileDashboard({
     const activeMtm = activeMtmRequest;
     const activeMtmStatus = String(activeMtm?.status || "").toLowerCase();
     const showMtmSuccessState = Boolean(mtmSubmitted);
-    const shouldShowScheduleCta = activeMtmStatus === "approved";
     const activeMtmScheduledAt = dateTimeValue(activeMtm, ["appointment_start", "scheduled_at", "created_at"]);
     return <div className="customer-mobile-app">
       {renderDrawer()}
@@ -4925,7 +5012,7 @@ function CustomerMobileDashboard({
                 </div> : null}
                 {mtmStep === 3 ? <div className="customer-mobile-form-stack">
                   <section className="customer-mobile-form-group">
-                    <p class="customer-mobile-form-group-title">Vital Signs</p>
+                    <p className="customer-mobile-form-group-title">Vital Signs</p>
                     {[
                       ["Height", "height"],
                       ["Weight", "weight"],
@@ -4938,7 +5025,7 @@ function CustomerMobileDashboard({
                     </label>)}
                   </section>
                   <section className="customer-mobile-form-group">
-                    <p class="customer-mobile-form-group-title">Medical Conditions</p>
+                    <p className="customer-mobile-form-group-title">Medical Conditions</p>
                     {[
                       ["Primary Diagnosis", "primaryDiagnosis"],
                       ["Secondary Diagnosis", "secondaryDiagnosis"],
@@ -4950,7 +5037,7 @@ function CustomerMobileDashboard({
                     </label>)}
                   </section>
                   <section className="customer-mobile-form-group">
-                    <p class="customer-mobile-form-group-title">Medical History</p>
+                    <p className="customer-mobile-form-group-title">Medical History</p>
                     {[
                       ["Past Medical History", "pastMedicalHistory"],
                       ["Past Surgical History", "pastSurgicalHistory"],
@@ -4961,7 +5048,7 @@ function CustomerMobileDashboard({
                     </label>)}
                   </section>
                   <section className="customer-mobile-form-group">
-                    <p class="customer-mobile-form-group-title">Allergies</p>
+                    <p className="customer-mobile-form-group-title">Allergies</p>
                     {[
                       ["Drug Allergies", "drugAllergies"],
                       ["Drug Intolerances", "drugIntolerances"],
@@ -4972,7 +5059,7 @@ function CustomerMobileDashboard({
                     </label>)}
                   </section>
                   <section className="customer-mobile-form-group">
-                    <p class="customer-mobile-form-group-title">Monitoring</p>
+                    <p className="customer-mobile-form-group-title">Monitoring</p>
                     <label className="customer-mobile-field">
                       <span>Relevant Lab Results:</span>
                       <div className="customer-mobile-upload-row-wrap">
@@ -5070,6 +5157,7 @@ function CustomerMobileDashboard({
                     {mtmStepErrors[key] ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                   </label>)}
                   <button className="customer-mobile-add-medication-button" type="button" onClick={addMtmMedicationEntry}><span aria-hidden="true">+</span> Add Medication</button>
+                  {mtmStepErrors.medications ? <small className="customer-mobile-field-error">{mtmStepErrors.medications}</small> : null}
                   <div className="customer-mobile-subsection-title">
                     <strong>Additional Medication Information</strong>
                     <small>Answer where relevant</small>
@@ -5127,17 +5215,17 @@ function CustomerMobileDashboard({
               }}>{mtmSubmitting ? "Submitting..." : (mtmStep < 6 ? "Continue" : "Submit MTM Assessment")}</button>
               {mtmStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToMtmStep(Math.max(1, mtmStep - 1))}>Go Back</button> : null}
             </section> : null}
-            {mtmTab === "request" && showMtmSuccessState ? <section className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell">
+            {mtmTab === "request" && showMtmSuccessState ? <section className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell customer-mobile-full-therapy-shell">
               <div className="customer-confirmation-icon" aria-hidden="true">
                 <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#B68A2B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#B68A2B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </div>
               <h2>{mtmLoadingState ? "Submitting MTM assessment..." : "Thank you for completing the MTM Patient Assessment Form."}</h2>
               {!mtmLoadingState ? <p>Your information has been received. A NevariHealth pharmacist will review your submission and contact you within 24 hours.</p> : null}
               {!mtmLoadingState ? <div className="detail-card info-list">
+                <div className="info-row"><span className="info-label">Request</span><span className="info-value">{activeMtm?.request_reference || `MTM-${String(activeMtm?.id || "").padStart(6, "0")}`}</span></div>
                 <div className="info-row"><span className="info-label">Status</span><span className="info-value">{titleCase(activeMtmStatus || "submitted")}</span></div>
                 <div className="info-row"><span className="info-label">Assigned Pharmacist</span><span className="info-value">{activeMtm?.assigned_pharmacist_user_id ? `Pharmacist #${activeMtm.assigned_pharmacist_user_id}` : "Pending assignment"}</span></div>
               </div> : null}
-              {shouldShowScheduleCta ? <button className="customer-mobile-primary-button" type="button" onClick={scheduleMtmAppointment}>Schedule Appointment</button> : null}
               <button className="customer-mobile-secondary-button" type="button" onClick={async () => {
                 await mtmRequestsQuery.mutate();
                 const nextHistoryRequestId = activeMtm?.id || mtmLatestRequest?.id;
@@ -5147,25 +5235,9 @@ function CustomerMobileDashboard({
                   setMtmSubmitted(false);
                   setMtmStep(1);
                 }
-              }}>{shouldShowScheduleCta ? "Refresh Status" : "View Request Status"}</button>
+              }}>View Request Status</button>
             </section> : null}
             {mtmTab === "history" ? <section className="customer-mobile-list-section customer-mobile-appointment-pane">
-              {activeMtm ? <article className="customer-mobile-panel customer-mobile-mtm-history-detail">
-                <div className="customer-panel-head">
-                  <div>
-                    <span className="customer-section-kicker">History</span>
-                    <h2>{activeMtm.patient?.name || activeMtm.patient?.fullName || `MTM Request #${activeMtm.id}`}</h2>
-                  </div>
-                  <span className="chip processing"><span className="chip-dot" />{titleCase(activeMtmStatus || "submitted")}</span>
-                </div>
-                <div className="detail-card info-list">
-                  <div className="info-row"><span className="info-label">Submitted</span><span className="info-value">{formatAppointmentListDateTime(activeMtmScheduledAt, storeTimeZone)}</span></div>
-                  <div className="info-row"><span className="info-label">Assigned Pharmacist</span><span className="info-value">{activeMtm.assigned_pharmacist_user_id ? `Pharmacist #${activeMtm.assigned_pharmacist_user_id}` : "Pending assignment"}</span></div>
-                  <div className="info-row"><span className="info-label">Scheduled For</span><span className="info-value">{activeMtm.scheduled_at ? formatAppointmentListDateTime(activeMtm.scheduled_at, storeTimeZone) : "Not scheduled yet"}</span></div>
-                  <div className="info-row"><span className="info-label">Consultation</span><span className="info-value">{activeMtm.consultation_method || "Google Meet"}</span></div>
-                  {activeMtm.google_meet_link ? <div className="info-row"><span className="info-label">Join Call</span><span className="info-value"><a href={activeMtm.google_meet_link} target="_blank" rel="noreferrer">Open Google Meet</a></span></div> : null}
-                </div>
-              </article> : null}
               {mtmRequestsQuery.isLoading ? Array.from({ length: 3 }, (_, index) => <article className="customer-mobile-visit-row skeleton-panel" key={`customer-mobile-mtm-skeleton-${index}`}>
                 <div className="customer-mobile-clock skeleton-circle skeleton-circle-sm" />
                 <div className="customer-mobile-visit-copy">
@@ -5204,7 +5276,7 @@ function CustomerMobileDashboard({
                     <MobileIcon name="clock" />
                   </div>
                   <div className="customer-mobile-visit-copy">
-                    <strong>{request?.patient?.name || request?.patient?.fullName || "MTM Consultation"}</strong>
+                    <strong>{request?.request_reference || request?.patient?.name || request?.patient?.fullName || "MTM Consultation"}</strong>
                     <span>{formatAppointmentListDateTime(scheduledAt, storeTimeZone)}</span>
                     <small>{pharmacistLabel}</small>
                   </div>
@@ -5221,6 +5293,14 @@ function CustomerMobileDashboard({
                 icon="appointments"
                 illustrationSrc="/group-3.png"
               />}
+              {mtmModalRequest ? <MtmRequestDetailsModal
+                request={mtmModalRequest}
+                storeTimeZone={storeTimeZone}
+                session={session}
+                busy={mtmRescheduleBusyId === String(mtmModalRequest.id || "")}
+                onRequestReschedule={handleMtmRescheduleRequest}
+                onClose={() => setMtmHistoryModalRequestId("")}
+              /> : null}
             </section> : null}
           </section>
         </SubscriptionGate>

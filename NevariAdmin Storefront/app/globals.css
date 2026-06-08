@@ -2538,6 +2538,9 @@ body:has(.role-shell-exact) {
   place-items: end center;
   padding: 18px;
   isolation: isolate;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .customer-appointment-modal-backdrop {
@@ -2554,8 +2557,10 @@ body:has(.role-shell-exact) {
   z-index: 1;
   width: min(520px, 100%);
   max-height: min(720px, calc(100dvh - 32px));
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   border-radius: 16px;
   border: 1px solid var(--overview-border);
   background: #ffffff;
@@ -18642,6 +18647,11 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
   overflow: hidden;
 }
 
+.customer-appointment-detail-card {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .customer-confirmation-modal .customer-confirmation-shell .modal-actions {
   justify-content: flex-end;
 }
@@ -19829,4 +19839,9 @@ button:focus-visible,
     width: 100%;
     min-width: 0;
   }
+}
+.customer-mobile-full-therapy-shell {
+  min-height: calc(100dvh - 180px);
+  display: grid;
+  align-content: center;
 }

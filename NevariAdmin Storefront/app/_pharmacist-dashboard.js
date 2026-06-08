@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
-import { hydrateStoredSession, isSessionUsable, shortDate, titleCase } from "./components/role-dashboard-utils";
+import { hydrateStoredSession, isSessionUsable, money, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase } from "./components/role-dashboard-utils";
 import { clearSessionAuth } from "./components/role-session";
 import {
   createManagedProduct,
+  approvePharmacistMtmRequest,
+  fetchManagedOrders,
   fetchManagedProducts,
   fetchPharmacistMtmRequests,
   updateManagedProduct,
@@ -17,6 +19,8 @@ import {
 
 const PHARMACIST_VIEWS = [
   { id: "products", label: "Products" },
+  { id: "orders", label: "Orders" },
+  { id: "payments", label: "Payments" },
   { id: "mtm", label: "Medical therapy management" },
 ];
 
@@ -72,11 +76,13 @@ export default function PharmacistDashboard() {
   const [view, setView] = useState("products");
   const [selectedRequestId, setSelectedRequestId] = useState(null);
   const [selectedProductId, setSelectedProductId] = useState(null);
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [productSearch, setProductSearch] = useState("");
   const [productDraft, setProductDraft] = useState(() => createProductDraft());
   const [mtmDraft, setMtmDraft] = useState(() => createMtmDraft());
   const [feedback, setFeedback] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [busyRequestId, setBusyRequestId] = useState(null);
 
   useEffect(() => {
     setDocumentMetadata("Nevari Pharmacist", "Pharmacist product management and medical therapy management.");
@@ -103,16 +109,31 @@ export default function PharmacistDashboard() {
     () => fetchPharmacistMtmRequests(session),
     { refreshInterval: 45_000, revalidateOnFocus: false }
   );
+  const ordersQuery = useSWR(
+    session && ["orders", "payments"].includes(view) ? ["pharmacist-orders", view] : null,
+    () => fetchManagedOrders(session, { per_page: 50, page: 1 }),
+    { revalidateOnFocus: false, dedupingInterval: 45_000 }
+  );
 
   const products = productsQuery.data?.items || [];
   const mtmRequests = mtmQuery.data || [];
+  const orders = ordersQuery.data?.items || [];
+  const storeCurrency = storedStoreCurrency();
   const selectedProduct = useMemo(
     () => products.find((item) => String(item.product_id || item.id) === String(selectedProductId)) || null,
     [products, selectedProductId]
   );
+  const selectedOrder = useMemo(
+    () => orders.find((item) => String(item.id || item.order_id) === String(selectedOrderId)) || orders[0] || null,
+    [orders, selectedOrderId]
+  );
   const selectedRequest = useMemo(
     () => mtmRequests.find((item) => String(item.id) === String(selectedRequestId)) || mtmRequests[0] || null,
     [mtmRequests, selectedRequestId]
+  );
+  const paymentOrders = useMemo(
+    () => orders.filter((item) => item?.payment_status || item?.payment_method || item?.total),
+    [orders]
   );
 
   useEffect(() => {
@@ -136,8 +157,14 @@ export default function PharmacistDashboard() {
     }
   }, [mtmRequests, selectedRequestId]);
 
+  useEffect(() => {
+    if (!selectedOrderId && orders.length) {
+      setSelectedOrderId(orders[0].id || orders[0].order_id || null);
+    }
+  }, [orders, selectedOrderId]);
+
   if (!authResolved) {
-    return <PharmacistDashboardBootSkeleton />;
+    return null;
   }
 
   function logout() {
@@ -179,10 +206,32 @@ export default function PharmacistDashboard() {
     if (!selectedRequest) {
       return;
     }
+    const currentRequestId = String(selectedRequest.id || "");
     setBusyAction(action);
+    setBusyRequestId(currentRequestId);
     setFeedback("");
     try {
-      const next = await updatePharmacistMtmRequest(session, selectedRequest.id, action, body);
+      const optimisticStatusMap = {
+        approve: "approved",
+        schedule: "scheduled",
+        "consultation-complete": "treatment_completed",
+        "follow-up-schedule": "follow_up",
+        complete: "completed",
+      };
+      const optimisticStatus = optimisticStatusMap[action];
+      if (optimisticStatus) {
+        const optimisticRequest = {
+          ...selectedRequest,
+          status: optimisticStatus,
+          status_label: titleCase(optimisticStatus.replace(/_/g, " ")),
+        };
+        await mtmQuery.mutate((current) => Array.isArray(current)
+          ? current.map((item) => String(item.id) === currentRequestId ? optimisticRequest : item)
+          : current, { revalidate: false });
+      }
+      const next = action === "approve"
+        ? await approvePharmacistMtmRequest(session, selectedRequest.id)
+        : await updatePharmacistMtmRequest(session, selectedRequest.id, action, body);
       await mtmQuery.mutate((current) => Array.isArray(current)
         ? current.map((item) => String(item.id) === String(next?.id) ? next : item)
         : current, { revalidate: false });
@@ -192,8 +241,14 @@ export default function PharmacistDashboard() {
       setFeedback(error?.message || "Unable to update the MTM request.");
     } finally {
       setBusyAction("");
+      setBusyRequestId(null);
     }
   }
+
+  const selectedRequestStatus = String(selectedRequest?.status || "").toLowerCase();
+  const requestActionLocked = String(busyRequestId || "") === String(selectedRequest?.id || "");
+  const ordersTotal = ordersQuery.data?.total || orders.length;
+  const paymentsTotal = paymentOrders.length;
 
   const feedbackClass = feedback ? `pharmacist-dashboard-feedback ${feedbackTone(feedback)}` : "";
 
@@ -227,10 +282,14 @@ export default function PharmacistDashboard() {
       <header className="pharmacist-dashboard-header">
         <div>
           <div className="pharmacist-dashboard-kicker">Pharmacy operations</div>
-          <h1>{view === "products" ? "Products" : "Medical therapy management"}</h1>
+          <h1>{view === "products" ? "Products" : view === "orders" ? "Orders" : view === "payments" ? "Payments" : "Medical therapy management"}</h1>
           <p>
             {view === "products"
               ? "Create, update, and maintain the core WooCommerce product catalog used by pharmacists."
+              : view === "orders"
+                ? "Monitor pharmacy orders and review fulfillment-ready customer details."
+                : view === "payments"
+                  ? "Track order payment status inside the pharmacist workspace."
               : "Review assigned MTM cases, schedule consultations, capture outcomes, and close requests cleanly."}
           </p>
         </div>
@@ -240,8 +299,12 @@ export default function PharmacistDashboard() {
             <strong>{productsQuery.data?.total || products.length}</strong>
           </div>
           <div className="pharmacist-dashboard-metric">
-            <span>MTM Requests</span>
-            <strong>{mtmRequests.length}</strong>
+            <span>Orders</span>
+            <strong>{ordersTotal}</strong>
+          </div>
+          <div className="pharmacist-dashboard-metric">
+            <span>{view === "payments" ? "Payments" : "MTM Requests"}</span>
+            <strong>{view === "payments" ? paymentsTotal : mtmRequests.length}</strong>
           </div>
         </div>
       </header>
@@ -326,6 +389,116 @@ export default function PharmacistDashboard() {
         </article>
       </section> : null}
 
+      {view === "orders" ? <section className="pharmacist-dashboard-grid">
+        <article className="pharmacist-dashboard-panel">
+          <div className="pharmacist-dashboard-panel-head">
+            <div>
+              <h2>Order queue</h2>
+              <p>Recent pharmacy orders available to this dashboard role.</p>
+            </div>
+          </div>
+          <div className="pharmacist-dashboard-list">
+            {ordersQuery.isLoading ? <div className="empty-card compact-empty"><div className="card-title">Loading orders...</div></div> : null}
+            {!ordersQuery.isLoading && !orders.length ? <div className="empty-card compact-empty"><div className="card-title">No orders found.</div></div> : null}
+            {orders.map((order) => {
+              const orderId = order.id || order.order_id;
+              return <button
+                key={orderId}
+                type="button"
+                className={`pharmacist-dashboard-list-item ${String(selectedOrder?.id || selectedOrder?.order_id || "") === String(orderId) ? "active" : ""}`}
+                onClick={() => setSelectedOrderId(orderId)}
+              >
+                <div>
+                  <strong>{order.number ? `Order #${order.number}` : `Order #${orderId}`}</strong>
+                  <span>{titleCase(order.status || "pending")} · {titleCase(order.payment_status || "pending")}</span>
+                </div>
+                <b>{money(order.total || 0, storeCurrency)}</b>
+              </button>;
+            })}
+          </div>
+        </article>
+
+        <article className="pharmacist-dashboard-panel">
+          {selectedOrder ? <>
+            <div className="pharmacist-dashboard-panel-head">
+              <div>
+                <h2>{selectedOrder.number ? `Order #${selectedOrder.number}` : `Order #${selectedOrder.id}`}</h2>
+                <p>{titleCase(selectedOrder.status || "pending")} · {titleCase(selectedOrder.payment_status || "pending")}</p>
+              </div>
+            </div>
+            <div className="pharmacist-dashboard-summary-grid">
+              <div className="detail-card info-list">
+                <div className="info-row"><span className="info-label">Customer</span><span className="info-value">{selectedOrder.billing?.first_name ? `${selectedOrder.billing.first_name} ${selectedOrder.billing.last_name || ""}`.trim() : (selectedOrder.customer_name || "Not recorded")}</span></div>
+                <div className="info-row"><span className="info-label">Email</span><span className="info-value">{selectedOrder.billing?.email || selectedOrder.customer_email || "Not recorded"}</span></div>
+                <div className="info-row"><span className="info-label">Phone</span><span className="info-value">{selectedOrder.billing?.phone || "Not recorded"}</span></div>
+                <div className="info-row"><span className="info-label">Created</span><span className="info-value">{shortDate(selectedOrder.created_at)}</span></div>
+              </div>
+              <div className="detail-card info-list">
+                <div className="info-row"><span className="info-label">Total</span><span className="info-value">{money(selectedOrder.total || 0, storeCurrency)}</span></div>
+                <div className="info-row"><span className="info-label">Payment</span><span className="info-value">{titleCase(selectedOrder.payment_status || "pending")}</span></div>
+                <div className="info-row"><span className="info-label">Method</span><span className="info-value">{selectedOrder.payment_method_title || selectedOrder.payment_method || "Not recorded"}</span></div>
+                <div className="info-row"><span className="info-label">Prescription</span><span className="info-value">{selectedOrder.prescription_id || "None"}</span></div>
+              </div>
+            </div>
+          </> : <div className="empty-card compact-empty"><div className="card-title">Select an order.</div></div>}
+        </article>
+      </section> : null}
+
+      {view === "payments" ? <section className="pharmacist-dashboard-grid">
+        <article className="pharmacist-dashboard-panel">
+          <div className="pharmacist-dashboard-panel-head">
+            <div>
+              <h2>Payment records</h2>
+              <p>Payment activity derived from pharmacy orders.</p>
+            </div>
+          </div>
+          <div className="pharmacist-dashboard-list">
+            {ordersQuery.isLoading ? <div className="empty-card compact-empty"><div className="card-title">Loading payments...</div></div> : null}
+            {!ordersQuery.isLoading && !paymentOrders.length ? <div className="empty-card compact-empty"><div className="card-title">No payments found.</div></div> : null}
+            {paymentOrders.map((order) => {
+              const orderId = order.id || order.order_id;
+              return <button
+                key={`payment-${orderId}`}
+                type="button"
+                className={`pharmacist-dashboard-list-item ${String(selectedOrder?.id || selectedOrder?.order_id || "") === String(orderId) ? "active" : ""}`}
+                onClick={() => setSelectedOrderId(orderId)}
+              >
+                <div>
+                  <strong>{order.number ? `Payment for Order #${order.number}` : `Payment for Order #${orderId}`}</strong>
+                  <span>{titleCase(order.payment_status || "pending")} · {shortDate(order.date_paid || order.created_at)}</span>
+                </div>
+                <b>{money(order.total || 0, storeCurrency)}</b>
+              </button>;
+            })}
+          </div>
+        </article>
+
+        <article className="pharmacist-dashboard-panel">
+          {selectedOrder ? <>
+            <div className="pharmacist-dashboard-panel-head">
+              <div>
+                <h2>{selectedOrder.number ? `Payment Summary · Order #${selectedOrder.number}` : `Payment Summary · Order #${selectedOrder.id}`}</h2>
+                <p>{titleCase(selectedOrder.payment_status || "pending")}</p>
+              </div>
+            </div>
+            <div className="pharmacist-dashboard-summary-grid">
+              <div className="detail-card info-list">
+                <div className="info-row"><span className="info-label">Amount</span><span className="info-value">{money(selectedOrder.total || 0, storeCurrency)}</span></div>
+                <div className="info-row"><span className="info-label">Paid At</span><span className="info-value">{selectedOrder.date_paid ? shortDate(selectedOrder.date_paid) : "Not paid yet"}</span></div>
+                <div className="info-row"><span className="info-label">Method</span><span className="info-value">{selectedOrder.payment_method_title || selectedOrder.payment_method || "Not recorded"}</span></div>
+                <div className="info-row"><span className="info-label">Status</span><span className="info-value">{titleCase(selectedOrder.payment_status || "pending")}</span></div>
+              </div>
+              <div className="detail-card info-list">
+                <div className="info-row"><span className="info-label">Customer</span><span className="info-value">{selectedOrder.billing?.first_name ? `${selectedOrder.billing.first_name} ${selectedOrder.billing.last_name || ""}`.trim() : (selectedOrder.customer_name || "Not recorded")}</span></div>
+                <div className="info-row"><span className="info-label">Order Status</span><span className="info-value">{titleCase(selectedOrder.status || "pending")}</span></div>
+                <div className="info-row"><span className="info-label">Transaction Ref</span><span className="info-value">{selectedOrder.transaction_id || "Not recorded"}</span></div>
+                <div className="info-row"><span className="info-label">Created</span><span className="info-value">{shortDate(selectedOrder.created_at)}</span></div>
+              </div>
+            </div>
+          </> : <div className="empty-card compact-empty"><div className="card-title">Select a payment record.</div></div>}
+        </article>
+      </section> : null}
+
       {view === "mtm" ? <section className="pharmacist-dashboard-grid">
         <article className="pharmacist-dashboard-panel">
           <div className="pharmacist-dashboard-panel-head">
@@ -345,7 +518,7 @@ export default function PharmacistDashboard() {
                 onClick={() => setSelectedRequestId(request.id)}
               >
                 <div>
-                  <strong>{request.patient?.name || `Request #${request.id}`}</strong>
+                  <strong>{request.request_reference || request.patient?.name || `MTM-${String(request.id || "").padStart(6, "0")}`}</strong>
                   <span>{request.status_label || titleCase(request.status || "submitted")}</span>
                 </div>
                 <b>{shortDate(request.created_at)}</b>
@@ -358,12 +531,20 @@ export default function PharmacistDashboard() {
           {selectedRequest ? <>
             <div className="pharmacist-dashboard-panel-head">
               <div>
-                <h2>{selectedRequest.patient?.name || `Request #${selectedRequest.id}`}</h2>
+                <h2>{selectedRequest.request_reference || selectedRequest.patient?.name || `MTM-${String(selectedRequest.id || "").padStart(6, "0")}`}</h2>
                 <p>{selectedRequest.status_label || titleCase(selectedRequest.status || "submitted")}</p>
               </div>
               <div className="pharmacist-dashboard-actions compact">
-                <button type="button" className="pill-button" disabled={busyAction === "approve"} onClick={() => runMtmAction("approve", {}, "MTM request approved.")}>Approve</button>
-                <button type="button" className="pill-button" disabled={busyAction === "complete"} onClick={() => runMtmAction("complete", {}, "MTM case completed.")}>Complete</button>
+                {selectedRequestStatus !== "approved" && selectedRequestStatus !== "scheduled" && selectedRequestStatus !== "treatment_completed" && selectedRequestStatus !== "follow_up" && selectedRequestStatus !== "completed" ? <button type="button" className="pill-button" disabled={requestActionLocked && busyAction === "approve"} onClick={() => runMtmAction("approve", {}, "MTM request approved.")}>{requestActionLocked && busyAction === "approve" ? "Approving..." : "Approve"}</button> : null}
+                {selectedRequest?.id ? <a
+                  className="pill-button"
+                  href={`/api/admin/mtm/${selectedRequest.id}/pdf?baseUrl=${encodeURIComponent(session?.baseUrl || "")}&frontendType=${encodeURIComponent(session?.frontendType || "pharmacist_dashboard")}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Download Prefilled MTM PDF
+                </a> : null}
+                <button type="button" className="pill-button" disabled={requestActionLocked && busyAction === "complete"} onClick={() => runMtmAction("complete", {}, "MTM case completed.")}>{requestActionLocked && busyAction === "complete" ? "Completing..." : "Complete"}</button>
               </div>
             </div>
 
@@ -375,7 +556,8 @@ export default function PharmacistDashboard() {
               </div>
               <div className="detail-card info-list">
                 <div className="info-row"><span className="info-label">Submitted</span><span className="info-value">{shortDate(selectedRequest.created_at)}</span></div>
-                <div className="info-row"><span className="info-label">Meeting</span><span className="info-value">{selectedRequest.google_meet?.meeting_uri ? "Created" : "Pending"}</span></div>
+                <div className="info-row"><span className="info-label">Meeting</span><span className="info-value">{selectedRequest.meeting_state ? titleCase(selectedRequest.meeting_state) : (selectedRequest.google_meet?.meeting_uri ? "Created" : "Pending")}</span></div>
+                <div className="info-row"><span className="info-label">Attendance</span><span className="info-value">{selectedRequest.attendance_status ? titleCase(selectedRequest.attendance_status) : "Pending"}</span></div>
                 <div className="info-row"><span className="info-label">Order</span><span className="info-value">{selectedRequest.order_id || "None"}</span></div>
               </div>
             </div>
@@ -388,13 +570,13 @@ export default function PharmacistDashboard() {
               <button
                 type="button"
                 className="pill-button"
-                disabled={busyAction === "schedule"}
+                disabled={requestActionLocked && busyAction === "schedule"}
                 onClick={() => runMtmAction("schedule", {
                   appointment_start: mtmDraft.scheduleAt,
-                  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  timezone: storedStoreTimeZone(),
                 }, "MTM appointment scheduled for 30 minutes.")}
               >
-                {busyAction === "schedule" ? "Scheduling..." : "Schedule Google Meet"}
+                {requestActionLocked && busyAction === "schedule" ? "Scheduling..." : "Schedule Google Meet"}
               </button>
 
               <label className="customer-mobile-field">
@@ -404,7 +586,7 @@ export default function PharmacistDashboard() {
               <button
                 type="button"
                 className="pill-button"
-                disabled={busyAction === "consultation-complete"}
+                disabled={requestActionLocked && busyAction === "consultation-complete"}
                 onClick={() => runMtmAction("consultation-complete", {
                   consultation_notes: { notes: mtmDraft.consultationNotes },
                 }, "Treatment marked completed.")}
@@ -419,7 +601,7 @@ export default function PharmacistDashboard() {
               <button
                 type="button"
                 className="pill-button"
-                disabled={busyAction === "action-plan"}
+                disabled={requestActionLocked && busyAction === "action-plan"}
                 onClick={() => runMtmAction("action-plan", {
                   action_plan: { summary: mtmDraft.actionPlan },
                 }, "Medication Action Plan saved.")}
@@ -444,7 +626,7 @@ export default function PharmacistDashboard() {
               <button
                 type="button"
                 className="pill-button"
-                disabled={busyAction === "follow-up-schedule"}
+                disabled={requestActionLocked && busyAction === "follow-up-schedule"}
                 onClick={() => runMtmAction("follow-up-schedule", {
                   follow_up_at: mtmDraft.followUpAt,
                   purpose: mtmDraft.followUpPurpose,
@@ -461,7 +643,7 @@ export default function PharmacistDashboard() {
               <button
                 type="button"
                 className="pill-button"
-                disabled={busyAction === "outcome-tracking"}
+                disabled={requestActionLocked && busyAction === "outcome-tracking"}
                 onClick={() => runMtmAction("outcome-tracking", {
                   outcome_tracking: { notes: mtmDraft.outcome },
                 }, "Outcome tracking saved.")}

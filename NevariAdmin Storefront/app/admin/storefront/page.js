@@ -110,7 +110,7 @@ const FRONTEND_PAGES = [
     items: [
       ["doctors", "Doctors", "i-briefcase-medical"],
       ["consultations", "Consultations", "i-stethoscope"],
-      ["prescriptions", "Prescriptions", "i-clipboard"]
+      ["mtm", "MTM", "i-clipboard"]
     ]
   },
   {
@@ -124,12 +124,12 @@ const FRONTEND_PAGES = [
 ];
 
 const SEARCH_PLACEHOLDERS = {
-  overview: "Search bookings, prescriptions, products, orders or customers",
+  overview: "Search bookings, MTM requests, products, orders or customers",
   orders: "Search orders",
   payments: "Search payments",
   customers: "Search patients",
   consultations: "Search appointments",
-  prescriptions: "Search prescriptions",
+  mtm: "Search MTM requests",
   products: "Search products",
   doctors: "Search doctors",
   emails: "Search emails",
@@ -294,6 +294,7 @@ function emptyData() {
     orders: [],
     orderDetails: [],
     appointments: [],
+    mtmRequests: [],
     prescriptions: [],
     prescriptionDetails: [],
     prescriptionHistory: [],
@@ -2148,6 +2149,8 @@ export default function Page() {
   const [consultationFilter, setConsultationFilter] = useState("all");
   const [selectedConsultationDate, setSelectedConsultationDate] = useState("");
   const [selectedConsultation, setSelectedConsultation] = useState(null);
+  const [selectedMtmRequestId, setSelectedMtmRequestId] = useState(null);
+  const [mtmPreviewRequestId, setMtmPreviewRequestId] = useState(null);
   const [consultationDetailForm, setConsultationDetailForm] = useState({ startAt: "", endAt: "", doctorNotes: "", cancellationReason: "" });
   const [consultationActionLoading, setConsultationActionLoading] = useState("");
   const [consultationActionFeedback, setConsultationActionFeedback] = useState("");
@@ -2665,7 +2668,7 @@ export default function Page() {
   }, [session, currentPage, hydrated]);
 
   useEffect(() => {
-    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(selectedCustomerId);
+    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(selectedCustomerId) || Boolean(mtmPreviewRequestId);
     document.body.classList.toggle("auth-locked", authGate.visible);
     document.body.classList.toggle("modal-open", hasPopupOpen);
     return () => {
@@ -5747,8 +5750,8 @@ export default function Page() {
   const consultationsListKey = canLoadSections && ["overview", "consultations"].includes(currentPage)
     ? swrKeys.admin.appointments(withBaseUrl(session, { per_page: 50, page: 1, search: deferredSearch }))
     : null;
-  const prescriptionsListKey = canLoadSections && ["overview", "prescriptions"].includes(currentPage)
-    ? swrKeys.admin.prescriptions(withBaseUrl(session, { per_page: 30, page: 1, search: deferredSearch }))
+  const mtmListKey = canLoadSections && ["overview", "mtm"].includes(currentPage)
+    ? swrKeys.admin.prescriptions(withBaseUrl(session, { per_page: 30, page: 1, search: deferredSearch, mtm: "1" }))
     : null;
   const doctorsListKey = canLoadSections && ["overview", "doctors"].includes(currentPage)
     ? swrKeys.admin.doctors(withBaseUrl(session, { per_page: 50, page: 1, search: deferredSearch }))
@@ -5796,9 +5799,9 @@ export default function Page() {
     () => adminApiRequest("appointments", { params: { per_page: 50, page: 1, search: deferredSearch } }, session),
     { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 60_000 }
   );
-  const prescriptionsQuery = useSWR(
-    prescriptionsListKey,
-    () => adminApiRequest("prescriptions", { params: { per_page: 30, page: 1, search: deferredSearch } }, session),
+  const mtmQuery = useSWR(
+    mtmListKey,
+    () => adminApiRequest("mtm", { params: { per_page: 30, page: 1, search: deferredSearch } }, session),
     { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 60_000 }
   );
   const doctorsQuery = useSWR(
@@ -5916,8 +5919,8 @@ export default function Page() {
     if (["overview", "consultations"].includes(currentPage) && consultationsListKey) {
       tasks.push(consultationsQuery.mutate());
     }
-    if (["overview", "prescriptions"].includes(currentPage) && prescriptionsListKey) {
-      tasks.push(prescriptionsQuery.mutate());
+    if (["overview", "mtm"].includes(currentPage) && mtmListKey) {
+      tasks.push(mtmQuery.mutate());
     }
     if (["overview", "doctors"].includes(currentPage) && doctorsListKey) {
       tasks.push(doctorsQuery.mutate());
@@ -5997,9 +6000,10 @@ export default function Page() {
   }, [consultationsQuery.data]);
 
   useEffect(() => {
-    if (!prescriptionsQuery.data?.data) return;
-    setData((prev) => ({ ...prev, prescriptions: prescriptionsQuery.data.data, prescriptionDetails: prescriptionsQuery.data.data }));
-  }, [prescriptionsQuery.data]);
+    if (!mtmQuery.data?.data) return;
+    setData((prev) => ({ ...prev, mtmRequests: Array.isArray(mtmQuery.data.data) ? mtmQuery.data.data : [] }));
+  }, [mtmQuery.data]);
+
 
   useEffect(() => {
     if (!doctorsQuery.data?.data) return;
@@ -6319,7 +6323,7 @@ export default function Page() {
   const productsLoading = Boolean(productsListKey) && !productsQuery.data?.data;
   const doctorsLoading = Boolean(doctorsListKey) && !doctorsQuery.data?.data;
   const consultationsLoading = Boolean(consultationsListKey) && !consultationsQuery.data?.data;
-  const prescriptionsLoading = Boolean(prescriptionsListKey) && !prescriptionsQuery.data?.data;
+  const mtmLoading = Boolean(mtmListKey) && !mtmQuery.data?.data;
   const orderQueueCounts = {
     all: orderQueueRows.length,
     needs_rx: orderQueueRows.filter((order) => isNeedsRxOrder(order)).length,
@@ -6353,6 +6357,30 @@ export default function Page() {
   const filteredPrescriptions = (data.prescriptionDetails || []).filter((prescription) =>
     matchesSearch(`${prescription.prescription_number} ${prescription.status} ${prescription.patient_user_id} ${prescription.doctor_user_id} ${prescription.diagnosis}`, ["overview", "prescriptions"].includes(currentPage))
   );
+
+  const filteredMtmRequests = (Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((request) =>
+    matchesSearch(`${request.request_reference || ""} ${request.status || ""} ${request.patient?.name || ""} ${request.assigned_pharmacist_name || ""}`, ["overview", "mtm"].includes(currentPage))
+  );
+  const selectedMtmRequest = filteredMtmRequests.find((request) => String(request.id) === String(selectedMtmRequestId || "")) || filteredMtmRequests[0] || null;
+  const previewMtmRequest = filteredMtmRequests.find((request) => String(request.id) === String(mtmPreviewRequestId || "")) || null;
+
+  useEffect(() => {
+    if (!filteredMtmRequests.length) {
+      setSelectedMtmRequestId(null);
+      setMtmPreviewRequestId(null);
+      return;
+    }
+    if (!selectedMtmRequestId || !filteredMtmRequests.some((request) => String(request.id) === String(selectedMtmRequestId))) {
+      setSelectedMtmRequestId(filteredMtmRequests[0].id);
+    }
+  }, [filteredMtmRequests, selectedMtmRequestId]);
+
+  useEffect(() => {
+    if (!mtmPreviewRequestId) return;
+    if (!filteredMtmRequests.some((request) => String(request.id) === String(mtmPreviewRequestId))) {
+      setMtmPreviewRequestId(null);
+    }
+  }, [filteredMtmRequests, mtmPreviewRequestId]);
 
   const productFilterCounts = {
     all: (data.products || []).length,
@@ -8568,59 +8596,87 @@ export default function Page() {
               </section>
             )}
 
-            {currentPage === "prescriptions" && (
+            {currentPage === "mtm" && (
               <section className="page-view active">
                 <section className="operations-grid">
                   <article className="panel compact">
                     <div className="panel-header">
                       <div>
-                        <p className="section-kicker">Prescription program</p>
+                        <p className="section-kicker">Medical Therapy Management</p>
                         <h2>Status summary</h2>
                       </div>
                     </div>
                     <div className="mini-stat-grid">
-                      <div className="mini-stat"><span>Draft</span><strong>{formatNumber(prescriptionsSummary.draft || 0)}</strong><small>awaiting issue review</small></div>
-                      <div className="mini-stat"><span>Assigned</span><strong>{formatNumber(prescriptionsSummary.assigned || 0)}</strong><small>patient notification queue</small></div>
-                      <div className="mini-stat"><span>Fulfilled</span><strong>{formatNumber(prescriptionsSummary.fulfilled || 0)}</strong><small>completed medication flow</small></div>
-                      <div className="mini-stat"><span>Expired</span><strong>{formatNumber(prescriptionsSummary.expired || 0)}</strong><small>needs renewal handling</small></div>
+                      <div className="mini-stat"><span>Total</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).length)}</strong><small>tracked MTM requests</small></div>
+                      <div className="mini-stat"><span>Submitted</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "submitted").length)}</strong><small>awaiting pharmacist review</small></div>
+                      <div className="mini-stat"><span>Scheduled</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "scheduled").length)}</strong><small>consultations booked</small></div>
+                      <div className="mini-stat"><span>Completed</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "completed").length)}</strong><small>workflow closed out</small></div>
                     </div>
                   </article>
                 </section>
-                <section className="panel table-panel">
-                  <div className="panel-header">
-                    <div>
-                      <p className="section-kicker">Prescription registry</p>
-                      <h2>Current patient medication instructions</h2>
+                <section className="operations-grid">
+                  <section className="panel table-panel">
+                    <div className="panel-header">
+                      <div>
+                        <p className="section-kicker">MTM registry</p>
+                        <h2>All customer therapy requests</h2>
+                      </div>
                     </div>
-                  </div>
-                  <div className="table-scroll">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Prescription</th>
-                          <th>Patient</th>
-                          <th>Doctor</th>
-                          <th>Status</th>
-                          <th>Issued</th>
-                          <th>Valid until</th>
-                          <th>Diagnosis</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {prescriptionsLoading ? renderTableRowSkeletons(6, 7) : filteredPrescriptions.length ? filteredPrescriptions.map((item) => (
-                          <tr key={item.id}>
-                            <td>{item.prescription_number || `Prescription #${item.id}`}</td>
-                            <td>{patientLabel(item.patient_user_id)}</td>
-                            <td>{doctorMap.get(item.doctor_user_id) || `Doctor #${item.doctor_user_id}`}</td>
-                            <td><StatusPill value={item.status}>{item.status}</StatusPill></td>
-                            <td>{formatDate(item.issued_at || item.created_at, true)}</td>
-                            <td>{formatDate(item.valid_until)}</td>
-                            <td>{item.diagnosis || "Diagnosis not recorded"}</td>
+                    <div className="table-scroll">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Request</th>
+                            <th>Patient</th>
+                            <th>Pharmacist</th>
+                            <th>Status</th>
+                            <th>Submitted</th>
+                            <th>Scheduled</th>
+                            <th>Attendance</th>
                           </tr>
-                        )) : <tr><td colSpan="7" className="muted">No prescriptions match the current search.</td></tr>}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {mtmLoading ? renderTableRowSkeletons(6, 7) : filteredMtmRequests.length ? filteredMtmRequests.map((item) => (
+                            <tr key={item.id} role="button" tabIndex={0} onClick={() => {
+                              setSelectedMtmRequestId(item.id);
+                              setMtmPreviewRequestId(item.id);
+                            }} onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setSelectedMtmRequestId(item.id);
+                                setMtmPreviewRequestId(item.id);
+                              }
+                            }}>
+                              <td>{item.request_reference || `MTM-${String(item.id || "").padStart(6, "0")}`}</td>
+                              <td>{item.patient?.name || patientLabel(item.customer_user_id)}</td>
+                              <td>{item.assigned_pharmacist_name || (item.assigned_pharmacist_user_id ? `Pharmacist #${item.assigned_pharmacist_user_id}` : "Pending")}</td>
+                              <td><StatusPill value={item.status}>{item.status_label || item.status}</StatusPill></td>
+                              <td>{formatDate(item.created_at, true)}</td>
+                              <td>{formatDate(item.scheduled_at, true)}</td>
+                              <td>{titleCase(item.attendance_status || "pending")}</td>
+                            </tr>
+                          )) : <tr><td colSpan="7" className="muted">No MTM requests match the current search.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                  <article className="panel compact">
+                    <div className="panel-header">
+                      <div>
+                        <p className="section-kicker">Preview</p>
+                        <h2>{selectedMtmRequest?.request_reference || "Select an MTM request"}</h2>
+                      </div>
+                    </div>
+                    {selectedMtmRequest ? <div className="stacked-detail-list">
+                      <div className="detail-item-card"><strong>Patient</strong><span>{selectedMtmRequest.patient?.name || patientLabel(selectedMtmRequest.customer_user_id)}</span></div>
+                      <div className="detail-item-card"><strong>Status</strong><span>{selectedMtmRequest.status_label || titleCase(selectedMtmRequest.status)}</span></div>
+                      <div className="detail-item-card"><strong>Attendance</strong><span>{titleCase(selectedMtmRequest.attendance_status || "pending")}</span></div>
+                      <div className="detail-item-card"><strong>Medications</strong><span>{Array.isArray(selectedMtmRequest.medication_profile?.medications) ? selectedMtmRequest.medication_profile.medications.length : 0}</span></div>
+                      <button className="button-primary" type="button" onClick={() => setMtmPreviewRequestId(selectedMtmRequest.id)}>
+                        Open preview
+                      </button>
+                    </div> : <div className="muted">Select an MTM request to preview the submitted form details.</div>}
+                  </article>
                 </section>
               </section>
             )}
@@ -10108,6 +10164,67 @@ export default function Page() {
         ) : null}
 
       </div>
+      ) : null}
+
+      {previewMtmRequest && typeof document !== "undefined" ? createPortal(
+        <div className="app-modal-stack">
+          <div className="app-modal-layer app-modal-layer-top is-open">
+            <button className="app-modal-backdrop" type="button" aria-label="Close MTM preview" onClick={() => setMtmPreviewRequestId(null)} />
+            <section className="detail-section stacked-order-popup receipt-popup" role="dialog" aria-modal="true" aria-label={`MTM preview for ${previewMtmRequest.request_reference || `MTM-${String(previewMtmRequest.id || "").padStart(6, "0")}`}`}>
+              <div className="panel-header stacked-order-popup-header">
+                <div>
+                  <p className="section-kicker">MTM preview</p>
+                  <h3>{previewMtmRequest.request_reference || `MTM-${String(previewMtmRequest.id || "").padStart(6, "0")}`}</h3>
+                </div>
+                <button className="icon-button" type="button" aria-label="Close MTM preview" onClick={() => setMtmPreviewRequestId(null)}>
+                  <InlineIcon id="i-x" />
+                </button>
+              </div>
+              <div className="app-modal-scroll">
+                <div className="detail-grid two-col detail-grid-compact">
+                  <div className="detail-item-card"><strong>Patient</strong><span>{previewMtmRequest.patient?.name || patientLabel(previewMtmRequest.customer_user_id)}</span></div>
+                  <div className="detail-item-card"><strong>Status</strong><span>{previewMtmRequest.status_label || titleCase(previewMtmRequest.status)}</span></div>
+                  <div className="detail-item-card"><strong>Submitted</strong><span>{formatDate(previewMtmRequest.created_at, true)}</span></div>
+                  <div className="detail-item-card"><strong>Scheduled</strong><span>{formatDate(previewMtmRequest.scheduled_at, true)}</span></div>
+                  <div className="detail-item-card"><strong>Attendance</strong><span>{titleCase(previewMtmRequest.attendance_status || "pending")}</span></div>
+                  <div className="detail-item-card"><strong>Assigned pharmacist</strong><span>{previewMtmRequest.assigned_pharmacist_name || (previewMtmRequest.assigned_pharmacist_user_id ? `Pharmacist #${previewMtmRequest.assigned_pharmacist_user_id}` : "Pending")}</span></div>
+                  <div className="detail-item-card"><strong>Order</strong><span>{previewMtmRequest.order_id || "None"}</span></div>
+                  <div className="detail-item-card"><strong>Medications</strong><span>{Array.isArray(previewMtmRequest.medication_profile?.medications) ? previewMtmRequest.medication_profile.medications.length : 0}</span></div>
+                </div>
+                <div className="stacked-detail-list">
+                  <div className="detail-item-card">
+                    <strong>Primary diagnosis</strong>
+                    <span>{previewMtmRequest.medical_history?.primaryDiagnosis || "Not recorded"}</span>
+                  </div>
+                  <div className="detail-item-card">
+                    <strong>Medication notes</strong>
+                    <span>{previewMtmRequest.additional_information?.notes || previewMtmRequest.medication_profile?.notes || "No additional medication notes submitted."}</span>
+                  </div>
+                  <div className="detail-item-card">
+                    <strong>Submitted medications</strong>
+                    <span>
+                      {Array.isArray(previewMtmRequest.medication_profile?.medications) && previewMtmRequest.medication_profile.medications.length
+                        ? previewMtmRequest.medication_profile.medications.map((medication) => medication?.name || medication?.medicationName || "Unnamed medication").join(", ")
+                        : "No medications recorded"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="stacked-order-popup-actions">
+                <button className="pill-button" type="button" onClick={() => setMtmPreviewRequestId(null)}>Close</button>
+                <a
+                  className="button-primary"
+                  href={`/api/admin/mtm/${previewMtmRequest.id}/pdf?baseUrl=${encodeURIComponent(session.baseUrl || "")}&frontendType=${encodeURIComponent(session.frontendType || "admin_dashboard")}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Download Prefilled MTM PDF
+                </a>
+              </div>
+            </section>
+          </div>
+        </div>,
+        document.body
       ) : null}
 
       {paymentReceiptModalOpen && selectedPaymentReceipt && typeof document !== "undefined" ? createPortal(

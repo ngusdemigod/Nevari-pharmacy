@@ -39,7 +39,7 @@ const BRAND = {
     color: "#8a8f98",
     fontSize: "14px",
     lineHeight: 1.35,
-    maxWidth: "220px",
+    maxWidth: "240px",
   },
   button: {
     display: "inline-flex",
@@ -59,7 +59,7 @@ const BRAND = {
     borderRadius: "999px",
     border: "2px solid rgba(14, 41, 85, 0.18)",
     borderTopColor: "#0E2955",
-    animation: "appointmentJoinSpin 0.72s linear infinite",
+    animation: "mtmJoinSpin 0.72s linear infinite",
   },
   srOnly: {
     position: "absolute",
@@ -74,10 +74,10 @@ const BRAND = {
   },
 };
 
-export default function AppointmentJoinPage({ params }) {
+export default function MtmJoinPage({ params }) {
   const resolvedParams = use(params);
   const token = String(resolvedParams?.token || "").trim();
-  const [state, setState] = useState({ loading: true, view: "loading", message: "Checking appointment access...", redirectUrl: "", bookUrl: "/dashboard" });
+  const [state, setState] = useState({ loading: true, view: "loading", message: "Checking meeting access...", redirectUrl: "", bookUrl: "/dashboard" });
 
   useEffect(() => {
     let cancelled = false;
@@ -85,28 +85,19 @@ export default function AppointmentJoinPage({ params }) {
       const apiBase = resolveApiBase(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "");
       if (!apiBase) {
         if (!cancelled) {
-          setState({
-            loading: false,
-            view: "unavailable",
-            message: "Appointment service is not configured.",
-            redirectUrl: "",
-            bookUrl: "/dashboard",
-          });
+          setState({ loading: false, view: "unavailable", message: "Meeting service is not configured.", redirectUrl: "", bookUrl: "/dashboard" });
         }
         return;
       }
       try {
-        const endpoint = `${apiBase}/appointments/join/${encodeURIComponent(token)}`;
-        const response = await fetch(endpoint, {
+        const response = await fetch(`${apiBase}/mtm-requests/join/${encodeURIComponent(token)}`, {
           method: "GET",
           headers: { Accept: "application/json" },
           cache: "no-store",
         });
         const payload = await response.json().catch(() => ({}));
-        if (cancelled) {
-          return;
-        }
         const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+        if (cancelled) return;
         if (!response.ok) {
           setState({
             loading: false,
@@ -118,13 +109,7 @@ export default function AppointmentJoinPage({ params }) {
           return;
         }
         if (data?.state === "active" && data?.redirect_url) {
-          setState({
-            loading: false,
-            view: "redirecting",
-            message: "Redirecting you to the appointment...",
-            redirectUrl: data.redirect_url,
-            bookUrl: data?.book_url || "/dashboard",
-          });
+          setState({ loading: false, view: "redirecting", message: "Redirecting you to the meeting...", redirectUrl: data.redirect_url, bookUrl: data?.book_url || "/dashboard" });
           window.location.replace(data.redirect_url);
           return;
         }
@@ -137,13 +122,7 @@ export default function AppointmentJoinPage({ params }) {
         });
       } catch {
         if (!cancelled) {
-          setState({
-            loading: false,
-            view: "unavailable",
-            message: "Kindly check back on your appointment time",
-            redirectUrl: "",
-            bookUrl: "/dashboard",
-          });
+          setState({ loading: false, view: "unavailable", message: "Kindly check back on your appointment time", redirectUrl: "", bookUrl: "/dashboard" });
         }
       }
     }
@@ -153,10 +132,8 @@ export default function AppointmentJoinPage({ params }) {
     };
   }, [token]);
 
-  const showBusyState = state.loading || state.view === "redirecting";
-  const message = state.view === "ended"
-    ? "Meeting has ended"
-    : state.message;
+  const busy = state.loading || state.view === "redirecting";
+  const message = state.view === "ended" ? "Meeting has ended" : state.message;
 
   return (
     <main style={BRAND.shell}>
@@ -164,7 +141,7 @@ export default function AppointmentJoinPage({ params }) {
         <div style={BRAND.logo}>
           <Image src="/ne.webp" alt="Nevari Health" width={56} height={56} priority />
         </div>
-        {showBusyState ? (
+        {busy ? (
           <>
             <span style={BRAND.spinner} aria-hidden="true" />
             <span style={BRAND.srOnly}>{state.message}</span>
@@ -172,9 +149,9 @@ export default function AppointmentJoinPage({ params }) {
         ) : (
           <p style={BRAND.body}>{message}</p>
         )}
-        {state.view === "ended" ? <Link href={state.bookUrl || "/dashboard"} style={BRAND.button}>Book appointment</Link> : null}
+        {!busy ? <Link href={state.bookUrl || "/dashboard"} style={BRAND.button}>Open MTM request</Link> : null}
         <style jsx>{`
-          @keyframes appointmentJoinSpin {
+          @keyframes mtmJoinSpin {
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
           }

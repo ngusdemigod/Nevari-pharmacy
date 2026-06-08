@@ -166,6 +166,7 @@ final class Nevari_Plugin {
         }
 
         $columns = [
+            'request_reference' => "ALTER TABLE {$table} ADD request_reference VARCHAR(32) NULL",
             'assigned_pharmacist_user_id' => "ALTER TABLE {$table} ADD assigned_pharmacist_user_id BIGINT UNSIGNED NOT NULL DEFAULT 0",
             'reviewed_by_pharmacist_user_id' => "ALTER TABLE {$table} ADD reviewed_by_pharmacist_user_id BIGINT UNSIGNED NOT NULL DEFAULT 0",
             'attached_products_json' => "ALTER TABLE {$table} ADD attached_products_json LONGTEXT NULL",
@@ -182,10 +183,31 @@ final class Nevari_Plugin {
             'google_meet_error' => "ALTER TABLE {$table} ADD google_meet_error TEXT NULL",
             'google_meet_created_at' => "ALTER TABLE {$table} ADD google_meet_created_at DATETIME NULL",
             'google_meet_ended_at' => "ALTER TABLE {$table} ADD google_meet_ended_at DATETIME NULL",
+            'customer_join_token_hash' => "ALTER TABLE {$table} ADD customer_join_token_hash VARCHAR(64) NULL",
+            'pharmacist_join_token_hash' => "ALTER TABLE {$table} ADD pharmacist_join_token_hash VARCHAR(64) NULL",
+            'join_valid_from_at' => "ALTER TABLE {$table} ADD join_valid_from_at DATETIME NULL",
+            'join_expires_at' => "ALTER TABLE {$table} ADD join_expires_at DATETIME NULL",
+            'customer_checked_in_at' => "ALTER TABLE {$table} ADD customer_checked_in_at DATETIME NULL",
+            'pharmacist_checked_in_at' => "ALTER TABLE {$table} ADD pharmacist_checked_in_at DATETIME NULL",
+            'missed_attendance_at' => "ALTER TABLE {$table} ADD missed_attendance_at DATETIME NULL",
+            'missed_attendance_role' => "ALTER TABLE {$table} ADD missed_attendance_role VARCHAR(20) NULL",
         ];
 
         foreach ($columns as $column => $sql) {
             $exists = $wpdb->get_var($wpdb->prepare("SHOW COLUMNS FROM {$table} LIKE %s", $column));
+            if (!$exists) {
+                $wpdb->query($sql);
+            }
+        }
+
+        $indexes = [
+            'request_reference' => "ALTER TABLE {$table} ADD UNIQUE KEY request_reference (request_reference)",
+            'customer_join_token_hash' => "ALTER TABLE {$table} ADD KEY customer_join_token_hash (customer_join_token_hash)",
+            'pharmacist_join_token_hash' => "ALTER TABLE {$table} ADD KEY pharmacist_join_token_hash (pharmacist_join_token_hash)",
+        ];
+
+        foreach ($indexes as $index_name => $sql) {
+            $exists = $wpdb->get_var($wpdb->prepare("SHOW INDEX FROM {$table} WHERE Key_name = %s", $index_name));
             if (!$exists) {
                 $wpdb->query($sql);
             }
@@ -399,7 +421,7 @@ final class Nevari_Plugin {
             [
                 'template_key' => 'mtm_request_submitted_customer',
                 'name' => 'MTM Request Submitted Customer',
-                'subject' => 'We received your MTM request #{{mtm_request_id}}',
+                'subject' => 'We received your MTM request {{request_reference}}',
                 'body_html' => '<p>Hello {{patient_name}},</p><p>Your MTM request {{request_reference}} has been received and assigned for review.</p><p>Current status: {{current_status}}</p><p>{{mtm_request_link_html}}</p>',
                 'body_text' => 'Hello {{patient_name}}, your MTM request {{request_reference}} has been received. Current status: {{current_status}}. View request: {{mtm_request_link}}',
                 'variables' => ['patient_name', 'request_reference', 'mtm_request_id', 'current_status', 'mtm_request_link', 'mtm_request_link_html'],
@@ -441,7 +463,7 @@ final class Nevari_Plugin {
                 'name' => 'MTM Request Scheduled Customer',
                 'subject' => 'Your MTM consultation is scheduled for {{appointment_date}} at {{appointment_time}}',
                 'body_html' => '<p>Hello {{patient_name}},</p><p>Your MTM consultation has been scheduled for {{appointment_date}} at {{appointment_time}} ({{timezone}}).</p><p>{{google_meet_link_html}}</p><p>{{mtm_request_link_html}}</p>',
-                'body_text' => 'Hello {{patient_name}}, your MTM consultation is scheduled for {{appointment_date}} at {{appointment_time}} ({{timezone}}). Join: {{google_meet_link}} View request: {{mtm_request_link}}',
+                'body_text' => 'Hello {{patient_name}}, your MTM consultation is scheduled for {{appointment_date}} at {{appointment_time}} ({{timezone}}). Join: {{google_meet_link}}. View request: {{mtm_request_link}}',
                 'variables' => ['patient_name', 'appointment_date', 'appointment_time', 'timezone', 'google_meet_link', 'google_meet_link_html', 'mtm_request_link', 'mtm_request_link_html'],
             ],
             [
@@ -1259,9 +1281,9 @@ final class Nevari_Plugin {
         $amount = $order && is_object($order) && method_exists($order, 'get_formatted_order_total')
             ? html_entity_decode(wp_strip_all_tags($order->get_formatted_order_total()))
             : '';
-        $patient_dashboard_link = $this->frontend_dashboard_url('patient_dashboard', '/dashboard');
-        $patient_login_link = $this->frontend_dashboard_url('patient_dashboard', '/login');
-        $doctor_dashboard_link = $this->frontend_dashboard_url('doctors_dashboard', '/admin/doctor');
+        $patient_dashboard_link = Nevari_Helpers::frontend_dashboard_url('/dashboard');
+        $patient_login_link = Nevari_Helpers::frontend_dashboard_url('/login');
+        $doctor_dashboard_link = Nevari_Helpers::frontend_dashboard_url('/admin/doctor');
         $review_link = add_query_arg([
             'review' => '1',
             'doctor_id' => (int) $appointment->doctor_user_id,
@@ -1326,22 +1348,7 @@ final class Nevari_Plugin {
     }
 
     private function frontend_dashboard_url(string $frontend_type, string $default_path): string {
-        if (class_exists('Nevari_Connections')) {
-            foreach (Nevari_Connections::trusted_frontends() as $connection) {
-                if (($connection['trust_status'] ?? '') !== 'trusted') {
-                    continue;
-                }
-                if (($connection['frontend_type'] ?? '') !== $frontend_type && ($connection['frontend_type'] ?? '') !== 'custom_frontend') {
-                    continue;
-                }
-                $origin = !empty($connection['frontend_origin']) ? rtrim((string) $connection['frontend_origin'], '/') : '';
-                if ($origin !== '') {
-                    return $origin . $default_path;
-                }
-            }
-        }
-
-        return home_url($default_path);
+        return Nevari_Helpers::frontend_dashboard_url($default_path);
     }
 
     private function send_guarded_appointment_email($appointment, string $sent_column, array $args, bool $send_now = false): bool {

@@ -5,7 +5,8 @@ import { isAllowedUrl } from "../../../../lib/inputValidation";
 import { resolveApiBase } from "../../../customer/appointments/_shared";
 
 export async function GET(_request, { params }) {
-  const token = String(params?.token || "").trim();
+  const resolvedParams = await params;
+  const token = String(resolvedParams?.token || "").trim();
   if (!token) {
     return NextResponse.json({ ok: false, error: { message: "Appointment link is invalid." } }, { status: 404 });
   }
@@ -22,15 +23,15 @@ export async function GET(_request, { params }) {
     cache: "no-store",
   });
   const payload = await response.text().catch(() => "");
-  let data = null;
-  try {
-    data = payload ? JSON.parse(payload) : null;
-  } catch {
-    data = null;
+
+  if (payload) {
+    return new Response(payload, {
+      status: response.status || 500,
+      headers: {
+        "Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
+      },
+    });
   }
 
-  return NextResponse.json(
-    data?.data ? { ok: true, ...data.data } : (data || { ok: false, error: { message: "Unable to resolve appointment link." } }),
-    { status: response.status || 500 }
-  );
+  return NextResponse.json({ ok: false, error: { message: "Unable to resolve appointment link." } }, { status: response.status || 500 });
 }

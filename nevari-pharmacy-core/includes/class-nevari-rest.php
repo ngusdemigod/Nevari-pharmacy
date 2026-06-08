@@ -636,6 +636,9 @@ final class Nevari_Rest {
             } elseif (Nevari_Helpers::is_doctor()) {
                 $args['meta_key'] = '_nevari_assigned_doctor_user_id';
                 $args['meta_value'] = (string) get_current_user_id();
+            } elseif (Nevari_Helpers::is_pharmacist()) {
+                // Pharmacists oversee retail and MTM-linked orders from the same dashboard views.
+                // They intentionally share the broader order list scope with store operations.
             } else {
                 return Nevari_Helpers::error('forbidden', 'You cannot list these orders.', 403);
             }
@@ -4884,7 +4887,7 @@ final class Nevari_Rest {
         $valid_from_ts = $valid_from_at ? (int) strtotime($valid_from_at . ' UTC') : 0;
         $expires_ts = $expires_at ? (int) strtotime($expires_at . ' UTC') : 0;
         $now = time();
-        $book_url = Nevari_Helpers::payment_frontend_origin() . '/dashboard';
+        $book_url = Nevari_Helpers::appointment_frontend_origin() . '/dashboard';
         $raw_meet_link = Nevari_Helpers::appointment_raw_meeting_link($appointment);
 
         if (

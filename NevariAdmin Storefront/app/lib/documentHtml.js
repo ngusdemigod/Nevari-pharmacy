@@ -81,6 +81,11 @@ export function documentFilename(data, documentType) {
   return `nevari-${documentType}-${String(number || data?.order_number || data?.order_id || "document").replace(/[^a-z0-9_-]+/gi, "-")}.pdf`;
 }
 
+export function mtmDocumentFilename(data) {
+  const reference = String(data?.request_reference || data?.id || "request").replace(/[^a-z0-9_-]+/gi, "-");
+  return `nevari-mtm-${reference}.pdf`;
+}
+
 export function renderDocumentHtml(data, documentType = "invoice", { appOrigin = "", statusMode = "order" } = {}) {
   const currency = data?.currency || "USD";
   const isPrescription = documentType === "prescription";
@@ -227,6 +232,117 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
         <div class="summary-row balance"><span>Balance Due:</span><span>${escapeHtml(money(documentType === "receipt" ? 0 : (data?.totals?.balance_due || 0), currency))}</span></div>
       </div>
     </section>
+  </main>
+</body>
+</html>`;
+}
+
+export function renderMtmDocumentHtml(data, { appOrigin = "" } = {}) {
+  const medications = Array.isArray(data?.medication_profile?.medications) ? data.medication_profile.medications : [];
+  const patient = data?.patient || {};
+  const emergency = data?.emergency_contact || {};
+  const medical = data?.medical_history || {};
+  const adherence = data?.adherence_assessment || {};
+  const additional = data?.additional_information || {};
+  const medicationRows = medications.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.medicationName || "-")}</td>
+      <td>${escapeHtml(item.dosage || "-")}</td>
+      <td>${escapeHtml(item.frequency || "-")}</td>
+      <td>${escapeHtml(item.route || "-")}</td>
+      <td>${escapeHtml(item.indication || "-")}</td>
+      <td>${escapeHtml(item.prescribingDoctor || "-")}</td>
+    </tr>
+  `).join("") || '<tr><td colspan="6">No medications submitted.</td></tr>';
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(data?.request_reference || "MTM Request")}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: "Product Sans", "Google Sans", "Inter", Arial, sans-serif; color: #111; background: #fff; margin: 0; }
+    main { width: 860px; margin: 0 auto; padding: 48px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; }
+    .logo { width: 72px; height: 72px; object-fit: contain; }
+    h1 { margin: 0 0 8px; color: #0E2955; font-size: 34px; }
+    h2 { margin: 28px 0 10px; color: #0E2955; font-size: 18px; }
+    p { margin: 0 0 6px; }
+    .meta { text-align: right; font-size: 13px; color: #5b6474; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .card { border: 1px solid #e4e9f0; border-radius: 18px; padding: 16px; }
+    .label { display: block; color: #5b6474; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th { text-align: left; background: #0E2955; color: #fff; padding: 10px 12px; font-size: 11px; text-transform: uppercase; }
+    td { border-bottom: 1px solid #e4e9f0; padding: 12px; font-size: 13px; vertical-align: top; }
+    tbody tr:nth-child(even) { background: #eef4fb; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="header">
+      <div>
+        <img src="${escapeHtml(appOrigin)}/ne.webp" alt="Nevari logo" class="logo" />
+        <h1>${escapeHtml(data?.request_reference || "MTM Request")}</h1>
+        <p>${escapeHtml(patient.name || "Patient")}</p>
+      </div>
+      <div class="meta">
+        <p><strong>Status:</strong> ${escapeHtml(data?.status_label || data?.status || "Submitted")}</p>
+        <p><strong>Submitted:</strong> ${escapeHtml(shortDate(data?.created_at))}</p>
+        <p><strong>Scheduled:</strong> ${escapeHtml(shortDate(data?.scheduled_at))}</p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Patient Details</h2>
+        <p><span class="label">Name</span>${escapeHtml(patient.name || "-")}</p>
+        <p><span class="label">Age</span>${escapeHtml(patient.age || "-")}</p>
+        <p><span class="label">Phone</span>${escapeHtml(patient.phoneNumber || "-")}</p>
+        <p><span class="label">Address</span>${escapeHtml(patient.address || "-")}</p>
+      </section>
+      <section class="card">
+        <h2>Emergency Contact</h2>
+        <p><span class="label">Name</span>${escapeHtml(emergency.caregiverName || "-")}</p>
+        <p><span class="label">Relationship</span>${escapeHtml(emergency.relationship || "-")}</p>
+        <p><span class="label">Phone</span>${escapeHtml(emergency.phoneNumber || "-")}</p>
+        <p><span class="label">Email</span>${escapeHtml(emergency.emailAddress || "-")}</p>
+      </section>
+    </div>
+
+    <section>
+      <h2>Medical History</h2>
+      <p><span class="label">Primary Diagnosis</span>${escapeHtml(medical.primaryDiagnosis || "-")}</p>
+      <p><span class="label">Chronic Conditions</span>${escapeHtml(medical.chronicConditions || "-")}</p>
+      <p><span class="label">Past Medical History</span>${escapeHtml(medical.pastMedicalHistory || "-")}</p>
+      <p><span class="label">Drug Allergies</span>${escapeHtml(medical.drugAllergies || "-")}</p>
+    </section>
+
+    <section>
+      <h2>Medications</h2>
+      <table>
+        <thead>
+          <tr><th>Medication</th><th>Dosage</th><th>Frequency</th><th>Route</th><th>Indication</th><th>Prescriber</th></tr>
+        </thead>
+        <tbody>${medicationRows}</tbody>
+      </table>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Adherence</h2>
+        <p><span class="label">Barriers</span>${escapeHtml(Array.isArray(adherence.barriers) ? adherence.barriers.join(", ") : "-")}</p>
+        <p><span class="label">Other</span>${escapeHtml(adherence.other || "-")}</p>
+      </section>
+      <section class="card">
+        <h2>Additional Information</h2>
+        <p><span class="label">Recent Changes</span>${escapeHtml(additional.recentMedicationChanges || "-")}</p>
+        <p><span class="label">OTC Medications</span>${escapeHtml(additional.otcMedications || "-")}</p>
+        <p><span class="label">Supplements</span>${escapeHtml(additional.supplements || "-")}</p>
+      </section>
+    </div>
   </main>
 </body>
 </html>`;

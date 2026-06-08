@@ -1048,6 +1048,70 @@ final class Nevari_Helpers {
         return rtrim(home_url(), '/');
     }
 
+    public static function shared_frontend_base_url(): string {
+        $stored = self::normalize_frontend_base_url((string) get_option('nevari_shared_frontend_base_url', ''));
+        if ($stored !== '') {
+            return $stored;
+        }
+
+        foreach (['NEVARI_SHARED_FRONTEND_BASE_URL', 'NEVARI_FRONTEND_BASE_URL', 'NEXT_PUBLIC_NEVARI_BASE_URL'] as $env_key) {
+            $env_value = self::normalize_frontend_base_url((string) getenv($env_key));
+            if ($env_value !== '') {
+                return $env_value;
+            }
+        }
+
+        return rtrim(home_url(), '/');
+    }
+
+    public static function normalize_frontend_base_url(string $value): string {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+        $sanitized = esc_url_raw($value);
+        if (!$sanitized) {
+            return '';
+        }
+        $parts = wp_parse_url($sanitized);
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        if (!in_array($scheme, ['http', 'https'], true)) {
+            return '';
+        }
+        return rtrim($sanitized, '/');
+    }
+
+    public static function frontend_dashboard_url(string $path = ''): string {
+        $base = self::shared_frontend_base_url();
+        $normalized_path = '/' . ltrim((string) $path, '/');
+        if ($normalized_path === '/') {
+            return $base;
+        }
+        return $base . $normalized_path;
+    }
+
+    public static function appointment_frontend_origin(): string {
+        if (class_exists('Nevari_Connections')) {
+            $preferred_types = ['storefront', 'patient_dashboard', 'custom_frontend'];
+            foreach ($preferred_types as $preferred_type) {
+                foreach (Nevari_Connections::trusted_frontends() as $connection) {
+                    if (($connection['trust_status'] ?? '') !== 'trusted') {
+                        continue;
+                    }
+                    if ((string) ($connection['frontend_type'] ?? '') !== $preferred_type) {
+                        continue;
+                    }
+                    $origin = !empty($connection['frontend_origin']) ? rtrim((string) $connection['frontend_origin'], '/') : '';
+                    if ($origin !== '') {
+                        return $origin;
+                    }
+                }
+            }
+        }
+
+        return self::shared_frontend_base_url();
+    }
+
     public static function appointment_invoice_payment_url($invoice): string {
         $invoice_number = isset($invoice->invoice_number) && $invoice->invoice_number
             ? (string) $invoice->invoice_number
@@ -1181,7 +1245,7 @@ final class Nevari_Helpers {
         if ($stored_hash === '' || !hash_equals($stored_hash, $expected_hash)) {
             return '';
         }
-        return self::payment_frontend_origin() . '/appointment/join/' . rawurlencode($token);
+        return self::appointment_frontend_origin() . '/appointment/join/' . rawurlencode($token);
     }
 
     public static function appointment_meeting_link($appointment, $order = null): string {

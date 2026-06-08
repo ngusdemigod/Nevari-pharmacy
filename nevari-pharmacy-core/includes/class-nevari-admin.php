@@ -7,6 +7,7 @@ final class Nevari_Admin {
     private const RATE_LIMIT_OPTION = 'nevari_rate_limit_settings';
     private const PAYMENT_GATEWAY_OPTION = 'nevari_payment_gateway_settings';
     private const GOOGLE_MEET_OAUTH_OPTION = 'nevari_google_meet_oauth_settings';
+    private const SHARED_FRONTEND_BASE_URL_OPTION = 'nevari_shared_frontend_base_url';
     private const GOOGLE_MEET_OAUTH_STATE_TRANSIENT = 'nevari_google_meet_oauth_state_';
 
     public static function init(): void {
@@ -92,18 +93,55 @@ final class Nevari_Admin {
             } elseif ($action === 'save_google_meet_oauth') {
                 self::handle_google_meet_oauth_settings_save();
                 echo '<div class="notice notice-success"><p>' . esc_html__('Google Meet OAuth settings saved.', 'nevari-pharmacy-core') . '</p></div>';
+            } elseif ($action === 'save_frontend_base_url') {
+                self::handle_shared_frontend_base_url_save();
+                echo '<div class="notice notice-success"><p>' . esc_html__('Shared frontend base URL saved.', 'nevari-pharmacy-core') . '</p></div>';
             }
         }
 
         $pairings = Nevari_Connections::recent_pairing_sessions(8);
         $connections = Nevari_Connections::trusted_frontends();
         $oauth = Nevari_Helpers::google_meet_oauth_settings();
+        $stored_shared_frontend_base_url = (string) get_option(self::SHARED_FRONTEND_BASE_URL_OPTION, '');
+        $shared_frontend_base_url = $stored_shared_frontend_base_url !== ''
+            ? $stored_shared_frontend_base_url
+            : Nevari_Helpers::shared_frontend_base_url();
         $can_connect_google = !empty($oauth['client_id']) && !empty($oauth['client_secret']);
         self::render_google_meet_oauth_notice();
         ?>
         <div class="wrap nevari-admin-wrap">
             <h1><?php echo esc_html__('Nevari Pharmacy Connections', 'nevari-pharmacy-core'); ?></h1>
             <p><?php echo esc_html__('Generate a one-time pairing code for each frontend application. The code includes this site URL, expires after 10 minutes, and is invalidated immediately after successful use.', 'nevari-pharmacy-core'); ?></p>
+
+            <h2 style="margin-top:24px;"><?php echo esc_html__('Shared Frontend Base URL', 'nevari-pharmacy-core'); ?></h2>
+            <p><?php echo esc_html__('All email dashboard links are built from this one frontend base URL plus fixed dashboard paths.', 'nevari-pharmacy-core'); ?></p>
+            <form method="post">
+                <?php wp_nonce_field('nevari_connections_action'); ?>
+                <input type="hidden" name="nevari_connections_action" value="save_frontend_base_url" />
+                <table class="form-table" role="presentation">
+                    <tbody>
+                        <tr>
+                            <th scope="row"><label for="nevari_shared_frontend_base_url"><?php esc_html_e('Frontend base URL', 'nevari-pharmacy-core'); ?></label></th>
+                            <td>
+                                <input
+                                    id="nevari_shared_frontend_base_url"
+                                    class="regular-text"
+                                    type="url"
+                                    name="shared_frontend_base_url"
+                                    value="<?php echo esc_attr($shared_frontend_base_url); ?>"
+                                    placeholder="<?php echo esc_attr(Nevari_Helpers::normalize_frontend_base_url((string) getenv('NEVARI_FRONTEND_BASE_URL')) ?: Nevari_Helpers::normalize_frontend_base_url((string) getenv('NEXT_PUBLIC_NEVARI_BASE_URL')) ?: 'https://app.example.com'); ?>"
+                                />
+                                <p class="description"><?php esc_html_e('Example: https://app.example.com. Patient links become /dashboard or /login, doctor links become /admin/doctor, pharmacist links become /admin/pharmacist, and admin links become /admin/storefront.', 'nevari-pharmacy-core'); ?></p>
+                                <p class="description"><?php echo esc_html(sprintf(__('If empty, email links fall back to the site URL: %s', 'nevari-pharmacy-core'), home_url())); ?></p>
+                                <?php if ($stored_shared_frontend_base_url === '' && $shared_frontend_base_url !== rtrim(home_url(), '/')) : ?>
+                                    <p class="description"><?php echo esc_html(sprintf(__('Currently using fallback frontend base URL from configuration: %s', 'nevari-pharmacy-core'), $shared_frontend_base_url)); ?></p>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                <?php submit_button(__('Save frontend base URL', 'nevari-pharmacy-core')); ?>
+            </form>
 
             <h2 style="margin-top:24px;"><?php echo esc_html__('Google Meet OAuth (Server-side)', 'nevari-pharmacy-core'); ?></h2>
             <p><?php echo esc_html__('Configure OAuth credentials used by the core plugin to generate Google Meet links on the server during appointment booking.', 'nevari-pharmacy-core'); ?></p>
@@ -557,6 +595,15 @@ final class Nevari_Admin {
             </tbody>
         </table>
         <?php
+    }
+
+    private static function handle_shared_frontend_base_url_save(): void {
+        if (!check_admin_referer('nevari_connections_action')) {
+            return;
+        }
+        $raw = isset($_POST['shared_frontend_base_url']) ? wp_unslash($_POST['shared_frontend_base_url']) : '';
+        $normalized = Nevari_Helpers::normalize_frontend_base_url((string) $raw);
+        update_option(self::SHARED_FRONTEND_BASE_URL_OPTION, $normalized, false);
     }
 
     private static function handle_payment_gateway_settings_save(): void {
