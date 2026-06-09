@@ -906,7 +906,7 @@ body.modal-open .page-shell {
   color: var(--color-text-main);
   text-align: left;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .nav-item:hover,
@@ -4354,9 +4354,8 @@ body:has(.role-shell-exact) {
   margin-bottom: 18px;
 }
 
-.metrics-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
+
+ 
 
 .metric-card {
   min-height: 148px;
@@ -4879,9 +4878,18 @@ td {
 .auth-gate {
   position: fixed;
   inset: 0;
-  background: rgba(7, 15, 32, 0.68);
-  backdrop-filter: blur(10px);
-  padding: 32px 16px;
+  background-color: #f7f9ff;
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0.72) 48%, rgba(255, 255, 255, 0.46) 100%),
+    url("/Frame 95621.png");
+  background-position:
+    center center,
+    bottom center;
+  background-size:
+    cover,
+    cover;
+  background-repeat: no-repeat;
+  padding: 28px 16px 40px;
   z-index: 80;
   overflow-y: auto;
 }
@@ -4891,57 +4899,34 @@ td {
 }
 
 .auth-gate-shell {
-  width: min(480px, 100%);
+  width: min(440px, 100%);
   min-height: 100%;
   margin: 0 auto;
   display: grid;
   place-items: center;
+  align-content: center;
+  grid-auto-rows: max-content;
+  gap: 16px;
 }
 
 .auth-screen-card {
   width: 100%;
-  max-width: 480px;
-  overflow: hidden;
+  max-width: 420px;
+  overflow: visible;
   padding: 0;
-  border-radius: var(--radius-xl);
-  background: rgba(248, 245, 239, 0.94);
-  border: 1px solid rgba(255, 255, 255, 0.56);
-  box-shadow: 0 18px 45px rgba(14, 41, 85, 0.1);
-  backdrop-filter: blur(18px);
+  border-radius: 28px;
+  background: #ffffff;
+  border: 1px solid rgba(10, 42, 94, 0.08);
+  box-shadow: none;
+  backdrop-filter: none;
   position: relative;
-}
-
-.auth-screen-card::before {
-  content: "";
-  position: absolute;
-  top: -70px;
-  right: -70px;
-  width: 200px;
-  height: 200px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(216, 202, 182, 0.38), transparent 68%);
-  pointer-events: none;
-}
-
-.auth-screen-card::after {
-  content: "";
-  position: absolute;
-  bottom: -50px;
-  left: -50px;
-  width: 180px;
-  height: 180px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(173, 183, 200, 0.24), transparent 68%);
-  pointer-events: none;
 }
 
 .auth-card-body {
-  position: relative;
-  z-index: 1;
-  padding: 32px 40px;
+  padding: 20px 20px 24px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
 }
 
 .auth-feedback {
@@ -4950,39 +4935,48 @@ td {
   color: var(--color-text-muted);
   text-align: center;
   width: 100%;
+  margin: 16px 0 0;
 }
 
 .auth-intro {
-  width: 100%;
   display: grid;
   justify-items: center;
-  gap: 14px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 0;
   text-align: center;
 }
 
 .auth-logo {
-  width: 88px;
-  height: 88px;
+  width: 86px;
+  height: 86px;
   object-fit: contain;
   display: block;
 }
 
+.auth-dashboard-name {
+  margin: 0;
+  color: #0a2a5e;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
 .auth-title {
   margin: 0;
-  color: var(--color-text-main);
-  font-size: clamp(10px, 4vw, 24px);
+  color: #000000;
+  font-size: clamp(28px, 4vw, 34px);
   font-weight: 400;
-  line-height: 1.1;
+  line-height: 1;
   letter-spacing: -0.03em;
+  text-align: left;
 }
 
 .auth-form {
   display: grid;
-  gap: 13px;
-  margin-top: 18px;
+  gap: 14px;
+  margin-top: 16px;
   width: 100%;
-  max-width: 360px;
+  max-width: none;
 }
 
 .form-group {
@@ -4992,9 +4986,9 @@ td {
 
 .auth-reference-form label > span {
   display: block;
-  margin-bottom: 6px;
-  color: var(--color-text-main);
-  font-size: 11.5px;
+  margin-bottom: 8px;
+  color: rgba(0, 0, 0, 0.75);
+  font-size: 14px;
   font-weight: 400;
   letter-spacing: -0.01em;
   text-transform: none;
@@ -5017,24 +5011,24 @@ td {
 
 .auth-reference-form input {
   width: 100%;
-  height: 44px;
-  padding: 0 42px 0 40px;
-  border-radius: 12px;
-  border: 1.5px solid rgba(14, 41, 85, 0.18);
-  background: rgba(255, 255, 255, 0.62);
+  height: 40px;
+  padding: 0 52px 0 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(10, 42, 94, 0.14);
+  background: #f9fbff;
   color: var(--color-text-main);
   outline: none;
-  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+  transition: border-color 180ms ease, background 180ms ease;
 }
 
 .auth-reference-form input::placeholder {
-  color: var(--color-text-subtle);
+  color: rgba(15, 23, 42, 0.35);
 }
 
 .auth-reference-form input:focus {
-  border-color: var(--color-primary);
+  border-color: #0a2a5e;
   background: #fff;
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
+  box-shadow: none;
 }
 
 .input-suffix {
@@ -5053,8 +5047,8 @@ td {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-  margin-top: 8px;
-  justify-content: center;
+  margin-top: 14px;
+  justify-content: stretch;
 }
 
 .auth-primary-button,
@@ -5068,15 +5062,19 @@ td {
 }
 
 .auth-primary-button {
-  flex: 1 1 220px;
-  background: var(--color-primary);
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 48px;
+  background: #0a2a5e;
   color: #fff;
-  box-shadow: var(--shadow-btn);
+  border-radius: 999px;
+  box-shadow: none;
+  justify-content: center;
 }
 
 .auth-primary-button:hover {
-  background: var(--color-primary-hover);
-  transform: translateY(-1px);
+  background: #0a2a5e;
+  transform: none;
 }
 
 .auth-primary-button:disabled {
@@ -5098,26 +5096,23 @@ td {
 
 .auth-secondary-button {
   flex: 1 1 160px;
-  background: rgba(255, 255, 255, 0.42);
+  background: #ffffff;
   border: 1px solid var(--color-border-strong);
   color: var(--color-text-main);
-  box-shadow: var(--shadow-inset);
+  box-shadow: none;
 }
 
 .auth-secondary-button:hover {
-  background: rgba(255, 255, 255, 0.66);
-  transform: translateY(-1px);
-}
-
-.auth-feedback {
-  margin: 14px 0 0;
+  background: #ffffff;
+  transform: none;
 }
 
 .auth-inline-links {
   display: flex;
-  justify-content: space-between;
-  gap: 18px;
+  justify-content: center;
+  gap: 10px;
   margin-top: 2px;
+  flex-wrap: wrap;
 }
 
 .auth-text-link {
@@ -5125,12 +5120,18 @@ td {
   min-height: auto;
   padding: 0;
   background: transparent;
-  color: var(--color-text-main);
-  font-size: 12px;
-  font-weight: 600;
+  color: #000000;
+  font-size: 13px;
+  font-weight: 400;
   text-decoration: underline;
-  text-decoration-color: rgba(14, 41, 85, 0.2);
+  text-decoration-color: rgba(10, 42, 94, 0.35);
   text-underline-offset: 3px;
+}
+
+.auth-text-link:disabled {
+  color: rgba(0, 0, 0, 0.45);
+  cursor: not-allowed;
+  text-decoration-color: rgba(0, 0, 0, 0.18);
 }
 
 @media (max-width: 1240px) {
@@ -5299,16 +5300,16 @@ td {
   }
 
   .auth-gate {
-    padding: 20px 14px;
+    padding: 24px 14px 32px;
     align-items: flex-start;
   }
 
   .auth-screen-card {
-    border-radius: var(--radius-lg);
+    border-radius: 28px;
   }
 
   .auth-card-body {
-    padding: 24px;
+    padding: 24px 18px 22px;
   }
 
   .auth-form {
@@ -5358,8 +5359,7 @@ td {
 
 @media (max-width: 400px) {
   .auth-gate {
-    padding: 0;
-    background: #f8f5ef;
+    padding: 20px 12px 28px;
   }
 
   .auth-gate-shell {
@@ -5368,19 +5368,14 @@ td {
 
   .auth-screen-card {
     max-width: 100%;
-    min-height: 100vh;
-    border-radius: 0;
-    border-color: transparent;
+    min-height: 0;
+    border-radius: 26px;
+    border-color: rgba(10, 42, 94, 0.08);
     box-shadow: none;
   }
 
-  .auth-screen-card::before,
-  .auth-screen-card::after {
-    display: none;
-  }
-
   .auth-card-body {
-    padding: 20px;
+    padding: 22px 16px 20px;
   }
 
   .auth-logo {
@@ -5389,18 +5384,18 @@ td {
   }
 
   .auth-title {
-    font-size: clamp(10px, 4vw, 24px);
+    font-size: 28px;
     font-weight: 400;
   }
 
   .auth-reference-form input {
-    height: 48px;
+    height: 42px;
     font-size: 14px;
   }
 
   .auth-primary-button,
   .auth-secondary-button {
-    min-height: 50px;
+    min-height: 48px;
     font-size: 14px;
   }
 
@@ -5863,6 +5858,10 @@ th,
   padding: var(--space-panel);
 }
 
+
+.metric-card .most-sold {
+  
+}
 .hero-panel {
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.9fr);
   align-items: stretch;
@@ -6019,14 +6018,10 @@ td:last-child {
   align-self: stretch;
 }
 
-.auth-card-body {
-  padding: clamp(24px, 4vw, 36px);
-}
-
 .auth-title {
-  font-size: clamp(22px, 4vw, 26px);
-  font-weight: 650;
-  letter-spacing: 0;
+  font-size: clamp(28px, 4vw, 34px);
+  font-weight: 400;
+  letter-spacing: -0.03em;
 }
 
 body.auth-locked .page-shell {
@@ -9551,6 +9546,30 @@ body.auth-locked .page-shell {
   color: rgba(255, 255, 255, 0.9);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.auth-snackbar {
+  top: 24px;
+  right: 24px;
+  bottom: auto;
+  display: grid;
+  gap: 0;
+  padding-right: 42px;
+}
+
+.auth-snackbar-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  line-height: 1;
 }
 
 .order-quantity-input {
@@ -14482,7 +14501,7 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 252px minmax(0, 1fr);
-  background: linear-gradient(145deg, #f7f4ef, #efe7db);
+  background: #ffffff;
 }
 
 .pharmacist-dashboard-sidebar {
@@ -14491,8 +14510,7 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   flex-direction: column;
   justify-content: space-between;
   border-right: 1px solid rgba(10, 42, 94, 0.1);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(246, 239, 231, 0.82));
-  backdrop-filter: blur(14px);
+  background: #ffffff;
 }
 
 .pharmacist-dashboard-brand {
@@ -14509,7 +14527,7 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   display: grid;
   place-items: center;
   background: #0a2a5e;
-  color: #e5d7c6;
+  color: #ffffff;
   font-weight: 800;
 }
 
@@ -14536,19 +14554,17 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 .pharmacist-dashboard-nav {
   min-height: 46px;
   padding: 0 14px;
-  border: 1px solid rgba(10, 42, 94, 0.08);
+  border: 1px solid rgba(10, 42, 94, 0.12);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.56);
+  background: #ffffff;
   color: #102039;
   text-align: left;
   font-size: 14px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .pharmacist-dashboard-nav.active {
   background: #0a2a5e;
   color: #ffffff;
-  box-shadow: 0 12px 28px rgba(10, 42, 94, 0.18);
 }
 
 .pharmacist-dashboard-logout {
@@ -14559,15 +14575,14 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   padding: 26px;
   display: grid;
   gap: 20px;
+  background: #ffffff;
 }
 
 .pharmacist-dashboard-header,
 .pharmacist-dashboard-panel {
-  border: 1px solid rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(10, 42, 94, 0.12);
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 18px 40px rgba(10, 42, 94, 0.08);
-  backdrop-filter: blur(18px);
+  background: #ffffff;
 }
 
 .pharmacist-dashboard-header {
@@ -14607,7 +14622,8 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 .pharmacist-dashboard-metric {
   padding: 14px 16px;
   border-radius: 18px;
-  background: linear-gradient(135deg, #f8f3ea, #e8eef7);
+  background: #ffffff;
+  border: 1px solid rgba(10, 42, 94, 0.12);
 }
 
 .pharmacist-dashboard-metric span {
@@ -14630,12 +14646,12 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 }
 
 .pharmacist-dashboard-feedback.success {
-  background: #e9f5ee;
+  background: #eef8f3;
   color: #1f6f4a;
 }
 
 .pharmacist-dashboard-feedback.error {
-  background: #fdeceb;
+  background: #fff0f0;
   color: #b42318;
 }
 
@@ -14679,9 +14695,9 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 .pharmacist-dashboard-list-item {
   width: 100%;
   padding: 14px 16px;
-  border: 1px solid #e7e3db;
+  border: 1px solid rgba(10, 42, 94, 0.12);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.92);
+  background: #ffffff;
   align-items: center;
   justify-content: space-between;
   text-align: left;
@@ -14689,7 +14705,7 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 
 .pharmacist-dashboard-list-item.active {
   border-color: #0a2a5e;
-  background: #f1f6fd;
+  background: #f4f7fb;
 }
 
 .pharmacist-dashboard-list-item strong,
@@ -14706,6 +14722,34 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+
+.pharmacist-dashboard-shell .button-primary,
+.pharmacist-dashboard-shell .pill-button,
+.pharmacist-dashboard-shell .icon-button,
+.pharmacist-dashboard-shell .segment,
+.pharmacist-dashboard-shell .page-item {
+  box-shadow: none;
+  filter: none;
+}
+
+.pharmacist-dashboard-shell .button-primary {
+  background: #0a2a5e;
+}
+
+.pharmacist-dashboard-shell .pill-button,
+.pharmacist-dashboard-shell .icon-button,
+.pharmacist-dashboard-shell .segment,
+.pharmacist-dashboard-shell .page-item {
+  background: #ffffff;
+}
+
+.pharmacist-dashboard-shell .customer-mobile-field input,
+.pharmacist-dashboard-shell .customer-mobile-field textarea,
+.pharmacist-dashboard-shell .customer-mobile-field select {
+  background: #ffffff;
+  border-color: rgba(10, 42, 94, 0.12);
+  box-shadow: none;
 }
 
 .pharmacist-dashboard-inline-fields,
@@ -15654,8 +15698,8 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 }
 
 .customer-mobile-drawer-brand {
-  width: 32px;
-  height: 32px;
+  width: 100%;
+  height: auto;
   margin-bottom: 24px;
 }
 
@@ -19153,17 +19197,17 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
 }
 
 .auth-otp-form {
-  max-width: 532px;
+  max-width: none;
   width: 100%;
-  gap: 0;
+  gap: 16px;
   margin-top: 0;
 }
 
 .auth-verify-screen-card {
-  width: min(532px, 100%);
-  max-width: 532px;
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  border-radius: 16px;
+  width: min(420px, 100%);
+  max-width: 420px;
+  border: 1px solid rgba(10, 42, 94, 0.08);
+  border-radius: 28px;
   background: #ffffff;
   box-shadow: none;
   backdrop-filter: none;
@@ -19175,36 +19219,38 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
 }
 
 .auth-verify-card-body {
-  padding: 0;
+  padding: 20px 20px 24px;
 }
 
 .auth-otp-card {
   display: grid;
   width: 100%;
   justify-items: center;
-  gap: 24px;
-  padding: 66px 40px 34px;
+  gap: 20px;
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  text-align: center;
+  text-align: left;
 }
 
 .auth-otp-title {
   margin: 0;
   color: #000000;
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: -0.04em;
-  line-height: 1.15;
+  font-size: clamp(28px, 4vw, 34px);
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  justify-self: start;
 }
 
 .auth-otp-recipient {
   margin: 0;
   color: #667085;
-  font-size: 17px;
+  font-size: 13px;
   line-height: 1.45;
+  justify-self: start;
 }
 
 .auth-otp-hidden-input {
@@ -19219,29 +19265,29 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
   display: grid;
   width: 100%;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .auth-otp-box {
   display: grid;
-  min-height: 64px;
+  min-height: 48px;
   aspect-ratio: 1.02;
   place-items: center;
-  border: 1px solid #cfd6df;
-  border-radius: 9px;
-  background: #ffffff;
+  border: 1px solid rgba(10, 42, 94, 0.14);
+  border-radius: 8px;
+  background: #f9fbff;
   color: #111827;
   cursor: text;
-  font-size: 24px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 600;
   line-height: 1;
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .auth-otp-box:focus-visible,
 .auth-otp-box.filled {
-  border-color: #2f65e7;
-  box-shadow: 0 0 0 3px rgba(47, 101, 231, 0.12);
+  border-color: #0a2a5e;
+  box-shadow: none;
   outline: none;
 }
 
@@ -19252,11 +19298,11 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
 
 .auth-otp-submit {
   width: 100%;
-  min-height: 58px;
+  min-height: 48px;
   justify-content: center;
-  border-radius: 32px;
-  font-size: 14px;
-  font-weight: 500;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 600;
   letter-spacing: -0.02em;
 }
 
@@ -19267,44 +19313,31 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
 .auth-otp-form .auth-inline-links {
   justify-content: center;
   gap: 18px;
-  margin-top: 14px;
+  margin-top: 0;
 }
 
 .auth-verify-card-body .auth-feedback {
-  max-width: 452px;
-  margin: 12px 40px 30px;
+  max-width: none;
+  margin: 16px 0 0;
 }
 
 @media (max-width: 560px) {
   .auth-verify-card-body .auth-feedback {
-    margin: 12px 24px 26px;
-  }
-
-  .auth-otp-card {
-    padding: 48px 24px 28px;
+    margin: 16px 0 0;
   }
 
   .auth-otp-title {
-    font-size: 24px;
-  }
-
-  .auth-otp-recipient {
-    font-size: 15px;
-  }
-
-  .auth-otp-boxes {
-    gap: 8px;
+    font-size: 30px;
   }
 
   .auth-otp-box {
-    min-height: 52px;
-    border-radius: 8px;
-    font-size: 20px;
+    min-height: 46px;
+    font-size: 18px;
   }
 
   .auth-otp-submit {
-    min-height: 54px;
-    font-size: 18px;
+    min-height: 48px;
+    font-size: 15px;
   }
 }
 
@@ -22038,9 +22071,7 @@ button:focus-visible,
 .doctor-mobile-shell {
   min-height: 100dvh;
   width: 100%;
-  background:
-    radial-gradient(circle at top left, rgba(246, 239, 227, 0.92), transparent 34%),
-    linear-gradient(180deg, #fcfaf5 0%, #f8f4ec 100%);
+  
   color: #17356d;
 }
 
@@ -22113,8 +22144,7 @@ button:focus-visible,
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: 1px solid rgba(21, 58, 122, 0.14);
-  background: rgba(22, 58, 122, 0.04);
+  
 }
 
 .doctor-mobile-nav-item.active .doctor-mobile-nav-icon {
@@ -22218,11 +22248,11 @@ button:focus-visible,
 }
 
 .doctor-mobile-page-title {
-  margin: 0;
-  font-size: clamp(1.9rem, 6vw, 2.1rem);
-  line-height: 1.02;
-  letter-spacing: -0.03em;
-  color: #163a7a;
+  margin: 0 0 12px;
+  color: #0b326d;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.25;
 }
 
 .doctor-mobile-inline-link {
@@ -22256,12 +22286,16 @@ button:focus-visible,
 }
 
 .doctor-mobile-metric-card {
-  display: grid;
-  gap: 10px;
-  min-height: 116px;
-  padding: 14px;
-  align-content: start;
-  min-width: 0;
+    min-height: 108px;
+    border-radius: 12px;
+    border: 1px solid #e2e4e9;
+    background: #f6f8fa;
+    padding: 10px;
+    display: grid;
+    grid-template-rows: 46px 1fr;
+    min-width: 0;
+    overflow: hidden;
+    box-sizing: border-box;
 }
 
 .doctor-mobile-metric-icon,
@@ -22279,14 +22313,24 @@ button:focus-visible,
 
 .doctor-mobile-metric-label,
 .doctor-mobile-form-field span {
-  font-size: 14px;
+  font-size: 12px;
   color: #65748e;
 }
 
 .doctor-mobile-metric-value {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   font-size: clamp(1.3rem, 5vw, 1.95rem);
   line-height: 1.08;
   color: #163a7a;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  align-self: end;
+  padding-right: 2px;
 }
 
 .doctor-mobile-appointment-listing,
@@ -22297,7 +22341,7 @@ button:focus-visible,
 }
 
 .doctor-mobile-overview-item {
-  display: grid;
+  display: flex;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 12px;
   align-items: start;
@@ -22305,6 +22349,7 @@ button:focus-visible,
   border-bottom: 1px solid rgba(21, 58, 122, 0.12);
   cursor: pointer;
   min-width: 0;
+  justify-content: space-between;
 }
 
 .doctor-mobile-overview-item:last-child {
@@ -22319,13 +22364,20 @@ button:focus-visible,
 }
 
 .doctor-mobile-overview-copy strong {
-  font-size: 1.1rem;
-  color: #163a7a;
+  color: #525866;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: capitalize;
 }
 
 .doctor-mobile-overview-copy span {
-  font-size: 0.92rem;
-  color: #65748e;
+    color: #7e8798 !important;
+    font-size: 12px !important;
+    line-height: 1.35;
 }
 
 .doctor-mobile-status-pill {
@@ -22336,9 +22388,10 @@ button:focus-visible,
   max-width: 100%;
   padding: 0 14px;
   border-radius: 999px;
-  font-size: 0.88rem;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 300;
   white-space: nowrap;
+  align-content: center;
 }
 
 .doctor-mobile-status-pill::before {
@@ -22408,16 +22461,18 @@ button:focus-visible,
 }
 
 .doctor-mobile-consultation-top {
-  display: grid;
+  display: flex;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: start;
   min-width: 0;
+  justify-content: space-between;
 }
 
 .doctor-mobile-consultation-top strong {
   display: block;
   color: #163a7a;
+  text-transform: capitalize;
 }
 
 .doctor-mobile-consultation-top span,
@@ -22461,7 +22516,7 @@ button:focus-visible,
   border: 1px solid #163a7a;
   background: #163a7a;
   color: #ffffff;
-  width: 100%;
+  width: fit-content;
 }
 
 .doctor-mobile-action-button.secondary {
@@ -22633,7 +22688,7 @@ button:focus-visible,
 }
 
 .doctor-mobile-shell .customer-mobile-header {
-  background: #fcfaf5;
+  
 }
 
 .doctor-mobile-shell .customer-mobile-header-spacer.is-overview {
@@ -22672,6 +22727,11 @@ button:focus-visible,
   padding: 0 14px;
 }
 
+.doctor-pagination {
+  display: flex;
+  align-items: center;
+}
+
 .doctor-mobile-shell .doctor-pagination {
   justify-content: space-between;
   padding-top: 4px;
@@ -22695,7 +22755,12 @@ button:focus-visible,
   }
 
   .doctor-mobile-metric-grid {
-    grid-template-columns: 1fr;
+    
+    
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-gap: 8px;
+    gap: 8px;
   }
 
   .doctor-mobile-overview-item,
@@ -22920,4 +22985,1287 @@ button:focus-visible,
   .doctor-flow-shell .page-body {
     padding-bottom: 88px;
   }
+}
+
+.nevari-admin-storefront {
+  --admin-surface-bg: linear-gradient(180deg, rgba(255, 252, 246, 0.98) 0%, rgba(251, 247, 239, 0.96) 100%);
+  --admin-surface-border: rgba(196, 178, 150, 0.28);
+  --admin-surface-shadow: 0 24px 48px rgba(25, 44, 78, 0.1), 0 8px 18px rgba(25, 44, 78, 0.05);
+  --admin-surface-shadow-soft: 0 16px 30px rgba(25, 44, 78, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.74);
+  --admin-surface-radius: 28px;
+  --admin-surface-radius-sm: 18px;
+  --admin-ink: #16386a;
+  --admin-muted: #6f7f99;
+  --admin-line: rgba(24, 55, 101, 0.12);
+  --admin-pill-bg: rgba(255, 255, 255, 0.82);
+  --admin-page-gap: clamp(18px, 2vw, 28px);
+}
+
+.nevari-admin-storefront .pages-stack {
+  gap: var(--admin-page-gap);
+}
+
+.nevari-admin-storefront .page-banner,
+.nevari-admin-storefront .operations-grid > .panel.compact:first-child,
+.nevari-admin-storefront .overview-v2-panel:first-child,
+.nevari-admin-storefront .doctor-settings-card:first-child {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--admin-surface-border);
+  border-radius: var(--admin-surface-radius);
+  background:
+    radial-gradient(circle at top right, rgba(204, 227, 255, 0.62), transparent 32%),
+    radial-gradient(circle at top left, rgba(255, 221, 178, 0.36), transparent 28%),
+    var(--admin-surface-bg);
+  box-shadow: var(--admin-surface-shadow);
+}
+
+.nevari-admin-storefront .page-banner::before,
+.nevari-admin-storefront .operations-grid > .panel.compact:first-child::before,
+.nevari-admin-storefront .overview-v2-panel:first-child::before,
+.nevari-admin-storefront .doctor-settings-card:first-child::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4), transparent 42%);
+}
+
+.nevari-admin-storefront .page-banner,
+.nevari-admin-storefront .operations-grid > .panel.compact:first-child {
+  padding: clamp(22px, 3vw, 34px);
+}
+
+.nevari-admin-storefront .page-banner h1,
+.nevari-admin-storefront .page-banner h2,
+.nevari-admin-storefront .page-banner h3,
+.nevari-admin-storefront .operations-grid > .panel.compact:first-child h1,
+.nevari-admin-storefront .operations-grid > .panel.compact:first-child h2,
+.nevari-admin-storefront .operations-grid > .panel.compact:first-child h3,
+.nevari-admin-storefront .panel-header h3 {
+  color: var(--admin-ink);
+  letter-spacing: -0.03em;
+}
+
+.nevari-admin-storefront .page-banner p,
+.nevari-admin-storefront .operations-grid > .panel.compact:first-child p,
+.nevari-admin-storefront .panel-header p,
+.nevari-admin-storefront .muted {
+  color: var(--admin-muted);
+}
+
+.nevari-admin-storefront .section-kicker,
+.nevari-admin-storefront .page-banner .section-kicker,
+.nevari-admin-storefront .panel-header .section-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid rgba(31, 93, 178, 0.18);
+  border-radius: 999px;
+  background: rgba(235, 244, 255, 0.88);
+  color: #2f6dcb;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.nevari-admin-storefront .mini-stat-grid,
+.nevari-admin-storefront .metrics-grid,
+.nevari-admin-storefront .banner-stats,
+.nevari-admin-storefront .overview-metric-grid,
+.nevari-admin-storefront .order-summary-grid {
+  gap: 16px;
+}
+
+.nevari-admin-storefront .mini-stat,
+.nevari-admin-storefront .metric-card,
+.nevari-admin-storefront .banner-stat,
+.nevari-admin-storefront .order-mini-stat,
+.nevari-admin-storefront .detail-item-card,
+.nevari-admin-storefront .history-card {
+  border: 1px solid rgba(24, 55, 101, 0.1);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: var(--admin-surface-shadow-soft);
+}
+
+.nevari-admin-storefront .mini-stat,
+.nevari-admin-storefront .metric-card,
+.nevari-admin-storefront .order-mini-stat {
+  min-width: 0;
+  padding: 20px 18px;
+}
+
+.nevari-admin-storefront .mini-stat span,
+.nevari-admin-storefront .metric-card span,
+.nevari-admin-storefront .order-mini-stat span {
+  color: var(--admin-ink);
+  opacity: 0.9;
+}
+
+.nevari-admin-storefront .mini-stat strong,
+.nevari-admin-storefront .metric-card strong,
+.nevari-admin-storefront .order-mini-stat strong {
+  min-width: 0;
+  font-size: clamp(1.45rem, 1.2rem + 1vw, 2.15rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  overflow-wrap: anywhere;
+  color: #142a4f;
+}
+
+.nevari-admin-storefront .mini-stat small,
+.nevari-admin-storefront .metric-card small,
+.nevari-admin-storefront .order-mini-stat small {
+  color: var(--admin-muted);
+}
+
+.nevari-admin-storefront .panel,
+.nevari-admin-storefront .overview-v2-panel,
+.nevari-admin-storefront .doctor-settings-card,
+.nevari-admin-storefront .receipt-panel,
+.nevari-admin-storefront .payment-stat-panel,
+.nevari-admin-storefront .orders-matrix-panel,
+.nevari-admin-storefront .operations-grid > .panel,
+.nevari-admin-storefront .settings-grid > .panel {
+  border: 1px solid var(--admin-surface-border);
+  border-radius: var(--admin-surface-radius);
+  background: var(--admin-surface-bg);
+  box-shadow: var(--admin-surface-shadow-soft);
+}
+
+.nevari-admin-storefront .staffs-hero-grid {
+  align-items: start;
+}
+
+.nevari-admin-storefront .staffs-hero-grid > .panel.compact:first-child {
+  display: block;
+  height: auto;
+  min-height: 0;
+  align-self: start;
+}
+
+.nevari-admin-storefront .panel.table-panel,
+.nevari-admin-storefront .audit-panel,
+.nevari-admin-storefront .doctor-settings-card,
+.nevari-admin-storefront .overview-v2-panel,
+.nevari-admin-storefront .receipt-panel {
+  padding: clamp(20px, 2.4vw, 30px);
+}
+
+.nevari-admin-storefront .panel-header,
+.nevari-admin-storefront .page-banner,
+.nevari-admin-storefront .filter-bar,
+.nevari-admin-storefront .toolbar {
+  position: relative;
+  z-index: 1;
+}
+
+.nevari-admin-storefront .filter-bar,
+.nevari-admin-storefront .tabs-bar {
+  padding: 8px;
+  border: 1px solid rgba(24, 55, 101, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.nevari-admin-storefront .filter-btn,
+.nevari-admin-storefront .page-item,
+.nevari-admin-storefront .product-chip,
+.nevari-admin-storefront .status-chip,
+.nevari-admin-storefront .pill-button,
+.nevari-admin-storefront .button-primary,
+.nevari-admin-storefront .icon-button {
+  border-radius: 999px;
+}
+
+.nevari-admin-storefront .button-primary {
+  background: linear-gradient(180deg, #214680 0%, #183666 100%);
+  box-shadow: 0 14px 28px rgba(24, 54, 102, 0.18);
+}
+
+.nevari-admin-storefront .pill-button,
+.nevari-admin-storefront .icon-button,
+.nevari-admin-storefront .filter-btn,
+.nevari-admin-storefront .page-item {
+  background: var(--admin-pill-bg);
+  border-color: rgba(24, 55, 101, 0.12);
+  color: var(--admin-ink);
+}
+
+.nevari-admin-storefront .filter-btn.active,
+.nevari-admin-storefront .page-item.active {
+  background: #173769;
+  color: #fff;
+}
+
+.nevari-admin-storefront .table-scroll,
+.nevari-admin-storefront .customer-history-scroll,
+.nevari-admin-storefront .product-editor-form-card,
+.nevari-admin-storefront .order-detail-section,
+.nevari-admin-storefront .detail-section {
+  min-width: 0;
+}
+
+.nevari-admin-storefront table thead th {
+  color: var(--admin-muted);
+}
+
+.nevari-admin-storefront table tbody tr {
+  border-color: rgba(24, 55, 101, 0.08);
+}
+
+.admin-surface-modal {
+  width: min(1180px, calc(100vw - 32px));
+  max-height: min(92vh, 920px);
+  border: 1px solid var(--admin-surface-border, rgba(196, 178, 150, 0.28));
+  border-radius: 32px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top right, rgba(204, 227, 255, 0.56), transparent 28%),
+    radial-gradient(circle at top left, rgba(255, 221, 178, 0.32), transparent 22%),
+    linear-gradient(180deg, rgba(255, 252, 246, 0.99) 0%, rgba(251, 247, 239, 0.97) 100%);
+  box-shadow: 0 36px 72px rgba(17, 39, 74, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.admin-surface-modal.modal-frame {
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-surface-modal .modal-head,
+.admin-surface-modal.modal-head,
+.admin-surface-modal .order-modal-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 24px 28px;
+  border-bottom: 1px solid rgba(24, 55, 101, 0.09);
+  background: linear-gradient(180deg, rgba(255, 252, 246, 0.98), rgba(255, 249, 240, 0.92));
+  backdrop-filter: blur(12px);
+}
+
+.admin-surface-modal .modal-body,
+.admin-surface-modal.modal-body,
+.admin-surface-modal .order-detail-scroll,
+.admin-surface-modal .app-modal-scroll,
+.admin-surface-modal .customer-detail-scroll,
+.admin-surface-modal .product-editor-shell,
+.admin-surface-modal .order-create-shell,
+.admin-surface-modal .consultation-create-shell,
+.admin-surface-modal .profile-create-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.admin-surface-modal .modal-actions,
+.admin-surface-modal .product-editor-footer,
+.admin-surface-modal .stacked-order-popup-actions,
+.admin-surface-modal .receipt-footer-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 18px 28px 24px;
+  border-top: 1px solid rgba(24, 55, 101, 0.09);
+  background: linear-gradient(180deg, rgba(255, 249, 240, 0.9), rgba(255, 252, 246, 0.98));
+  backdrop-filter: blur(12px);
+}
+
+.admin-surface-modal.creation-frame .order-create-shell,
+.admin-surface-modal.creation-frame .profile-create-shell,
+.admin-surface-modal.creation-frame .consultation-create-shell {
+  padding: 24px 28px;
+}
+
+.admin-surface-modal .creation-popup-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.92fr);
+  gap: 20px;
+}
+
+.admin-surface-modal .creation-main,
+.admin-surface-modal .creation-side,
+.admin-surface-modal .consultation-design-card,
+.admin-surface-modal .profile-create-preview,
+.admin-surface-modal .profile-create-form-column,
+.admin-surface-modal .product-editor-panel,
+.admin-surface-modal .product-editor-form-card {
+  border: 1px solid rgba(24, 55, 101, 0.1);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+}
+
+.admin-surface-modal .creation-main,
+.admin-surface-modal .creation-side,
+.admin-surface-modal .consultation-design-card,
+.admin-surface-modal .profile-create-preview,
+.admin-surface-modal .profile-create-form-column,
+.admin-surface-modal .product-editor-panel,
+.admin-surface-modal .product-editor-form-card {
+  padding: 20px;
+}
+
+.admin-surface-modal .creation-section-title {
+  margin-bottom: 16px;
+  color: var(--admin-ink, #16386a);
+}
+
+.admin-surface-modal .creation-summary-card,
+.admin-surface-modal .profile-create-preview,
+.admin-surface-modal .consultation-design-summary,
+.admin-surface-modal .order-create-preview {
+  align-self: start;
+}
+
+.admin-surface-modal .creation-summary-card,
+.admin-surface-modal .profile-create-preview,
+.admin-surface-modal .consultation-design-summary {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-surface-modal .creation-summary-icon {
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  border-radius: 28px;
+  border: 1px solid rgba(24, 55, 101, 0.12);
+  background: linear-gradient(180deg, rgba(248, 240, 225, 0.92), rgba(255, 252, 246, 0.9));
+  color: var(--admin-ink, #16386a);
+}
+
+.admin-surface-modal .creation-summary-card > strong,
+.admin-surface-modal .profile-create-preview > strong,
+.admin-surface-modal .consultation-design-summary > h4 {
+  color: var(--admin-ink, #16386a);
+  font-size: 1.4rem;
+  line-height: 1.15;
+}
+
+.admin-surface-modal .creation-summary-card > span,
+.admin-surface-modal .profile-create-preview > span,
+.admin-surface-modal .consultation-design-summary > p {
+  color: var(--admin-muted, #6f7f99);
+}
+
+.admin-surface-modal .order-create-shell {
+  grid-template-columns: minmax(300px, 0.95fr) minmax(0, 1.35fr);
+  gap: 20px;
+}
+
+.admin-surface-modal .order-create-customer-column,
+.admin-surface-modal .order-create-items-column {
+  align-content: start;
+}
+
+.admin-surface-modal .product-editor-shell {
+  padding: 24px 28px;
+  gap: 20px;
+}
+
+.admin-surface-modal .product-editor-form-scroll {
+  padding-right: 4px;
+}
+
+.admin-surface-modal .filter-bar.tabs-bar {
+  margin: 18px 28px 0;
+}
+
+.admin-surface-modal .order-detail-scroll,
+.admin-surface-modal .app-modal-scroll,
+.admin-surface-modal .customer-detail-scroll {
+  padding: 24px 28px;
+}
+
+.admin-surface-modal .receipt-popup-redesign .receipt-popup-body,
+.admin-surface-modal.receipt-popup-redesign .receipt-popup-body {
+  padding: 24px 28px;
+}
+
+.admin-surface-modal .detail-grid,
+.admin-surface-modal .detail-form-grid,
+.admin-surface-modal .customer-detail-grid {
+  gap: 16px;
+}
+
+.admin-surface-modal .detail-item-card,
+.admin-surface-modal .detail-block {
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.admin-surface-modal :where(input, select, textarea) {
+  border-color: rgba(24, 55, 101, 0.14);
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--admin-ink, #16386a);
+}
+
+.admin-surface-modal :where(input, select, textarea)::placeholder {
+  color: #8492a9;
+}
+
+.admin-surface-modal .order-detail-footer-actions,
+.admin-surface-modal .receipt-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.admin-surface-modal .order-detail-footer-end,
+.admin-surface-modal .receipt-footer-actions-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-surface-modal .order-detail-footer-actions .button-primary,
+.admin-surface-modal .receipt-footer-actions .button-primary {
+  min-width: 168px;
+}
+
+.admin-surface-modal .icon-button {
+  width: 44px;
+  height: 44px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal {
+  width: min(1188px, calc(100vw - 32px));
+  max-height: min(92vh, 920px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.84);
+  background: linear-gradient(180deg, rgba(251, 248, 243, 0.98), rgba(250, 246, 240, 0.98));
+  box-shadow: 0 22px 60px rgba(10, 42, 94, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 24px 28px 20px;
+  border-bottom: 1px solid rgba(10, 42, 94, 0.08);
+  background: linear-gradient(180deg, rgba(251, 248, 243, 0.98), rgba(251, 248, 243, 0.92));
+  backdrop-filter: blur(14px);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-header h3 {
+  color: var(--admin-ink, #16386a);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 390px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 20px;
+  overflow: hidden;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-media-column,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-form-column {
+  min-width: 0;
+  min-height: 0;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-media-panel,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-form-card {
+  height: 100%;
+  min-height: 0;
+  border: 1px solid rgba(10, 42, 94, 0.1);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-media-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 18px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-panel-header {
+  margin-bottom: 0;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-shell {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-stage {
+  position: relative;
+  min-height: 360px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo {
+  width: 100%;
+  min-height: 360px;
+  padding: 0;
+  border-radius: 16px;
+  border: 1px solid var(--primary);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 38% 22%, rgba(255, 255, 255, 0.85) 0 16%, transparent 17%),
+    linear-gradient(145deg, rgba(10, 42, 94, 0.08), rgba(227, 215, 198, 0.48));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-placeholder {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  color: var(--admin-muted, #6f7f99);
+  background:
+    radial-gradient(circle at 50% 25%, rgba(255, 255, 255, 0.88) 0 18%, transparent 19%),
+    linear-gradient(145deg, rgba(10, 42, 94, 0.06), rgba(227, 215, 198, 0.45));
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-placeholder svg {
+  width: 38px;
+  height: 38px;
+  color: var(--primary);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-index {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-actions {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
+  display: inline-flex;
+  gap: 8px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-stage:hover .product-photo-actions,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-stage:focus-within .product-photo-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-action,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail-edit,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail-remove {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 24px rgba(14, 41, 85, 0.14);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-action {
+  color: var(--primary);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-action.danger,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail-remove {
+  color: #c62828;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 10px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1.5px solid rgba(14, 41, 85, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail:hover,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail.active {
+  transform: translateY(-1px);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail-surface {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail-surface img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail-index {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(14, 41, 85, 0.88);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail-actions {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail:hover .product-thumbnail-actions,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-thumbnail:focus-within .product-thumbnail-actions {
+  opacity: 1;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-upload-dropzone {
+  min-height: 64px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border-radius: 16px;
+  border: 1.5px dashed rgba(10, 42, 94, 0.24);
+  background: rgba(255, 255, 255, 0.65);
+  color: var(--primary);
+  text-align: left;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-upload-dropzone-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(14, 41, 85, 0.18);
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-upload-dropzone-copy strong,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-upload-dropzone-copy small {
+  display: block;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-upload-dropzone-copy small {
+  margin-top: 2px;
+  color: var(--admin-muted, #6f7f99);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-form-column {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-form-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tablist {
+  display: flex;
+  min-height: 42px;
+  background: rgba(255, 255, 255, 0.72);
+  border-bottom: 1px solid rgba(10, 42, 94, 0.1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tablist::-webkit-scrollbar {
+  display: none;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tab {
+  flex: 1 0 auto;
+  min-width: 132px;
+  height: 42px;
+  background: transparent;
+  color: var(--admin-muted, #6f7f99);
+  border-bottom: 2px solid transparent;
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  background: rgba(10, 42, 94, 0.025);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-form-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 18px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tab-grid,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tab-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tab-grid-details,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tab-grid-inventory {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tab-grid-details .product-long-description-field,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tab-grid-inventory .detail-field.detail-field-wide {
+  grid-column: 1 / -1;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .detail-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .detail-field > span,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-term-header .section-kicker {
+  font-size: 10px;
+  font-weight: 680;
+  color: var(--admin-muted, #6f7f99);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .detail-field input,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .detail-field textarea,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .detail-field select,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .currency-input {
+  width: 100%;
+  border: 1px solid rgba(10, 42, 94, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .detail-field input,
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .detail-field textarea {
+  padding: 12px 13px;
+  color: var(--admin-ink, #16386a);
+  outline: none;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .detail-field input {
+  min-height: 42px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .detail-field textarea {
+  min-height: 94px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .currency-input {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .currency-input span {
+  display: grid;
+  place-items: center;
+  border-right: 1px solid rgba(10, 42, 94, 0.09);
+  color: var(--primary);
+  font-size: 12px;
+  background: rgba(10, 42, 94, 0.025);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .currency-input input {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-rich-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-rich-editor-card {
+  border-radius: 14px;
+  border: 1px solid rgba(10, 42, 94, 0.13);
+  background: rgba(255, 255, 255, 0.86);
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-rich-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 0 12px;
+  min-height: 38px;
+  border-bottom: 1px solid rgba(10, 42, 94, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-rich-toolbar button {
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  color: var(--admin-ink, #16386a);
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-rich-toolbar button:hover {
+  background: rgba(231, 238, 248, 0.72);
+  color: var(--primary);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-rich-surface {
+  min-height: 122px;
+  padding: 12px 14px;
+  color: var(--admin-muted, #6f7f99);
+  font-size: 12px;
+  outline: none;
+  overflow-y: auto;
+  line-height: 1.45;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-field-note {
+  color: var(--admin-muted, #6f7f99);
+  font-size: 11px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-term-field {
+  display: grid;
+  gap: 12px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-term-header h4 {
+  margin: 0;
+  color: var(--admin-ink, #16386a);
+  font-size: 14px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-term-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-chip {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(231, 238, 248, 0.9);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-term-search-row {
+  display: flex;
+  gap: 10px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-term-search-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 20px 20px;
+  margin: 0;
+  border-top: 1px solid rgba(10, 42, 94, 0.08);
+  background: linear-gradient(180deg, rgba(251, 250, 247, 0.82), rgba(251, 248, 243, 0.98));
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-footer-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-delete-button {
+  color: #b23b3b;
+  background: var(--danger-bg);
+  border-color: rgba(178, 59, 59, 0.2);
+}
+
+.nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-feedback {
+  min-height: 24px;
+}
+
+@media (max-width: 1100px) {
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal {
+    width: min(100vw - 24px, 920px);
+  }
+
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-stage,
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo,
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-photo-placeholder {
+    min-height: 260px;
+  }
+}
+
+@media (max-width: 720px) {
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    border-radius: 24px;
+  }
+
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-header,
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-footer,
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-shell {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-shell {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-footer-end,
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-actions .pill-button,
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-actions .button-primary,
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-footer .pill-button,
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-footer .button-primary {
+    width: 100%;
+  }
+
+  .nevari-admin-storefront .admin-surface-modal.product-editor-modal .product-editor-tab {
+    min-width: 112px;
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .nevari-admin-storefront .mini-stat-grid,
+  .nevari-admin-storefront .metrics-grid,
+  .nevari-admin-storefront .order-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-surface-modal .creation-popup-layout,
+  .admin-surface-modal .order-create-shell,
+  .admin-surface-modal .product-editor-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-surface-modal .order-detail-footer-actions,
+  .admin-surface-modal .receipt-footer-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-surface-modal .order-detail-footer-end,
+  .admin-surface-modal .receipt-footer-actions-end {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 720px) {
+  .nevari-admin-storefront .page-banner,
+  .nevari-admin-storefront .operations-grid > .panel.compact:first-child,
+  .nevari-admin-storefront .panel.table-panel,
+  .nevari-admin-storefront .audit-panel,
+  .nevari-admin-storefront .overview-v2-panel,
+  .nevari-admin-storefront .doctor-settings-card {
+    border-radius: 24px;
+    padding: 18px;
+  }
+
+  .nevari-admin-storefront .mini-stat-grid,
+  .nevari-admin-storefront .metrics-grid,
+  .nevari-admin-storefront .banner-stats,
+  .nevari-admin-storefront .overview-metric-grid,
+  .nevari-admin-storefront .order-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-surface-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    border-radius: 24px;
+  }
+
+  .admin-surface-modal .modal-head,
+  .admin-surface-modal .order-modal-topbar,
+  .admin-surface-modal .modal-actions,
+  .admin-surface-modal .product-editor-footer,
+  .admin-surface-modal .stacked-order-popup-actions,
+  .admin-surface-modal .receipt-footer-actions,
+  .admin-surface-modal .order-detail-scroll,
+  .admin-surface-modal .app-modal-scroll,
+  .admin-surface-modal .customer-detail-scroll,
+  .admin-surface-modal.creation-frame .order-create-shell,
+  .admin-surface-modal.creation-frame .profile-create-shell,
+  .admin-surface-modal.creation-frame .consultation-create-shell,
+  .admin-surface-modal .product-editor-shell {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .admin-surface-modal .order-detail-footer-end,
+  .admin-surface-modal .receipt-footer-actions-end {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-surface-modal .order-detail-footer-actions .button-primary,
+  .admin-surface-modal .receipt-footer-actions .button-primary,
+  .admin-surface-modal .order-detail-footer-actions .pill-button,
+  .admin-surface-modal .receipt-footer-actions .pill-button {
+    width: 100%;
+  }
+}
+.nevari-admin-storefront,
+.nevari-admin-storefront::before,
+.nevari-admin-storefront::after,
+.nevari-admin-storefront *::before,
+.nevari-admin-storefront *::after {
+  background-image: none;
+}
+
+.nevari-admin-storefront,
+.nevari-admin-storefront .page-shell,
+.nevari-admin-storefront .main-shell,
+.nevari-admin-storefront .desktop-dashboard-page,
+.nevari-admin-storefront .desktop-dashboard-shell,
+.nevari-admin-storefront .desktop-dashboard-screen,
+.nevari-admin-storefront .pages-stack,
+.nevari-admin-storefront .page-view.active {
+  background: #ffffff !important;
+}
+
+.nevari-admin-storefront .panel,
+.nevari-admin-storefront .table-panel,
+.nevari-admin-storefront .hero-panel,
+.nevari-admin-storefront .page-banner,
+.nevari-admin-storefront .mini-stat,
+.nevari-admin-storefront .audit-panel,
+.nevari-admin-storefront .receipt-panel,
+.nevari-admin-storefront .receipt-items-panel,
+.nevari-admin-storefront .customer-panel-card,
+.nevari-admin-storefront .customer-settings-panel,
+.nevari-admin-storefront .doctor-settings-card,
+.nevari-admin-storefront .detail-item-card,
+.nevari-admin-storefront .detail-block,
+.nevari-admin-storefront .product-category-product-card,
+.nevari-admin-storefront .product-editor-panel,
+.nevari-admin-storefront .product-media-panel,
+.nevari-admin-storefront .product-editor-form-card,
+.nevari-admin-storefront .product-rich-editor-card,
+.nevari-admin-storefront .product-photo,
+.nevari-admin-storefront .product-photo-placeholder,
+.nevari-admin-storefront .product-thumbnail-surface,
+.nevari-admin-storefront .product-upload-dropzone,
+.nevari-admin-storefront .consultation-design-card,
+.nevari-admin-storefront .consultation-design-summary,
+.nevari-admin-storefront .consultation-booking-form-panel,
+.nevari-admin-storefront .profile-create-preview,
+.nevari-admin-storefront .profile-create-form-column,
+.nevari-admin-storefront .creation-main,
+.nevari-admin-storefront .creation-side,
+.nevari-admin-storefront .order-create-preview,
+.nevari-admin-storefront .order-create-customer-column,
+.nevari-admin-storefront .order-create-items-column,
+.nevari-admin-storefront .customer-detail-summary-panel,
+.nevari-admin-storefront .admin-surface-modal,
+.nevari-admin-storefront .admin-surface-modal .modal-head,
+.nevari-admin-storefront .admin-surface-modal .modal-actions,
+.nevari-admin-storefront .admin-surface-modal .product-editor-footer,
+.nevari-admin-storefront .admin-surface-modal .stacked-order-popup-actions,
+.nevari-admin-storefront .admin-surface-modal .receipt-footer-actions,
+.nevari-admin-storefront .admin-surface-modal .order-detail-scroll,
+.nevari-admin-storefront .admin-surface-modal .app-modal-scroll,
+.nevari-admin-storefront .admin-surface-modal .customer-detail-scroll,
+.nevari-admin-storefront .admin-surface-modal .product-editor-shell,
+.nevari-admin-storefront .admin-surface-modal .order-create-shell,
+.nevari-admin-storefront .admin-surface-modal .consultation-create-shell,
+.nevari-admin-storefront .admin-surface-modal .profile-create-shell {
+  background: #fffdf9 !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.nevari-admin-storefront .table-scroll,
+.nevari-admin-storefront .filter-bar,
+.nevari-admin-storefront .tabs-bar,
+.nevari-admin-storefront .pagination-row,
+.nevari-admin-storefront .search-shell,
+.nevari-admin-storefront .currency-input,
+.nevari-admin-storefront :where(input, select, textarea) {
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.nevari-admin-storefront .button-primary,
+.nevari-admin-storefront .pill-button,
+.nevari-admin-storefront .icon-button,
+.nevari-admin-storefront .filter-btn,
+.nevari-admin-storefront .page-item,
+.nevari-admin-storefront .product-photo-action,
+.nevari-admin-storefront .product-thumbnail-edit,
+.nevari-admin-storefront .product-thumbnail-remove {
+  background: #f6f1e8 !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+.nevari-admin-storefront .button-primary,
+.nevari-admin-storefront .filter-btn.active,
+.nevari-admin-storefront .page-item.active {
+  background: #16356d !important;
+  color: #fff !important;
+}
+
+.nevari-admin-storefront .pill-button,
+.nevari-admin-storefront .icon-button,
+.nevari-admin-storefront .filter-btn,
+.nevari-admin-storefront .page-item {
+  color: #16356d;
+}
+
+.nevari-admin-storefront .status-pill,
+.nevari-admin-storefront .status-pill.success,
+.nevari-admin-storefront .status-pill.warning,
+.nevari-admin-storefront .status-pill.error,
+.nevari-admin-storefront .status-pill.info,
+.nevari-admin-storefront .product-chip,
+.nevari-admin-storefront .filter-count,
+.nevari-admin-storefront .product-photo-index,
+.nevari-admin-storefront .product-thumbnail-index {
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.nevari-admin-storefront .status-pill.success {
+  background: #eaf5ee !important;
+}
+
+.nevari-admin-storefront .status-pill.warning {
+  background: #fbf1e3 !important;
+}
+
+.nevari-admin-storefront .status-pill.error {
+  background: #f9e4df !important;
+}
+
+.nevari-admin-storefront .status-pill.info {
+  background: #e7eef8 !important;
+}
+
+.nevari-admin-storefront .panel,
+.nevari-admin-storefront .table-panel,
+.nevari-admin-storefront .page-banner,
+.nevari-admin-storefront .mini-stat,
+.nevari-admin-storefront .audit-panel,
+.nevari-admin-storefront .admin-surface-modal,
+.nevari-admin-storefront .product-editor-panel,
+.nevari-admin-storefront .product-media-panel,
+.nevari-admin-storefront .product-editor-form-card,
+.nevari-admin-storefront .product-rich-editor-card,
+.nevari-admin-storefront .product-upload-dropzone,
+.nevari-admin-storefront .product-photo,
+.nevari-admin-storefront .product-photo-placeholder,
+.nevari-admin-storefront .product-thumbnail-surface {
+  border-color: #d9e1ee !important;
 }

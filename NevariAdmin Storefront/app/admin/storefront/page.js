@@ -96,7 +96,7 @@ const LEGACY_PAGE_ALIASES = {
 
 const FRONTEND_PAGES = [
   {
-    label: "Command",
+    label: "Nevari Pharmacy",
     items: [
       ["overview", "Overview", "i-layout"],
       ["products", "Products", "i-pill"],
@@ -106,17 +106,17 @@ const FRONTEND_PAGES = [
     ]
   },
   {
-    label: "Care Ops",
+    label: "Nevari Health",
     items: [
-      ["doctors", "Doctors", "i-briefcase-medical"],
+      ["subscriptions", "Subscriptions", "i-credit-card"],
+      ["doctors", "Staffs", "i-briefcase-medical"],
       ["consultations", "Consultations", "i-stethoscope"],
       ["mtm", "MTM", "i-clipboard"]
     ]
   },
   {
-    label: "Trust",
+    label: "Security",
     items: [
-      ["subscriptions", "Subscriptions", "i-credit-card"],
       ["audit", "Audit Center", "i-shield"],
       ["settings", "Settings", "i-settings"]
     ]
@@ -131,7 +131,7 @@ const SEARCH_PLACEHOLDERS = {
   consultations: "Search appointments",
   mtm: "Search MTM requests",
   products: "Search products",
-  doctors: "Search doctors",
+  doctors: "Search staff",
   emails: "Search emails",
   subscriptions: "Search subscriptions",
   audit: "Search audit events",
@@ -2099,7 +2099,6 @@ export default function Page() {
   const [consultationCalendarMode, setConsultationCalendarMode] = useState("week");
   const [consultationDuration, setConsultationDuration] = useState(30);
   const [consultationBookingDate, setConsultationBookingDate] = useState("");
-  const [consultationCalendarViewDate, setConsultationCalendarViewDate] = useState(() => new Date());
   const [consultationCreateCalendarViewDate, setConsultationCreateCalendarViewDate] = useState(() => new Date());
   const [consultationPatientSearch, setConsultationPatientSearch] = useState("");
   const [consultationDoctorSearch, setConsultationDoctorSearch] = useState("");
@@ -2138,7 +2137,9 @@ export default function Page() {
   const [deletingProductIds, setDeletingProductIds] = useState([]);
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [paymentPage, setPaymentPage] = useState(1);
+  const [orderPage, setOrderPage] = useState(1);
   const [customerFilter, setCustomerFilter] = useState("all");
+  const [customerPage, setCustomerPage] = useState(1);
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [customerDetailTab, setCustomerDetailTab] = useState("details");
   const [customerOrderPage, setCustomerOrderPage] = useState(1);
@@ -2147,9 +2148,10 @@ export default function Page() {
   const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
   const [customerHistoryFeedback, setCustomerHistoryFeedback] = useState("");
   const [consultationFilter, setConsultationFilter] = useState("all");
-  const [selectedConsultationDate, setSelectedConsultationDate] = useState("");
+  const [consultationPage, setConsultationPage] = useState(1);
   const [selectedConsultation, setSelectedConsultation] = useState(null);
   const [selectedMtmRequestId, setSelectedMtmRequestId] = useState(null);
+  const [mtmPage, setMtmPage] = useState(1);
   const [mtmPreviewRequestId, setMtmPreviewRequestId] = useState(null);
   const [consultationDetailForm, setConsultationDetailForm] = useState({ startAt: "", endAt: "", doctorNotes: "", cancellationReason: "" });
   const [consultationActionLoading, setConsultationActionLoading] = useState("");
@@ -2171,6 +2173,7 @@ export default function Page() {
   const [appDataLoaded, setAppDataLoaded] = useState(false);
   const [appointmentSettings, setAppointmentSettings] = useState(() => loadAdminAppointmentSettings());
   const [doctorDetailTierLoading, setDoctorDetailTierLoading] = useState(false);
+  const [staffPage, setStaffPage] = useState(1);
   const [globalConsultationFee, setGlobalConsultationFee] = useState("5000");
   const [globalConsultationFeeLoading, setGlobalConsultationFeeLoading] = useState(false);
   const [globalConsultationFeeFeedback, setGlobalConsultationFeeFeedback] = useState("");
@@ -2760,8 +2763,28 @@ export default function Page() {
   }, [paymentFilter, deferredSearch, data.orderDetails]);
 
   useEffect(() => {
+    setOrderPage(1);
+  }, [orderQueueFilter, deferredSearch, data.orderDetails]);
+
+  useEffect(() => {
     setProductPage(1);
   }, [productListFilter, deferredSearch, data.products]);
+
+  useEffect(() => {
+    setCustomerPage(1);
+  }, [customerFilter, deferredSearch, data.customers, data.orderDetails, data.appointments, data.prescriptionDetails]);
+
+  useEffect(() => {
+    setConsultationPage(1);
+  }, [consultationFilter, deferredSearch, data.appointments]);
+
+  useEffect(() => {
+    setMtmPage(1);
+  }, [deferredSearch, data.mtmRequests]);
+
+  useEffect(() => {
+    setStaffPage(1);
+  }, [deferredSearch, data.doctors]);
 
   useEffect(() => {
     if (productCatalogView !== "categories") {
@@ -6582,7 +6605,7 @@ export default function Page() {
       return `${product.name} ${product.sku} ${getProductCategories(product)}`.toLowerCase().includes(categorySearchQuery);
     }).slice(0, 8)
     : [];
-  const categoryProductsPerPage = 4;
+  const categoryProductsPerPage = 10;
   const categoryProductPageCount = Math.max(1, Math.ceil(selectedCategoryProducts.length / categoryProductsPerPage));
   const activeCategoryProductPage = Math.min(categoryProductPage, categoryProductPageCount);
   const paginatedSelectedCategoryProducts = selectedCategoryProducts.slice(
@@ -6634,8 +6657,78 @@ export default function Page() {
     return () => window.clearTimeout(timeoutId);
   }, [categorySaveNotice]);
 
+  const getDoctorWpRoles = (doctor) => {
+    const collectRoleValues = (value) => {
+      if (!value) {
+        return [];
+      }
+      if (Array.isArray(value)) {
+        return value.flatMap(collectRoleValues);
+      }
+      if (typeof value === "object") {
+        return Object.entries(value).flatMap(([key, nestedValue]) => {
+          if (nestedValue === true || nestedValue === 1 || nestedValue === "1") {
+            return [key];
+          }
+          return collectRoleValues(nestedValue);
+        });
+      }
+      return [value];
+    };
+
+    const roleValues = [
+      doctor?.role,
+      doctor?.roles,
+      doctor?.wp_role,
+      doctor?.wp_roles,
+      doctor?.user_role,
+      doctor?.user_roles,
+      doctor?.role_slug,
+      doctor?.role_slugs,
+      doctor?.capabilities,
+      doctor?.user?.role,
+      doctor?.user?.roles,
+      doctor?.user?.wp_roles,
+      doctor?.user?.capabilities,
+      doctor?.wp_user?.role,
+      doctor?.wp_user?.roles,
+      doctor?.wp_user?.wp_roles,
+      doctor?.wp_user?.capabilities
+    ]
+      .flatMap(collectRoleValues)
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+
+    return Array.from(new Set(roleValues));
+  };
+
+  const formatWpRoleLabel = (role) => titleCase(String(role || "").replace(/[_-]+/g, " "));
+
+  const isStaffDirectoryRecord = (doctor) => (
+    getDoctorWpRoles(doctor).some((role) => (
+      role.includes("doctor")
+      || role.includes("pharmacist")
+      || role === "admin"
+      || role === "administrator"
+    ))
+  );
+
+  const getStaffRoleLabel = (doctor) => {
+    const wpRole = getDoctorWpRoles(doctor).find((role) => (
+      role.includes("doctor")
+      || role.includes("pharmacist")
+      || role === "admin"
+      || role === "administrator"
+    ));
+    return wpRole ? formatWpRoleLabel(wpRole) : "Unknown";
+  };
+
   const filteredDoctors = (data.doctors || []).filter((doctor) =>
-    matchesSearch(`${doctor.display_name} ${doctor.email} ${doctor.specialties?.join(" ")} ${doctor.location} ${doctor.user_id}`, currentPage === "doctors")
+    isStaffDirectoryRecord(doctor)
+    && matchesSearch(
+      `${doctor.display_name} ${doctor.email} ${getDoctorWpRoles(doctor).join(" ")} ${doctor.user_id}`,
+      currentPage === "doctors"
+    )
   );
 
   const popupOrderProducts = orderCreateProductsQuery.data?.data || data.products || [];
@@ -6689,6 +6782,7 @@ export default function Page() {
   ));
 
   const activeProductMedia = productEditMedia.find((item) => item.id === activeProductMediaId) || productEditMedia[0] || null;
+  const activeProductMediaIndex = activeProductMedia ? productEditMedia.findIndex((item) => item.id === activeProductMedia.id) + 1 : 0;
   const productMediaSizing = productEditMedia.length > 18
     ? { thumbMin: "58px" }
     : productEditMedia.length > 12
@@ -6862,8 +6956,7 @@ export default function Page() {
 
     return [...customerMap.values()]
       .filter((row) => matchesSearch(`${row.label} ${row.name} ${row.email} ${row.id}`, currentPage === "customers"))
-      .sort((a, b) => safeNumber(b.spend) - safeNumber(a.spend))
-      .slice(0, 18);
+      .sort((a, b) => safeNumber(b.spend) - safeNumber(a.spend));
   })();
   const consultationDoctorProfile = popupConsultationDoctors.find((doctor) => String(doctor.user_id || doctor.id) === String(consultationCreateForm.doctorUserId)) || null;
   const consultationDoctorAppointments = popupConsultationAppointments
@@ -6958,7 +7051,7 @@ export default function Page() {
       image_url: item.image_url || item.image?.src || item.thumbnail || item.image || ""
     })))
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-  const customerHistoryPerPage = 8;
+  const customerHistoryPerPage = 10;
   const customerOrderPageCount = Math.max(1, Math.ceil(selectedCustomerOrders.length / customerHistoryPerPage));
   const activeCustomerOrderPage = Math.min(customerOrderPage, customerOrderPageCount);
   const paginatedCustomerOrders = selectedCustomerOrders.slice(
@@ -6979,34 +7072,51 @@ export default function Page() {
     ongoing: filteredAppointments.filter((item) => appointmentStatusGroup(item) === "ongoing").length
   };
 
-  const appointmentDateSet = new Set((data.appointments || []).map((item) => isoDateKey(item.start_at)).filter(Boolean));
-
-  const calendarDays = (() => {
-    const base = new Date(`${selectedConsultationDate || isoDateKey()}T00:00:00`);
-    const year = base.getFullYear();
-    const month = base.getMonth();
-    const first = new Date(year, month, 1);
-    const days = [];
-    const cursor = new Date(first);
-    cursor.setDate(first.getDate() - first.getDay());
-    for (let index = 0; index < 42; index += 1) {
-      days.push({
-        key: isoDateKey(cursor),
-        label: cursor.getDate(),
-        muted: cursor.getMonth() !== month,
-        active: isoDateKey(cursor) === selectedConsultationDate,
-        hasAppointment: appointmentDateSet.has(isoDateKey(cursor))
-      });
-      cursor.setDate(cursor.getDate() + 1);
-    }
-    return days;
-  })();
-
   const consultationList = filteredAppointments
     .map((item) => ({ ...item, group: appointmentStatusGroup(item) }))
     .filter((item) => consultationFilter === "all" || item.group === consultationFilter)
-    .filter((item) => !selectedConsultationDate || isoDateKey(item.start_at) === selectedConsultationDate)
     .sort((a, b) => new Date(a.start_at || 0) - new Date(b.start_at || 0));
+
+  const ordersPerPage = 10;
+  const orderPageCount = Math.max(1, Math.ceil(filteredOrders.length / ordersPerPage));
+  const activeOrderPage = Math.min(orderPage, orderPageCount);
+  const paginatedOrders = filteredOrders.slice((activeOrderPage - 1) * ordersPerPage, activeOrderPage * ordersPerPage);
+  const customersPerPage = 10;
+  const customerPageCount = Math.max(1, Math.ceil(customerRows.length / customersPerPage));
+  const activeCustomerPage = Math.min(customerPage, customerPageCount);
+  const paginatedCustomerRows = customerRows.slice((activeCustomerPage - 1) * customersPerPage, activeCustomerPage * customersPerPage);
+  const consultationsPerPage = 10;
+  const consultationPageCount = Math.max(1, Math.ceil(consultationList.length / consultationsPerPage));
+  const activeConsultationPage = Math.min(consultationPage, consultationPageCount);
+  const paginatedConsultationRows = consultationList.slice((activeConsultationPage - 1) * consultationsPerPage, activeConsultationPage * consultationsPerPage);
+  const mtmPerPage = 10;
+  const mtmPageCount = Math.max(1, Math.ceil(filteredMtmRequests.length / mtmPerPage));
+  const activeMtmPage = Math.min(mtmPage, mtmPageCount);
+  const paginatedMtmRequests = filteredMtmRequests.slice((activeMtmPage - 1) * mtmPerPage, activeMtmPage * mtmPerPage);
+  const staffPerPage = 10;
+  const staffPageCount = Math.max(1, Math.ceil(filteredDoctors.length / staffPerPage));
+  const activeStaffPage = Math.min(staffPage, staffPageCount);
+  const paginatedStaffRows = filteredDoctors.slice((activeStaffPage - 1) * staffPerPage, activeStaffPage * staffPerPage);
+
+  useEffect(() => {
+    setOrderPage((prev) => Math.min(prev, orderPageCount));
+  }, [orderPageCount]);
+
+  useEffect(() => {
+    setCustomerPage((prev) => Math.min(prev, customerPageCount));
+  }, [customerPageCount]);
+
+  useEffect(() => {
+    setConsultationPage((prev) => Math.min(prev, consultationPageCount));
+  }, [consultationPageCount]);
+
+  useEffect(() => {
+    setMtmPage((prev) => Math.min(prev, mtmPageCount));
+  }, [mtmPageCount]);
+
+  useEffect(() => {
+    setStaffPage((prev) => Math.min(prev, staffPageCount));
+  }, [staffPageCount]);
 
   const sortedHistory = [...(data.prescriptionHistory || [])]
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
@@ -7864,7 +7974,7 @@ export default function Page() {
     <>
       <IconSprite />
 
-      <div className="page-shell">
+      <div className="page-shell nevari-admin-storefront">
         <aside className={`sidebar ${sidebarOpen ? "open" : ""}`} id="sidebar">
           <div className="sidebar-top">
             <div className="brand-row">
@@ -8027,8 +8137,7 @@ export default function Page() {
                       <div className="panel-header">
                         <div>
                           <p className="section-kicker">Revenue and orders</p>
-                          <h2>Weekly revenue and order velocity</h2>
-                          <p className="overview-v2-panel-copy">Shows paid revenue, pending payment checks and order count across the selected range.</p>
+                          
                         </div>
                         <div className="overview-v2-tabs" aria-label="Revenue range">
                           <button className={`segment ${trendMode === "week" ? "active" : ""}`} type="button" onClick={() => setTrendMode("week")}>Week</button>
@@ -8193,17 +8302,6 @@ export default function Page() {
 
             {currentPage === "orders" && (
               <section className="page-view active">
-                <section className="page-banner panel">
-                  <div>
-                    <p className="section-kicker">Order operations</p>
-                    <h2>Prescription-sensitive order queue</h2>
-                    <p className="hero-text">Review WooCommerce orders that intersect with RX validation, payment state, or fulfillment risk.</p>
-                  </div>
-                  <div className="banner-stats">
-                    <div className="mini-stat"><span>Orders loaded</span><strong>{ordersLoading ? "—" : formatNumber(filteredOrders.length)}</strong><small>scoped by current search</small></div>
-                    <div className="mini-stat"><span>RX holds</span><strong>{formatNumber(rxHolds)}</strong><small>need release or linkage</small></div>
-                  </div>
-                </section>
                 <section className="panel table-panel">
                   <div className="panel-header">
                     <div>
@@ -8249,7 +8347,7 @@ export default function Page() {
                         </tr>
                       </thead>
                       <tbody>
-                        {ordersLoading ? renderTableRowSkeletons(6, 8) : filteredOrders.length ? filteredOrders.map((order) => {
+                        {ordersLoading ? renderTableRowSkeletons(6, 8) : filteredOrders.length ? paginatedOrders.map((order) => {
                           const prescription = (data.prescriptionDetails || []).find((item) => item.id === order.prescription_id);
                           const itemNames = Array.isArray(order.items_summary) ? order.items_summary.filter(Boolean) : [];
                           const itemCount = Number(order.totals?.items_count || order.items_count || itemNames.length || 0);
@@ -8287,10 +8385,20 @@ export default function Page() {
                             </tr>
                           );
                         }) : (
-                          <tr><td colSpan="7" className="muted">No orders match the current search.</td></tr>
+                          <tr><td colSpan="8" className="muted">No orders match the current search.</td></tr>
                         )}
                       </tbody>
                     </table>
+                  </div>
+                  <div className="pagination-row">
+                    <div className="pagination">
+                      <button className="page-item" type="button" disabled={activeOrderPage === 1} onClick={() => setOrderPage((prev) => Math.max(1, prev - 1))}>Prev</button>
+                      {Array.from({ length: orderPageCount }, (_, index) => index + 1).slice(0, 7).map((page) => (
+                        <button className={`page-item ${activeOrderPage === page ? "active" : ""}`} type="button" key={page} onClick={() => setOrderPage(page)}>{page}</button>
+                      ))}
+                      <button className="page-item" type="button" disabled={activeOrderPage === orderPageCount} onClick={() => setOrderPage((prev) => Math.min(orderPageCount, prev + 1))}>Next</button>
+                    </div>
+                    <div className="pagination-summary">Showing {filteredOrders.length ? `${formatNumber(((activeOrderPage - 1) * ordersPerPage) + 1)}-${formatNumber(Math.min(activeOrderPage * ordersPerPage, filteredOrders.length))}` : "0"} of {formatNumber(filteredOrders.length)} orders</div>
                   </div>
                 </section>
               </section>
@@ -8403,19 +8511,6 @@ export default function Page() {
 
             {currentPage === "customers" && (
               <section className="page-view active">
-                <section className="operations-grid">
-                  <article className="panel compact">
-                    <div className="panel-header">
-                      
-                    </div>
-                    <div className="mini-stat-grid">
-                      <button className={`mini-stat clickable-stat ${customerFilter === "all" ? "active" : ""}`} type="button" onClick={() => setCustomerFilter("all")}><span>Visible customers</span><strong>{formatNumber(allCustomerRows.length)}</strong><small>derived from orders, appointments, and prescriptions</small></button>
-                      <button className={`mini-stat clickable-stat ${customerFilter === "repeat" ? "active" : ""}`} type="button" onClick={() => setCustomerFilter("repeat")}><span>Repeat customers</span><strong>{formatNumber(allCustomerRows.filter((row) => row.orders > 1).length)}</strong><small>more than one order in current dataset</small></button>
-                      <button className={`mini-stat clickable-stat ${customerFilter === "prescriptions" ? "active" : ""}`} type="button" onClick={() => setCustomerFilter("prescriptions")}><span>With prescriptions</span><strong>{formatNumber(allCustomerRows.filter((row) => row.prescriptions > 0).length)}</strong><small>linked to active pharmacy workflow</small></button>
-                      <button className={`mini-stat clickable-stat ${customerFilter === "appointments" ? "active" : ""}`} type="button" onClick={() => setCustomerFilter("appointments")}><span>With appointments</span><strong>{formatNumber(allCustomerRows.filter((row) => row.appointments > 0).length)}</strong><small>consultation touchpoints</small></button>
-                    </div>
-                  </article>
-                </section>
                 <section className="panel table-panel">
                   <div className="panel-header">
                     <div>
@@ -8438,7 +8533,7 @@ export default function Page() {
                         </tr>
                       </thead>
                       <tbody>
-                        {customerRows.length ? customerRows.map((row) => (
+                        {customerRows.length ? paginatedCustomerRows.map((row) => (
                           <tr
                             key={row.id}
                             className="table-row-button"
@@ -8469,6 +8564,16 @@ export default function Page() {
                         )) : <tr><td colSpan="8" className="muted">No customer rows match the current search.</td></tr>}
                       </tbody>
                     </table>
+                  </div>
+                  <div className="pagination-row">
+                    <div className="pagination">
+                      <button className="page-item" type="button" disabled={activeCustomerPage === 1} onClick={() => setCustomerPage((prev) => Math.max(1, prev - 1))}>Prev</button>
+                      {Array.from({ length: customerPageCount }, (_, index) => index + 1).slice(0, 7).map((page) => (
+                        <button className={`page-item ${activeCustomerPage === page ? "active" : ""}`} type="button" key={page} onClick={() => setCustomerPage(page)}>{page}</button>
+                      ))}
+                      <button className="page-item" type="button" disabled={activeCustomerPage === customerPageCount} onClick={() => setCustomerPage((prev) => Math.min(customerPageCount, prev + 1))}>Next</button>
+                    </div>
+                    <div className="pagination-summary">Showing {customerRows.length ? `${formatNumber(((activeCustomerPage - 1) * customersPerPage) + 1)}-${formatNumber(Math.min(activeCustomerPage * customersPerPage, customerRows.length))}` : "0"} of {formatNumber(customerRows.length)} customers</div>
                   </div>
                 </section>
               </section>
@@ -8507,10 +8612,6 @@ export default function Page() {
                         <p className="section-kicker">Consultation flow</p>
                         <h2>{formatStatusLabel(consultationFilter)} consultations</h2>
                       </div>
-                      <div className="toolbar consultation-list-actions">
-                        <button className="pill-button" type="button" onClick={() => setSelectedConsultationDate(isoDateKey())}>Today only</button>
-                        {selectedConsultationDate ? <button className="pill-button" type="button" onClick={() => setSelectedConsultationDate("")}>All dates</button> : null}
-                      </div>
                     </div>
                     <div className="table-scroll consultation-table-scroll">
                       <table className="consultations-table">
@@ -8525,7 +8626,7 @@ export default function Page() {
                           </tr>
                         </thead>
                         <tbody>
-                          {consultationsLoading ? renderTableRowSkeletons(6, 6) : consultationList.length ? consultationList.map((item) => (
+                          {consultationsLoading ? renderTableRowSkeletons(6, 6) : consultationList.length ? paginatedConsultationRows.map((item) => (
                             <tr
                               key={item.id}
                               className="table-row-button"
@@ -8551,45 +8652,19 @@ export default function Page() {
                               <td>{formatDate(item.start_at, true)}</td>
                               <td>{formatDate(item.end_at, true)}</td>
                             </tr>
-                          )) : <tr><td colSpan="6" className="muted">No consultations match the selected status{selectedConsultationDate ? " and date" : ""}.</td></tr>}
+                          )) : <tr><td colSpan="6" className="muted">No consultations match the selected status.</td></tr>}
                         </tbody>
                       </table>
                     </div>
-                  </article>
-
-                  <article className="panel table-panel">
-                    <BookingCalendarWidget
-                      title="Consultation Calendar"
-                      subtitle="Review bookings and filter the consultation list"
-                      datePanelSubtitle="Tap any day to review bookings"
-                      appointments={data.appointments || []}
-                      selectedDate={selectedConsultationDate}
-                      viewDate={consultationCalendarViewDate}
-                      duration={consultationDuration}
-                      onViewDateChange={setConsultationCalendarViewDate}
-                      onDateSelect={(dateKey, date) => {
-                        setSelectedConsultationDate(dateKey);
-                        setConsultationCalendarViewDate(date);
-                      }}
-                      onSlotSelect={(dateKey) => setSelectedConsultationDate(dateKey)}
-                      onDurationChange={setConsultationDuration}
-                      showStepsHeader={false}
-                      showTimeSlots={false}
-                    />
-                    <div className="history-list removed-history" hidden>
-                      {sortedHistory.length ? sortedHistory.map((item, index) => {
-                        const prescription = (data.prescriptionDetails || []).find((entry) => entry.id === item.prescription_id);
-                        return (
-                          <article className="history-card" key={`${item.prescription_id}-${item.created_at}-${index}`}>
-                            <div className="history-meta">
-                              <strong>{prescription?.prescription_number || `Prescription #${item.prescription_id}`}</strong>
-                              <StatusPill value={item.new_status || item.action} className="audit-pill">{formatDate(item.created_at, true)}</StatusPill>
-                            </div>
-                            <p>{item.action} moved {item.previous_status || "new"} to {item.new_status}.</p>
-                            <span>Actor user #{item.actor_user_id}{item.note ? ` • ${item.note}` : ""}</span>
-                          </article>
-                        );
-                      }) : <article className="history-card"><p>No prescription history is available yet.</p></article>}
+                    <div className="pagination-row">
+                      <div className="pagination">
+                        <button className="page-item" type="button" disabled={activeConsultationPage === 1} onClick={() => setConsultationPage((prev) => Math.max(1, prev - 1))}>Prev</button>
+                        {Array.from({ length: consultationPageCount }, (_, index) => index + 1).slice(0, 7).map((page) => (
+                          <button className={`page-item ${activeConsultationPage === page ? "active" : ""}`} type="button" key={page} onClick={() => setConsultationPage(page)}>{page}</button>
+                        ))}
+                        <button className="page-item" type="button" disabled={activeConsultationPage === consultationPageCount} onClick={() => setConsultationPage((prev) => Math.min(consultationPageCount, prev + 1))}>Next</button>
+                      </div>
+                      <div className="pagination-summary">Showing {consultationList.length ? `${formatNumber(((activeConsultationPage - 1) * consultationsPerPage) + 1)}-${formatNumber(Math.min(activeConsultationPage * consultationsPerPage, consultationList.length))}` : "0"} of {formatNumber(consultationList.length)} consultations</div>
                     </div>
                   </article>
                 </section>
@@ -8636,7 +8711,7 @@ export default function Page() {
                           </tr>
                         </thead>
                         <tbody>
-                          {mtmLoading ? renderTableRowSkeletons(6, 7) : filteredMtmRequests.length ? filteredMtmRequests.map((item) => (
+                          {mtmLoading ? renderTableRowSkeletons(6, 7) : filteredMtmRequests.length ? paginatedMtmRequests.map((item) => (
                             <tr key={item.id} role="button" tabIndex={0} onClick={() => {
                               setSelectedMtmRequestId(item.id);
                               setMtmPreviewRequestId(item.id);
@@ -8658,6 +8733,16 @@ export default function Page() {
                           )) : <tr><td colSpan="7" className="muted">No MTM requests match the current search.</td></tr>}
                         </tbody>
                       </table>
+                    </div>
+                    <div className="pagination-row">
+                      <div className="pagination">
+                        <button className="page-item" type="button" disabled={activeMtmPage === 1} onClick={() => setMtmPage((prev) => Math.max(1, prev - 1))}>Prev</button>
+                        {Array.from({ length: mtmPageCount }, (_, index) => index + 1).slice(0, 7).map((page) => (
+                          <button className={`page-item ${activeMtmPage === page ? "active" : ""}`} type="button" key={page} onClick={() => setMtmPage(page)}>{page}</button>
+                        ))}
+                        <button className="page-item" type="button" disabled={activeMtmPage === mtmPageCount} onClick={() => setMtmPage((prev) => Math.min(mtmPageCount, prev + 1))}>Next</button>
+                      </div>
+                      <div className="pagination-summary">Showing {filteredMtmRequests.length ? `${formatNumber(((activeMtmPage - 1) * mtmPerPage) + 1)}-${formatNumber(Math.min(activeMtmPage * mtmPerPage, filteredMtmRequests.length))}` : "0"} of {formatNumber(filteredMtmRequests.length)} requests</div>
                     </div>
                   </section>
                   <article className="panel compact">
@@ -8702,19 +8787,14 @@ export default function Page() {
                     <strong className="metric-value">{formatNumber(lowStockProducts)}</strong>
                     <small className="metric-note">below threshold (default under 5)</small>
                   </article>
-                  <article className="metric-card">
-                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-cart" /></span><StatusPill value="processing">stock</StatusPill></div>
-                    <span className="metric-label">Out of stock products</span>
-                    <strong className="metric-value">{formatNumber(outOfStockProducts)}</strong>
-                    <small className="metric-note">quantity at zero or stock flag outofstock</small>
-                  </article>
+                  
                   <article className="metric-card accent">
                     <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-mail" /></span><StatusPill value="warning">watchlist</StatusPill></div>
                     <span className="metric-label">Total inventory value</span>
                     <strong className="metric-value">{formatCompactMoney(totalInventoryValue, storeCurrency)}</strong>
                     <small className="metric-note">capital currently tied down in stock</small>
                   </article>
-                  <article className="metric-card">
+                  <article className="metric-card most-sold">
                     <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-cart" /></span><StatusPill value="processing">sales</StatusPill></div>
                     <span className="metric-label">Most sold products</span>
                     <strong className="metric-value">{mostSoldProducts[0]?.name || "No sales data"}</strong>
@@ -9114,46 +9194,22 @@ export default function Page() {
 
             {currentPage === "doctors" && (
               <section className="page-view active">
-                <section className="operations-grid">
+                <section className="operations-grid staffs-hero-grid">
                   <article className="panel compact">
                     <div className="panel-header">
                       <div>
-                        <p className="section-kicker">Clinical team</p>
-                        <h2>Doctor capacity and role coverage</h2>
+                        <p className="section-kicker">Staffs</p>
+                        <h2>Doctor and pharmacist coverage</h2>
                       </div>
                     </div>
                     {renderTeamBlock()}
-                    <div className="doctor-settings-card global-fee-card">
-                      <h3>Global consultation fee</h3>
-                      <p className="muted">This flat rate applies to every doctor and all new consultation bookings.</p>
-                      <label>
-                        <span>Consultation fee ({storeCurrency})</span>
-                        <input
-                          inputMode="decimal"
-                          value={globalConsultationFee}
-                          onChange={(event) => {
-                            setGlobalConsultationFee(event.target.value);
-                            if (globalConsultationFeeFeedback) {
-                              setGlobalConsultationFeeFeedback("");
-                            }
-                          }}
-                          placeholder="5000"
-                        />
-                      </label>
-                      <div className="stacked-order-popup-actions doctor-detail-actions">
-                        <button className="pill-button" type="button" onClick={saveGlobalConsultationFee} disabled={globalConsultationFeeLoading}>
-                          {globalConsultationFeeLoading ? "Saving..." : "Save consultation fee"}
-                        </button>
-                      </div>
-                      {globalConsultationFeeFeedback ? <p className="receipt-feedback">{globalConsultationFeeFeedback}</p> : null}
-                    </div>
                   </article>
                 </section>
                 <section className="panel table-panel">
                   <div className="panel-header">
                     <div>
-                      <p className="section-kicker">Doctor directory</p>
-                      <h2>Assigned practitioners</h2>
+                      <p className="section-kicker">Staff directory</p>
+                      <h2>Doctors and pharmacists</h2>
                     </div>
                   </div>
                   <div className="table-scroll">
@@ -9162,14 +9218,13 @@ export default function Page() {
                         <tr>
                           <th>Name</th>
                           <th>Email</th>
-                          <th>Specialty</th>
-                          <th>Location</th>
+                          <th>Role</th>
                           <th>Status</th>
                           <th>Linked patients</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {doctorsLoading ? renderTableRowSkeletons(6, 6) : filteredDoctors.length ? filteredDoctors.map((doctor) => {
+                        {doctorsLoading ? renderTableRowSkeletons(6, 5) : filteredDoctors.length ? paginatedStaffRows.map((doctor) => {
                           const doctorId = doctor.user_id || doctor.id;
                           const linkedPatients = new Set([
                             ...(data.appointments || []).filter((item) => Number(item.doctor_user_id) === Number(doctorId)).map((item) => item.patient_user_id),
@@ -9177,16 +9232,30 @@ export default function Page() {
                           ].filter(Boolean));
                           return (
                           <tr key={doctorId} className="table-row-button" onClick={() => setSelectedDoctorId(doctorId)}>
-                            <td>{doctor.display_name || `Doctor #${doctor.user_id || doctor.id}`}</td>
+                            <td>
+                              <div className="customer-list-profile">
+                                <span className="customer-list-avatar">{getNameInitials(doctor.display_name || doctor.email || `Doctor ${doctorId}`, "ST")}</span>
+                                <span>{doctor.display_name || `Doctor #${doctor.user_id || doctor.id}`}</span>
+                              </div>
+                            </td>
                             <td>{doctor.email || "n/a"}</td>
-                            <td>{doctor.specialty || "General practice"}</td>
-                            <td>{doctor.location || "Nevari network"}</td>
+                            <td>{getStaffRoleLabel(doctor)}</td>
                             <td><StatusPill value={getDoctorStatus(doctor)}>{formatStatusLabel(getDoctorStatus(doctor))}</StatusPill></td>
                             <td>{formatNumber(linkedPatients.size)}</td>
                           </tr>
-                        );}) : <tr><td colSpan="6" className="muted">No doctors match the current search.</td></tr>}
+                        );}) : <tr><td colSpan="5" className="muted">No staff match the current search.</td></tr>}
                       </tbody>
                     </table>
+                  </div>
+                  <div className="pagination-row">
+                    <div className="pagination">
+                      <button className="page-item" type="button" disabled={activeStaffPage === 1} onClick={() => setStaffPage((prev) => Math.max(1, prev - 1))}>Prev</button>
+                      {Array.from({ length: staffPageCount }, (_, index) => index + 1).slice(0, 7).map((page) => (
+                        <button className={`page-item ${activeStaffPage === page ? "active" : ""}`} type="button" key={page} onClick={() => setStaffPage(page)}>{page}</button>
+                      ))}
+                      <button className="page-item" type="button" disabled={activeStaffPage === staffPageCount} onClick={() => setStaffPage((prev) => Math.min(staffPageCount, prev + 1))}>Next</button>
+                    </div>
+                    <div className="pagination-summary">Showing {filteredDoctors.length ? `${formatNumber(((activeStaffPage - 1) * staffPerPage) + 1)}-${formatNumber(Math.min(activeStaffPage * staffPerPage, filteredDoctors.length))}` : "0"} of {formatNumber(filteredDoctors.length)} staff records</div>
                   </div>
                 </section>
               </section>
@@ -9535,7 +9604,6 @@ export default function Page() {
                   <article className="doctor-settings-card">
                     <h3>Consultation rules</h3>
                     <label><span>Minimum consultation minutes</span><input type="number" min="5" value={appointmentSettings.minimumConsultationMinutes} onChange={(event) => setAppointmentSettings((current) => ({ ...current, minimumConsultationMinutes: event.target.value }))} /></label>
-                    <div className="muted">Global consultation pricing is managed from the Doctors page.</div>
                     <label><span>General category price</span><input value={appointmentSettings.categoryPricing.general} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, general: event.target.value } }))} /></label>
                     <label><span>Cardiology category price</span><input value={appointmentSettings.categoryPricing.cardiology} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, cardiology: event.target.value } }))} /></label>
                   </article>
@@ -9588,9 +9656,9 @@ export default function Page() {
       <div className="app-modal-stack">
         <div className="app-modal-layer">
           <button className="app-modal-backdrop" type="button" aria-label="Close order creation" onClick={closeOrderCreateModal} />
-          <section className="detail-section stacked-order-popup order-create-popup" role="dialog" aria-modal="true" aria-label="Create order">
+          <section className="detail-section stacked-order-popup order-create-popup admin-surface-modal modal-frame creation-frame" role="dialog" aria-modal="true" aria-label="Create order">
             <form className="order-create-form" onSubmit={createOrderFromForm}>
-              <div className="panel-header stacked-order-popup-header">
+              <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
                   <p className="section-kicker">Order creation</p>
                   <h3>Create pharmacy order</h3>
@@ -9600,8 +9668,12 @@ export default function Page() {
                 </button>
               </div>
 
-              <div className="order-create-shell">
-                <aside className="order-create-customer-column">
+              <div className="order-create-shell modal-body creation-popup-layout">
+                <section className="order-create-customer-column creation-main">
+                  <div className="creation-section-title">
+                    <InlineIcon id="i-user" />
+                    <span>Customer and order details</span>
+                  </div>
                   <div className="profile-create-preview order-create-preview">
                     <div className="profile-avatar">
                       <span>{getNameInitials([orderCreateForm.firstName, orderCreateForm.lastName].filter(Boolean).join(" "))}</span>
@@ -9718,9 +9790,28 @@ export default function Page() {
                       />
                     </label>
                   </div>
-                </aside>
+                </section>
 
-                <section className="order-create-items-column">
+                <aside className="order-create-items-column creation-side">
+                  <div className="creation-summary-card order-create-summary-card">
+                    <div className="creation-summary-icon">
+                      <InlineIcon id="i-package" />
+                    </div>
+                    <strong>{[orderCreateForm.firstName, orderCreateForm.lastName].filter(Boolean).join(" ") || "Customer Guest"}</strong>
+                    <span>{orderCreateForm.status ? formatStatusLabel(orderCreateForm.status) : "Draft order"}</span>
+                    <div className="creation-summary-list">
+                      <div><span>Items</span><strong>{formatNumber(orderCreateItems.length)}</strong></div>
+                      <div><span>Doctor</span><strong>{popupOrderDoctors.find((doctor) => String(doctor.user_id) === String(orderCreateForm.doctorId))?.display_name || "Unassigned"}</strong></div>
+                      <div><span>Estimated total</span><strong>{formatMoney(orderCreateItems.reduce((sum, item) => {
+                        const product = popupOrderProducts.find((entry) => String(entry.id) === String(item.productId));
+                        const quantity = Math.max(1, Number(item.quantity || 1));
+                        const unitPrice = product ? Number(hasActiveSalePrice(product) ? getProductPrice(product, "sale_price") : (getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0)) : 0;
+                        return sum + (unitPrice * quantity);
+                      }, 0), storeCurrency)}</strong></div>
+                    </div>
+                    <div className="creation-popup-note">This popup supports manual orders while preserving the existing multi-product search and fulfilment workflow.</div>
+                  </div>
+
                   <div className="panel-header order-create-items-header">
                     <div>
                       <p className="section-kicker">Products</p>
@@ -9827,11 +9918,11 @@ export default function Page() {
                       </tbody>
                     </table>
                   </div>
-                </section>
+                </aside>
               </div>
 
               {orderCreateFeedback ? <p className="muted popup-support-copy">{orderCreateFeedback}</p> : null}
-              <div className="stacked-order-popup-actions">
+              <div className="stacked-order-popup-actions modal-actions">
                 <button className="pill-button" type="button" onClick={closeOrderCreateModal}>Cancel</button>
                 <button className="button-primary" type="submit" disabled={orderCreateLoading}>
                   {orderCreateLoading ? "Creating..." : "Create Order"}
@@ -9848,12 +9939,12 @@ export default function Page() {
         <div className="app-modal-layer app-modal-layer-base">
           <button className="app-modal-backdrop" type="button" aria-label="Close order details" onClick={closeOrderModal} />
           <section
-            className={`panel order-detail-panel order-modal ${orderModalOpen ? "is-open" : "is-hidden"} ${selectedOrderDetail && deletingOrderIds.includes(selectedOrderDetail.id) ? "order-modal-deleting" : ""}`}
+            className={`panel order-detail-panel order-modal admin-surface-modal modal-frame detail-frame ${orderModalOpen ? "is-open" : "is-hidden"} ${selectedOrderDetail && deletingOrderIds.includes(selectedOrderDetail.id) ? "order-modal-deleting" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label={selectedOrderDetail ? `Order #${selectedOrderDetail.number}` : "Order details"}
           >
-            <div className="panel-header order-modal-topbar">
+            <div className="panel-header order-modal-topbar modal-head">
               {selectedOrderDetail ? (
                 <div className="order-modal-topbar-content">
                   <div className="toolbar order-modal-topbar-primary">
@@ -9897,7 +9988,7 @@ export default function Page() {
                 </div>
               ) : null}
             </div>
-            <div className="order-detail-scroll">
+            <div className="order-detail-scroll modal-body">
             {orderDetailLoading ? (
               renderOrderDetailSkeleton()
             ) : selectedOrderDetail ? (
@@ -10072,6 +10163,22 @@ export default function Page() {
               <div className="muted">Choose an order from the table to open its details.</div>
             )}
             </div>
+            <div className="modal-actions order-detail-footer-actions">
+              <button
+                className="pill-button"
+                type="button"
+                onClick={contactSelectedCustomer}
+                disabled={!selectedOrderDetail || orderMutationLoading || orderEmailActionLoading === String(selectedOrderDetail?.id || selectedOrderDetail?.number || "order") || !customerEmail(selectedOrderDetail)}
+              >
+                {orderEmailActionLoading === String(selectedOrderDetail?.id || selectedOrderDetail?.number || "order") ? "Sending..." : "Email Customer"}
+              </button>
+              <div className="order-detail-footer-end">
+                <button className="pill-button" type="button" onClick={closeOrderModal}>Close</button>
+                <button className="button-primary" type="button" onClick={openOrderControlsPopup} disabled={orderMutationLoading || !selectedOrderDetail}>
+                  Update Order
+                </button>
+              </div>
+            </div>
           </section>
         </div>
 
@@ -10170,8 +10277,8 @@ export default function Page() {
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <button className="app-modal-backdrop" type="button" aria-label="Close MTM preview" onClick={() => setMtmPreviewRequestId(null)} />
-            <section className="detail-section stacked-order-popup receipt-popup" role="dialog" aria-modal="true" aria-label={`MTM preview for ${previewMtmRequest.request_reference || `MTM-${String(previewMtmRequest.id || "").padStart(6, "0")}`}`}>
-              <div className="panel-header stacked-order-popup-header">
+            <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`MTM preview for ${previewMtmRequest.request_reference || `MTM-${String(previewMtmRequest.id || "").padStart(6, "0")}`}`}>
+              <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
                   <p className="section-kicker">MTM preview</p>
                   <h3>{previewMtmRequest.request_reference || `MTM-${String(previewMtmRequest.id || "").padStart(6, "0")}`}</h3>
@@ -10180,7 +10287,7 @@ export default function Page() {
                   <InlineIcon id="i-x" />
                 </button>
               </div>
-              <div className="app-modal-scroll">
+              <div className="app-modal-scroll modal-body">
                 <div className="detail-grid two-col detail-grid-compact">
                   <div className="detail-item-card"><strong>Patient</strong><span>{previewMtmRequest.patient?.name || patientLabel(previewMtmRequest.customer_user_id)}</span></div>
                   <div className="detail-item-card"><strong>Status</strong><span>{previewMtmRequest.status_label || titleCase(previewMtmRequest.status)}</span></div>
@@ -10210,7 +10317,7 @@ export default function Page() {
                   </div>
                 </div>
               </div>
-              <div className="stacked-order-popup-actions">
+              <div className="stacked-order-popup-actions modal-actions">
                 <button className="pill-button" type="button" onClick={() => setMtmPreviewRequestId(null)}>Close</button>
                 <a
                   className="button-primary"
@@ -10231,8 +10338,8 @@ export default function Page() {
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <button className="app-modal-backdrop" type="button" aria-label="Close payment receipt" onClick={closePaymentReceiptModal} />
-            <section className="detail-section stacked-order-popup receipt-popup receipt-popup-redesign" role="dialog" aria-modal="true" aria-label={`Receipt for order #${selectedPaymentReceipt.number}`}>
-            <div className="receipt-hero">
+            <section className="detail-section stacked-order-popup receipt-popup receipt-popup-redesign admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`Receipt for order #${selectedPaymentReceipt.number}`}>
+            <div className="receipt-hero modal-head">
               <div>
                 <p className="section-kicker">Payment receipt</p>
                 <h3>Order #{selectedPaymentReceipt.number}</h3>
@@ -10251,7 +10358,7 @@ export default function Page() {
               </div>
             </div>
 
-            <div className="app-modal-scroll">
+            <div className="app-modal-scroll modal-body">
             <div className="receipt-command-bar">
               <div>
                 <span>Total paid</span>
@@ -10353,8 +10460,16 @@ export default function Page() {
             {paymentReceiptFeedback ? <p className="receipt-feedback">{paymentReceiptFeedback}</p> : null}
             </div>
 
-            <div className="stacked-order-popup-actions receipt-footer-actions">
-              <button className="pill-button" type="button" onClick={closePaymentReceiptModal}>Close</button>
+            <div className="stacked-order-popup-actions receipt-footer-actions modal-actions">
+              <button className="pill-button" type="button" onClick={printPaymentReceipt} disabled={Boolean(receiptActionLoading)}>
+                {receiptActionLoading === "print" ? "Preparing..." : "Print Receipt"}
+              </button>
+              <div className="receipt-footer-actions-end">
+                <button className="pill-button" type="button" onClick={closePaymentReceiptModal}>Close</button>
+                <button className="button-primary" type="button" onClick={sendPaymentReceipt} disabled={Boolean(receiptActionLoading) || !customerEmail(selectedPaymentReceipt)}>
+                  {receiptActionLoading === "send" ? "Sending..." : "Email Receipt"}
+                </button>
+              </div>
             </div>
             </section>
           </div>
@@ -10366,10 +10481,10 @@ export default function Page() {
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <button className="app-modal-backdrop" type="button" aria-label="Close product editor" onClick={closeProductEditModal} />
-            <section className={`detail-section product-editor-popup product-editor-modal ${selectedProductEdit && deletingProductIds.includes(selectedProductEdit.id) ? "product-editor-modal-deleting" : ""}`} role="dialog" aria-modal="true" aria-label={productEditorMode === "create" ? "Create product" : `Edit ${selectedProductEdit?.name || "product"}`}>
+            <section className={`detail-section product-editor-popup product-editor-modal admin-surface-modal modal-frame detail-frame ${selectedProductEdit && deletingProductIds.includes(selectedProductEdit.id) ? "product-editor-modal-deleting" : ""}`} role="dialog" aria-modal="true" aria-label={productEditorMode === "create" ? "Create product" : `Edit ${selectedProductEdit?.name || "product"}`}>
               <form className="product-editor-form" onSubmit={saveProductEdits}>
                 <input ref={productMediaInputRef} type="file" accept="image/*" multiple hidden onChange={handleProductMediaUpload} />
-                <div className="panel-header stacked-order-popup-header product-editor-header">
+                <div className="panel-header stacked-order-popup-header product-editor-header modal-head">
                   <div>
                     <p className="section-kicker">{productEditorMode === "create" ? "New product" : "Product editor"}</p>
                     <h3>{productEditorMode === "create" ? (productEditForm.title || "New Product") : (productEditForm.title || selectedProductEdit?.name || "Untitled product")}</h3>
@@ -10393,7 +10508,7 @@ export default function Page() {
                   </div>
                 </div>
 
-                <div className="product-editor-shell">
+                <div className="product-editor-shell modal-body detail-modal-shell">
                   <aside
                     className="product-editor-media-column"
                     style={{ "--product-thumb-min": productMediaSizing.thumbMin }}
@@ -10403,56 +10518,106 @@ export default function Page() {
                         <div>
                           <p className="section-kicker">Media gallery</p>
                         </div>
+                        <span className="chip processing">
+                          {productEditMedia.length ? `${productEditMedia.length} image${productEditMedia.length === 1 ? "" : "s"}` : "0 images"}
+                        </span>
                       </div>
-                      <div className="product-thumbnail-grid">
-                        {productEditMedia.map((item, index) => (
-                          <div
-                            className={`product-thumbnail ${activeProductMedia?.id === item.id ? "active" : ""}`}
-                            key={item.id}
-                            draggable
-                            onDragStart={() => {
-                              productMediaDragIndexRef.current = index;
-                            }}
-                            onDragOver={(event) => event.preventDefault()}
-                            onDrop={() => {
-                              moveProductMediaItem(productMediaDragIndexRef.current, index);
-                              productMediaDragIndexRef.current = null;
-                            }}
+                      <div className="product-photo-shell">
+                        <div className={`product-photo-stage ${activeProductMedia ? "has-media" : "is-empty"}`}>
+                          <button
+                            className={`product-photo ${activeProductMedia ? "has-image" : "is-empty"}`}
+                            type="button"
+                            onClick={() => activeProductMedia && setActiveProductMediaId(activeProductMedia.id)}
+                            aria-label={activeProductMedia ? `Select ${activeProductMedia.alt}` : "No product images available"}
                           >
-                            <span className="product-thumbnail-index">{index + 1}</span>
-                            <button
-                              className="product-thumbnail-surface"
-                              type="button"
-                              onClick={() => setActiveProductMediaId(item.id)}
-                              aria-label={`Select ${item.alt}`}
-                            >
-                              <img src={item.src} alt={item.alt} />
-                            </button>
-                            <button
-                              className="product-thumbnail-edit"
-                              type="button"
-                              aria-label={`Replace ${item.alt}`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                triggerProductMediaUpload("replace", index);
-                              }}
-                            >
-                              <InlineIcon id="i-pencil" />
-                            </button>
-                            <button
-                              className="product-thumbnail-remove"
-                              type="button"
-                              aria-label={`Remove ${item.alt}`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                removeProductMediaItem(index);
-                              }}
-                            >
-                              <InlineIcon id="i-x" />
-                            </button>
+                            {activeProductMedia ? (
+                              <img src={activeProductMedia.src} alt={activeProductMedia.alt} />
+                            ) : (
+                              <div className="product-photo-placeholder">
+                                <InlineIcon id="i-pill" />
+                                <span>No media yet</span>
+                              </div>
+                            )}
+                          </button>
+
+                          {activeProductMedia ? (
+                            <>
+                              <span className="product-photo-index">{activeProductMediaIndex || 1}</span>
+                              <div className="product-photo-actions" aria-label="Active media actions">
+                                <button
+                                  className="product-photo-action"
+                                  type="button"
+                                  aria-label={`Replace ${activeProductMedia.alt}`}
+                                  onClick={() => triggerProductMediaUpload("replace", activeProductMediaIndex - 1)}
+                                >
+                                  <InlineIcon id="i-pencil" />
+                                </button>
+                                <button
+                                  className="product-photo-action danger"
+                                  type="button"
+                                  aria-label={`Remove ${activeProductMedia.alt}`}
+                                  onClick={() => removeProductMediaItem(activeProductMediaIndex - 1)}
+                                >
+                                  <InlineIcon id="i-x" />
+                                </button>
+                              </div>
+                            </>
+                          ) : null}
+                        </div>
+
+                        {productEditMedia.length > 1 ? (
+                          <div className="product-thumbnail-strip" aria-label="Additional product images">
+                            {productEditMedia.map((item, index) => (
+                              <div
+                                className={`product-thumbnail ${activeProductMedia?.id === item.id ? "active" : ""}`}
+                                key={item.id}
+                                draggable
+                                onDragStart={() => {
+                                  productMediaDragIndexRef.current = index;
+                                }}
+                                onDragOver={(event) => event.preventDefault()}
+                                onDrop={() => {
+                                  moveProductMediaItem(productMediaDragIndexRef.current, index);
+                                  productMediaDragIndexRef.current = null;
+                                }}
+                              >
+                                <button
+                                  className="product-thumbnail-surface"
+                                  type="button"
+                                  onClick={() => setActiveProductMediaId(item.id)}
+                                  aria-label={`Select ${item.alt}`}
+                                >
+                                  <img src={item.src} alt={item.alt} />
+                                </button>
+                                <span className="product-thumbnail-index">{index + 1}</span>
+                                <div className="product-thumbnail-actions">
+                                  <button
+                                    className="product-thumbnail-edit"
+                                    type="button"
+                                    aria-label={`Replace ${item.alt}`}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      triggerProductMediaUpload("replace", index);
+                                    }}
+                                  >
+                                    <InlineIcon id="i-pencil" />
+                                  </button>
+                                  <button
+                                    className="product-thumbnail-remove"
+                                    type="button"
+                                    aria-label={`Remove ${item.alt}`}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      removeProductMediaItem(index);
+                                    }}
+                                  >
+                                    <InlineIcon id="i-x" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                        {!productEditMedia.length ? <div className="product-media-empty"><InlineIcon id="i-pill" /><span>No media yet</span></div> : null}
+                        ) : null}
                       </div>
                       <button className="product-upload-dropzone" type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload("append")}>
                         <span className="product-upload-dropzone-icon">+</span>
@@ -10515,15 +10680,15 @@ export default function Page() {
                           </div>
                           <label className="detail-field">
                             <span>Regular Price *</span>
-                            <div className="product-price-input">
-                              <div className="select-wrap"><select value={productEditorCurrency} readOnly><option value={productEditorCurrency}>{productEditorCurrency}</option></select></div>
+                            <div className="currency-input">
+                              <span>{productEditorCurrency}</span>
                               <input type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} />
                             </div>
                           </label>
                           <label className="detail-field">
                             <span>Sale Price</span>
-                            <div className="product-price-input">
-                              <div className="select-wrap"><select value={productEditorCurrency} readOnly><option value={productEditorCurrency}>{productEditorCurrency}</option></select></div>
+                            <div className="currency-input">
+                              <span>{productEditorCurrency}</span>
                               <input type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} />
                             </div>
                             <small className="product-field-note">Leave empty if product is not on sale</small>
@@ -10570,7 +10735,7 @@ export default function Page() {
                   </div>
                 </div>
 
-                <div className="product-editor-footer">
+                <div className="product-editor-footer modal-actions">
                   {productEditorMode === "create" ? <div /> : <button className="pill-button danger product-delete-button" type="button" onClick={deleteSelectedProduct} disabled={productEditLoading}>Delete Product</button>}
                   <div className="product-editor-footer-end">
                     <div className="product-editor-feedback">{productEditFeedback ? <p className="muted popup-support-copy">{productEditFeedback}</p> : null}</div>
@@ -10590,9 +10755,9 @@ export default function Page() {
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <button className="app-modal-backdrop" type="button" aria-label="Close create form" onClick={closeCreateModal} />
-            <section className={`detail-section stacked-order-popup create-record-popup ${createModalType === "consultation" ? "consultation-create-popup consultation-design-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-label={`Create ${createModalType}`}>
+            <section className={`detail-section stacked-order-popup create-record-popup admin-surface-modal modal-frame creation-frame ${createModalType === "consultation" ? "consultation-create-popup consultation-design-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-label={`Create ${createModalType}`}>
               <form className="create-record-form" onSubmit={submitGenericCreate}>
-                <div className="panel-header stacked-order-popup-header">
+                <div className="panel-header stacked-order-popup-header modal-head">
                   <div>
                     {createModalType === "consultation" ? null : <p className="section-kicker">Create record</p>}
                     <h3>{createModalType === "consultation" ? "New appointment" : `New ${formatStatusLabel(createModalType)}`}</h3>
@@ -10602,7 +10767,7 @@ export default function Page() {
                 </div>
 
                 {createModalType === "consultation" ? (
-                  <div className="consultation-create-shell consultation-design-shell">
+                  <div className="consultation-create-shell consultation-design-shell modal-body creation-popup-layout">
                     {(consultationCreateDoctorsQuery.isLoading || consultationCreatePatientsQuery.isLoading || consultationCreateAppointmentsQuery.isLoading) ? (
                       <p className="muted popup-support-copy detail-field-wide">Loading consultation dependencies...</p>
                     ) : null}
@@ -10759,15 +10924,39 @@ export default function Page() {
                     </aside>
                   </div>
                 ) : (
-                  <div className="profile-create-shell">
-                    <aside className="profile-create-preview">
+                  <div className="profile-create-shell modal-body creation-popup-layout">
+                    <aside className="profile-create-preview creation-side">
                       <div className="profile-avatar">
                         <span>{getNameInitials((createModalType === "doctor" ? doctorCreateForm.fullName : customerCreateForm.fullName) || "")}</span>
                       </div>
                       <strong>{createModalType === "doctor" ? (doctorCreateForm.fullName || "Doctor name") : (customerCreateForm.fullName || "Customer name")}</strong>
                       <span>{createModalType === "doctor" ? (doctorCreateForm.email || "doctor@email.com") : (customerCreateForm.email || "customer@email.com")}</span>
+                      <div className="creation-summary-list">
+                        {createModalType === "doctor" ? (
+                          <>
+                            <div><span>Status</span><strong>{formatStatusLabel(doctorCreateForm.status || "active")}</strong></div>
+                            <div><span>Access level</span><strong>{DOCTOR_PRICING_TIER_OPTIONS.find((tier) => tier.value === doctorCreateForm.position)?.label || "Doctor"}</strong></div>
+                            <div><span>Coverage</span><strong>{selectedDoctorCreateCategories.length ? `${selectedDoctorCreateCategories.length} categories` : "No categories yet"}</strong></div>
+                          </>
+                        ) : (
+                          <>
+                            <div><span>Phone</span><strong>{customerCreateForm.phone || "Not provided"}</strong></div>
+                            <div><span>Profile type</span><strong>Customer</strong></div>
+                            <div><span>Address</span><strong>{customerCreateForm.address ? "Added" : "Pending"}</strong></div>
+                          </>
+                        )}
+                      </div>
+                      <div className="creation-popup-note">
+                        {createModalType === "doctor"
+                          ? "Use this profile popup to add doctors, routing metadata, and assignment readiness without changing the current create handler."
+                          : "Use this profile popup to add customer contact details for order, consultation, and prescription workflows."}
+                      </div>
                     </aside>
-                    <div className="profile-create-form-column">
+                    <div className="profile-create-form-column creation-main">
+                      <div className="creation-section-title">
+                        <InlineIcon id={createModalType === "doctor" ? "i-user" : "i-mail"} />
+                        <span>{createModalType === "doctor" ? "Doctor identity" : "Customer details"}</span>
+                      </div>
                       {createModalType === "doctor" ? (
                         <div className="detail-form-grid profile-create-grid">
                           <label className="detail-field detail-field-wide">
@@ -10876,7 +11065,7 @@ export default function Page() {
                 )}
 
                 {createFeedback ? <p className="muted popup-support-copy">{createFeedback}</p> : null}
-                <div className="stacked-order-popup-actions">
+                <div className="stacked-order-popup-actions modal-actions">
                   <button className="pill-button" type="button" onClick={closeCreateModal}>Cancel</button>
                   <button className="button-primary" type="submit" disabled={createLoading || !consultationCanSubmit}>{createLoading ? (createModalType === "consultation" ? "Booking..." : "Submitting...") : (createModalType === "consultation" ? "Book appointment" : "Create")}</button>
                 </div>
@@ -10890,12 +11079,12 @@ export default function Page() {
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <button className="app-modal-backdrop" type="button" aria-label="Close consultation details" onClick={() => setSelectedConsultation(null)} />
-            <section className="detail-section stacked-order-popup receipt-popup" role="dialog" aria-modal="true" aria-label="Consultation details">
-              <div className="panel-header stacked-order-popup-header">
+            <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label="Consultation details">
+              <div className="panel-header stacked-order-popup-header modal-head">
                 <div><p className="section-kicker">Consultation</p><h3>{patientLabel(selectedConsultation.patient_user_id)}</h3></div>
                 <button className="icon-button" type="button" onClick={() => setSelectedConsultation(null)}><InlineIcon id="i-x" /></button>
               </div>
-              <div className="app-modal-scroll">
+              <div className="app-modal-scroll modal-body">
               <div className="detail-grid">
                 <div className="detail-block"><span>Doctor</span><strong>{doctorMap.get(selectedConsultation.doctor_user_id) || `Doctor #${selectedConsultation.doctor_user_id}`}</strong></div>
                 <div className="detail-block"><span>Starts</span><strong>{formatDate(selectedConsultation.start_at, true)}</strong></div>
@@ -10931,7 +11120,7 @@ export default function Page() {
                 </div>
               </div>
               </div>
-              <div className="stacked-order-popup-actions consultation-action-buttons">
+              <div className="stacked-order-popup-actions consultation-action-buttons modal-actions">
                 <button className="pill-button" type="button" onClick={() => runAppointmentAction("reschedule", { start_at: consultationDetailForm.startAt, end_at: consultationDetailForm.endAt })} disabled={Boolean(consultationActionLoading) || !consultationDetailForm.startAt || !consultationDetailForm.endAt}>
                   {consultationActionLoading === "reschedule" ? "Rescheduling..." : "Reschedule"}
                 </button>
@@ -10962,17 +11151,17 @@ export default function Page() {
       {selectedDoctorProfile ? (
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
-            <button className="app-modal-backdrop" type="button" aria-label="Close doctor details" onClick={() => setSelectedDoctorId(null)} />
-            <section className="detail-section stacked-order-popup receipt-popup" role="dialog" aria-modal="true" aria-label="Doctor details">
-              <div className="panel-header stacked-order-popup-header">
-                <div><p className="section-kicker">Doctor details</p><h3>{selectedDoctorProfile.display_name}</h3></div>
+            <button className="app-modal-backdrop" type="button" aria-label="Close staff details" onClick={() => setSelectedDoctorId(null)} />
+            <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label="Staff details">
+              <div className="panel-header stacked-order-popup-header modal-head">
+                <div><p className="section-kicker">Staff details</p><h3>{selectedDoctorProfile.display_name}</h3></div>
                 <button className="icon-button" type="button" onClick={() => setSelectedDoctorId(null)}><InlineIcon id="i-x" /></button>
               </div>
               <div className="filter-bar tabs-bar">
                 <button className={`filter-btn ${doctorDetailTab === "account" ? "active" : ""}`} type="button" onClick={() => setDoctorDetailTab("account")}>Account</button>
                 <button className={`filter-btn ${doctorDetailTab === "prescriptions" ? "active" : ""}`} type="button" onClick={() => setDoctorDetailTab("prescriptions")}>Prescriptions</button>
               </div>
-              <div className="app-modal-scroll">
+              <div className="app-modal-scroll modal-body">
               {doctorDetailTab === "account" ? (
                 <div className="detail-list">
                   <div className="detail-grid">
@@ -11055,8 +11244,8 @@ export default function Page() {
               {doctorDetailTab === "account" ? (
                 <div className="stacked-order-popup-actions doctor-detail-actions">
                   <button className="pill-button" type="button" onClick={resetSelectedDoctorPassword} disabled={doctorDetailTierLoading}>Reset password</button>
-                  <button className="pill-button danger" type="button" onClick={suspendSelectedDoctor} disabled={doctorDetailTierLoading}>Suspend doctor</button>
-                  <button className="pill-button danger" type="button" onClick={deleteSelectedDoctor} disabled={doctorDetailTierLoading}>Delete doctor</button>
+                  <button className="pill-button danger" type="button" onClick={suspendSelectedDoctor} disabled={doctorDetailTierLoading}>Suspend staff</button>
+                  <button className="pill-button danger" type="button" onClick={deleteSelectedDoctor} disabled={doctorDetailTierLoading}>Delete staff</button>
                 </div>
               ) : null}
             </section>
@@ -11068,8 +11257,8 @@ export default function Page() {
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <button className="app-modal-backdrop" type="button" aria-label="Close customer details" onClick={closeCustomerDetails} />
-            <section className="detail-section stacked-order-popup receipt-popup customer-detail-popup" role="dialog" aria-modal="true" aria-label={`Customer details for ${selectedCustomerProfile.name}`}>
-              <div className="panel-header stacked-order-popup-header">
+            <section className="detail-section stacked-order-popup receipt-popup customer-detail-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`Customer details for ${selectedCustomerProfile.name}`}>
+              <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
                   <p className="section-kicker">Customer profile</p>
                   <h3>{selectedCustomerProfile.name}</h3>
@@ -11084,7 +11273,7 @@ export default function Page() {
                 <button className={`filter-btn ${customerDetailTab === "orders" ? "active" : ""}`} type="button" onClick={() => setCustomerDetailTab("orders")}>Orders</button>
                 <button className={`filter-btn ${customerDetailTab === "products" ? "active" : ""}`} type="button" onClick={() => setCustomerDetailTab("products")}>Products</button>
               </div>
-              <div className="customer-detail-scroll">
+              <div className="customer-detail-scroll modal-body">
                 {customerDetailTab === "details" ? (
                   <div className="customer-detail-grid">
                     <div className="detail-item-card"><strong>Customer</strong><span className="muted">{selectedCustomerProfile.label}</span></div>

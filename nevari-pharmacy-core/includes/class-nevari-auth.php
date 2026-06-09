@@ -4,6 +4,8 @@ if (!defined('ABSPATH')) {
 }
 
 final class Nevari_Auth {
+    private const RESEND_CODE_COOLDOWN_SECONDS = 60;
+
     private static int $api_session_resolution_depth = 0;
 
     public static function init(): void {
@@ -192,6 +194,7 @@ final class Nevari_Auth {
                 'challenge_id' => $challenge['challenge_id'],
                 'masked_email' => self::mask_email((string) $user->user_email),
                 'expires_in' => $challenge['expires_in'],
+                'resend_cooldown' => self::RESEND_CODE_COOLDOWN_SECONDS,
             ]);
         }
 
@@ -599,6 +602,18 @@ final class Nevari_Auth {
             return Nevari_Helpers::error('invalid_verification_code', 'Verification code is invalid or expired.', 401);
         }
 
+        $created_at = strtotime((string) $row->created_at . ' UTC');
+        $elapsed = $created_at ? max(0, time() - $created_at) : self::RESEND_CODE_COOLDOWN_SECONDS;
+        if ($elapsed < self::RESEND_CODE_COOLDOWN_SECONDS) {
+            $retry_after = self::RESEND_CODE_COOLDOWN_SECONDS - $elapsed;
+            return Nevari_Helpers::error(
+                'verification_resend_cooldown',
+                sprintf('Please wait %d seconds before requesting another code.', $retry_after),
+                429,
+                ['retry_after' => $retry_after]
+            );
+        }
+
         $user = get_user_by('id', (int) $row->user_id);
         if (!$user || !self::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
             return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
@@ -626,6 +641,7 @@ final class Nevari_Auth {
             'challenge_id' => $challenge['challenge_id'],
             'masked_email' => self::mask_email((string) $user->user_email),
             'expires_in' => $challenge['expires_in'],
+            'resend_cooldown' => self::RESEND_CODE_COOLDOWN_SECONDS,
         ]);
     }
 
@@ -662,6 +678,7 @@ final class Nevari_Auth {
             'challenge_id' => $challenge['challenge_id'],
             'masked_email' => self::mask_email((string) $user->user_email),
             'expires_in' => $challenge['expires_in'],
+            'resend_cooldown' => self::RESEND_CODE_COOLDOWN_SECONDS,
         ]);
     }
 

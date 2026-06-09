@@ -24,6 +24,36 @@ function AuthButtonContent({ loading, loadingText, idleText }) {
   );
 }
 
+const RESEND_CODE_COOLDOWN_SECONDS = 60;
+
+function authScreenTitle(view) {
+  if (view === "register") {
+    return "Sign up";
+  }
+  if (view === "reset") {
+    return "Reset password";
+  }
+  if (view === "verify") {
+    return "Verify code";
+  }
+  return "Log in";
+}
+
+function authDashboardName(config) {
+  return config?.authDashboardName || String(config?.label || "").replace(/^Nevari\s+/i, "").trim() || "Dashboard";
+}
+
+function noticeTone(message) {
+  const text = String(message || "").toLowerCase();
+  if (text.includes("failed") || text.includes("error") || text.includes("unable") || text.includes("invalid") || text.includes("required")) {
+    return "error";
+  }
+  if (text.includes("sent") || text.includes("success") || text.includes("created") || text.includes("updated") || text.includes("verified")) {
+    return "success";
+  }
+  return "warning";
+}
+
 export default function RoleLoginPage({ config }) {
   const router = useRouter();
   const [session, setSession] = useState(() => defaultSession(config));
@@ -34,11 +64,41 @@ export default function RoleLoginPage({ config }) {
   const [verification, setVerification] = useState({ challengeId: "", maskedEmail: "", code: "" });
   const verificationInputRef = useRef(null);
   const [view, setView] = useState("login");
-  const [feedback, setFeedback] = useState(config.loginPrompt || `Sign in to ${config.label}.`);
+  const [notice, setNotice] = useState({ message: config.loginPrompt || `Sign in to ${config.label}.`, tone: "warning" });
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [registrationPasswordVisible, setRegistrationPasswordVisible] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [loadingAction, setLoadingAction] = useState("");
+  const dashboardName = authDashboardName(config);
+  const screenTitle = authScreenTitle(view);
+  const showNotice = (message, tone = noticeTone(message)) => {
+    if (!message) {
+      return;
+    }
+    setNotice({ message, tone });
+  };
+  const clearNotice = () => setNotice(null);
+
+  useEffect(() => {
+    if (!notice?.message) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setNotice((current) => (current?.message === notice.message ? null : current));
+    }, notice.tone === "error" ? 5200 : 3800);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  useEffect(() => {
+    if (view !== "verify" || resendCooldown <= 0) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      setResendCooldown((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resendCooldown, view]);
 
   useEffect(() => {
     let active = true;
@@ -65,11 +125,10 @@ export default function RoleLoginPage({ config }) {
   async function signIn(event) {
     event.preventDefault();
     if (!session.baseUrl) {
-      setFeedback("Base API URL is not configured. Set NEXT_PUBLIC_NEVARI_BASE_URL and try again.");
+      showNotice("Base API URL is not configured. Set NEXT_PUBLIC_NEVARI_BASE_URL and try again.", "error");
       return;
     }
     setLoadingAction("signin");
-    setFeedback("Signing in...");
     try {
       const response = await fetch(buildUrl(session, "/auth/login"), {
         method: "POST",
@@ -87,7 +146,7 @@ export default function RoleLoginPage({ config }) {
           resetToPairingState();
           return;
         }
-        setFeedback(payload?.error?.message || "Sign in failed.");
+        showNotice(payload?.error?.message || "Sign in failed.", "error");
         return;
       }
       if (payload.data.verification_required) {
@@ -98,7 +157,8 @@ export default function RoleLoginPage({ config }) {
         });
         setPassword("");
         setView("verify");
-        setFeedback(`Enter the code sent to ${payload.data.masked_email || "your email"}.`);
+        setResendCooldown(Number(payload.data.resend_cooldown || RESEND_CODE_COOLDOWN_SECONDS));
+        showNotice(`Enter the code sent to ${payload.data.masked_email || "your email"}.`, "warning");
         return;
       }
       const next = {
@@ -119,7 +179,6 @@ export default function RoleLoginPage({ config }) {
   async function verifyCode(event) {
     event.preventDefault();
     setLoadingAction("verify");
-    setFeedback("Verifying code...");
     try {
       const response = await fetch(buildUrl(session, "/auth/verify-code"), {
         method: "POST",
@@ -141,7 +200,7 @@ export default function RoleLoginPage({ config }) {
           resetToPairingState();
           return;
         }
-        setFeedback(payload?.error?.message || "Verification failed.");
+        showNotice(payload?.error?.message || "Verification failed.", "error");
         return;
       }
       const next = {
@@ -161,11 +220,10 @@ export default function RoleLoginPage({ config }) {
 
   async function resendCode() {
     if (!verification.challengeId) {
-      setFeedback("No verification challenge is available. Sign in again.");
+      showNotice("No verification challenge is available. Sign in again.", "error");
       return;
     }
     setResendLoading(true);
-    setFeedback("Sending a new verification code...");
     try {
       const response = await fetch(buildUrl(session, "/auth/resend-code"), {
         method: "POST",
@@ -186,7 +244,11 @@ export default function RoleLoginPage({ config }) {
           resetToPairingState();
           return;
         }
-        setFeedback(payload?.error?.message || "Failed to resend the verification code.");
+        const retryAfter = Number(payload?.error?.details?.retry_after || 0);
+        if (retryAfter > 0) {
+          setResendCooldown(retryAfter);
+        }
+        showNotice(payload?.error?.message || "Failed to resend the verification code.", "error");
         return;
       }
       setVerification((prev) => ({
@@ -195,7 +257,8 @@ export default function RoleLoginPage({ config }) {
         maskedEmail: payload.data.masked_email || prev.maskedEmail,
         code: ""
       }));
-      setFeedback(`A new code was sent to ${payload.data.masked_email || verification.maskedEmail || "your email"}.`);
+      setResendCooldown(Number(payload.data.resend_cooldown || RESEND_CODE_COOLDOWN_SECONDS));
+      showNotice(`A new code was sent to ${payload.data.masked_email || verification.maskedEmail || "your email"}.`, "success");
     } finally {
       setResendLoading(false);
     }
@@ -204,7 +267,7 @@ export default function RoleLoginPage({ config }) {
   async function requestReset(event) {
     event.preventDefault();
     if (!session.baseUrl) {
-      setFeedback("Base API URL is not configured. Set NEXT_PUBLIC_NEVARI_BASE_URL and try again.");
+      showNotice("Base API URL is not configured. Set NEXT_PUBLIC_NEVARI_BASE_URL and try again.", "error");
       return;
     }
     setLoadingAction("reset");
@@ -225,10 +288,10 @@ export default function RoleLoginPage({ config }) {
           resetToPairingState();
           return;
         }
-        setFeedback(payload?.error?.message || "Reset request failed.");
+        showNotice(payload?.error?.message || "Reset request failed.", "error");
         return;
       }
-      setFeedback("If that account exists, password reset instructions have been sent.");
+      showNotice("If that account exists, password reset instructions have been sent.", "success");
     } finally {
       setLoadingAction("");
     }
@@ -238,7 +301,7 @@ export default function RoleLoginPage({ config }) {
   async function registerCustomer(event) {
     event.preventDefault();
     if (!session.baseUrl) {
-      setFeedback("Base API URL is not configured. Set NEXT_PUBLIC_NEVARI_BASE_URL and try again.");
+      showNotice("Base API URL is not configured. Set NEXT_PUBLIC_NEVARI_BASE_URL and try again.", "error");
       return;
     }
     setLoadingAction("register");
@@ -265,10 +328,10 @@ export default function RoleLoginPage({ config }) {
           resetToPairingState();
           return;
         }
-        setFeedback(payload?.error?.message || "Account creation failed.");
+        showNotice(payload?.error?.message || "Account creation failed.", "error");
         return;
       }
-      setFeedback(config.loginPrompt || "Sign in to continue.");
+      showNotice(config.loginPrompt || "Sign in to continue.", "success");
       setUsername(registration.email);
       setPassword("");
       setView("login");
@@ -280,17 +343,16 @@ export default function RoleLoginPage({ config }) {
   return (
     <div className="auth-gate">
       <div className="auth-gate-shell">
+        <div className="auth-intro">
+          <img className="auth-logo" src="/ne.webp" alt="Nevari logo" />
+          <p className="auth-dashboard-name">{dashboardName}</p>
+        </div>
         <section className={`auth-card auth-screen-card ${view === "verify" ? "auth-verify-screen-card" : ""}`}>
           <div className={`auth-card-body ${view === "verify" ? "auth-verify-card-body" : ""}`}>
-            {view !== "verify" ? (
-              <div className="auth-intro">
-                <img className="auth-logo" src="/ne.webp" alt="Nevari logo" />
-                <h1 className="auth-title">{config.label}</h1>
-              </div>
-            ) : null}
+            {view !== "verify" ? <h1 className="auth-title">{screenTitle}</h1> : null}
             {view === "login" ? (
               <form className="auth-form auth-reference-form" onSubmit={signIn}>
-                <label className="form-group"><span>Username or email</span><div className="input-wrap"><input value={username} onChange={(event) => setUsername(event.target.value)} required /></div></label>
+                <label className="form-group"><span>Email</span><div className="input-wrap"><input value={username} onChange={(event) => setUsername(event.target.value)} required /></div></label>
                 <label className="form-group"><span>Password</span><div className="input-wrap"><input type={passwordVisible ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} required /><button className="input-suffix auth-toggle-button" type="button" onClick={() => setPasswordVisible((value) => !value)}>{passwordVisible ? "Hide" : "Show"}</button></div></label>
                 <div className="auth-actions"><button className="auth-primary-button" type="submit" disabled={loadingAction === "signin"}><AuthButtonContent loading={loadingAction === "signin"} loadingText="Signing in..." idleText="Sign In" /></button></div>
                 <div className="auth-inline-links">
@@ -309,7 +371,7 @@ export default function RoleLoginPage({ config }) {
             {view === "verify" ? (
               <form className="auth-form auth-reference-form auth-otp-form" onSubmit={verifyCode}>
                 <div className="auth-otp-card">
-                  <h2 className="auth-otp-title">Verify to Continue</h2>
+                  <h2 className="auth-otp-title">{screenTitle}</h2>
                   <p className="auth-otp-recipient">Recipient: {verification.maskedEmail || "Waiting for OTP"}</p>
                   <input
                     ref={verificationInputRef}
@@ -342,8 +404,8 @@ export default function RoleLoginPage({ config }) {
                 </div>
                 <div className="auth-inline-links">
                   <button className="auth-text-link" type="button" onClick={() => setView("login")}>Back to login</button>
-                  <button className="auth-text-link" type="button" onClick={resendCode} disabled={resendLoading}>
-                    {resendLoading ? "Sending..." : "Resend code"}
+                  <button className="auth-text-link" type="button" onClick={resendCode} disabled={resendLoading || resendCooldown > 0}>
+                    {resendLoading ? "Sending..." : resendCooldown > 0 ? `Resend code (${resendCooldown}s)` : "Resend code"}
                   </button>
                 </div>
               </form>
@@ -358,7 +420,13 @@ export default function RoleLoginPage({ config }) {
                 <div className="auth-inline-links"><button className="auth-text-link" type="button" onClick={() => setView("login")}>Back to login</button></div>
               </form>
             ) : null}
-            <p className="auth-feedback">{feedback}</p>
+            {notice?.message ? (
+              <div className={`snackbar auth-snackbar ${notice.tone}`}>
+                <span className="snackbar-title">{notice.tone === "error" ? "Error" : notice.tone === "success" ? "Success" : "Notice"}</span>
+                <span className="snackbar-message">{notice.message}</span>
+                <button className="auth-snackbar-close" type="button" onClick={clearNotice} aria-label="Dismiss notice">×</button>
+              </div>
+            ) : null}
           </div>
         </section>
       </div>

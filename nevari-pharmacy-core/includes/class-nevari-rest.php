@@ -3626,7 +3626,7 @@ final class Nevari_Rest {
         $page = max(1, (int) $request->get_param('page') ?: 1);
         $per_page = min(100, max(1, (int) $request->get_param('per_page') ?: 20));
         $args = [
-            'role' => 'doctor',
+            'role__in' => self::staff_directory_roles(),
             'number' => $per_page,
             'offset' => ($page - 1) * $per_page,
             'orderby' => 'display_name',
@@ -3647,7 +3647,7 @@ final class Nevari_Rest {
             return $response;
         }
         $user = get_user_by('id', (int) $request['id']);
-        if (!$user || !in_array('doctor', (array) $user->roles, true)) {
+        if (!$user || !self::is_staff_directory_user($user)) {
             return Nevari_Helpers::error('doctor_not_found', 'Doctor not found.', 404);
         }
         $include_private = Nevari_Helpers::is_store_admin() || get_current_user_id() === (int) $user->ID;
@@ -4020,11 +4020,14 @@ final class Nevari_Rest {
         $profile_id = $profile_ids ? (int) $profile_ids[0] : 0;
         $settings = $wpdb->get_row($wpdb->prepare("SELECT * FROM " . Nevari_Helpers::table('doctor_settings') . " WHERE doctor_user_id = %d", (int) $user->ID));
         $review_summary = Nevari_Helpers::doctor_review_summary((int) $user->ID);
+        $roles = array_values(array_filter(array_map('sanitize_key', (array) $user->roles)));
         $data = [
             'id' => (int) $user->ID,
             'user_id' => (int) $user->ID,
             'display_name' => $user->display_name,
             'email' => $include_private || Nevari_Helpers::is_store_admin() ? $user->user_email : null,
+            'role' => $roles ? $roles[0] : '',
+            'roles' => $roles,
             'store_currency' => self::store_currency(),
             'store_timezone' => self::store_timezone(),
             'profile_post_id' => $profile_id ?: null,
@@ -4054,6 +4057,17 @@ final class Nevari_Rest {
             $data['default_appointment_duration'] = $settings ? (int) $settings->default_appointment_duration : 30;
         }
         return $data;
+    }
+
+    private static function staff_directory_roles(): array {
+        return ['doctor', 'pharmacist', 'administrator', 'admin'];
+    }
+
+    private static function is_staff_directory_user($user): bool {
+        if (!($user instanceof WP_User)) {
+            return false;
+        }
+        return (bool) array_intersect(self::staff_directory_roles(), (array) $user->roles);
     }
 
     private static function save_doctor_product_categories(int $doctor_id, array $category_ids): void {

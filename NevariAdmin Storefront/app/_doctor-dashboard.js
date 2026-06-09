@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import useSWR, { mutate as mutateSWRKey, useSWRConfig } from "swr";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { AddCircleIcon, Calendar03Icon, Doctor01Icon, Home01Icon, Settings01Icon, ShoppingCart01Icon } from "@hugeicons/core-free-icons";
+import { AddCircleIcon, Calendar03Icon, Clock01Icon, Doctor01Icon, Home01Icon, Menu01Icon, Settings01Icon, ShoppingCart01Icon, UserIcon } from "@hugeicons/core-free-icons";
 import { replaceById, updateListPayload, upsertById } from "../lib/fetcher";
 import { isProxyAppointmentsKey, isProxyDashboardDoctorKey, isProxyDoctorPathKey, isProxyOrdersKey, swrKeys, withBaseUrl } from "../lib/swrKeys";
 import { FRONTENDS } from "./components/frontend-config";
@@ -542,7 +542,7 @@ export default function DoctorDashboard() {
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     const fitStats = () => {
-      document.querySelectorAll(".overview-action-value, .doctor-profile-metrics strong, .doctor-insight-card strong, .doctor-settings-summary strong, .metric-card strong, .mini-stat strong").forEach((node) => {
+      document.querySelectorAll(".overview-action-value, .doctor-profile-metrics strong, .doctor-insight-card strong, .doctor-settings-summary strong, .metric-card strong, .mini-stat strong, .doctor-mobile-metric-value").forEach((node) => {
         fitTextToContainer(node, { minFontSize: 12, step: 0.5 });
       });
     };
@@ -2189,6 +2189,14 @@ function DoctorMobileShell({
   const doctorName = String(doctor?.display_name || "Doctor").trim();
   const welcomeName = doctorName.split(/\s+/).filter(Boolean)[0] || doctorName;
 
+  function handleSearchChange(nextValue) {
+    onSearchTermChange?.(nextValue);
+    if (String(nextValue || "").trim() && !["overview", "consultations"].includes(active)) {
+      onPageChange("consultations");
+      setSideNavOpen(false);
+    }
+  }
+
   return <div className="customer-mobile-app doctor-mobile-shell">
     <div className={`customer-mobile-drawer-layer ${sideNavOpen ? "open" : ""}`.trim()}>
       <button className="customer-mobile-drawer-backdrop" type="button" aria-label="Close navigation" onClick={() => setSideNavOpen(false)} />
@@ -2243,15 +2251,13 @@ function DoctorMobileShell({
           <input
             type="search"
             value={searchTerm}
-            onChange={(event) => onSearchTermChange?.(event.target.value)}
+            onChange={(event) => handleSearchChange(event.target.value)}
             placeholder="Search here for orders, appointments etc"
           />
         </label>
         <div className="doctor-mobile-header-row customer-mobile-greeting-row">
           <button className="doctor-mobile-menu-button customer-mobile-icon-button" type="button" aria-label="Open navigation" onClick={() => setSideNavOpen(true)}>
-            <span />
-            <span />
-            <span />
+            <HugeiconsIcon icon={Menu01Icon} size={20} strokeWidth={1.7} />
           </button>
           <p className="doctor-mobile-welcome">Welcome back, {welcomeName}</p>
         </div>
@@ -2272,7 +2278,7 @@ function DoctorMobilePageSection({ title, children, action = null }) {
   </section>;
 }
 
-function DoctorMobileOverview({ doctor, dashboard, appointments, orders, estimatedRevenue, storeCurrency, searchTerm, onOpenConsultations }) {
+function DoctorMobileOverview({ doctor, appointments, searchTerm, onOpenConsultations }) {
   const [detailAppointment, setDetailAppointment] = useState(null);
   const filteredAppointments = useMemo(() => {
     const query = String(searchTerm || "").trim().toLowerCase();
@@ -2282,31 +2288,63 @@ function DoctorMobileOverview({ doctor, dashboard, appointments, orders, estimat
     }
     return sorted.filter((appointment) => doctorAppointmentMatchesSearch(appointment, query)).slice(0, 4);
   }, [appointments, searchTerm]);
+  const appointmentMetrics = useMemo(() => {
+    const now = Date.now();
+    let upcomingAppointments = 0;
+    let totalConsultationMinutes = 0;
+    const uniquePatients = new Set();
+
+    appointments.forEach((appointment) => {
+      const startAtMs = Date.parse(appointment?.start_at || "");
+      const endAtMs = Date.parse(appointment?.end_at || "");
+      const status = String(appointment?.status || "").toLowerCase();
+      const patientKey = appointment?.patient_user_id
+        || appointment?.patient?.id
+        || appointment?.patient?.email
+        || appointment?.patient?.display_name;
+
+      if (patientKey) {
+        uniquePatients.add(String(patientKey));
+      }
+      if (Number.isFinite(startAtMs) && startAtMs > now && !["cancelled", "failed"].includes(status)) {
+        upcomingAppointments += 1;
+      }
+      if (Number.isFinite(startAtMs) && Number.isFinite(endAtMs) && endAtMs > startAtMs) {
+        totalConsultationMinutes += Math.round((endAtMs - startAtMs) / 60000);
+      }
+    });
+
+    return {
+      upcomingAppointments,
+      customerInteractions: uniquePatients.size,
+      totalConsultationMinutes
+    };
+  }, [appointments]);
 
   const metrics = [
     {
-      key: "spent",
-      label: "Spent this month",
-      value: money(estimatedRevenue, storeCurrency),
-      icon: <HugeiconsIcon icon={ShoppingCart01Icon} size={18} strokeWidth={1.8} />
+      key: "upcoming-appointments",
+      label: "Upcoming appointments",
+      value: appointmentMetrics.upcomingAppointments,
+      icon: <HugeiconsIcon icon={Calendar03Icon} size={18} strokeWidth={1.8} />
     },
     {
-      key: "appointments",
-      label: "Appointments",
+      key: "total-appointments",
+      label: "Total appointments",
       value: appointments.length,
       icon: <HugeiconsIcon icon={Calendar03Icon} size={18} strokeWidth={1.8} />
     },
     {
-      key: "orders",
-      label: "Orders",
-      value: orders.length,
-      icon: <HugeiconsIcon icon={ShoppingCart01Icon} size={18} strokeWidth={1.8} />
+      key: "customer-interactions",
+      label: "Customer interactions",
+      value: appointmentMetrics.customerInteractions,
+      icon: <HugeiconsIcon icon={UserIcon} size={18} strokeWidth={1.8} />
     },
     {
-      key: "available-doctors",
-      label: "Available Doctors",
-      value: Number(dashboard?.available_doctors ?? 0),
-      icon: <HugeiconsIcon icon={Doctor01Icon} size={18} strokeWidth={1.8} />
+      key: "consultation-minutes",
+      label: "Consultation minutes",
+      value: appointmentMetrics.totalConsultationMinutes,
+      icon: <HugeiconsIcon icon={Clock01Icon} size={18} strokeWidth={1.8} />
     }
   ];
 
