@@ -213,7 +213,7 @@ async function proxyRequest(request, { params } = {}) {
 
   if (request.method !== "GET" && request.method !== "HEAD") {
     const bodyText = await request.text();
-    if (targetUrl.pathname.endsWith("/auth/refresh") || targetUrl.pathname.endsWith("/auth/logout")) {
+    if (targetUrl.pathname.endsWith("/auth/refresh") || targetUrl.pathname.endsWith("/auth/logout") || targetUrl.pathname.endsWith("/sso/logout")) {
       const body = JSON.parse(bodyText || "{}");
       const refreshToken = requestCookie(request, cookieName("refresh", frontendType));
       if (refreshToken) {
@@ -276,7 +276,7 @@ async function proxyRequest(request, { params } = {}) {
   }
 
   if (contentType.toLowerCase().includes("application/json")
-      && ["/auth/login", "/auth/verify-code", "/auth/refresh", "/auth/logout"].some((path) => targetUrl.pathname.endsWith(path))) {
+      && ["/auth/login", "/auth/verify-code", "/auth/refresh", "/auth/logout", "/sso/logout"].some((path) => targetUrl.pathname.endsWith(path))) {
     const payload = await response.json().catch(() => null);
     const outgoing = Response.json(payload || {}, {
       status: withSoftFailStatus(response.status, softFail),
@@ -290,7 +290,7 @@ async function proxyRequest(request, { params } = {}) {
       payload.data.refresh_token = SESSION_MARKER;
       return Response.json(payload, { status: response.status, headers: outgoing.headers });
     }
-    if (targetUrl.pathname.endsWith("/auth/logout") && payload?.success) {
+    if ((targetUrl.pathname.endsWith("/auth/logout") || targetUrl.pathname.endsWith("/sso/logout")) && payload?.success) {
       setSessionCookie(outgoing, request, cookieName("access", frontendType), "", 0);
       setSessionCookie(outgoing, request, cookieName("refresh", frontendType), "", 0);
       setCsrfCookie(outgoing, request, "", 0);

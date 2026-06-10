@@ -38,3 +38,8 @@ export const FRONTENDS = {
     dashboardPath: "/admin/storefront"
   }
 };
+
+export const FRONTEND_BY_TYPE = Object.values(FRONTENDS).reduce((accumulator, frontend) => {
+  accumulator[frontend.type] = frontend;
+  return accumulator;
+}, {});

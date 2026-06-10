@@ -31,6 +31,10 @@ final class Nevari_Connections {
     public static function frontend_types(): array {
         return [
             'custom_frontend' => __('Custom Frontend', 'nevari-pharmacy-core'),
+            'storefront' => __('Storefront Dashboard', 'nevari-pharmacy-core'),
+            'doctors_dashboard' => __('Doctor Dashboard', 'nevari-pharmacy-core'),
+            'pharmacist_dashboard' => __('Pharmacist Dashboard', 'nevari-pharmacy-core'),
+            'patient_dashboard' => __('Patient Dashboard', 'nevari-pharmacy-core'),
         ];
     }
 
@@ -97,6 +101,23 @@ final class Nevari_Connections {
         global $wpdb;
         $rows = $wpdb->get_results("SELECT * FROM " . Nevari_Helpers::table('frontend_connections') . " ORDER BY updated_at DESC, created_at DESC");
         return array_map([__CLASS__, 'format_frontend_connection'], $rows ?: []);
+    }
+
+    public static function trusted_frontend_for_type(string $frontend_type): ?array {
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM " . Nevari_Helpers::table('frontend_connections') . " WHERE frontend_type = %s AND trust_status = 'trusted' ORDER BY updated_at DESC, created_at DESC LIMIT 1",
+            sanitize_key($frontend_type)
+        ));
+
+        if (!$row && in_array($frontend_type, ['storefront', 'doctors_dashboard', 'pharmacist_dashboard', 'patient_dashboard'], true)) {
+            $row = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM " . Nevari_Helpers::table('frontend_connections') . " WHERE frontend_type = %s AND trust_status = 'trusted' ORDER BY updated_at DESC, created_at DESC LIMIT 1",
+                'custom_frontend'
+            ));
+        }
+
+        return $row ? self::format_frontend_connection($row) : null;
     }
 
     public static function revoke_frontend(int $connection_id): bool {
@@ -349,26 +370,47 @@ final class Nevari_Connections {
             return null;
         }
 
+        $trusted = self::trusted_frontend_for_type($frontend_type);
+        if ($trusted && !empty($trusted['frontend_origin']) && (string) $trusted['frontend_origin'] !== (string) $frontend_origin) {
+            return null;
+        }
+
+        $proxy_verified_origin = self::verified_proxy_origin($frontend_type);
+        if ($proxy_verified_origin && $proxy_verified_origin !== $frontend_origin) {
+            return null;
+        }
+
         return [
-            'id' => 0,
+            'id' => !empty($trusted['id']) ? (int) $trusted['id'] : 0,
             'frontend_type' => $frontend_type,
             'frontend_origin' => $frontend_origin,
-            'frontend_url' => !empty($params['frontend_url']) ? (string) $params['frontend_url'] : $frontend_origin,
-            'trust_status' => 'credential_only',
-            'paired_by' => 0,
-            'pairing_session_id' => null,
-            'paired_at' => null,
-            'last_seen_at' => null,
-            'created_at' => null,
-            'updated_at' => null,
+            'frontend_url' => !empty($params['frontend_url']) ? (string) $params['frontend_url'] : (!empty($trusted['frontend_url']) ? (string) $trusted['frontend_url'] : $frontend_origin),
+            'trust_status' => !empty($trusted['trust_status']) ? (string) $trusted['trust_status'] : 'credential_only',
+            'paired_by' => !empty($trusted['paired_by']) ? (int) $trusted['paired_by'] : 0,
+            'pairing_session_id' => isset($trusted['pairing_session_id']) ? $trusted['pairing_session_id'] : null,
+            'paired_at' => !empty($trusted['paired_at']) ? $trusted['paired_at'] : null,
+            'last_seen_at' => !empty($trusted['last_seen_at']) ? $trusted['last_seen_at'] : null,
+            'created_at' => !empty($trusted['created_at']) ? $trusted['created_at'] : null,
+            'updated_at' => !empty($trusted['updated_at']) ? $trusted['updated_at'] : null,
         ];
     }
 
     public static function validate_token_context(array $payload): bool {
-        if (empty($payload['frontend_type'])) {
+        if (empty($payload['frontend_type']) || empty($payload['frontend_origin'])) {
             return false;
         }
-        return in_array((string) $payload['frontend_type'], ['storefront', 'doctors_dashboard', 'pharmacist_dashboard', 'patient_dashboard'], true);
+        $frontend_type = sanitize_key((string) $payload['frontend_type']);
+        $frontend_origin = self::normalize_origin((string) $payload['frontend_origin']);
+        if (!in_array($frontend_type, ['storefront', 'doctors_dashboard', 'pharmacist_dashboard', 'patient_dashboard'], true) || !$frontend_origin) {
+            return false;
+        }
+
+        $trusted = self::trusted_frontend_for_type($frontend_type);
+        if (!$trusted) {
+            return false;
+        }
+
+        return (string) $trusted['frontend_origin'] === (string) $frontend_origin;
     }
 
     private static function site_logo_url(): ?string {

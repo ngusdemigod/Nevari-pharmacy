@@ -6,6 +6,7 @@ if (!defined('ABSPATH')) {
 final class Nevari_Plugin {
     private const DOCTOR_PROFILE_POST_TYPE = 'nevari_doctor_prof';
     private const SUBSCRIPTION_PLAN_POST_TYPE = 'nevari_subscription';
+    private const PRODUCT_PRESCRIPTION_TEXT_META = '_nevari_product_prescription';
 
     private static $instance = null;
 
@@ -24,6 +25,8 @@ final class Nevari_Plugin {
         add_action('init', [$this, 'register_product_meta']);
         add_action('init', [$this, 'register_subscription_plan_meta']);
         add_action('init', [$this, 'register_order_statuses']);
+        add_action('woocommerce_product_options_general_product_data', [$this, 'render_product_prescription_field']);
+        add_action('woocommerce_admin_process_product_object', [$this, 'save_product_prescription_field']);
         add_filter('rest_post_dispatch', [$this, 'append_rest_cors_headers'], 10, 3);
         add_filter('rest_pre_serve_request', [$this, 'send_rest_cors_headers'], 10, 4);
         add_filter('wc_order_statuses', [$this, 'filter_woocommerce_order_statuses']);
@@ -43,6 +46,7 @@ final class Nevari_Plugin {
         Nevari_Audit::init();
         Nevari_Auth::init();
         Nevari_Connections::init();
+        Nevari_SSO::init();
         Nevari_Mtm::init();
         Nevari_Rest::init();
         Nevari_Subscriptions::init();
@@ -757,6 +761,51 @@ final class Nevari_Plugin {
                 },
             ]);
         }
+
+        register_post_meta('product', self::PRODUCT_PRESCRIPTION_TEXT_META, [
+            'single' => true,
+            'type' => 'string',
+            'show_in_rest' => false,
+            'sanitize_callback' => 'sanitize_textarea_field',
+            'auth_callback' => static function () {
+                return current_user_can('edit_products') || current_user_can('nevari_manage_products');
+            },
+        ]);
+    }
+
+    public function render_product_prescription_field(): void {
+        global $post;
+
+        if (!$post instanceof WP_Post || $post->post_type !== 'product') {
+            return;
+        }
+
+        $prescription = (string) get_post_meta($post->ID, self::PRODUCT_PRESCRIPTION_TEXT_META, true);
+
+        echo '<div class="options_group">';
+        echo '<p class="form-field">';
+        echo '<label for="_nevari_product_prescription">' . esc_html__('Prescription', 'nevari-pharmacy-core') . '</label>';
+        echo '<textarea id="_nevari_product_prescription" name="_nevari_product_prescription" rows="5" style="width:50%;min-width:320px;">' . esc_textarea($prescription) . '</textarea>';
+        echo '<span class="description" style="display:block;margin-top:8px;">' . esc_html__('Enter the prescription/instructions for this product. It will be included in customer order emails for orders containing this product.', 'nevari-pharmacy-core') . '</span>';
+        echo '</p>';
+        echo '</div>';
+    }
+
+    public function save_product_prescription_field($product): void {
+        if (!$product || !is_object($product) || !method_exists($product, 'update_meta_data')) {
+            return;
+        }
+
+        $prescription = isset($_POST['_nevari_product_prescription'])
+            ? sanitize_textarea_field(wp_unslash($_POST['_nevari_product_prescription']))
+            : '';
+
+        if ($prescription !== '') {
+            $product->update_meta_data(self::PRODUCT_PRESCRIPTION_TEXT_META, $prescription);
+            return;
+        }
+
+        $product->delete_meta_data(self::PRODUCT_PRESCRIPTION_TEXT_META);
     }
 
     public function register_order_statuses(): void {
@@ -861,6 +910,7 @@ final class Nevari_Plugin {
         }
 
         add_filter('woocommerce_add_to_cart_validation', [$this, 'validate_rx_add_to_cart'], 10, 3);
+        add_action('woocommerce_email_after_order_table', [$this, 'render_customer_order_prescriptions_email'], 20, 4);
         add_action('woocommerce_checkout_process', [$this, 'validate_rx_checkout']);
         add_action('woocommerce_checkout_create_order_line_item', [$this, 'add_rx_order_item_meta'], 10, 4);
     }
@@ -906,14 +956,109 @@ final class Nevari_Plugin {
 
     public function add_rx_order_item_meta($item, $cart_item_key, $values, $order): void {
         $product_id = isset($values['product_id']) ? (int) $values['product_id'] : 0;
-        if (!$product_id || !Nevari_Helpers::product_requires_rx($product_id)) {
+        if (!$product_id) {
             return;
         }
+
+        $variation_id = isset($values['variation_id']) ? (int) $values['variation_id'] : 0;
+        $prescription_text = $this->get_product_prescription_text($variation_id ?: $product_id);
+        if ($prescription_text !== '') {
+            $item->add_meta_data(self::PRODUCT_PRESCRIPTION_TEXT_META, $prescription_text, true);
+        }
+
+        if (!Nevari_Helpers::product_requires_rx($product_id)) {
+            return;
+        }
+
         $item->add_meta_data('_nevari_rx_required', 'yes', true);
         $prescription = Nevari_Helpers::find_valid_prescription_for_product((int) $order->get_user_id(), $product_id, isset($values['quantity']) ? (float) $values['quantity'] : 1);
         if ($prescription) {
             $item->add_meta_data('_nevari_prescription_id', (int) $prescription->id, true);
         }
+    }
+
+    public function render_customer_order_prescriptions_email($order, $sent_to_admin, $plain_text, $email): void {
+        $allowed_email_ids = [
+            'customer_processing_order',
+            'customer_completed_order',
+            'customer_invoice',
+            'customer_on_hold_order',
+        ];
+
+        $email_id = is_object($email) && isset($email->id) ? (string) $email->id : '';
+
+        if ($sent_to_admin || !in_array($email_id, $allowed_email_ids, true) || !$order instanceof WC_Order) {
+            return;
+        }
+
+        $entries = [];
+
+        foreach ($order->get_items('line_item') as $item) {
+            if (!$item instanceof WC_Order_Item_Product) {
+                continue;
+            }
+
+            $prescription_text = trim((string) $item->get_meta(self::PRODUCT_PRESCRIPTION_TEXT_META, true));
+            if ($prescription_text === '') {
+                $product_id = $item->get_variation_id() ?: $item->get_product_id();
+                $prescription_text = $this->get_product_prescription_text((int) $product_id);
+            }
+
+            if ($prescription_text === '') {
+                continue;
+            }
+
+            $entries[] = [
+                'product_name' => $item->get_name(),
+                'prescription' => $prescription_text,
+            ];
+        }
+
+        if (!$entries) {
+            return;
+        }
+
+        if ($plain_text) {
+            echo "\n" . wp_strip_all_tags(__('Product Prescriptions', 'nevari-pharmacy-core')) . "\n";
+            foreach ($entries as $entry) {
+                echo sprintf(
+                    "\n%s:\n%s\n",
+                    wp_strip_all_tags((string) $entry['product_name']),
+                    wp_strip_all_tags((string) $entry['prescription'])
+                );
+            }
+            return;
+        }
+
+        echo '<section class="nevari-order-prescriptions" style="margin-top:24px;">';
+        echo '<h2 style="font-size:18px;line-height:1.4;margin:0 0 12px;">' . esc_html__('Product Prescriptions', 'nevari-pharmacy-core') . '</h2>';
+        foreach ($entries as $entry) {
+            echo '<div style="margin:0 0 14px;padding:14px 16px;border:1px solid #e6ecf2;border-radius:12px;background:#f8fafc;">';
+            echo '<strong style="display:block;margin-bottom:8px;">' . esc_html((string) $entry['product_name']) . '</strong>';
+            echo '<div style="white-space:pre-line;color:#334155;">' . esc_html((string) $entry['prescription']) . '</div>';
+            echo '</div>';
+        }
+        echo '</section>';
+    }
+
+    private function get_product_prescription_text(int $product_id): string {
+        if ($product_id < 1) {
+            return '';
+        }
+
+        $prescription = trim((string) get_post_meta($product_id, self::PRODUCT_PRESCRIPTION_TEXT_META, true));
+        if ($prescription !== '') {
+            return $prescription;
+        }
+
+        if (function_exists('wp_get_post_parent_id')) {
+            $parent_id = wp_get_post_parent_id($product_id);
+            if ($parent_id > 0) {
+                return trim((string) get_post_meta($parent_id, self::PRODUCT_PRESCRIPTION_TEXT_META, true));
+            }
+        }
+
+        return '';
     }
 
     public function apply_initial_rx_order_status(int $order_id): void {

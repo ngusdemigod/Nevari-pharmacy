@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { BrandedLoadingScreen } from "../components/BrandedSpinner";
 import Paywall from "../components/subscription/Paywall";
 import SubscriptionSuccess from "../components/subscription/SubscriptionSuccess";
 import { hydrateStoredSession } from "../components/role-dashboard-utils";
@@ -26,6 +27,25 @@ function resolveCustomerSession() {
   return session;
 }
 
+function formatSubscriptionPrice(subscription) {
+  const amount = Number(subscription?.monthlyEquivalent ?? subscription?.amount ?? 0);
+  const currency = String(subscription?.currency || "NGN").trim().toUpperCase();
+  const frequency = String(subscription?.frequency || subscription?.interval || "monthly").trim().toLowerCase();
+  const recurringLabel = frequency === "yearly" ? "/year" : frequency === "weekly" ? "/week" : "/month";
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return `${currency}1,000${recurringLabel}`;
+  }
+  try {
+    return `${new Intl.NumberFormat("en-NG", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(amount)}${recurringLabel}`;
+  } catch {
+    return `${currency}${amount}${recurringLabel}`;
+  }
+}
+
 export default function SubscriptionPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -41,6 +61,7 @@ export default function SubscriptionPageClient() {
     || searchParams.get("transaction")
     || "", [searchParams]);
   const continuePath = useMemo(() => sanitizeReturnPath(searchParams.get("returnTo")), [searchParams]);
+  const priceLabel = useMemo(() => formatSubscriptionPrice(subscriptionState.subscription), [subscriptionState.subscription]);
 
   useEffect(() => {
     const hydratedSession = resolveCustomerSession();
@@ -77,19 +98,11 @@ export default function SubscriptionPageClient() {
   }, [paymentReference, session, subscriptionState, verifiedReference, verifying]);
 
   if (!resolved || (!session && !subscriptionState.actionError)) {
-    return (
-      <section className="subscription-shell subscription-shell-loading">
-        <div className="subscription-loading-card">Loading your Nevari Access Pro subscription...</div>
-      </section>
-    );
+    return <BrandedLoadingScreen className="subscription-shell subscription-shell-loading" label="Loading your Nevari Access Pro subscription" />;
   }
 
   if (paymentReference && !subscriptionState.active && (verifying || subscriptionState.isActionBusy)) {
-    return (
-      <section className="subscription-shell subscription-shell-loading">
-        <div className="subscription-loading-card">Verifying your subscription...</div>
-      </section>
-    );
+    return <BrandedLoadingScreen className="subscription-shell subscription-shell-loading" label="Verifying your subscription" />;
   }
 
   if (subscriptionState.showSuccess || subscriptionState.active) {
@@ -111,6 +124,7 @@ export default function SubscriptionPageClient() {
       error={subscriptionState.actionError}
       onOpenMenu={() => router.push(continuePath)}
       onSubscribe={() => subscriptionState.launchCheckout()}
+      priceLabel={priceLabel}
     />
   );
 }

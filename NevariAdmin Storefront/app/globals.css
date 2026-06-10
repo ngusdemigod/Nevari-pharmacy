@@ -24253,6 +24253,218 @@ button:focus-visible,
   background: #e7eef8 !important;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.nevari-branded-spinner {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.9)),
+    url("/Frame 95621.png") center/cover no-repeat;
+  position: relative;
+}
+
+.nevari-branded-spinner::after {
+  content: "";
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 2px solid rgba(11, 50, 109, 0.18);
+  border-top-color: #0b326d;
+  animation: nevariSpinnerRotate 0.8s linear infinite;
+  box-sizing: border-box;
+}
+
+.nevari-loading-screen {
+  display: grid;
+  place-items: center;
+}
+
+@keyframes nevariSpinnerRotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.customer-desktop-topbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0 12px;
+}
+
+.customer-desktop-search-shell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 420px);
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid #d9e1ee;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #6b7a93;
+}
+
+.customer-desktop-search-shell input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #6b7a93;
+  font: inherit;
+}
+
+.customer-desktop-panel {
+  border: 1px solid #e2e8f2;
+  border-radius: 24px;
+  background: #ffffff;
+  padding: 28px;
+}
+
+.customer-desktop-panel-centered {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+}
+
+.customer-desktop-panel-copy {
+  max-width: 520px;
+  text-align: center;
+  color: #183a73;
+}
+
+.customer-desktop-panel-copy h2 {
+  margin: 0 0 12px;
+  font-size: 28px;
+}
+
+.customer-desktop-panel-copy p {
+  margin: 0;
+  color: #6b7a93;
+  line-height: 1.6;
+}
+
+.subscription-shell-loading {
+  min-height: 100dvh;
+}
+
+.subscription-success-seal-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.subscription-success-subtitle {
+  max-width: 26rem;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.subscription-shell-success {
+  justify-content: center;
+  gap: 2rem;
+}
+
+.subscription-success-footer {
+  position: static;
+  width: 100%;
+  max-width: 28rem;
+  margin: 0 auto;
+  padding-top: 0;
+  background: #ffffff;
+}
+
+.doctor-flow-shell,
+.doctor-flow-shell .app-shell,
+.doctor-flow-shell .sidebar,
+.doctor-flow-shell .main,
+.doctor-flow-shell .page-body,
+.desktop-dashboard-page,
+.desktop-dashboard-shell,
+.desktop-dashboard-screen,
+.customer-dashboard-stack,
+.customer-list-shell,
+.customer-stats-row .customer-stat-card,
+.customer-profile-hero,
+.customer-settings-shell,
+.pharmacist-dashboard-shell,
+.pharmacist-dashboard-sidebar,
+.pharmacist-dashboard-main,
+.pharmacist-dashboard-panel,
+.pharmacist-dashboard-metric,
+.pharmacist-dashboard-list-item,
+.pharmacist-dashboard-brand,
+.pharmacist-dashboard-header,
+.pharmacist-dashboard-summary-grid .detail-card,
+.pharmacist-dashboard-form,
+.role-shell-exact .category-card,
+.role-shell-exact .appointment-card,
+.role-shell-exact .empty-card,
+.role-shell-exact .dashboard-topbar-chip,
+.role-shell-exact .icon-btn,
+.role-shell-exact .appointment-stack-card,
+.doctor-flow-shell .consultation-stat-card,
+.doctor-flow-shell .consultation-detail-box,
+.doctor-flow-shell .doctor-settings-summary,
+.doctor-flow-shell .doctor-profile-metrics article,
+.doctor-flow-shell .doctor-insight-card {
+  background: #ffffff !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+body,
+.page-shell,
+.main-shell,
+.doctor-flow-shell .dashboard-tablet-toolbar,
+.doctor-flow-shell .bottom-nav,
+.doctor-flow-shell .dashboard-side-nav-backdrop {
+  background-image: none !important;
+}
+
+.doctor-flow-shell .nav-item.active,
+.dashboard-side-nav-item.active,
+.button-primary,
+.customer-mobile-primary-button,
+.subscription-cta-button,
+.pharmacist-dashboard-nav.active,
+.pharmacist-dashboard-logout,
+.appointment-primary-cta {
+  background: #0b326d !important;
+  color: #ffffff !important;
+}
+
+.dashboard-side-nav,
+.doctor-flow-shell .sidebar,
+.pharmacist-dashboard-sidebar,
+.customer-list-shell,
+.customer-profile-hero,
+.customer-settings-shell,
+.pharmacist-dashboard-panel,
+.pharmacist-dashboard-list-item,
+.desktop-dashboard-screen,
+.role-shell-exact .category-card,
+.role-shell-exact .appointment-card,
+.role-shell-exact .empty-card,
+.doctor-flow-shell .consultation-stat-card,
+.doctor-flow-shell .consultation-detail-box {
+  border-color: #e2e8f2 !important;
+}
+
 .nevari-admin-storefront .panel,
 .nevari-admin-storefront .table-panel,
 .nevari-admin-storefront .page-banner,
@@ -24268,4 +24480,44 @@ button:focus-visible,
 .nevari-admin-storefront .product-photo-placeholder,
 .nevari-admin-storefront .product-thumbnail-surface {
   border-color: #d9e1ee !important;
+}
+.button-spinner {
+  --spinner-size: 18px;
+}
+
+.button-spinner::after {
+  border-width: 1.5px;
+}
+
+.subscription-manage-spinner-wrap {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+}
+
+.pharmacist-dashboard-chip-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pharmacist-dashboard-chip {
+  border: 1px solid #d7dfef;
+  background: #ffffff;
+  color: #0d3b7a;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.pharmacist-dashboard-chip.active {
+  background: #0d3b7a;
+  color: #ffffff;
+  border-color: #0d3b7a;
+}
+
+.pharmacist-dashboard-inline-fields-stacked {
+  align-items: flex-start;
 }

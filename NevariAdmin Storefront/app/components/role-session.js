@@ -174,6 +174,43 @@ export function clearSessionAuth(config, session) {
   return nextSession;
 }
 
+export async function performGlobalLogout(config, session) {
+  if (typeof window === "undefined") {
+    return clearSessionAuth(config, session);
+  }
+
+  const activeSession = session || loadSession(config);
+  try {
+    await fetch(buildUrl(activeSession, "/sso/logout"), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: activeSession.accessToken ? `Bearer ${activeSession.accessToken}` : "",
+        "X-Nevari-Frontend-Type": activeSession.frontendType,
+        "X-Nevari-Frontend-Origin": window.location.origin
+      },
+      body: JSON.stringify(frontendContext(activeSession))
+    });
+  } catch {}
+
+  try {
+    await fetch(buildUrl(activeSession, "/auth/logout"), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: activeSession.accessToken ? `Bearer ${activeSession.accessToken}` : "",
+        "X-Nevari-Frontend-Type": activeSession.frontendType,
+        "X-Nevari-Frontend-Origin": window.location.origin
+      },
+      body: JSON.stringify(frontendContext(activeSession))
+    });
+  } catch {}
+
+  return clearSessionAuth(config, activeSession);
+}
+
 export function buildUrl(session, path) {
   const url = new URL("/api/nevari-proxy", typeof window !== "undefined" ? window.location.origin : "http://localhost");
   url.searchParams.set("baseUrl", String(session.baseUrl || "").replace(/\/+$/, ""));

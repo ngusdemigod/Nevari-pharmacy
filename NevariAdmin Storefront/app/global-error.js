@@ -1,8 +1,21 @@
 "use client";
 
 import React from "react";
+import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 
 export default function GlobalError({ error, reset }) {
+  useEffect(() => {
+    if (error) {
+      Sentry.captureException(error, {
+        tags: {
+          app_runtime: "client",
+          error_boundary: "global",
+        },
+      });
+    }
+  }, [error]);
+
   return (
     <html lang="en">
       <body style={{ margin: 0, fontFamily: "\"Product Sans\", \"Google Sans\", system-ui, sans-serif", background: "#f6f8fc", color: "#102039" }}>

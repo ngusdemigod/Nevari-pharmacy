@@ -343,6 +343,9 @@ final class Nevari_Helpers {
             'auth_logout_token' => ['limit' => 10, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_verify_ip' => ['limit' => 10, 'window' => 15 * MINUTE_IN_SECONDS],
             'auth_verify_challenge' => ['limit' => 5, 'window' => 15 * MINUTE_IN_SECONDS],
+            'sso_start' => ['limit' => 20, 'window' => 15 * MINUTE_IN_SECONDS],
+            'sso_exchange' => ['limit' => 20, 'window' => 15 * MINUTE_IN_SECONDS],
+            'sso_logout' => ['limit' => 20, 'window' => 15 * MINUTE_IN_SECONDS],
             'pairing_verify' => ['limit' => 20, 'window' => 10 * MINUTE_IN_SECONDS],
             'pairing_register' => ['limit' => 20, 'window' => 10 * MINUTE_IN_SECONDS],
             'rest_orders_read' => ['limit' => 120, 'window' => MINUTE_IN_SECONDS],
@@ -738,6 +741,7 @@ final class Nevari_Helpers {
             'consultation_required' => self::bool_param(get_post_meta($product_id, '_nevari_consultation_required', true)),
             'otc' => self::bool_param(get_post_meta($product_id, '_nevari_otc', true)),
             'restricted_visibility' => self::bool_param(get_post_meta($product_id, '_nevari_restricted_visibility', true)),
+            'prescription' => (string) get_post_meta($product_id, '_nevari_product_prescription', true),
             'badge_label' => (string) get_post_meta($product_id, '_nevari_badge_label', true),
             'badge_color' => (string) get_post_meta($product_id, '_nevari_badge_color', true),
             'badges' => array_values($badges),
@@ -773,6 +777,10 @@ final class Nevari_Helpers {
             if (array_key_exists($input, $rules)) {
                 update_post_meta($product_id, $meta_key, sanitize_text_field((string) $rules[$input]));
             }
+        }
+
+        if (array_key_exists('prescription', $rules)) {
+            update_post_meta($product_id, '_nevari_product_prescription', sanitize_textarea_field((string) $rules['prescription']));
         }
 
         if (isset($rules['badge'])) {

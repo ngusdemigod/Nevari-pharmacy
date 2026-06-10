@@ -5522,6 +5522,13 @@ export default function Page() {
   async function handleLogout() {
     try {
       if (session.refreshToken && session.accessToken) {
+        await apiRequest("/sso/logout", {
+          method: "POST",
+          body: {
+            refresh_token: session.refreshToken,
+            ...frontendContext(session)
+          }
+        }, session);
         await apiRequest("/auth/logout", {
           method: "POST",
           body: {

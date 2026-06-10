@@ -12,7 +12,7 @@ import { isProxyAppointmentsKey, isProxyDashboardDoctorKey, isProxyDoctorPathKey
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
 import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, describeDashboardFetchError, fitTextToContainer, hydrateStoredSession, isSessionUsable, money, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
-import { clearSessionAuth } from "./components/role-session";
+import { performGlobalLogout } from "./components/role-session";
 
 const DOCTOR_SETTINGS_KEY = "nevari_doctor_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
@@ -505,7 +505,7 @@ export default function DoctorDashboard() {
     }
     setLogoutBusy(true);
     try {
-      clearSessionAuth(FRONTENDS.doctor, session || hydrateStoredSession("doctor"));
+      await performGlobalLogout(FRONTENDS.doctor, session || hydrateStoredSession("doctor"));
       router.replace("/admin/doctor/login");
     } catch {
       setLogoutBusy(false);

@@ -1,11 +1,18 @@
 "use client";
 
 import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 
 export default function Error({ error, reset }) {
   useEffect(() => {
     if (error) {
       console.error(error);
+      Sentry.captureException(error, {
+        tags: {
+          app_runtime: "client",
+          error_boundary: "segment",
+        },
+      });
     }
   }, [error]);
 

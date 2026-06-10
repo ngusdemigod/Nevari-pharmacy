@@ -3,17 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
+import { useCreateProduct, useDeleteProduct, useUpdateProduct } from "../hooks/products";
+import { BrandedSpinner } from "./components/BrandedSpinner";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
-import { hydrateStoredSession, isSessionUsable, money, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase } from "./components/role-dashboard-utils";
-import { clearSessionAuth } from "./components/role-session";
+import { apiRequest, hydrateStoredSession, isSessionUsable, money, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase } from "./components/role-dashboard-utils";
+import { performGlobalLogout } from "./components/role-session";
 import {
-  createManagedProduct,
   approvePharmacistMtmRequest,
   fetchManagedOrders,
   fetchManagedProducts,
   fetchPharmacistMtmRequests,
-  updateManagedProduct,
   updatePharmacistMtmRequest,
 } from "./lib/nevari-api";
 
@@ -33,11 +33,22 @@ function hasPharmacistRole(user) {
 function createProductDraft() {
   return {
     id: null,
+    image: "",
     name: "",
+    sku: "",
     regular_price: "",
+    sale_price: "",
     stock_quantity: "",
     status: "draft",
+    visibility: "visible",
+    categories: [],
+    tags: [],
+    brands: [],
     short_description: "",
+    description: "",
+    shipping_information: "",
+    linked_products: "",
+    purchase_note: "",
   };
 }
 
@@ -56,11 +67,90 @@ function createMtmDraft() {
 function sanitizeProductDraft(draft) {
   return {
     name: String(draft.name || "").trim(),
+    sku: String(draft.sku || "").trim(),
     regular_price: String(draft.regular_price || "").trim(),
+    sale_price: String(draft.sale_price || "").trim(),
     stock_quantity: String(draft.stock_quantity || "").trim(),
     status: String(draft.status || "draft").trim(),
+    catalog_visibility: String(draft.visibility || "visible").trim(),
+    categories: Array.isArray(draft.categories) ? draft.categories.map((value) => String(value || "").trim()).filter(Boolean) : [],
+    tags: Array.isArray(draft.tags) ? draft.tags.map((value) => String(value || "").trim()).filter(Boolean) : [],
+    brands: Array.isArray(draft.brands) ? draft.brands.map((value) => String(value || "").trim()).filter(Boolean) : [],
     short_description: String(draft.short_description || "").trim(),
+    description: String(draft.description || "").trim(),
+    shipping_information: String(draft.shipping_information || "").trim(),
+    linked_products: String(draft.linked_products || "").trim(),
+    purchase_note: String(draft.purchase_note || "").trim(),
   };
+}
+
+function normalizeTermList(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === "string" || typeof item === "number") {
+          return String(item).trim();
+        }
+        if (item && typeof item === "object") {
+          return String(item.name || item.slug || item.id || "").trim();
+        }
+        return "";
+      })
+      .filter(Boolean);
+  }
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function productPrimaryImage(product) {
+  return String(
+    product?.image_url
+    || product?.image?.src
+    || product?.images?.[0]?.src
+    || product?.thumbnail
+    || ""
+  ).trim();
+}
+
+function draftFromProduct(product) {
+  return {
+    id: product?.product_id || product?.id || null,
+    image: productPrimaryImage(product),
+    name: product?.name || "",
+    sku: product?.sku || "",
+    regular_price: String(product?.regular_price || product?.price || ""),
+    sale_price: String(product?.sale_price || ""),
+    stock_quantity: String(product?.stock_quantity ?? ""),
+    status: product?.status || "draft",
+    visibility: product?.catalog_visibility || "visible",
+    categories: normalizeTermList(product?.categories || product?.category_names || product?.category),
+    tags: normalizeTermList(product?.tags || product?.tag_names || product?.tag),
+    brands: normalizeTermList(product?.brands || product?.brand_names || product?.brand),
+    short_description: product?.short_description || "",
+    description: product?.description || "",
+    shipping_information: product?.shipping_information || product?.shipping_class || product?.shipping_class_name || "",
+    linked_products: Array.isArray(product?.linked_products)
+      ? product.linked_products.map((item) => item?.name || item?.label || item).filter(Boolean).join(", ")
+      : String(product?.linked_products || product?.upsell_ids?.join(", ") || ""),
+    purchase_note: product?.purchase_note || product?.purchase_notes || "",
+  };
+}
+
+function termOptionsFromPayload(payload) {
+  const items = Array.isArray(payload?.items)
+    ? payload.items
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload)
+        ? payload
+        : [];
+  return items.map((item) => ({
+    id: String(item?.id || item?.term_id || item?.slug || item?.name || ""),
+    label: String(item?.name || item?.label || item?.slug || item?.id || "").trim(),
+    value: String(item?.name || item?.slug || item?.id || "").trim(),
+  })).filter((item) => item.value);
 }
 
 function feedbackTone(message) {
@@ -78,11 +168,15 @@ export default function PharmacistDashboard() {
   const [selectedProductId, setSelectedProductId] = useState(null);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [productSearch, setProductSearch] = useState("");
+  const [productTaxonomySearch, setProductTaxonomySearch] = useState({ categories: "", tags: "", brands: "" });
   const [productDraft, setProductDraft] = useState(() => createProductDraft());
   const [mtmDraft, setMtmDraft] = useState(() => createMtmDraft());
   const [feedback, setFeedback] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [busyRequestId, setBusyRequestId] = useState(null);
+  const createProductMutation = useCreateProduct(session);
+  const updateProductMutation = useUpdateProduct(session);
+  const deleteProductMutation = useDeleteProduct(session);
 
   useEffect(() => {
     setDocumentMetadata("Nevari Pharmacist", "Pharmacist product management and medical therapy management.");
@@ -104,6 +198,16 @@ export default function PharmacistDashboard() {
     () => fetchManagedProducts(session, { search: productSearch.trim(), per_page: 50 }),
     { revalidateOnFocus: false }
   );
+  const categoriesQuery = useSWR(
+    session ? "pharmacist-product-categories" : null,
+    () => apiRequest(session, "/products/categories", { params: { per_page: 100 }, suppressHttpError: true }),
+    { revalidateOnFocus: false }
+  );
+  const tagsQuery = useSWR(
+    session ? "pharmacist-product-tags" : null,
+    () => apiRequest(session, "/products/tags", { params: { per_page: 100 }, suppressHttpError: true }),
+    { revalidateOnFocus: false }
+  );
   const mtmQuery = useSWR(
     session ? "pharmacist-mtm-requests" : null,
     () => fetchPharmacistMtmRequests(session),
@@ -116,6 +220,8 @@ export default function PharmacistDashboard() {
   );
 
   const products = productsQuery.data?.items || [];
+  const categoryOptions = useMemo(() => termOptionsFromPayload(categoriesQuery.data), [categoriesQuery.data]);
+  const tagOptions = useMemo(() => termOptionsFromPayload(tagsQuery.data), [tagsQuery.data]);
   const mtmRequests = mtmQuery.data || [];
   const orders = ordersQuery.data?.items || [];
   const storeCurrency = storedStoreCurrency();
@@ -138,14 +244,7 @@ export default function PharmacistDashboard() {
 
   useEffect(() => {
     if (selectedProduct) {
-      setProductDraft({
-        id: selectedProduct.product_id || selectedProduct.id,
-        name: selectedProduct.name || "",
-        regular_price: String(selectedProduct.regular_price || selectedProduct.price || ""),
-        stock_quantity: String(selectedProduct.stock_quantity ?? ""),
-        status: selectedProduct.status || "draft",
-        short_description: selectedProduct.short_description || "",
-      });
+      setProductDraft(draftFromProduct(selectedProduct));
     } else if (!selectedProductId) {
       setProductDraft(createProductDraft());
     }
@@ -164,16 +263,17 @@ export default function PharmacistDashboard() {
   }, [orders, selectedOrderId]);
 
   if (!authResolved) {
-    return null;
+    return <PharmacistDashboardBootSkeleton />;
   }
 
-  function logout() {
-    clearSessionAuth(FRONTENDS.pharmacist, session || hydrateStoredSession("pharmacist"));
+  async function logout() {
+    await performGlobalLogout(FRONTENDS.pharmacist, session || hydrateStoredSession("pharmacist"));
     router.replace(FRONTENDS.pharmacist.loginPath);
   }
 
   function resetProductEditor() {
     setSelectedProductId(null);
+    setProductTaxonomySearch({ categories: "", tags: "", brands: "" });
     setProductDraft(createProductDraft());
   }
 
@@ -187,10 +287,13 @@ export default function PharmacistDashboard() {
     setFeedback("");
     try {
       if (productDraft.id) {
-        await updateManagedProduct(session, productDraft.id, payload);
+        await updateProductMutation.updateProduct(productDraft.id, payload, {
+          ...selectedProduct,
+          ...payload,
+        });
         setFeedback("Product updated.");
       } else {
-        await createManagedProduct(session, payload);
+        await createProductMutation.createProduct(payload);
         setFeedback("Product created.");
       }
       await productsQuery.mutate();
@@ -200,6 +303,71 @@ export default function PharmacistDashboard() {
     } finally {
       setBusyAction("");
     }
+  }
+
+  async function duplicateProduct() {
+    if (!productDraft.id || busyAction) {
+      return;
+    }
+    setBusyAction("duplicate-product");
+    setFeedback("");
+    try {
+      await apiRequest(session, `/products/${productDraft.id}/duplicate`, {
+        method: "POST",
+        body: {},
+      });
+      await productsQuery.mutate();
+      setFeedback("Product duplicated.");
+    } catch (error) {
+      setFeedback(error?.message || "Unable to duplicate product.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function deleteProduct() {
+    if (!productDraft.id || busyAction) {
+      return;
+    }
+    setBusyAction("delete-product");
+    setFeedback("");
+    try {
+      await deleteProductMutation.deleteProduct(productDraft.id);
+      await productsQuery.mutate();
+      resetProductEditor();
+      setFeedback("Product deleted.");
+    } catch (error) {
+      setFeedback(error?.message || "Unable to delete product.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  function updateDraftField(field, value) {
+    setProductDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function filteredOptions(options, field) {
+    const query = String(productTaxonomySearch[field] || "").trim().toLowerCase();
+    if (!query) {
+      return options;
+    }
+    return options.filter((item) => item.label.toLowerCase().includes(query));
+  }
+
+  function toggleDraftTerm(field, value) {
+    const nextValue = String(value || "").trim();
+    if (!nextValue) {
+      return;
+    }
+    setProductDraft((current) => {
+      const active = Array.isArray(current[field]) ? current[field] : [];
+      const exists = active.includes(nextValue);
+      return {
+        ...current,
+        [field]: exists ? active.filter((item) => item !== nextValue) : [...active, nextValue],
+      };
+    });
   }
 
   async function runMtmAction(action, body = {}, successMessage = "MTM request updated.") {
@@ -316,7 +484,7 @@ export default function PharmacistDashboard() {
           <div className="pharmacist-dashboard-panel-head">
             <div>
               <h2>Catalog</h2>
-              <p>Search and open an item for editing.</p>
+              <p>Search, duplicate, and open products inside the pharmacist product workspace.</p>
             </div>
             <button type="button" className="pill-button" onClick={resetProductEditor}>New Product</button>
           </div>
@@ -325,7 +493,7 @@ export default function PharmacistDashboard() {
             <input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Search by name or SKU" />
           </label>
           <div className="pharmacist-dashboard-list">
-            {productsQuery.isLoading ? <div className="empty-card compact-empty"><div className="card-title">Loading products...</div></div> : null}
+            {productsQuery.isLoading ? <div className="empty-card compact-empty"><BrandedSpinner label="Loading managed products" /></div> : null}
             {!productsQuery.isLoading && !products.length ? <div className="empty-card compact-empty"><div className="card-title">No products found.</div></div> : null}
             {products.map((product) => {
               const productId = product.product_id || product.id;
@@ -349,35 +517,110 @@ export default function PharmacistDashboard() {
           <div className="pharmacist-dashboard-panel-head">
             <div>
               <h2>{productDraft.id ? "Edit product" : "Create product"}</h2>
-              <p>Focused WooCommerce CRUD for pharmacists.</p>
+              <p>Admin-parity product fields for pricing, visibility, taxonomy, and inventory.</p>
             </div>
+            {productDraft.id ? <div className="pharmacist-dashboard-actions compact">
+              <button type="button" className="pill-button" disabled={busyAction === "duplicate-product"} onClick={duplicateProduct}>
+                {busyAction === "duplicate-product" ? "Duplicating..." : "Duplicate"}
+              </button>
+              <button type="button" className="pill-button danger" disabled={busyAction === "delete-product"} onClick={deleteProduct}>
+                {busyAction === "delete-product" ? "Deleting..." : "Delete"}
+              </button>
+            </div> : null}
           </div>
           <div className="pharmacist-dashboard-form">
             <label className="customer-mobile-field">
+              <span>Image URL</span>
+              <input value={productDraft.image} onChange={(event) => updateDraftField("image", event.target.value)} placeholder="https://..." />
+            </label>
+            <label className="customer-mobile-field">
               <span>Product name</span>
-              <input value={productDraft.name} onChange={(event) => setProductDraft((current) => ({ ...current, name: event.target.value }))} />
+              <input value={productDraft.name} onChange={(event) => updateDraftField("name", event.target.value)} />
             </label>
             <div className="pharmacist-dashboard-inline-fields">
               <label className="customer-mobile-field">
-                <span>Price</span>
-                <input value={productDraft.regular_price} onChange={(event) => setProductDraft((current) => ({ ...current, regular_price: event.target.value }))} />
+                <span>Regular price</span>
+                <input value={productDraft.regular_price} onChange={(event) => updateDraftField("regular_price", event.target.value)} />
               </label>
               <label className="customer-mobile-field">
+                <span>Sale price</span>
+                <input value={productDraft.sale_price} onChange={(event) => updateDraftField("sale_price", event.target.value)} />
+              </label>
+            </div>
+            <div className="pharmacist-dashboard-inline-fields">
+              <label className="customer-mobile-field">
                 <span>Stock</span>
-                <input value={productDraft.stock_quantity} onChange={(event) => setProductDraft((current) => ({ ...current, stock_quantity: event.target.value }))} />
+                <input value={productDraft.stock_quantity} onChange={(event) => updateDraftField("stock_quantity", event.target.value)} />
+              </label>
+              <label className="customer-mobile-field">
+                <span>SKU</span>
+                <input value={productDraft.sku} onChange={(event) => updateDraftField("sku", event.target.value)} />
+              </label>
+            </div>
+            <div className="pharmacist-dashboard-inline-fields">
+              <label className="customer-mobile-field">
+                <span>Status</span>
+                <select value={productDraft.status} onChange={(event) => updateDraftField("status", event.target.value)}>
+                  <option value="draft">Draft</option>
+                  <option value="publish">Published</option>
+                  <option value="private">Private</option>
+                </select>
+              </label>
+              <label className="customer-mobile-field">
+                <span>Visibility</span>
+                <select value={productDraft.visibility} onChange={(event) => updateDraftField("visibility", event.target.value)}>
+                  <option value="visible">Visible</option>
+                  <option value="catalog">Catalog only</option>
+                  <option value="search">Search only</option>
+                  <option value="hidden">Hidden</option>
+                </select>
               </label>
             </div>
             <label className="customer-mobile-field">
-              <span>Status</span>
-              <select value={productDraft.status} onChange={(event) => setProductDraft((current) => ({ ...current, status: event.target.value }))}>
-                <option value="draft">Draft</option>
-                <option value="publish">Published</option>
-                <option value="private">Private</option>
-              </select>
+              <span>Short description</span>
+              <textarea rows={4} value={productDraft.short_description} onChange={(event) => updateDraftField("short_description", event.target.value)} />
             </label>
             <label className="customer-mobile-field">
-              <span>Short description</span>
-              <textarea rows={5} value={productDraft.short_description} onChange={(event) => setProductDraft((current) => ({ ...current, short_description: event.target.value }))} />
+              <span>Long description</span>
+              <textarea rows={6} value={productDraft.description} onChange={(event) => updateDraftField("description", event.target.value)} />
+            </label>
+            <div className="pharmacist-dashboard-inline-fields pharmacist-dashboard-inline-fields-stacked">
+              <label className="customer-mobile-field">
+                <span>Categories</span>
+                <input value={productTaxonomySearch.categories} onChange={(event) => setProductTaxonomySearch((current) => ({ ...current, categories: event.target.value }))} placeholder="Filter categories" />
+                <div className="pharmacist-dashboard-chip-field">
+                  {filteredOptions(categoryOptions, "categories").slice(0, 12).map((option) => {
+                    const active = productDraft.categories.includes(option.value);
+                    return <button key={`category-${option.id}`} type="button" className={`pharmacist-dashboard-chip ${active ? "active" : ""}`} onClick={() => toggleDraftTerm("categories", option.value)}>{option.label}</button>;
+                  })}
+                </div>
+              </label>
+              <label className="customer-mobile-field">
+                <span>Tags</span>
+                <input value={productTaxonomySearch.tags} onChange={(event) => setProductTaxonomySearch((current) => ({ ...current, tags: event.target.value }))} placeholder="Filter tags" />
+                <div className="pharmacist-dashboard-chip-field">
+                  {filteredOptions(tagOptions, "tags").slice(0, 12).map((option) => {
+                    const active = productDraft.tags.includes(option.value);
+                    return <button key={`tag-${option.id}`} type="button" className={`pharmacist-dashboard-chip ${active ? "active" : ""}`} onClick={() => toggleDraftTerm("tags", option.value)}>{option.label}</button>;
+                  })}
+                </div>
+              </label>
+            </div>
+            <label className="customer-mobile-field">
+              <span>Brands</span>
+              <input value={productDraft.brands.join(", ")} onChange={(event) => updateDraftField("brands", normalizeTermList(event.target.value))} placeholder="Comma-separated brand names" />
+            </label>
+            <label className="customer-mobile-field">
+              <span>Shipping information</span>
+              <textarea rows={3} value={productDraft.shipping_information} onChange={(event) => updateDraftField("shipping_information", event.target.value)} />
+            </label>
+            <label className="customer-mobile-field">
+              <span>Linked products</span>
+              <input value={productDraft.linked_products} onChange={(event) => updateDraftField("linked_products", event.target.value)} placeholder="Comma-separated related products" />
+            </label>
+            <label className="customer-mobile-field">
+              <span>Purchase notes</span>
+              <textarea rows={3} value={productDraft.purchase_note} onChange={(event) => updateDraftField("purchase_note", event.target.value)} />
             </label>
           </div>
           <div className="pharmacist-dashboard-actions">
@@ -398,7 +641,7 @@ export default function PharmacistDashboard() {
             </div>
           </div>
           <div className="pharmacist-dashboard-list">
-            {ordersQuery.isLoading ? <div className="empty-card compact-empty"><div className="card-title">Loading orders...</div></div> : null}
+            {ordersQuery.isLoading ? <div className="empty-card compact-empty"><BrandedSpinner label="Loading orders" /></div> : null}
             {!ordersQuery.isLoading && !orders.length ? <div className="empty-card compact-empty"><div className="card-title">No orders found.</div></div> : null}
             {orders.map((order) => {
               const orderId = order.id || order.order_id;
@@ -453,7 +696,7 @@ export default function PharmacistDashboard() {
             </div>
           </div>
           <div className="pharmacist-dashboard-list">
-            {ordersQuery.isLoading ? <div className="empty-card compact-empty"><div className="card-title">Loading payments...</div></div> : null}
+            {ordersQuery.isLoading ? <div className="empty-card compact-empty"><BrandedSpinner label="Loading payments" /></div> : null}
             {!ordersQuery.isLoading && !paymentOrders.length ? <div className="empty-card compact-empty"><div className="card-title">No payments found.</div></div> : null}
             {paymentOrders.map((order) => {
               const orderId = order.id || order.order_id;
@@ -508,7 +751,7 @@ export default function PharmacistDashboard() {
             </div>
           </div>
           <div className="pharmacist-dashboard-list">
-            {mtmQuery.isLoading ? <div className="empty-card compact-empty"><div className="card-title">Loading MTM requests...</div></div> : null}
+            {mtmQuery.isLoading ? <div className="empty-card compact-empty"><BrandedSpinner label="Loading MTM requests" /></div> : null}
             {!mtmQuery.isLoading && !mtmRequests.length ? <div className="empty-card compact-empty"><div className="card-title">No MTM requests found.</div></div> : null}
             {mtmRequests.map((request) => (
               <button

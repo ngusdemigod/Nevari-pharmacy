@@ -9,7 +9,10 @@ export default function SubscriptionSuccess({ onContinue, busy = false }) {
         <h1 className="subscription-title">
           Congratulations, you&apos;re now on Nevari Access <SubscriptionProBadge />
         </h1>
-        <SubscriptionSealArt variant="success" />
+        <p className="subscription-subtitle subscription-success-subtitle">Your subscription is active and ready to use across the dashboard.</p>
+        <div className="subscription-success-seal-wrap">
+          <SubscriptionSealArt variant="success" />
+        </div>
       </div>
 
       <div className="subscription-success-footer">

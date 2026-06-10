@@ -9,13 +9,14 @@ import { ArrowLeft01Icon, ArrowRight01Icon, ArrowUpRight01Icon, BatteryFullIcon,
 import { removeById, replaceById, updateListPayload, upsertById } from "../lib/fetcher";
 import { isProxyAppointmentsKey, isProxyDoctorsKey, isProxyOrdersKey, swrKeys, withBaseUrl } from "../lib/swrKeys";
 import ManageSubscription from "./components/profile/ManageSubscription";
+import { BrandedSpinner } from "./components/BrandedSpinner";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
 import { apiRequest, buildDashboardCacheKey, buildUrl, clearDashboardCacheForFrontend, DASHBOARD_CACHE_TTL_MS, fitTextToContainer, getOrderTypeMeta, hydrateStoredSession, isSessionUsable, money, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
-import { clearSessionAuth } from "./components/role-session";
+import { performGlobalLogout } from "./components/role-session";
 import SubscriptionGate from "./components/subscription/SubscriptionGate";
 import { useSubscription } from "./hooks/use-subscription";
-import { SkeletonBox } from "./_doctor-dashboard";
+import { RoleShell, SkeletonBox } from "./_doctor-dashboard";
 import { fetchCustomerMtmRequests, requestMtmReschedule, submitCustomerMtmRequest } from "./lib/nevari-api";
 
 const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
@@ -34,6 +35,7 @@ const NURSE_REQUEST_CLINICAL_REQUIREMENTS = ["Medication Administration", "Cathe
 const NURSE_REQUEST_UPLOAD_LABELS = ["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"];
 const pages = ["overview", "appointment", "orders", "request", "settings", "profile", "therapy"];
 const CUSTOMER_DASHBOARD_REFRESH_MS = 60_000;
+const CUSTOMER_MOBILE_BREAKPOINT = 960;
 const pageLabels = {
   overview: "Overview",
   appointment: "Appointments",
@@ -43,6 +45,24 @@ const pageLabels = {
   profile: "My Profile",
   therapy: "Medical Therapy Management"
 };
+
+function formatSubscriptionPriceLabel(subscription) {
+  const amount = Number(subscription?.monthlyEquivalent ?? subscription?.amount ?? 0);
+  const currency = String(subscription?.currency || "NGN").trim().toUpperCase();
+  const recurringLabel = "/month";
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return `${currency}1,000${recurringLabel}`;
+  }
+  try {
+    return `${new Intl.NumberFormat("en-NG", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(amount)}${recurringLabel}`;
+  } catch {
+    return `${currency}${amount}${recurringLabel}`;
+  }
+}
 const APPOINTMENT_TIMEFRAME_OPTIONS = [
   "09:00",
   "09:30",
@@ -64,6 +84,20 @@ const APPOINTMENT_TIMEFRAME_OPTIONS = [
   "17:30"
 ];
 const DEFAULT_CONSULTATION_FEE_NGN = 5000;
+
+function renderCustomerNavIcon(page) {
+  const iconMap = {
+    overview: Home01Icon,
+    orders: ShoppingCart01Icon,
+    appointment: Calendar03Icon,
+    request: MedicalMaskIcon,
+    settings: Settings01Icon,
+    profile: UserIcon,
+    therapy: Medicine01Icon,
+  };
+  const icon = iconMap[page] || Home01Icon;
+  return <HugeiconsIcon icon={icon} size={18} strokeWidth={1.8} />;
+}
 
 function resolveUserRoles(user = null) {
   const roles = Array.isArray(user?.roles) ? user.roles : [];
@@ -89,8 +123,9 @@ function forcePatientLogoutToLogin() {
   const activeSession = hydrateStoredSession("patient");
   clearDashboardCacheForFrontend("patient", activeSession?.user?.id);
   window.localStorage.removeItem(CUSTOMER_NURSE_REQUESTS_KEY);
-  clearSessionAuth(FRONTENDS.patient, activeSession);
-  window.location.replace(FRONTENDS.patient.loginPath);
+  performGlobalLogout(FRONTENDS.patient, activeSession).finally(() => {
+    window.location.replace(FRONTENDS.patient.loginPath);
+  });
 }
 
 async function readCustomerNextApiResponse(response, fallbackMessage = "Request failed.") {
@@ -574,6 +609,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const [journey, setJourney] = useState(createJourneyState());
   const [reviewDeepLinkHandled, setReviewDeepLinkHandled] = useState(false);
   const [settings, setSettings] = useState(() => loadCustomerSettings());
+  const [isCustomerMobile, setIsCustomerMobile] = useState(true);
   const storefrontSettings = useMemo(() => loadStorefrontSettings(), []);
   const minimumBookingMinutes = useMemo(() => normalizeBookingMinutes(storefrontSettings.minimumConsultationMinutes), [storefrontSettings.minimumConsultationMinutes]);
 
@@ -582,11 +618,33 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   }, [page]);
 
   useEffect(() => {
-    document.body.classList.add("customer-mobile-mode");
-    return () => {
-      document.body.classList.remove("customer-mobile-mode");
-    };
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      setIsCustomerMobile(true);
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia(`(max-width: ${CUSTOMER_MOBILE_BREAKPOINT}px)`);
+    const syncCustomerMobile = (event) => setIsCustomerMobile(event.matches);
+    syncCustomerMobile(mediaQuery);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncCustomerMobile);
+      return () => mediaQuery.removeEventListener("change", syncCustomerMobile);
+    }
+    mediaQuery.addListener(syncCustomerMobile);
+    return () => mediaQuery.removeListener(syncCustomerMobile);
   }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+    const { body } = document;
+    if (isCustomerMobile) {
+      body.classList.add("customer-mobile-mode");
+      return () => body.classList.remove("customer-mobile-mode");
+    }
+    body.classList.remove("customer-mobile-mode");
+    return undefined;
+  }, [isCustomerMobile]);
 
   useEffect(() => {
     persistCustomerSettings(settings);
@@ -1242,6 +1300,145 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     setJourney(createJourneyState());
   }
 
+  if (!isCustomerMobile) {
+    return <RoleShell
+      title="Nevari Customer"
+      pages={pages}
+      active={page}
+      onPageChange={setPage}
+      pageLabels={pageLabels}
+      renderNavIcon={renderCustomerNavIcon}
+      onLogout={handleLogout}
+      logoutBusy={logoutBusy}
+      topContent={<div className="customer-desktop-topbar">
+        <label className="customer-desktop-search-shell" aria-label="Search dashboard">
+          <HugeiconsIcon icon={Search01Icon} size={18} strokeWidth={1.8} />
+          <input type="search" placeholder="Search here for orders, appointments etc" readOnly />
+        </label>
+      </div>}
+    >
+      {showSkeleton ? <CustomerDesktopSkeleton page={page} /> : null}
+      {!showSkeleton && page === "overview" ? <CustomerOverview
+        doctors={visibleDoctors}
+        doctorsUnavailable={state.doctorsUnavailable}
+        orders={state.orders}
+        appointments={state.appointments}
+        orderCounts={orderCounts}
+        spentThisMonth={spentThisMonth}
+        onOpenPage={setPage}
+        onOpenAvailability={openDoctorAvailability}
+        onOpenReviews={openDoctorReviews}
+        onOpenAppointment={setSelectedAppointment}
+        storeCurrency={storeCurrency}
+        storeTimeZone={storeTimeZone}
+        storeUrl={storeUrl}
+      /> : null}
+      {!showSkeleton && page === "orders" ? <OrdersPage
+        orders={state.orders}
+        counts={orderCounts}
+        expandedOrderId={expandedOrderId}
+        loading={ordersLoading}
+        onToggleOrder={setExpandedOrderId}
+        onOpenOrderDocuments={openOrderDocuments}
+        onCancelPendingOrder={cancelPendingOrder}
+        onRefillOrder={refillOrder}
+        refillOrderBusy={refillOrderBusy}
+        onOpenOrderDetails={setSelectedOrder}
+        storeCurrency={storeCurrency}
+      /> : null}
+      {!showSkeleton && page === "appointment" ? <AppointmentPage
+        profile={profile}
+        settings={settings}
+        doctors={visibleDoctors}
+        doctorsUnavailable={state.doctorsUnavailable}
+        doctorsLoading={doctorsLoading}
+        appointmentsLoading={appointmentsLoading}
+        journey={journey}
+        selectedDoctor={selectedDoctor}
+        upcoming={upcomingAppointments}
+        past={pastAppointments}
+        onOpenAvailability={openDoctorAvailability}
+        onOpenReviews={openDoctorReviews}
+        onOpenAppointment={setSelectedAppointment}
+        onUpdateAvailabilityDate={updateAvailabilityDate}
+        onSelectSlot={(slot) => setJourney((current) => ({ ...current, selectedSlot: slot }))}
+        onDurationChange={(durationMinutes) => setJourney((current) => ({ ...current, durationMinutes }))}
+        onReasonChange={(reason) => setJourney((current) => ({ ...current, reason }))}
+        onCreateAppointmentCheckout={createAppointmentCheckout}
+        onRescheduleAppointmentCheckout={rescheduleAppointmentFromSelection}
+        onRefreshConfirmation={refreshConfirmation}
+        onCancelCheckoutAppointment={cancelCheckoutAppointment}
+        onResetJourney={resetAppointmentJourney}
+        onReviewDraftChange={(field, value) => setJourney((current) => ({ ...current, reviewDraft: { ...current.reviewDraft, [field]: value } }))}
+        onSubmitReview={submitReview}
+        onOpenSearch={() => {}}
+        onOpenMenu={() => {}}
+        calendarDownloadUrl={journey.appointment?.mock ? "" : (journey.appointment?.id ? buildUrl(hydrateStoredSession("patient"), `/appointments/${journey.appointment.id}/calendar`) : "")}
+        storeCurrency={storeCurrency}
+        storeTimeZone={storeTimeZone}
+        storefrontSettings={storefrontSettings}
+        minimumBookingMinutes={minimumBookingMinutes}
+        subscriptionState={subscriptionState}
+        showConsultationQuotaNotice={showConsultationQuotaNotice}
+        consultationQuotaTitle={consultationQuotaTitle}
+        consultationQuotaBody={consultationQuotaBody}
+        consultationQuotaResetText={consultationQuotaResetText}
+        consultationQuotaTotal={consultationQuotaTotal}
+        consultationQuotaUsed={consultationQuotaUsed}
+        consultationQuotaRemaining={consultationQuotaRemaining}
+        rescheduleTarget={appointmentRescheduleTarget}
+        onClearRescheduleTarget={onClearAppointmentRescheduleTarget}
+        onShowConsultationQuotaNotice={() => setConsultationQuotaDismissed(false)}
+        onDismissConsultationQuotaNotice={() => setConsultationQuotaDismissed(true)}
+      /> : null}
+      {!showSkeleton && page === "settings" ? <SettingsPage
+        profile={profile}
+        doctors={visibleDoctors}
+        orders={state.orders}
+        appointments={state.appointments}
+        settings={settings}
+        onSettingsChange={setSettings}
+        onLogout={handleLogout}
+        logoutBusy={logoutBusy}
+      /> : null}
+      {!showSkeleton && page === "profile" ? <ProfilePage
+        profile={profile}
+        orders={state.orders}
+        appointments={state.appointments}
+        doctors={visibleDoctors}
+        settings={settings}
+        onSettingsChange={setSettings}
+        onLogout={handleLogout}
+        logoutBusy={logoutBusy}
+      /> : null}
+      {!showSkeleton && ["request", "therapy"].includes(page) ? <div className="customer-desktop-panel customer-desktop-panel-centered">
+        <div className="customer-desktop-panel-copy">
+          <h2>{pageLabels[page]}</h2>
+          <p>{page === "request" ? "Continue this care request flow on mobile-sized screens for the guided form experience." : "Manage your Nevari Access therapy and MTM flow from the customer dashboard."}</p>
+        </div>
+      </div> : null}
+      {selectedAppointment ? <AppointmentDetailsModal
+        appointment={selectedAppointment}
+        doctors={visibleDoctors}
+        storeTimeZone={storeTimeZone}
+        busy={appointmentActionBusy}
+        onCancelAppointment={cancelAppointmentFromDetails}
+        onRescheduleAppointment={startAppointmentReschedule}
+        onOpenOrderDocuments={openOrderDocuments}
+        onClose={() => setSelectedAppointment(null)}
+      /> : null}
+      {selectedOrder ? <OrderDetailsModal
+        order={selectedOrder}
+        storeCurrency={storeCurrency}
+        onOpenOrderDocuments={openOrderDocuments}
+        onCancelPendingOrder={cancelPendingOrder}
+        onRefillOrder={refillOrder}
+        refillOrderBusy={refillOrderBusy}
+        onClose={() => setSelectedOrder(null)}
+      /> : null}
+    </RoleShell>;
+  }
+
   return <>
     <CustomerMobileDashboard
       session={session}
@@ -1522,6 +1719,22 @@ function CustomerProfileSkeleton() {
       </article>)}
     </section>
   </div>;
+}
+
+function CustomerDesktopSkeleton({ page }) {
+  if (page === "orders") {
+    return <CustomerOrdersSkeleton />;
+  }
+  if (page === "appointment") {
+    return <CustomerAppointmentSkeleton />;
+  }
+  if (["settings", "request", "therapy"].includes(page)) {
+    return <CustomerSettingsSkeleton />;
+  }
+  if (page === "profile") {
+    return <CustomerProfileSkeleton />;
+  }
+  return <CustomerOverviewSkeleton />;
 }
 
 function CustomerAppHeader({ profile }) {
@@ -2421,7 +2634,7 @@ function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, 
           <strong>{day.day}</strong>
         </button>)}
       </div>
-      {journey.loading ? <div className="empty-card compact-empty"><div className="card-title">Loading slots...</div></div> : null}
+      {journey.loading ? <div className="empty-card compact-empty"><BrandedSpinner label="Loading appointment slots" /></div> : null}
       {journey.error ? <div className="appointment-inline-alert">{journey.error}</div> : null}
       <div className="appointment-slot-grid">
         {journey.slots.length ? journey.slots.map((slot) => {
@@ -2549,8 +2762,8 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
 
       <CustomerStatusActions>
         {canProceedToPayment ? <a className="customer-mobile-primary-button customer-flow-status-link" href={paymentUrl} target="_blank" rel="noreferrer">{!livePaymentsEnabled && paymentUrl === "#demo-payment" ? "Open demo payment" : "Proceed to payment"}</a> : null}
-        {canRefreshPayment ? <button className="customer-mobile-secondary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? "Checking..." : "Check payment status"}</button> : null}
-        {!paymentPending && hasAppointment ? <button className="customer-mobile-primary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? "Loading..." : "View confirmation"}</button> : null}
+        {canRefreshPayment ? <button className="customer-mobile-secondary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? <BrandedSpinner className="button-spinner" label="Checking payment status" /> : "Check payment status"}</button> : null}
+        {!paymentPending && hasAppointment ? <button className="customer-mobile-primary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? <BrandedSpinner className="button-spinner" label="Loading confirmation" /> : "View confirmation"}</button> : null}
         {canCancelAppointment ? <button className="customer-mobile-secondary-button customer-flow-status-danger-button" type="button" onClick={onCancelCheckoutAppointment} disabled={journey.loading}>Cancel appointment</button> : null}
       </CustomerStatusActions>
 
@@ -5144,6 +5357,7 @@ function CustomerMobileDashboard({
           showSuccess={subscriptionState.showSuccess}
           error={subscriptionState.actionError}
           busy={subscriptionState.isActionBusy}
+          priceLabel={formatSubscriptionPriceLabel(subscriptionState.subscription)}
           onOpenMenu={() => setDrawerOpen(true)}
           onSubscribe={() => subscriptionState.launchCheckout()}
           onContinue={async () => {

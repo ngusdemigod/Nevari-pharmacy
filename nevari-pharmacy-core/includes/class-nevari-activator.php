@@ -58,6 +58,8 @@ final class Nevari_Activator {
         $login_challenges = Nevari_Helpers::table('login_challenges');
         $pairing_sessions = Nevari_Helpers::table('pairing_sessions');
         $frontend_connections = Nevari_Helpers::table('frontend_connections');
+        $sso_transactions = Nevari_Helpers::table('sso_transactions');
+        $session_families = Nevari_Helpers::table('session_families');
         $subscription_plans = Nevari_Helpers::table('subscription_plans');
         $subscriptions = Nevari_Helpers::table('subscriptions');
         $subscription_payments = Nevari_Helpers::table('subscription_payments');
@@ -387,6 +389,9 @@ final class Nevari_Activator {
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             user_id BIGINT UNSIGNED NOT NULL,
             token_hash CHAR(64) NOT NULL,
+            session_family_uuid CHAR(36) NULL,
+            frontend_type VARCHAR(40) NULL,
+            frontend_origin VARCHAR(255) NULL,
             user_agent TEXT NULL,
             ip_address VARCHAR(45) NULL,
             expires_at DATETIME NOT NULL,
@@ -394,7 +399,9 @@ final class Nevari_Activator {
             created_at DATETIME NOT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY token_hash (token_hash),
-            KEY user_active (user_id, revoked_at, expires_at)
+            KEY user_active (user_id, revoked_at, expires_at),
+            KEY session_family_uuid (session_family_uuid),
+            KEY frontend_context (frontend_type, frontend_origin(191))
         ) {$charset};");
 
         dbDelta("CREATE TABLE {$login_challenges} (
@@ -451,6 +458,45 @@ final class Nevari_Activator {
             UNIQUE KEY frontend_type_origin (frontend_type, frontend_origin),
             KEY trust_status (trust_status),
             KEY pairing_session_id (pairing_session_id)
+        ) {$charset};");
+
+        dbDelta("CREATE TABLE {$session_families} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            family_uuid CHAR(36) NOT NULL,
+            user_id BIGINT UNSIGNED NOT NULL,
+            source_app VARCHAR(40) NOT NULL DEFAULT 'direct_login',
+            frontend_type VARCHAR(40) NULL,
+            frontend_origin VARCHAR(255) NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            revoked_at DATETIME NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY family_uuid (family_uuid),
+            KEY user_status (user_id, status)
+        ) {$charset};");
+
+        dbDelta("CREATE TABLE {$sso_transactions} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            transaction_uuid CHAR(36) NOT NULL,
+            source_app VARCHAR(40) NOT NULL,
+            target_app VARCHAR(40) NOT NULL,
+            target_frontend_type VARCHAR(40) NULL,
+            user_id BIGINT UNSIGNED NOT NULL,
+            verified_origin VARCHAR(255) NULL,
+            state_hash CHAR(64) NOT NULL,
+            post_login_path VARCHAR(255) NULL,
+            session_family_uuid CHAR(36) NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'issued',
+            expires_at DATETIME NOT NULL,
+            consumed_at DATETIME NULL,
+            completed_at DATETIME NULL,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY transaction_uuid (transaction_uuid),
+            KEY user_target (user_id, target_app, status),
+            KEY session_family_uuid (session_family_uuid),
+            KEY expires_at (expires_at)
         ) {$charset};");
 
         dbDelta("CREATE TABLE {$subscription_plans} (

@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandedLoadingScreen } from "../BrandedSpinner";
 import Paywall from "./Paywall";
 import SubscriptionSuccess from "./SubscriptionSuccess";
 
@@ -12,14 +13,11 @@ export default function SubscriptionGate({
   onOpenMenu,
   onSubscribe,
   onContinue,
+  priceLabel,
   children,
 }) {
   if (loading) {
-    return (
-      <section className="subscription-shell subscription-shell-loading">
-        <div className="subscription-loading-spinner" aria-label="Loading subscription access" />
-      </section>
-    );
+    return <BrandedLoadingScreen className="subscription-shell subscription-shell-loading" label="Loading subscription access" />;
   }
 
   if (showSuccess) {
@@ -27,7 +25,7 @@ export default function SubscriptionGate({
   }
 
   if (!allowed) {
-    return <Paywall busy={busy} error={error} onOpenMenu={onOpenMenu} onSubscribe={onSubscribe} />;
+    return <Paywall busy={busy} error={error} onOpenMenu={onOpenMenu} onSubscribe={onSubscribe} priceLabel={priceLabel} />;
   }
 
   return children;

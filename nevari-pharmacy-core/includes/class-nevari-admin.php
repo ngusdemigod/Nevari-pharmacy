@@ -502,6 +502,7 @@ final class Nevari_Admin {
             <div class="notice notice-info inline">
                 <p><?php echo esc_html(sprintf(__('WooCommerce gateway status: %s', 'nevari-pharmacy-core'), Nevari_Helpers::woocommerce_payment_gateway_configured() ? __('at least one gateway is enabled', 'nevari-pharmacy-core') : __('no enabled WooCommerce gateway detected', 'nevari-pharmacy-core'))); ?></p>
                 <p><?php esc_html_e('Pay Now links use the plugin document-data endpoint. For WooCommerce mode, the endpoint returns the official WooCommerce order-pay URL so installed gateways such as Paystack, Stripe, or Flutterwave can collect payment.', 'nevari-pharmacy-core'); ?></p>
+                <p><?php esc_html_e('The WooCommerce Nevari Paystack gateway reuses the Paystack credentials saved on this page. Keep the Paystack webhook pointed at the Nevari REST webhook URL shown below.', 'nevari-pharmacy-core'); ?></p>
             </div>
 
             <form method="post">
@@ -538,6 +539,7 @@ final class Nevari_Admin {
                     'secret_key' => __('Secret key', 'nevari-pharmacy-core'),
                     'webhook_secret' => __('Webhook secret', 'nevari-pharmacy-core'),
                 ], $settings); ?>
+                <p><strong><?php esc_html_e('Paystack webhook URL', 'nevari-pharmacy-core'); ?>:</strong> <code><?php echo esc_html(rest_url(NEVARI_PHARMACY_REST_NS . '/payments/paystack/webhook')); ?></code></p>
 
                 <?php self::render_gateway_fieldset('stripe', 'Stripe', [
                     'publishable_key' => __('Publishable key', 'nevari-pharmacy-core'),

@@ -951,6 +951,9 @@ final class Nevari_Rest {
         if (is_wp_error($result)) {
             return Nevari_Helpers::error($result->get_error_code(), $result->get_error_message(), 502);
         }
+        if (!empty($result['paid'])) {
+            self::complete_order_payment($order, $gateway, sanitize_text_field((string) ($result['transaction_id'] ?? $reference)));
+        }
 
         return Nevari_Helpers::success([
             'paid' => (bool) $result['paid'],
@@ -1159,7 +1162,14 @@ final class Nevari_Rest {
             return Nevari_Helpers::error('order_not_found', 'Webhook order not found.', 404);
         }
 
-        $result = self::verify_gateway_payment($gateway, $reference, $order);
+        if ($gateway === 'paystack' && (string) $order->get_payment_method() === Nevari_Paystack::WC_GATEWAY_ID) {
+            $result = Nevari_Paystack::verify_and_complete_woocommerce_order($order, $reference, 'webhook');
+        } else {
+            $result = self::verify_gateway_payment($gateway, $reference, $order);
+            if (!is_wp_error($result) && !empty($result['paid'])) {
+                self::complete_order_payment($order, $gateway, sanitize_text_field((string) ($result['transaction_id'] ?? $reference)));
+            }
+        }
         if (is_wp_error($result)) {
             return Nevari_Helpers::error($result->get_error_code(), $result->get_error_message(), 422);
         }
@@ -2338,11 +2348,11 @@ final class Nevari_Rest {
     }
 
     private static function available_invoice_gateways(): array {
-        $settings = Nevari_Helpers::payment_gateway_settings();
         $gateways = [];
-        if (!empty($settings['paystack']['secret_key'])) {
+        if (Nevari_Paystack::is_configured()) {
             $gateways[] = 'paystack';
         }
+        $settings = Nevari_Helpers::payment_gateway_settings();
         if (!empty($settings['flutterwave']['secret_key'])) {
             $gateways[] = 'flutterwave';
         }
@@ -2377,22 +2387,16 @@ final class Nevari_Rest {
 
     private static function initialize_gateway_payment_raw(string $gateway, string $reference, string $callback_url, array $metadata, array $settings, float $amount, string $currency, string $email, string $customer_name, string $title) {
         if ($gateway === 'paystack') {
-            $response = wp_remote_post('https://api.paystack.co/transaction/initialize', [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . (string) $settings['paystack']['secret_key'],
-                    'Content-Type' => 'application/json',
-                ],
-                'body' => wp_json_encode([
-                    'email' => $email,
-                    'amount' => (int) round($amount * 100),
-                    'currency' => $currency,
-                    'reference' => $reference,
-                    'callback_url' => $callback_url,
-                    'metadata' => $metadata,
-                ]),
-                'timeout' => 30,
-            ]);
-            return self::payment_init_response($gateway, $reference, $response, ['data', 'authorization_url']);
+            return Nevari_Paystack::initialize_payment(
+                $reference,
+                $callback_url,
+                $metadata,
+                $amount,
+                $currency,
+                $email,
+                $customer_name,
+                $title
+            );
         }
 
         if ($gateway === 'flutterwave') {
@@ -2487,14 +2491,15 @@ final class Nevari_Rest {
         if (!$stored_reference || !hash_equals($stored_reference, $reference)) {
             return new WP_Error('payment_context_mismatch', 'Payment does not match the initialized transaction.');
         }
-        $settings = Nevari_Helpers::payment_gateway_settings();
         if ($gateway === 'paystack') {
-            $response = wp_remote_get('https://api.paystack.co/transaction/verify/' . rawurlencode($reference), [
-                'headers' => ['Authorization' => 'Bearer ' . (string) $settings['paystack']['secret_key']],
-                'timeout' => 30,
-            ]);
-            return self::verify_gateway_response_raw($response, ['data', 'status'], 'success', ['data', 'reference'], ['data', 'amount'], 100, ['data', 'currency'], ['data', 'metadata'], $expected_amount, $expected_currency, $metadata);
+            return Nevari_Paystack::verify_payment(
+                $reference,
+                $expected_amount,
+                $expected_currency,
+                $metadata
+            );
         }
+        $settings = Nevari_Helpers::payment_gateway_settings();
         if ($gateway === 'flutterwave') {
             $response = wp_remote_get('https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=' . rawurlencode($reference), [
                 'headers' => ['Authorization' => 'Bearer ' . (string) $settings['flutterwave']['secret_key']],
@@ -2571,12 +2576,15 @@ final class Nevari_Rest {
     }
 
     private static function complete_order_payment($order, string $gateway, string $transaction_id): void {
+        $stored_reference = sanitize_text_field((string) $order->get_meta('_nevari_invoice_payment_reference'));
         if ($order->needs_payment()) {
             $order->payment_complete($transaction_id);
         }
         $order->set_transaction_id($transaction_id);
         $order->update_meta_data('_nevari_invoice_payment_gateway', $gateway);
-        $order->update_meta_data('_nevari_invoice_payment_reference', $transaction_id);
+        if ($stored_reference !== '') {
+            $order->update_meta_data('_nevari_invoice_payment_reference', $stored_reference);
+        }
         $order->add_order_note(sprintf('Payment completed via invoice Pay Now link. Gateway: %s. Reference: %s', ucfirst($gateway), $transaction_id));
         $order->save();
     }
@@ -2595,9 +2603,7 @@ final class Nevari_Rest {
     private static function gateway_webhook_signature_valid(string $gateway, WP_REST_Request $request, string $raw_body): bool {
         $settings = Nevari_Helpers::payment_gateway_settings();
         if ($gateway === 'paystack') {
-            $secret = (string) $settings['paystack']['secret_key'];
-            $signature = (string) $request->get_header('x-paystack-signature');
-            return $secret && $signature && hash_equals(hash_hmac('sha512', $raw_body, $secret), $signature);
+            return Nevari_Paystack::webhook_signature_valid($request, $raw_body);
         }
         if ($gateway === 'flutterwave') {
             $secret = (string) $settings['flutterwave']['webhook_secret'];
@@ -2644,6 +2650,10 @@ final class Nevari_Rest {
     private static function get_order_for_payment_reference(string $reference) {
         if (!$reference || !function_exists('wc_get_orders')) {
             return null;
+        }
+        $paystack_order = Nevari_Paystack::get_order_for_reference($reference);
+        if ($paystack_order) {
+            return $paystack_order;
         }
         $orders = wc_get_orders([
             'limit' => 1,

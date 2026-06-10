@@ -86,6 +86,28 @@ The proxy rejects requests when either required configuration value is missing, 
 
 Session bearer tokens are held in server-managed `HttpOnly`, `SameSite=Strict` cookies. Browser storage contains only non-secret connection/UI state and a session-presence marker.
 
+## Sentry
+
+This storefront is wired for full-stack Sentry monitoring through Next.js App Router instrumentation.
+
+Environment variables:
+
+```powershell
+$env:NEXT_PUBLIC_SENTRY_DSN="<browser-dsn>"
+$env:SENTRY_DSN="<server-dsn-or-same-as-browser>"
+$env:SENTRY_AUTH_TOKEN="<sentry-auth-token-for-source-map-upload>"
+$env:SENTRY_ORG="<sentry-org-slug>"
+$env:SENTRY_PROJECT="<sentry-project-slug>"
+$env:SENTRY_ENVIRONMENT="production"
+$env:SENTRY_RELEASE="<optional-release-name>"
+```
+
+Notes:
+
+- Source map upload is enabled only when `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` are set.
+- Session Replay is intentionally not enabled.
+- Request bodies, cookies, auth headers, and common patient/customer fields are scrubbed before events are sent.
+
 ## Cross-origin note
 
 The plugin now sends CORS headers for Nevari REST routes when the request origin matches the allowed list.

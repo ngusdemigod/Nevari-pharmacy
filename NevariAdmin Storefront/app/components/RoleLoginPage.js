@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { setDocumentMetadata } from "./page-metadata";
 import { buildUrl, defaultSession, frontendContext, isPairingRequiredPayload, loadSession, resetToPairingState, saveSession } from "./role-session";
 
@@ -56,12 +56,13 @@ function noticeTone(message) {
 
 export default function RoleLoginPage({ config }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [session, setSession] = useState(() => defaultSession(config));
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [resetUsername, setResetUsername] = useState("");
   const [registration, setRegistration] = useState({ firstName: "", lastName: "", email: "", password: "" });
-  const [verification, setVerification] = useState({ challengeId: "", maskedEmail: "", code: "" });
+  const [verification, setVerification] = useState({ challengeId: "", maskedEmail: "", code: "", ssoTransactionId: "", returnPath: "" });
   const verificationInputRef = useRef(null);
   const [view, setView] = useState("login");
   const [notice, setNotice] = useState({ message: config.loginPrompt || `Sign in to ${config.label}.`, tone: "warning" });
@@ -116,6 +117,27 @@ export default function RoleLoginPage({ config }) {
       active = false;
     };
   }, [config, router]);
+
+  useEffect(() => {
+    const challengeId = String(searchParams.get("challenge_id") || "").trim();
+    if (!challengeId) {
+      return;
+    }
+
+    const maskedEmail = String(searchParams.get("masked_email") || "").trim();
+    const ssoTransactionId = String(searchParams.get("sso_transaction_id") || "").trim();
+    const returnPath = String(searchParams.get("next") || "").trim();
+    setVerification({
+      challengeId,
+      maskedEmail,
+      code: "",
+      ssoTransactionId,
+      returnPath
+    });
+    setView("verify");
+    setResendCooldown(RESEND_CODE_COOLDOWN_SECONDS);
+    showNotice(`Enter the code sent to ${maskedEmail || "your email"}.`, "warning");
+  }, [searchParams]);
 
   useEffect(() => {
     const viewLabel = view === "verify" ? "Verify Login" : view === "reset" ? "Reset Password" : view === "register" ? "Create Account" : "Sign In";
@@ -191,6 +213,7 @@ export default function RoleLoginPage({ config }) {
         body: JSON.stringify({
           challenge_id: verification.challengeId,
           code: verification.code,
+          sso_transaction_id: verification.ssoTransactionId,
           ...frontendContext(session)
         })
       });
@@ -211,8 +234,9 @@ export default function RoleLoginPage({ config }) {
         user: payload.data.user
       };
       saveSession(config, next);
-      router.prefetch(config.dashboardPath);
-      router.replace(config.dashboardPath);
+      const destination = verification.returnPath || config.dashboardPath;
+      router.prefetch(destination);
+      router.replace(destination);
     } finally {
       setLoadingAction("");
     }

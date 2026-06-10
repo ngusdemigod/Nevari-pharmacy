@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { BrandedSpinner } from "../BrandedSpinner";
 
 function formatDate(value) {
   if (!value) {
@@ -17,11 +18,11 @@ function formatDate(value) {
   }).format(date);
 }
 
-function formatNaira(value) {
+function formatMoney(value, currency = "NGN") {
   const amount = Number(value || 0);
   return new Intl.NumberFormat("en-NG", {
     style: "currency",
-    currency: "NGN",
+    currency: String(currency || "NGN").trim().toUpperCase() || "NGN",
     minimumFractionDigits: amount % 1 === 0 ? 0 : 2,
     maximumFractionDigits: amount % 1 === 0 ? 0 : 2,
   }).format(amount);
@@ -62,12 +63,13 @@ export default function ManageSubscription({
   const isCancelled = status === "cancelled" || status === "expired";
   const isPendingCancellation = isCancelled && Boolean(subscription?.accessEndsAt || subscription?.access_ends_at || subscription?.renewal_date);
   const isActive = !isFree && (status === "active" || status === "trialing" || isPendingCancellation || status === "past_due");
+  const currency = String(subscription?.currency || "NGN").trim().toUpperCase() || "NGN";
 
   const amount = Number(
     subscription?.monthlyEquivalent
     ?? subscription?.monthly_equivalent
     ?? subscription?.amount
-    ?? (isFree ? 0 : 10)
+    ?? 0
   );
   const nextPaymentDate = subscription?.nextPaymentDate
     ?? subscription?.next_payment_date
@@ -77,7 +79,7 @@ export default function ManageSubscription({
     ?? subscription?.access_ends_at
     ?? subscription?.ends_at
     ?? null;
-  const formattedAmount = formatNaira(isFree ? 0 : amount);
+  const formattedAmount = formatMoney(isFree ? 0 : amount, currency);
   const frequencyLabel = isFree
     ? "Free"
     : frequencyRaw === "yearly" || frequencyRaw === "year"
@@ -147,15 +149,8 @@ export default function ManageSubscription({
   if (loading) {
     return (
       <article className="customer-profile-card customer-profile-card-wide subscription-manage-card is-loading" aria-busy="true">
-        <div className="subscription-top">
-          <div className="plan-info">
-            <span className="frequency skeleton-block skeleton-line skeleton-line-sm" />
-            <span className="monthly-price skeleton-block skeleton-line skeleton-line-xs" />
-          </div>
-          <div className="total-price">
-            <span className="subscription-action skeleton-block skeleton-pill skeleton-pill-sm" />
-            <span className="next-subscription skeleton-block skeleton-line skeleton-line-xs" />
-          </div>
+        <div className="subscription-manage-spinner-wrap">
+          <BrandedSpinner label="Loading subscription details" />
         </div>
       </article>
     );

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { BrandedLoadingScreen } from "../../components/BrandedSpinner";
 import { FRONTENDS } from "../../components/frontend-config";
 
 const SESSION_MARKER = "server-session";
@@ -102,7 +103,7 @@ function InlineSpinner() {
   return <span className="paywall-spinner" aria-label="Loading payment details" />;
 }
 
-export default function PaywallPage() {
+function PaywallPageContent() {
   const { invoiceRef } = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -331,5 +332,13 @@ export default function PaywallPage() {
         }
       `}</style>
     </main>
+  );
+}
+
+export default function PaywallPage() {
+  return (
+    <Suspense fallback={<BrandedLoadingScreen label="Loading payment details" />}>
+      <PaywallPageContent />
+    </Suspense>
   );
 }

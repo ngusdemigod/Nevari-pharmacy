@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
+import { BrandedLoadingScreen } from "../../../../components/BrandedSpinner";
 import { FRONTENDS } from "../../../../components/frontend-config";
 import { renderDocumentHtml } from "../../../../lib/documentHtml";
 
@@ -157,7 +158,7 @@ function normalizeDocumentData(rawOrder, prescription = null, role = "admin") {
   };
 }
 
-export default function OrderDocumentsPage() {
+function OrderDocumentsPageContent() {
   const { orderId } = useParams();
   const searchParams = useSearchParams();
   const previewRef = useRef(null);
@@ -297,5 +298,13 @@ export default function OrderDocumentsPage() {
         }
       `}</style>
     </main>
+  );
+}
+
+export default function OrderDocumentsPage() {
+  return (
+    <Suspense fallback={<BrandedLoadingScreen label="Loading document data" />}>
+      <OrderDocumentsPageContent />
+    </Suspense>
   );
 }

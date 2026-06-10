@@ -1,7 +1,7 @@
 "use client";
 
 import { FRONTENDS } from "./frontend-config";
-import { clearSessionAuth, createPairingRequiredError, isPairingRequiredPayload, resetToPairingState } from "./role-session";
+import { createPairingRequiredError, isPairingRequiredPayload, performGlobalLogout, resetToPairingState } from "./role-session";
 
 export const STORAGE_KEY = FRONTENDS.patient.storageKey;
 export const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -128,8 +128,9 @@ function forceSessionLogout(session) {
   }
   const frontend = frontendConfigForSession(session);
   clearDashboardCacheForFrontend(frontend === FRONTENDS.patient ? "patient" : frontend.type, session?.user?.id);
-  clearSessionAuth(frontend, session);
-  window.location.replace(frontend.loginPath);
+  performGlobalLogout(frontend, session).finally(() => {
+    window.location.replace(frontend.loginPath);
+  });
 }
 
 export async function apiRequest(session, path, { method = "GET", params = {}, body, suppressHttpError = false } = {}) {

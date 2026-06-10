@@ -107,6 +107,15 @@ final class Nevari_Auth {
                 ]);
                 return 0;
             }
+            if (class_exists('Nevari_SSO') && !Nevari_SSO::is_session_family_active(self::session_family_from_payload($payload))) {
+                Nevari_Audit::log('security', 'nevari', 'auth.revoked_session_family', 'error', [
+                    'actor_user_id' => !empty($payload['sub']) ? (int) $payload['sub'] : 0,
+                    'severity' => 'warning',
+                    'error_code' => 'session_family_revoked',
+                    'message' => 'Access token was used after the session family had been revoked.',
+                ]);
+                return 0;
+            }
             if (!self::user_can_access_frontend((int) $payload['sub'], (string) $payload['frontend_type'])) {
                 return 0;
             }
@@ -174,7 +183,7 @@ final class Nevari_Auth {
         }
 
         if (self::frontend_requires_email_verification((string) $frontend['frontend_type'])) {
-            $challenge = self::issue_login_challenge($user, $frontend);
+            $challenge = self::create_login_challenge($user, $frontend);
             if (is_wp_error($challenge)) {
                 return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
             }
@@ -273,7 +282,14 @@ final class Nevari_Auth {
         }
 
         $wpdb->update($table, ['consumed_at' => Nevari_Helpers::now()], ['id' => (int) $row->id], ['%s'], ['%d']);
-        $tokens = self::issue_token_pair((int) $user->ID, $frontend);
+        $sso_transaction_id = isset($params['sso_transaction_id']) ? sanitize_text_field((string) $params['sso_transaction_id']) : '';
+        $issue_context = class_exists('Nevari_SSO') && $sso_transaction_id !== ''
+            ? Nevari_SSO::consume_dashboard_verification_context($sso_transaction_id, (int) $user->ID, $frontend)
+            : [];
+        if (is_wp_error($issue_context)) {
+            return Nevari_Helpers::error($issue_context->get_error_code(), $issue_context->get_error_message(), 403);
+        }
+        $tokens = self::issue_token_pair((int) $user->ID, $frontend, is_array($issue_context) ? $issue_context : []);
         Nevari_Audit::log('security', 'nevari', 'auth.login_success', 'success', [
             'actor_user_id' => (int) $user->ID,
             'related_user_id' => (int) $user->ID,
@@ -457,13 +473,28 @@ final class Nevari_Auth {
         if (!$user) {
             return Nevari_Helpers::error('invalid_refresh_token', 'Refresh token user no longer exists.', 401);
         }
+        if (class_exists('Nevari_SSO') && !Nevari_SSO::is_session_family_active(isset($row->session_family_uuid) ? (string) $row->session_family_uuid : '')) {
+            $wpdb->update($table, ['revoked_at' => $now], ['id' => (int) $row->id], ['%s'], ['%d']);
+            return Nevari_Helpers::error('session_revoked', 'Your session has expired. Please sign in again.', 401);
+        }
         if (!self::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
             $wpdb->update($table, ['revoked_at' => $now], ['id' => (int) $row->id], ['%s'], ['%d']);
             return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
         }
+        if (!empty($row->frontend_type) && (string) $row->frontend_type !== (string) $frontend['frontend_type']) {
+            $wpdb->update($table, ['revoked_at' => $now], ['id' => (int) $row->id], ['%s'], ['%d']);
+            return Nevari_Helpers::error('invalid_refresh_token', 'Refresh token context is invalid.', 401);
+        }
+        if (!empty($row->frontend_origin) && (string) $row->frontend_origin !== (string) $frontend['frontend_origin']) {
+            $wpdb->update($table, ['revoked_at' => $now], ['id' => (int) $row->id], ['%s'], ['%d']);
+            return Nevari_Helpers::error('invalid_refresh_token', 'Refresh token context is invalid.', 401);
+        }
 
         $wpdb->update($table, ['revoked_at' => $now], ['id' => (int) $row->id], ['%s'], ['%d']);
-        $tokens = self::issue_token_pair((int) $user->ID, $frontend);
+        $tokens = self::issue_token_pair((int) $user->ID, $frontend, [
+            'session_family_uuid' => isset($row->session_family_uuid) ? (string) $row->session_family_uuid : '',
+            'issued_for' => 'refresh',
+        ]);
 
         Nevari_Audit::log('security', 'nevari', 'auth.refresh_success', 'success', [
             'actor_user_id' => (int) $user->ID,
@@ -501,9 +532,11 @@ final class Nevari_Auth {
         if (!$frontend) {
             return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
         }
+        $current_payload = self::current_token_payload();
+        $session_family_uuid = self::session_family_from_payload($current_payload);
         if ($refresh_token) {
             $row = $wpdb->get_row($wpdb->prepare(
-                "SELECT id, user_id FROM " . Nevari_Helpers::table('refresh_tokens') . " WHERE token_hash = %s LIMIT 1",
+                "SELECT id, user_id, session_family_uuid FROM " . Nevari_Helpers::table('refresh_tokens') . " WHERE token_hash = %s LIMIT 1",
                 hash('sha256', $refresh_token)
             ));
             if ($row) {
@@ -518,7 +551,16 @@ final class Nevari_Auth {
                     ['%s'],
                     ['%d']
                 );
+                if (!$session_family_uuid && !empty($row->session_family_uuid)) {
+                    $session_family_uuid = (string) $row->session_family_uuid;
+                }
             }
+        }
+        if (class_exists('Nevari_SSO') && $session_family_uuid !== '') {
+            Nevari_SSO::revoke_session_family($session_family_uuid, [
+                'actor_user_id' => get_current_user_id() ?: null,
+                'reason' => 'api_logout',
+            ]);
         }
         Nevari_Audit::log('security', 'nevari', 'auth.logout', 'success', [
             'actor_user_id' => get_current_user_id() ?: null,
@@ -536,39 +578,6 @@ final class Nevari_Auth {
                 'origin' => !empty($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN'])) : null,
             ],
         ]);
-    }
-
-    private static function issue_token_pair(int $user_id, array $frontend): array {
-        global $wpdb;
-        $expires_in = (int) apply_filters('nevari_access_token_ttl', 15 * MINUTE_IN_SECONDS);
-        $access_token = self::encode_jwt([
-            'iss' => site_url(),
-            'sub' => $user_id,
-            'type' => 'access',
-            'aud' => $frontend['frontend_origin'],
-            'frontend_type' => $frontend['frontend_type'],
-            'frontend_origin' => $frontend['frontend_origin'],
-            'iat' => time(),
-            'exp' => time() + $expires_in,
-        ]);
-
-        $refresh_token = Nevari_Helpers::base64url_encode(random_bytes(32));
-        $refresh_ttl = (int) apply_filters('nevari_refresh_token_ttl', 30 * DAY_IN_SECONDS);
-        $wpdb->insert(Nevari_Helpers::table('refresh_tokens'), [
-            'user_id' => $user_id,
-            'token_hash' => hash('sha256', $refresh_token),
-            'user_agent' => !empty($_SERVER['HTTP_USER_AGENT']) ? substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])), 0, 1000) : null,
-            'ip_address' => Nevari_Helpers::client_ip(),
-            'expires_at' => gmdate('Y-m-d H:i:s', time() + $refresh_ttl),
-            'revoked_at' => null,
-            'created_at' => Nevari_Helpers::now(),
-        ], ['%d', '%s', '%s', '%s', '%s', '%s', '%s']);
-
-        return [
-            'access_token' => $access_token,
-            'refresh_token' => $refresh_token,
-            'expires_in' => $expires_in,
-        ];
     }
 
     public static function resend_code(WP_REST_Request $request): WP_REST_Response {
@@ -619,7 +628,7 @@ final class Nevari_Auth {
             return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
         }
 
-        $challenge = self::issue_login_challenge($user, $frontend);
+        $challenge = self::create_login_challenge($user, $frontend);
         if (is_wp_error($challenge)) {
             return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
         }
@@ -658,7 +667,7 @@ final class Nevari_Auth {
             return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
         }
 
-        $challenge = self::issue_login_challenge($user, $frontend);
+        $challenge = self::create_login_challenge($user, $frontend);
         if (is_wp_error($challenge)) {
             return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
         }
@@ -682,11 +691,11 @@ final class Nevari_Auth {
         ]);
     }
 
-    private static function frontend_requires_email_verification(string $frontend_type): bool {
+    public static function frontend_requires_email_verification(string $frontend_type): bool {
         return in_array($frontend_type, ['storefront', 'doctors_dashboard', 'pharmacist_dashboard'], true);
     }
 
-    private static function issue_login_challenge(WP_User $user, array $frontend) {
+    public static function create_login_challenge(WP_User $user, array $frontend) {
         global $wpdb;
         $code = (string) random_int(100000, 999999);
         $expires_in = 10 * MINUTE_IN_SECONDS;
@@ -766,7 +775,7 @@ final class Nevari_Auth {
         return $payload;
     }
 
-    private static function user_can_access_frontend($user, string $frontend_type): bool {
+    public static function user_can_access_frontend($user, string $frontend_type): bool {
         $resolved_user = $user instanceof WP_User ? $user : get_user_by('id', (int) $user);
         if (!$resolved_user) {
             return false;
@@ -805,6 +814,76 @@ final class Nevari_Auth {
             'capabilities' => array_values(array_filter($all_caps, static function ($cap) {
                 return strpos($cap, 'nevari_') === 0 || in_array($cap, ['manage_woocommerce', 'edit_products', 'edit_shop_orders'], true);
             })),
+        ];
+    }
+
+    public static function current_token_payload(): ?array {
+        $token = Nevari_Helpers::get_bearer_token();
+        if (!$token) {
+            return null;
+        }
+
+        $payload = self::decode_jwt($token);
+        return is_array($payload) ? $payload : null;
+    }
+
+    public static function current_session_family_uuid(): string {
+        return self::session_family_from_payload(self::current_token_payload());
+    }
+
+    public static function session_family_from_payload(?array $payload): string {
+        if (!is_array($payload) || empty($payload['session_family'])) {
+            return '';
+        }
+
+        return sanitize_text_field((string) $payload['session_family']);
+    }
+
+    public static function issue_token_pair(int $user_id, array $frontend, array $options = []): array {
+        global $wpdb;
+        $expires_in = (int) apply_filters('nevari_access_token_ttl', 15 * MINUTE_IN_SECONDS);
+        $session_family_uuid = !empty($options['session_family_uuid'])
+            ? sanitize_text_field((string) $options['session_family_uuid'])
+            : (class_exists('Nevari_SSO') ? Nevari_SSO::create_session_family($user_id, $frontend, $options) : wp_generate_uuid4());
+        $issued_for = !empty($options['issued_for']) ? sanitize_key((string) $options['issued_for']) : 'direct_login';
+
+        $access_token = self::encode_jwt([
+            'iss' => site_url(),
+            'sub' => $user_id,
+            'type' => 'access',
+            'aud' => $frontend['frontend_origin'],
+            'frontend_type' => $frontend['frontend_type'],
+            'frontend_origin' => $frontend['frontend_origin'],
+            'session_family' => $session_family_uuid,
+            'issued_for' => $issued_for,
+            'iat' => time(),
+            'exp' => time() + $expires_in,
+        ]);
+
+        $refresh_token = Nevari_Helpers::base64url_encode(random_bytes(32));
+        $refresh_ttl = (int) apply_filters('nevari_refresh_token_ttl', 30 * DAY_IN_SECONDS);
+        $wpdb->insert(Nevari_Helpers::table('refresh_tokens'), [
+            'user_id' => $user_id,
+            'token_hash' => hash('sha256', $refresh_token),
+            'session_family_uuid' => $session_family_uuid,
+            'frontend_type' => $frontend['frontend_type'],
+            'frontend_origin' => $frontend['frontend_origin'],
+            'user_agent' => !empty($_SERVER['HTTP_USER_AGENT']) ? substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])), 0, 1000) : null,
+            'ip_address' => Nevari_Helpers::client_ip(),
+            'expires_at' => gmdate('Y-m-d H:i:s', time() + $refresh_ttl),
+            'revoked_at' => null,
+            'created_at' => Nevari_Helpers::now(),
+        ], ['%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']);
+
+        if (class_exists('Nevari_SSO')) {
+            Nevari_SSO::touch_last_role($user_id, (string) $frontend['frontend_type']);
+        }
+
+        return [
+            'access_token' => $access_token,
+            'refresh_token' => $refresh_token,
+            'expires_in' => $expires_in,
+            'session_family' => $session_family_uuid,
         ];
     }
 }

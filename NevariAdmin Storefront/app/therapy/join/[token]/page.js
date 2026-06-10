@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { BrandedSpinner } from "../../../components/BrandedSpinner";
 
 function resolveApiBase(baseUrl) {
   const cleaned = String(baseUrl || "").trim().replace(/\/+$/, "");
@@ -52,14 +53,6 @@ const BRAND = {
     color: "#ffffff",
     textDecoration: "none",
     fontWeight: 600,
-  },
-  spinner: {
-    width: "24px",
-    height: "24px",
-    borderRadius: "999px",
-    border: "2px solid rgba(14, 41, 85, 0.18)",
-    borderTopColor: "#0E2955",
-    animation: "mtmJoinSpin 0.72s linear infinite",
   },
   srOnly: {
     position: "absolute",
@@ -143,19 +136,12 @@ export default function MtmJoinPage({ params }) {
         </div>
         {busy ? (
           <>
-            <span style={BRAND.spinner} aria-hidden="true" />
-            <span style={BRAND.srOnly}>{state.message}</span>
+            <BrandedSpinner label={state.message} />
           </>
         ) : (
           <p style={BRAND.body}>{message}</p>
         )}
         {!busy ? <Link href={state.bookUrl || "/dashboard"} style={BRAND.button}>Open MTM request</Link> : null}
-        <style jsx>{`
-          @keyframes mtmJoinSpin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-          }
-        `}</style>
       </section>
     </main>
   );
