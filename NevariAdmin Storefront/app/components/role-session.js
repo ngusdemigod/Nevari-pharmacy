@@ -1,6 +1,6 @@
 "use client";
 
-import { FRONTENDS } from "./frontend-config";
+import { DEFAULT_NEVARI_BASE_URL, FRONTENDS } from "./frontend-config";
 
 export const PAIRING_REQUIRED_ERROR_CODE = "frontend_pairing_required";
 export const SESSION_MARKER = "server-session";
@@ -8,6 +8,10 @@ const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function configuredBaseUrl(value) {
+  return normalizeBaseUrl(value || DEFAULT_NEVARI_BASE_URL);
 }
 
 function currentOriginValue() {
@@ -47,7 +51,7 @@ export function defaultSession(config) {
   const origin = hasWindow ? currentOriginValue() : "";
   const href = hasWindow ? window.location.href : "";
   return {
-    baseUrl: normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+    baseUrl: configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
     frontendType: config.type,
     frontendOrigin: origin,
     frontendUrl: origin === "null" ? "null" : href,
@@ -77,7 +81,7 @@ export function loadSession(config) {
     const adminSession = JSON.parse(localStorage.getItem("nevari_admin_storefront_session") || "{}");
     const isSharedFrontend = config.type !== "storefront";
     const sharedConnection = isSharedFrontend ? {
-      baseUrl: ownSession.baseUrl || adminSession.baseUrl || normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+      baseUrl: ownSession.baseUrl || adminSession.baseUrl || configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
       frontendOrigin: ownSession.frontendOrigin || adminSession.frontendOrigin || "",
       frontendUrl: ownSession.frontendUrl || adminSession.frontendUrl || "",
       paired: Boolean(ownSession.paired || adminSession.paired),

@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
+import { DEFAULT_NEVARI_BASE_URL } from "../../components/frontend-config";
 import { removeById, replaceById, updateListPayload, upsertById } from "../../../lib/fetcher";
 import { isAdminSummaryKey, isAppointmentListKey, isCustomerListKey, isDoctorListKey, isOrderListKey, isProductCategoryListKey, isProductListKey, isProductTagListKey, swrKeys, withBaseUrl } from "../../../lib/swrKeys";
 import { useCreateProduct, useDeleteProduct, useUpdateProduct } from "../../../hooks/products";
@@ -274,7 +275,7 @@ function defaultSession() {
   const href = hasWindow ? window.location.href : "";
 
   return {
-    baseUrl: normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+    baseUrl: normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL),
     frontendType: FRONTEND_TYPE,
     frontendOrigin: origin === "null" ? "null" : origin,
     frontendUrl: origin === "null" ? "null" : href,

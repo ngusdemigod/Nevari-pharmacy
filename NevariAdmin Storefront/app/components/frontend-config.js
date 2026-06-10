@@ -1,3 +1,5 @@
+export const DEFAULT_NEVARI_BASE_URL = "https://demo.nevarihealth.com";
+
 export const FRONTENDS = {
   patient: {
     type: "patient_dashboard",

@@ -1,6 +1,6 @@
 "use client";
 
-import { FRONTENDS } from "./frontend-config";
+import { DEFAULT_NEVARI_BASE_URL, FRONTENDS } from "./frontend-config";
 import { createPairingRequiredError, isPairingRequiredPayload, performGlobalLogout, resetToPairingState } from "./role-session";
 
 export const STORAGE_KEY = FRONTENDS.patient.storageKey;
@@ -16,6 +16,10 @@ function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function configuredBaseUrl(value) {
+  return normalizeBaseUrl(value || DEFAULT_NEVARI_BASE_URL);
+}
+
 function currentOriginValue() {
   if (typeof window === "undefined") {
     return "";
@@ -24,7 +28,7 @@ function currentOriginValue() {
 }
 
 export const DEFAULT_SESSION = {
-  baseUrl: normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+  baseUrl: configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
   frontendType: FRONTENDS.patient.type,
   frontendOrigin: "",
   frontendUrl: "",
@@ -63,7 +67,7 @@ export function hydrateStoredSession(frontend = "patient") {
     const adminSession = JSON.parse(localStorage.getItem(FRONTENDS.admin.storageKey) || "{}");
     const isSharedFrontend = config.type !== FRONTENDS.admin.type;
     const sharedConnection = isSharedFrontend ? {
-      baseUrl: ownSession.baseUrl || adminSession.baseUrl || normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+      baseUrl: ownSession.baseUrl || adminSession.baseUrl || configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
       frontendOrigin: ownSession.frontendOrigin || adminSession.frontendOrigin || "",
       frontendUrl: ownSession.frontendUrl || adminSession.frontendUrl || "",
       paired: Boolean(ownSession.paired || adminSession.paired),

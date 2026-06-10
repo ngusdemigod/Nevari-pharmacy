@@ -4,6 +4,7 @@ import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { BrandedSpinner } from "../../../components/BrandedSpinner";
+import { DEFAULT_NEVARI_BASE_URL } from "../../../components/frontend-config";
 
 function resolveApiBase(baseUrl) {
   const cleaned = String(baseUrl || "").trim().replace(/\/+$/, "");
@@ -75,7 +76,7 @@ export default function AppointmentJoinPage({ params }) {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const apiBase = resolveApiBase(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "");
+      const apiBase = resolveApiBase(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL);
       if (!apiBase) {
         if (!cancelled) {
           setState({

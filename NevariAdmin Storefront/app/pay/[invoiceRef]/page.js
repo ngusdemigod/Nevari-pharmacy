@@ -3,11 +3,11 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { BrandedLoadingScreen } from "../../components/BrandedSpinner";
-import { FRONTENDS } from "../../components/frontend-config";
+import { DEFAULT_NEVARI_BASE_URL, FRONTENDS } from "../../components/frontend-config";
 
 const SESSION_MARKER = "server-session";
 const DEFAULT_SESSION = {
-  baseUrl: String(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "").trim().replace(/\/+$/, ""),
+  baseUrl: String(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL).trim().replace(/\/+$/, ""),
   frontendType: FRONTENDS.patient.type,
   frontendOrigin: "",
   frontendUrl: "",
@@ -129,7 +129,7 @@ function PaywallPageContent() {
       if (!session.baseUrl) {
         if (active) {
           setData(null);
-          setError("Payment page is missing the store connection details. Reopen the payment link from your dashboard or configure NEXT_PUBLIC_NEVARI_BASE_URL.");
+          setError("Payment page is missing the store connection details. Reopen the payment link from your dashboard or configure the store base URL.");
           setLoading(false);
         }
         return;
