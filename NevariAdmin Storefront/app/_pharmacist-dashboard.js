@@ -21,7 +21,8 @@ const PHARMACIST_NAV_GROUPS = [
   {
     label: "Nevari Health",
     items: [
-      { id: "mtm", label: "MTM", icon: "i-clipboard" }
+      { id: "mtm", label: "MTM", icon: "i-clipboard" },
+      { id: "iv-therapy", label: "IV Therapy", icon: "i-clipboard" }
     ]
   }
 ];

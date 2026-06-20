@@ -56,6 +56,7 @@ final class Nevari_Plugin {
         Nevari_Connections::init();
         Nevari_SSO::init();
         Nevari_Mtm::init();
+        Nevari_Iv_Therapy::init();
         Nevari_Nurse_Requests::init();
         Nevari_Rest::init();
         Nevari_Subscriptions::init();

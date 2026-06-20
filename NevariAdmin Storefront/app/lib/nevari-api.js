@@ -418,6 +418,50 @@ export async function fetchCustomerNurseRequests(session) {
   return Array.isArray(data?.items) ? data.items : [];
 }
 
+async function parseLocalIvTherapyResponse(response, fallbackMessage) {
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.success) {
+    throw new Error(payload?.error?.message || fallbackMessage);
+  }
+  return payload?.data || {};
+}
+
+export async function fetchCustomerIvTherapyRequests(session) {
+  const params = new URLSearchParams({
+    baseUrl: String(session?.baseUrl || ""),
+    frontendType: String(session?.frontendType || "patient"),
+  });
+  const response = await fetch(`/api/customer/iv-therapy?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Nevari-Frontend-Type": session?.frontendType || "patient",
+      "X-Nevari-Frontend-Origin": typeof window !== "undefined" ? window.location.origin : "",
+    },
+  });
+  const data = await parseLocalIvTherapyResponse(response, "Unable to load IV therapy requests.");
+  return Array.isArray(data?.items) ? data.items : [];
+}
+
+export async function submitCustomerIvTherapyRequest(session, body) {
+  const params = new URLSearchParams({
+    baseUrl: String(session?.baseUrl || ""),
+    frontendType: String(session?.frontendType || "patient"),
+  });
+  const response = await fetch(`/api/customer/iv-therapy?${params.toString()}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-Nevari-Frontend-Type": session?.frontendType || "patient",
+      "X-Nevari-Frontend-Origin": typeof window !== "undefined" ? window.location.origin : "",
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await parseLocalIvTherapyResponse(response, "Unable to submit IV therapy request.");
+  return data?.request || null;
+}
+
 export async function fetchMtmRequest(session, id) {
   const payload = await apiRequest(session, `/mtm-requests/${id}`, { suppressHttpError: true });
   return payload?.request || null;

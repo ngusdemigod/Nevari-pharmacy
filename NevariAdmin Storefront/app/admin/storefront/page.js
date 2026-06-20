@@ -125,7 +125,8 @@ const FRONTEND_PAGES = [
       ["subscriptions", "Subscriptions", "i-credit-card"],
       ["doctors", "Staffs", "i-briefcase-medical"],
       ["consultations", "Consultations", "i-stethoscope"],
-      ["mtm", "MTM", "i-clipboard"]
+      ["mtm", "MTM", "i-clipboard"],
+      ["iv-therapy", "IV Therapy", "i-clipboard"]
     ]
   },
   {
@@ -144,6 +145,7 @@ const SEARCH_PLACEHOLDERS = {
   customers: "Search patients",
   consultations: "Search appointments",
   mtm: "Search MTM requests",
+  "iv-therapy": "Search IV therapy requests",
   products: "Search products",
   doctors: "Search staff",
   emails: "Search emails",
@@ -336,6 +338,7 @@ function emptyData() {
     orderDetails: [],
     appointments: [],
     mtmRequests: [],
+    ivTherapyRequests: [],
     prescriptions: [],
     prescriptionDetails: [],
     prescriptionHistory: [],
@@ -2347,6 +2350,8 @@ export function AdminStorefrontDashboard({
   const [selectedConsultation, setSelectedConsultation] = useState(null);
   const [mtmPage, setMtmPage] = useState(1);
   const [mtmPreviewRequestId, setMtmPreviewRequestId] = useState(null);
+  const [ivTherapyPage, setIvTherapyPage] = useState(1);
+  const [ivTherapyPreviewRequestId, setIvTherapyPreviewRequestId] = useState(null);
   const [consultationDetailForm, setConsultationDetailForm] = useState({ startAt: "", endAt: "", doctorNotes: "", cancellationReason: "" });
   const [consultationActionLoading, setConsultationActionLoading] = useState("");
   const [consultationActionFeedback, setConsultationActionFeedback] = useState("");
@@ -2907,7 +2912,7 @@ export function AdminStorefrontDashboard({
   }, [session, currentPage, hydrated, isEmbeddedDashboard]);
 
   useEffect(() => {
-    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || auditDetailModalOpen || customerPrivilegeEscalationOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(selectedCustomerId) || Boolean(mtmPreviewRequestId);
+    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || auditDetailModalOpen || customerPrivilegeEscalationOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(selectedCustomerId) || Boolean(mtmPreviewRequestId) || Boolean(ivTherapyPreviewRequestId);
     document.body.classList.toggle("auth-locked", authGate.visible);
     document.body.classList.toggle("modal-open", hasPopupOpen);
     return () => {
@@ -6375,6 +6380,9 @@ export function AdminStorefrontDashboard({
   const mtmListKey = canLoadSections && ["overview", "mtm"].includes(currentPage)
     ? swrKeys.admin.prescriptions(withBaseUrl(session, { per_page: 30, page: 1, search: deferredSearch, mtm: "1" }))
     : null;
+  const ivTherapyListKey = canLoadSections && currentPage === "iv-therapy"
+    ? swrKeys.proxy.path("/iv-therapy-requests", withBaseUrl(session, { per_page: 30, page: 1, search: deferredSearch }))
+    : null;
   const doctorsListKey = canLoadSections && ["overview", "doctors"].includes(currentPage)
     ? swrKeys.admin.doctors(withBaseUrl(session, { per_page: 50, page: 1, search: deferredSearch }))
     : null;
@@ -6429,6 +6437,11 @@ export function AdminStorefrontDashboard({
   const mtmQuery = useSWR(
     mtmListKey,
     () => adminApiRequest("mtm", { params: { per_page: 30, page: 1, search: deferredSearch } }, session),
+    { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 60_000 }
+  );
+  const ivTherapyQuery = useSWR(
+    ivTherapyListKey,
+    () => adminApiRequest("iv-therapy", { params: { per_page: 30, page: 1, search: deferredSearch } }, session),
     { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 60_000 }
   );
   const doctorsQuery = useSWR(
@@ -6548,6 +6561,9 @@ export function AdminStorefrontDashboard({
     }
     if (["overview", "mtm"].includes(currentPage) && mtmListKey) {
       tasks.push(mtmQuery.mutate());
+    }
+    if (currentPage === "iv-therapy" && ivTherapyListKey) {
+      tasks.push(ivTherapyQuery.mutate());
     }
     if (["overview", "doctors"].includes(currentPage) && doctorsListKey) {
       tasks.push(doctorsQuery.mutate());
@@ -6669,6 +6685,10 @@ export function AdminStorefrontDashboard({
     if (!mtmQuery.data?.data) return;
     setData((prev) => ({ ...prev, mtmRequests: Array.isArray(mtmQuery.data.data) ? mtmQuery.data.data : [] }));
   }, [mtmQuery.data]);
+  useEffect(() => {
+    if (!ivTherapyQuery.data?.data) return;
+    setData((prev) => ({ ...prev, ivTherapyRequests: Array.isArray(ivTherapyQuery.data.data) ? ivTherapyQuery.data.data : [] }));
+  }, [ivTherapyQuery.data]);
 
 
   useEffect(() => {
@@ -7052,6 +7072,10 @@ export function AdminStorefrontDashboard({
     matchesSearch(`${request.request_reference || ""} ${request.status || ""} ${request.patient?.name || ""} ${request.assigned_pharmacist_name || ""}`, ["overview", "mtm"].includes(currentPage))
   );
   const previewMtmRequest = filteredMtmRequests.find((request) => String(request.id) === String(mtmPreviewRequestId || "")) || null;
+  const filteredIvTherapyRequests = (Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).filter((request) =>
+    matchesSearch(`${request.request_reference || ""} ${request.status || ""} ${request.customer_name || ""} ${request.customer_phone || ""} ${(request.therapy_types || []).join(" ")}`, currentPage === "iv-therapy")
+  );
+  const previewIvTherapyRequest = filteredIvTherapyRequests.find((request) => String(request.id) === String(ivTherapyPreviewRequestId || "")) || null;
 
   useEffect(() => {
     if (!filteredMtmRequests.length) {
@@ -7060,11 +7084,23 @@ export function AdminStorefrontDashboard({
   }, [filteredMtmRequests]);
 
   useEffect(() => {
+    if (!filteredIvTherapyRequests.length) {
+      setIvTherapyPreviewRequestId(null);
+    }
+  }, [filteredIvTherapyRequests]);
+
+  useEffect(() => {
     if (!mtmPreviewRequestId) return;
     if (!filteredMtmRequests.some((request) => String(request.id) === String(mtmPreviewRequestId))) {
       setMtmPreviewRequestId(null);
     }
   }, [filteredMtmRequests, mtmPreviewRequestId]);
+  useEffect(() => {
+    if (!ivTherapyPreviewRequestId) return;
+    if (!filteredIvTherapyRequests.some((request) => String(request.id) === String(ivTherapyPreviewRequestId))) {
+      setIvTherapyPreviewRequestId(null);
+    }
+  }, [filteredIvTherapyRequests, ivTherapyPreviewRequestId]);
 
   const productFilterCounts = {
     all: (data.products || []).length,
@@ -7668,6 +7704,10 @@ export function AdminStorefrontDashboard({
   const mtmPageCount = Math.max(1, Math.ceil(filteredMtmRequests.length / mtmPerPage));
   const activeMtmPage = Math.min(mtmPage, mtmPageCount);
   const paginatedMtmRequests = filteredMtmRequests.slice((activeMtmPage - 1) * mtmPerPage, activeMtmPage * mtmPerPage);
+  const ivTherapyPerPage = 10;
+  const ivTherapyPageCount = Math.max(1, Math.ceil(filteredIvTherapyRequests.length / ivTherapyPerPage));
+  const activeIvTherapyPage = Math.min(ivTherapyPage, ivTherapyPageCount);
+  const paginatedIvTherapyRequests = filteredIvTherapyRequests.slice((activeIvTherapyPage - 1) * ivTherapyPerPage, activeIvTherapyPage * ivTherapyPerPage);
   const staffPerPage = 10;
   const staffPageCount = Math.max(1, Math.ceil(filteredDoctors.length / staffPerPage));
   const activeStaffPage = Math.min(staffPage, staffPageCount);
@@ -7688,6 +7728,9 @@ export function AdminStorefrontDashboard({
   useEffect(() => {
     setMtmPage((prev) => Math.min(prev, mtmPageCount));
   }, [mtmPageCount]);
+  useEffect(() => {
+    setIvTherapyPage((prev) => Math.min(prev, ivTherapyPageCount));
+  }, [ivTherapyPageCount]);
 
   useEffect(() => {
     setStaffPage((prev) => Math.min(prev, staffPageCount));
@@ -7882,9 +7925,10 @@ export function AdminStorefrontDashboard({
       data.customers,
       data.doctors,
       data.mtmRequests,
+      data.ivTherapyRequests,
       data.emails
     ]),
-    [data.appointments, data.customers, data.doctors, data.emails, data.mtmRequests, data.orderDetails, data.orders, data.products]
+    [data.appointments, data.customers, data.doctors, data.emails, data.ivTherapyRequests, data.mtmRequests, data.orderDetails, data.orders, data.products]
   );
   const dashboardRevealActive = useSWRReveal(dashboardRevealSignature, { durationMs: 260 });
   const dashboardRevealClassName = `dashboard-swr-reveal ${dashboardRevealActive ? "is-active" : ""}`.trim();
@@ -9428,6 +9472,80 @@ export function AdminStorefrontDashboard({
               </section>
             )}
 
+            {currentPage === "iv-therapy" && (
+              <section className="page-view active">
+                <section className="operations-grid mtm-summary-row">
+                  <article className="panel compact mtm-summary-panel">
+                    <div className="panel-header">
+                      <div>
+                        <p className="section-kicker">IV therapy</p>
+                        <h2>Status summary</h2>
+                      </div>
+                    </div>
+                    <div className="mini-stat-grid mtm-summary-grid">
+                      <div className="mini-stat"><span>Total</span><strong>{formatNumber((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).length)}</strong><small>tracked IV therapy requests</small></div>
+                      <div className="mini-stat"><span>Submitted</span><strong>{formatNumber((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).filter((item) => String(item.status || "") === "submitted").length)}</strong><small>awaiting staff review</small></div>
+                      <div className="mini-stat"><span>Consented</span><strong>{formatNumber((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).filter((item) => String(item.consent || "") === "Yes").length)}</strong><small>customers approved treatment</small></div>
+                      <div className="mini-stat"><span>Therapy types</span><strong>{formatNumber(Array.from(new Set((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).flatMap((item) => Array.isArray(item.therapy_types) ? item.therapy_types : []))).length)}</strong><small>distinct request categories</small></div>
+                    </div>
+                  </article>
+                </section>
+                <section className="operations-grid mtm-registry-row">
+                  <section className="table-panel dashboard-table-shell mtm-table-shell mtm-table-panel">
+                    <div className="panel-header">
+                      <div>
+                        <p className="section-kicker">IV therapy registry</p>
+                        <h2>All customer IV therapy requests</h2>
+                      </div>
+                    </div>
+                    <div className="table-scroll">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Request</th>
+                            <th>Patient</th>
+                            <th>Phone</th>
+                            <th>Therapy types</th>
+                            <th>Consent</th>
+                            <th>Submitted</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {!ivTherapyQuery.data?.data && ivTherapyListKey ? renderTableRowSkeletons(6, 7) : filteredIvTherapyRequests.length ? paginatedIvTherapyRequests.map((item) => (
+                            <tr key={item.id} role="button" tabIndex={0} onClick={() => setIvTherapyPreviewRequestId(item.id)} onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setIvTherapyPreviewRequestId(item.id);
+                              }
+                            }}>
+                              <td>{item.request_reference || item.requestReference || item.id}</td>
+                              <td>{item.customer_name || item.patient?.name || patientLabel(item.customer_user_id)}</td>
+                              <td>{item.customer_phone || item.patient?.phoneNumber || "n/a"}</td>
+                              <td>{Array.isArray(item.therapy_types) && item.therapy_types.length ? item.therapy_types.join(", ") : "Not specified"}</td>
+                              <td>{item.consent || "No"}</td>
+                              <td>{formatDate(item.created_at || item.createdAt || item.submitted_at || item.submittedAt, true)}</td>
+                              <td><StatusPill value={item.status}>{item.status_label || item.status}</StatusPill></td>
+                            </tr>
+                          )) : <tr><td colSpan="7" className="muted">No IV therapy requests match the current search.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="pagination-row">
+                      <div className="pagination">
+                        <button className="page-item" type="button" disabled={activeIvTherapyPage === 1} onClick={() => setIvTherapyPage((prev) => Math.max(1, prev - 1))}>Prev</button>
+                        {Array.from({ length: ivTherapyPageCount }, (_, index) => index + 1).slice(0, 7).map((page) => (
+                          <button className={`page-item ${activeIvTherapyPage === page ? "active" : ""}`} type="button" key={page} onClick={() => setIvTherapyPage(page)}>{page}</button>
+                        ))}
+                        <button className="page-item" type="button" disabled={activeIvTherapyPage === ivTherapyPageCount} onClick={() => setIvTherapyPage((prev) => Math.min(ivTherapyPageCount, prev + 1))}>Next</button>
+                      </div>
+                      <div className="pagination-summary">Showing {filteredIvTherapyRequests.length ? `${formatNumber(((activeIvTherapyPage - 1) * ivTherapyPerPage) + 1)}-${formatNumber(Math.min(activeIvTherapyPage * ivTherapyPerPage, filteredIvTherapyRequests.length))}` : "0"} of {formatNumber(filteredIvTherapyRequests.length)} requests</div>
+                    </div>
+                  </section>
+                </section>
+              </section>
+            )}
+
             {currentPage === "products" && (
               <section className="page-view active">
                 <section className="products-redesign-metrics">
@@ -10923,6 +11041,77 @@ export function AdminStorefrontDashboard({
                 >
                   Download Request PDF
                 </a>
+              </div>
+            </section>
+          </div>
+        </div>,
+        document.body
+      ) : null}
+
+      {previewIvTherapyRequest && typeof document !== "undefined" ? createPortal(
+        <div className="app-modal-stack">
+          <div className="app-modal-layer app-modal-layer-top is-open">
+            <ModalScrim className="app-modal-backdrop" label="Close IV therapy preview" onDismiss={() => setIvTherapyPreviewRequestId(null)} />
+            <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`IV therapy preview for ${previewIvTherapyRequest.request_reference || previewIvTherapyRequest.id}`}>
+              <div className="panel-header stacked-order-popup-header modal-head">
+                <div>
+                  <p className="section-kicker">IV therapy preview</p>
+                  <h3>{previewIvTherapyRequest.request_reference || previewIvTherapyRequest.id}</h3>
+                </div>
+                <button className="icon-button" type="button" aria-label="Close IV therapy preview" onClick={() => setIvTherapyPreviewRequestId(null)}>
+                  <InlineIcon id="i-x" />
+                </button>
+              </div>
+              <div className="app-modal-scroll modal-body">
+                <div className="detail-grid two-col detail-grid-compact">
+                  <div className="detail-item-card"><strong>Patient</strong><span>{previewIvTherapyRequest.customer_name || previewIvTherapyRequest.patient?.name || "Customer"}</span></div>
+                  <div className="detail-item-card"><strong>Status</strong><span>{previewIvTherapyRequest.status_label || titleCase(previewIvTherapyRequest.status || "submitted")}</span></div>
+                  <div className="detail-item-card"><strong>Phone</strong><span>{previewIvTherapyRequest.customer_phone || previewIvTherapyRequest.patient?.phoneNumber || "n/a"}</span></div>
+                  <div className="detail-item-card"><strong>Gender</strong><span>{previewIvTherapyRequest.patient?.gender || "Not recorded"}</span></div>
+                  <div className="detail-item-card"><strong>Submitted</strong><span>{formatDate(previewIvTherapyRequest.created_at || previewIvTherapyRequest.createdAt || previewIvTherapyRequest.submitted_at || previewIvTherapyRequest.submittedAt, true)}</span></div>
+                  <div className="detail-item-card"><strong>Consent</strong><span>{previewIvTherapyRequest.consent || "No"}</span></div>
+                </div>
+                <div className="stacked-detail-list">
+                  <div className="detail-item-card">
+                    <strong>Address</strong>
+                    <span>{previewIvTherapyRequest.patient?.address || "Not recorded"}</span>
+                  </div>
+                  <div className="detail-item-card">
+                    <strong>City / State</strong>
+                    <span>{previewIvTherapyRequest.patient?.cityState || "Not recorded"}</span>
+                  </div>
+                  <div className="detail-item-card">
+                    <strong>Therapy types</strong>
+                    <span>{Array.isArray(previewIvTherapyRequest.therapy_types) && previewIvTherapyRequest.therapy_types.length ? previewIvTherapyRequest.therapy_types.join(", ") : "Not selected"}</span>
+                  </div>
+                  <div className="detail-item-card">
+                    <strong>Chronic conditions</strong>
+                    <span>{previewIvTherapyRequest.clinical_history?.chronicConditionsDetails || previewIvTherapyRequest.clinical_history?.chronicConditions || "No details provided"}</span>
+                  </div>
+                  <div className="detail-item-card">
+                    <strong>Current medications</strong>
+                    <span>{previewIvTherapyRequest.clinical_history?.currentMedicationsDetails || previewIvTherapyRequest.clinical_history?.currentMedications || "No details provided"}</span>
+                  </div>
+                  <div className="detail-item-card">
+                    <strong>Allergies</strong>
+                    <span>{previewIvTherapyRequest.clinical_history?.allergiesDetails || previewIvTherapyRequest.clinical_history?.allergies || "No details provided"}</span>
+                  </div>
+                  <div className="detail-item-card">
+                    <strong>Previous IV therapy</strong>
+                    <span>{previewIvTherapyRequest.clinical_history?.priorIvTherapyDetails || previewIvTherapyRequest.clinical_history?.priorIvTherapy || "No details provided"}</span>
+                  </div>
+                  <div className="detail-item-card">
+                    <strong>Main goal</strong>
+                    <span>{previewIvTherapyRequest.goals?.primaryReason || "Not provided"}</span>
+                  </div>
+                  <div className="detail-item-card">
+                    <strong>Expected results</strong>
+                    <span>{previewIvTherapyRequest.goals?.expectedResults || "Not provided"}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="stacked-order-popup-actions modal-actions">
+                <button className="pill-button" type="button" onClick={() => setIvTherapyPreviewRequestId(null)}>Close</button>
               </div>
             </section>
           </div>

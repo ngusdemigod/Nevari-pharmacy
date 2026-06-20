@@ -17,6 +17,7 @@ const RESOURCE_PATHS = {
   appointments: "/appointments",
   prescriptions: "/prescriptions",
   mtm: "/pharmacist/mtm-requests",
+  "iv-therapy": "/pharmacist/iv-therapy-requests",
   doctors: "/doctors",
   emails: "/emails/logs",
   audit: "/audit-logs"

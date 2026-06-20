@@ -30,6 +30,7 @@ require_once NEVARI_PHARMACY_DIR . 'includes/class-nevari-connections.php';
 require_once NEVARI_PHARMACY_DIR . 'includes/class-nevari-sso.php';
 require_once NEVARI_PHARMACY_DIR . 'includes/class-nevari-emails.php';
 require_once NEVARI_PHARMACY_DIR . 'includes/class-nevari-mtm.php';
+require_once NEVARI_PHARMACY_DIR . 'includes/class-nevari-iv-therapy.php';
 require_once NEVARI_PHARMACY_DIR . 'includes/class-nevari-nurse-requests.php';
 require_once NEVARI_PHARMACY_DIR . 'includes/class-nevari-rest.php';
 require_once NEVARI_PHARMACY_DIR . 'includes/class-nevari-subscriptions.php';

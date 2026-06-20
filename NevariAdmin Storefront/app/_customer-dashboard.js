@@ -18,7 +18,7 @@ import { buildSWRRevealSignature, useSWRReveal } from "./components/useSWRReveal
 import SubscriptionGate from "./components/subscription/SubscriptionGate";
 import { useSubscription } from "./hooks/use-subscription";
 import { RoleShell, SkeletonBox } from "./_doctor-dashboard";
-import { fetchCustomerMtmRequests, fetchCustomerNurseRequests, requestMtmReschedule, resolveSubscriptionMonthlyAmount, submitCustomerMtmRequest } from "./lib/nevari-api";
+import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, requestMtmReschedule, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest } from "./lib/nevari-api";
 
 const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
@@ -33,7 +33,15 @@ const NURSE_REQUEST_YES_NO_FIELDS = ["liveInCareRequired", "wheelchairAssistance
 const NURSE_REQUEST_YES_NO_OPTIONS = ["Yes", "No"];
 const NURSE_REQUEST_CLINICAL_REQUIREMENTS = ["Medication Administration", "Catheter Care", "Blood Pressure Monitoring", "Diabetes Monitoring", "IV Therapy", "Feeding Tube Support"];
 const NURSE_REQUEST_UPLOAD_LABELS = ["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"];
-const pages = ["overview", "orders", "appointment", "request", "therapy", "profile"];
+const IV_THERAPY_OPTIONS = [
+  "Beauty & Radiance Drips",
+  "Anti-Aging & Regenerative Drips",
+  "Weight Management Drips Assistance",
+  "Hair & Nail Restoration",
+  "Vitamin & Hydration Drips"
+];
+const IV_THERAPY_YES_NO_OPTIONS = ["Yes", "No"];
+const pages = ["overview", "orders", "appointment", "request", "therapy", "iv-therapy", "profile"];
 const CUSTOMER_DASHBOARD_REFRESH_MS = 60_000;
 const CUSTOMER_MOBILE_BREAKPOINT = 960;
 const pageLabels = {
@@ -44,8 +52,93 @@ const pageLabels = {
   request: "Request a Nurse",
   settings: "Settings",
   profile: "My Profile",
-  therapy: "Medical Therapy Management"
+  therapy: "Medical Therapy Management",
+  "iv-therapy": "IV Therapy"
 };
+
+function createIvTherapyFormState() {
+  return {
+    patient: {
+      name: "",
+      gender: "",
+      address: "",
+      cityState: "",
+      phoneNumber: ""
+    },
+    clinicalHistory: {
+      chronicConditions: "",
+      chronicConditionsDetails: "",
+      currentMedications: "",
+      currentMedicationsDetails: "",
+      allergies: "",
+      allergiesDetails: "",
+      priorIvTherapy: "",
+      priorIvTherapyDetails: "",
+      bloodClotHistory: ""
+    },
+    therapyTypes: [],
+    goals: {
+      primaryReason: "",
+      expectedResults: ""
+    },
+    consent: ""
+  };
+}
+
+function buildIvTherapyStepErrors(step, form) {
+  const errors = {};
+  const patient = form?.patient || {};
+  const clinicalHistory = form?.clinicalHistory || {};
+  const goals = form?.goals || {};
+  const therapyTypes = Array.isArray(form?.therapyTypes) ? form.therapyTypes : [];
+  const consent = String(form?.consent || "").trim();
+
+  if (step === 1) {
+    if (!String(patient.name || "").trim()) errors.name = "Patient name is required.";
+    else if (!/^[a-zA-Z\s'.-]{2,120}$/.test(String(patient.name || "").trim())) errors.name = "Enter a valid patient name.";
+    if (!["Male", "Female"].includes(String(patient.gender || "").trim())) {
+      errors.gender = "Select a valid gender.";
+    }
+    if (!String(patient.address || "").trim()) errors.address = "Address is required.";
+    if (!String(patient.cityState || "").trim()) errors.cityState = "City/State is required.";
+    if (!/^[0-9+\-()\s]{7,24}$/.test(String(patient.phoneNumber || "").trim())) errors.phoneNumber = "Enter a valid phone number.";
+  }
+
+  if (step === 2) {
+    ["chronicConditions", "currentMedications", "allergies", "priorIvTherapy", "bloodClotHistory"].forEach((key) => {
+      if (!IV_THERAPY_YES_NO_OPTIONS.includes(String(clinicalHistory[key] || "").trim())) {
+        errors[key] = "Select Yes or No.";
+      }
+    });
+    if (clinicalHistory.chronicConditions === "Yes" && !String(clinicalHistory.chronicConditionsDetails || "").trim()) {
+      errors.chronicConditionsDetails = "Add chronic condition details.";
+    }
+    if (clinicalHistory.currentMedications === "Yes" && !String(clinicalHistory.currentMedicationsDetails || "").trim()) {
+      errors.currentMedicationsDetails = "Add medication details.";
+    }
+    if (clinicalHistory.allergies === "Yes" && !String(clinicalHistory.allergiesDetails || "").trim()) {
+      errors.allergiesDetails = "Add allergy details.";
+    }
+    if (clinicalHistory.priorIvTherapy === "Yes" && !String(clinicalHistory.priorIvTherapyDetails || "").trim()) {
+      errors.priorIvTherapyDetails = "Add prior IV therapy details.";
+    }
+  }
+
+  if (step === 3 && !therapyTypes.length) {
+    errors.therapyTypes = "Select at least one IV therapy type.";
+  }
+
+  if (step === 4) {
+    if (!String(goals.primaryReason || "").trim()) errors.primaryReason = "Main reason is required.";
+    if (!String(goals.expectedResults || "").trim()) errors.expectedResults = "Expected results are required.";
+  }
+
+  if (step === 5 && consent !== "Yes") {
+    errors.consent = "Consent is required before submission.";
+  }
+
+  return errors;
+}
 
 function formatSubscriptionPriceLabel(subscription) {
   const amount = resolveSubscriptionMonthlyAmount(subscription);
@@ -128,6 +221,7 @@ function renderCustomerNavIcon(page) {
     settings: Settings01Icon,
     profile: UserIcon,
     therapy: Medicine01Icon,
+    "iv-therapy": Medicine01Icon,
   };
   const icon = iconMap[page] || Home01Icon;
   return <HugeiconsIcon icon={icon} size={18} strokeWidth={1.8} />;
@@ -556,6 +650,14 @@ const MTM_STEP_TITLES = {
   6: "Review and Submit",
 };
 
+const IV_THERAPY_STEP_TITLES = {
+  1: "IV Therapy Patient Details",
+  2: "IV Therapy Medical & Clinical History",
+  3: "IV Therapy Selection",
+  4: "IV Therapy Goals & Expectations",
+  5: "IV Therapy Consent",
+};
+
 const MTM_ADHERENCE_OPTIONS = [
   "Forgetfulness",
   "Side Effects",
@@ -841,6 +943,9 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const nurseRequestsKey = session && page === "request"
     ? swrKeys.proxy.path("/nurse-requests", withBaseUrl(session))
     : null;
+  const ivTherapyRequestsKey = session && page === "iv-therapy"
+    ? swrKeys.proxy.path("/iv-therapy-requests", withBaseUrl(session))
+    : null;
   const mtmRequestsQuery = useSWR(
     mtmRequestsKey,
     () => fetchCustomerMtmRequests(session),
@@ -851,8 +956,14 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     () => fetchCustomerNurseRequests(session),
     { revalidateOnFocus: false, dedupingInterval: 30_000, keepPreviousData: true }
   );
+  const ivTherapyRequestsQuery = useSWR(
+    ivTherapyRequestsKey,
+    () => fetchCustomerIvTherapyRequests(session),
+    { revalidateOnFocus: false, dedupingInterval: 30_000, keepPreviousData: true }
+  );
   const mtmRequests = mtmRequestsQuery.data || [];
   const nurseRequests = nurseRequestsQuery.data || [];
+  const ivTherapyRequests = ivTherapyRequestsQuery.data || [];
   useEffect(() => {
     rememberStoreContext(state.dashboard || {});
   }, [state.dashboard]);
@@ -891,9 +1002,10 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       state.appointments,
       state.doctors,
       mtmRequests,
-      nurseRequests
+      nurseRequests,
+      ivTherapyRequests
     ]),
-    [mtmRequests, nurseRequests, state.appointments, state.doctors, state.orders]
+    [ivTherapyRequests, mtmRequests, nurseRequests, state.appointments, state.doctors, state.orders]
   );
   const dashboardRevealActive = useSWRReveal(dashboardRevealSignature, { durationMs: 260 });
   const dashboardRevealClassName = `dashboard-swr-reveal ${dashboardRevealActive ? "is-active" : ""}`.trim();
@@ -1601,6 +1713,8 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         mtmRequestsQuery={mtmRequestsQuery}
         nurseRequests={nurseRequests}
         nurseRequestsQuery={nurseRequestsQuery}
+        ivTherapyRequests={ivTherapyRequests}
+        ivTherapyRequestsQuery={ivTherapyRequestsQuery}
         initialMtmRequestId={initialMtmRequestId}
         initialPage={initialPage}
         pathname={pathname}
@@ -1668,6 +1782,8 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         mtmRequestsQuery={mtmRequestsQuery}
         nurseRequests={nurseRequests}
         nurseRequestsQuery={nurseRequestsQuery}
+        ivTherapyRequests={ivTherapyRequests}
+        ivTherapyRequestsQuery={ivTherapyRequestsQuery}
         initialMtmRequestId={initialMtmRequestId}
         initialPage={initialPage}
         pathname={pathname}
@@ -1828,6 +1944,8 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         mtmRequestsQuery={mtmRequestsQuery}
         nurseRequests={nurseRequests}
         nurseRequestsQuery={nurseRequestsQuery}
+        ivTherapyRequests={ivTherapyRequests}
+        ivTherapyRequestsQuery={ivTherapyRequestsQuery}
         initialMtmRequestId={initialMtmRequestId}
         initialPage={initialPage}
         pathname={pathname}
@@ -1895,6 +2013,77 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         mtmRequestsQuery={mtmRequestsQuery}
         nurseRequests={nurseRequests}
         nurseRequestsQuery={nurseRequestsQuery}
+        ivTherapyRequests={ivTherapyRequests}
+        ivTherapyRequestsQuery={ivTherapyRequestsQuery}
+        initialMtmRequestId={initialMtmRequestId}
+        initialPage={initialPage}
+        pathname={pathname}
+        onOpenAvailability={openDoctorAvailability}
+        onOpenReviews={openDoctorReviews}
+        onOpenAppointment={setSelectedAppointment}
+        onOpenOrderDocuments={openOrderDocuments}
+        onCancelPendingOrder={cancelPendingOrder}
+        onRefillOrder={refillOrder}
+        refillOrderBusy={refillOrderBusy}
+        onUpdateAvailabilityDate={updateAvailabilityDate}
+        onSelectSlot={(slot) => setJourney((current) => ({ ...current, selectedSlot: slot }))}
+        onDurationChange={(durationMinutes) => setJourney((current) => ({ ...current, durationMinutes }))}
+        onReasonChange={(reason) => setJourney((current) => ({ ...current, reason }))}
+        onCreateAppointmentCheckout={createAppointmentCheckout}
+        onRescheduleAppointmentCheckout={rescheduleAppointmentFromSelection}
+        onRefreshConfirmation={refreshConfirmation}
+        onCancelCheckoutAppointment={cancelCheckoutAppointment}
+        onResetJourney={resetAppointmentJourney}
+        onReviewDraftChange={(field, value) => setJourney((current) => ({ ...current, reviewDraft: { ...current.reviewDraft, [field]: value } }))}
+        onSubmitReview={submitReview}
+        appointmentRescheduleTarget={appointmentRescheduleTarget}
+        onClearAppointmentRescheduleTarget={() => setAppointmentRescheduleTarget(null)}
+        nurseRequestAuth={{
+          baseUrl: session?.baseUrl || "",
+          accessToken: session?.accessToken || "",
+          adminEmail: "careteam@nevarihealth.com"
+        }}
+        onLogout={handleLogout}
+        logoutBusy={logoutBusy}
+        embeddedDesktop
+      /> : null}
+      {!showSkeleton && page === "iv-therapy" ? <CustomerMobileDashboard
+        session={session}
+        page={page}
+        setPage={setPage}
+        showSkeleton={showSkeleton}
+        state={state}
+        stateError={orderActionError || state.error}
+        profile={profile}
+        settings={settings}
+        setSettings={setSettings}
+        orderCounts={orderCounts}
+        spentThisMonth={spentThisMonth}
+        storeCurrency={storeCurrency}
+        storeTimeZone={storeTimeZone}
+        storeUrl={storeUrl}
+        visibleDoctors={visibleDoctors}
+        selectedDoctor={selectedDoctor}
+        expandedOrderId={expandedOrderId}
+        setExpandedOrderId={setExpandedOrderId}
+        setSelectedOrder={setSelectedOrder}
+        upcomingAppointments={upcomingAppointments}
+        pastAppointments={pastAppointments}
+        journey={journey}
+        setJourney={setJourney}
+        createJourneyState={createJourneyState}
+        minimumBookingMinutes={minimumBookingMinutes}
+        storefrontSettings={storefrontSettings}
+        ordersLoading={ordersLoading}
+        appointmentsLoading={appointmentsLoading}
+        doctorsLoading={doctorsLoading}
+        subscriptionState={subscriptionState}
+        mtmRequests={mtmRequests}
+        mtmRequestsQuery={mtmRequestsQuery}
+        nurseRequests={nurseRequests}
+        nurseRequestsQuery={nurseRequestsQuery}
+        ivTherapyRequests={ivTherapyRequests}
+        ivTherapyRequestsQuery={ivTherapyRequestsQuery}
         initialMtmRequestId={initialMtmRequestId}
         initialPage={initialPage}
         pathname={pathname}
@@ -1987,6 +2176,8 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         mtmRequestsQuery={mtmRequestsQuery}
         nurseRequests={nurseRequests}
         nurseRequestsQuery={nurseRequestsQuery}
+        ivTherapyRequests={ivTherapyRequests}
+        ivTherapyRequestsQuery={ivTherapyRequestsQuery}
         initialMtmRequestId={initialMtmRequestId}
         initialPage={initialPage}
         pathname={pathname}
@@ -4592,6 +4783,8 @@ function CustomerMobileDashboard({
   mtmRequestsQuery,
   nurseRequests = [],
   nurseRequestsQuery,
+  ivTherapyRequests = [],
+  ivTherapyRequestsQuery = { mutate: async () => [] },
   initialMtmRequestId = "",
   initialPage = "overview",
   pathname = "",
@@ -4701,6 +4894,14 @@ function CustomerMobileDashboard({
   const [requestSubmitError, setRequestSubmitError] = useState("");
   const [requestSubmitLoadingState, setRequestSubmitLoadingState] = useState(false);
   const [latestSubmittedRequest, setLatestSubmittedRequest] = useState(null);
+  const [ivTherapyStep, setIvTherapyStep] = useState(1);
+  const [ivTherapyAnimatingOut, setIvTherapyAnimatingOut] = useState(false);
+  const [ivTherapyForm, setIvTherapyForm] = useState(() => createIvTherapyFormState());
+  const [ivTherapyShowErrors, setIvTherapyShowErrors] = useState(false);
+  const [ivTherapySubmitted, setIvTherapySubmitted] = useState(false);
+  const [ivTherapySubmitting, setIvTherapySubmitting] = useState(false);
+  const [ivTherapySubmitError, setIvTherapySubmitError] = useState("");
+  const [ivTherapyLatestRequest, setIvTherapyLatestRequest] = useState(null);
   const [bookCalendarReason, setBookCalendarReason] = useState("");
   const [calendarDay, setCalendarDay] = useState(7);
   const [calendarTime, setCalendarTime] = useState("09:41");
@@ -5544,6 +5745,91 @@ function CustomerMobileDashboard({
     }
   }
 
+  function transitionToIvTherapyStep(nextStep) {
+    setIvTherapySubmitError("");
+    setIvTherapyShowErrors(false);
+    setIvTherapyAnimatingOut(true);
+    window.setTimeout(() => {
+      setIvTherapyStep(nextStep);
+      setIvTherapyAnimatingOut(false);
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    }, 140);
+  }
+
+  function updateIvTherapyField(section, key, value) {
+    const sanitizedValue = sanitizeClientText(value, { max: ["primaryReason", "expectedResults", "chronicConditionsDetails", "currentMedicationsDetails", "allergiesDetails", "priorIvTherapyDetails"].includes(key) ? 800 : 200 });
+    setIvTherapyForm((current) => ({
+      ...current,
+      [section]: {
+        ...current[section],
+        [key]: sanitizedValue,
+      }
+    }));
+  }
+
+  function toggleIvTherapyType(option) {
+    setIvTherapyForm((current) => {
+      const currentTypes = Array.isArray(current.therapyTypes) ? current.therapyTypes : [];
+      const selected = currentTypes.includes(option);
+      return {
+        ...current,
+        therapyTypes: selected ? currentTypes.filter((item) => item !== option) : [...currentTypes, option]
+      };
+    });
+  }
+
+  function setIvTherapyConsent(value) {
+    setIvTherapyForm((current) => ({ ...current, consent: value }));
+  }
+
+  const ivTherapyStepErrors = buildIvTherapyStepErrors(ivTherapyStep, ivTherapyForm);
+  const showIvTherapyFieldError = (key) => Boolean(ivTherapyStepErrors[key]) && ivTherapyShowErrors;
+
+  async function handleIvTherapyContinue() {
+    if (ivTherapySubmitting) {
+      return;
+    }
+
+    const currentStepErrors = buildIvTherapyStepErrors(ivTherapyStep, ivTherapyForm);
+    if (Object.keys(currentStepErrors).length) {
+      setIvTherapyShowErrors(true);
+      return;
+    }
+
+    if (ivTherapyStep < 5) {
+      transitionToIvTherapyStep(ivTherapyStep + 1);
+      return;
+    }
+
+    setIvTherapySubmitError("");
+    setIvTherapySubmitting(true);
+    try {
+      const created = await submitCustomerIvTherapyRequest(session, {
+        patient: ivTherapyForm.patient,
+        clinicalHistory: ivTherapyForm.clinicalHistory,
+        therapyTypes: ivTherapyForm.therapyTypes,
+        goals: ivTherapyForm.goals,
+        consent: ivTherapyForm.consent,
+        customerEmail: profile.email || settings.email || "",
+        customerName: ivTherapyForm.patient.name || settings.displayName || profile.display_name || "",
+        customerPhone: settings.phone || ivTherapyForm.patient.phoneNumber || "",
+        appOrigin: typeof window !== "undefined" ? window.location.origin : "",
+        baseUrl: session?.baseUrl || "",
+        frontendType: session?.frontendType || "patient",
+      });
+      await ivTherapyRequestsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, created) : [created], { revalidate: false });
+      void ivTherapyRequestsQuery.mutate();
+      setIvTherapyLatestRequest(created);
+      setIvTherapySubmitted(true);
+    } catch (error) {
+      setIvTherapySubmitError(error?.message || "Unable to submit IV therapy request.");
+    } finally {
+      setIvTherapySubmitting(false);
+    }
+  }
+
   function transitionToMtmStep(nextStep) {
       setMtmSubmitError("");
       setMtmStepErrors({});
@@ -5777,7 +6063,7 @@ function CustomerMobileDashboard({
 
   function renderHeader(title, showBack = false, onBack = onResetJourney, headerAction = null) {
     const greetingName = firstName(settings.displayName || profile.display_name || "Tee");
-    const isOverviewHeader = page === "overview";
+    const isOverviewHeader = ["overview", "iv-therapy"].includes(page);
     const searchbar = page === "search" ? <div className="customer-mobile-searchbar is-search-page">
       <MobileIcon name="search" />
       <input
@@ -5836,6 +6122,7 @@ function CustomerMobileDashboard({
             { id: "appointment", label: "Appointments", icon: "calendar" },
             { id: "request", label: "Request a Nurse", icon: "nurse" },
             { id: "therapy", label: "Medical Therapy Management", icon: "cross" },
+            { id: "iv-therapy", label: "IV Therapy", icon: "cross" },
             { id: "profile", label: "Profile", icon: "profile" }
           ].map((item) => (
             <button
@@ -6667,6 +6954,161 @@ function CustomerMobileDashboard({
           ))}
           <button className="customer-mobile-primary-button" type="button">Continue</button>
         </section>}
+      </main>
+    </div>;
+  }
+
+  if (page === "iv-therapy") {
+    return <div className={`customer-mobile-app ${embeddedDesktop ? "customer-desktop-embedded-page customer-iv-therapy-desktop" : ""}`}>
+      {!embeddedDesktop ? renderDrawer() : null}
+      <main className={`customer-mobile-frame ${pageTransitionClass}`}>
+        {embeddedDesktop ? <header className="customer-request-desktop-header customer-overview-desktop-header">
+          <span>Welcome back, {firstName(settings.displayName || profile.display_name || "Tee")}</span>
+          <h1>IV Therapy</h1>
+        </header> : renderHeader("IV Therapy")}
+        <section className="customer-mobile-flow customer-iv-therapy-shell">
+          {!ivTherapySubmitted ? <>
+            <div className="customer-mobile-step-title">Step {ivTherapyStep} of 5 - {IV_THERAPY_STEP_TITLES[ivTherapyStep] || "IV Therapy"}</div>
+            <p className="customer-mobile-step-copy">{ivTherapyStep === 3 ? "Please select the type(s) of IV therapy you are interested in." : "Please fill out the IV therapy form."}</p>
+            <div className={`customer-mobile-step-panel customer-iv-therapy-panel ${ivTherapyAnimatingOut ? "is-out" : "is-in"}`}>
+              {ivTherapyStep === 1 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
+                {[
+                  ["Name:", "name", "Enter your full name"],
+                  ["Address:", "address", "Enter your address"],
+                  ["City/State:", "cityState", "Enter your city and state"],
+                  ["Phone Number:", "phoneNumber", "Enter your phone number"]
+                ].map(([label, key, placeholder]) => <label className="customer-mobile-field" key={key}>
+                  <span>{label}</span>
+                  <input
+                    type={key === "phoneNumber" ? "tel" : "text"}
+                    value={ivTherapyForm.patient[key]}
+                    placeholder={placeholder}
+                    className={showIvTherapyFieldError(key) ? "has-error" : ""}
+                    onChange={(event) => updateIvTherapyField("patient", key, event.target.value)}
+                  />
+                  {showIvTherapyFieldError(key) ? <small className="customer-mobile-field-error">{ivTherapyStepErrors[key]}</small> : null}
+                </label>)}
+                <label className="customer-mobile-field">
+                  <span>Gender:</span>
+                  <select
+                    value={ivTherapyForm.patient.gender}
+                    className={showIvTherapyFieldError("gender") ? "has-error" : ""}
+                    onChange={(event) => updateIvTherapyField("patient", "gender", event.target.value)}
+                  >
+                    <option value="">Select gender</option>
+                    <option value="Female">Female</option>
+                    <option value="Male">Male</option>
+                  </select>
+                  {showIvTherapyFieldError("gender") ? <small className="customer-mobile-field-error">{ivTherapyStepErrors.gender}</small> : null}
+                </label>
+              </div> : null}
+
+              {ivTherapyStep === 2 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
+                {[
+                  ["Do you have any chronic medical conditions? (e.g., diabetes, heart disease, kidney issues)", "chronicConditions", "chronicConditionsDetails", "If yes, please specify:"],
+                  ["Are you currently taking any medications?", "currentMedications", "currentMedicationsDetails", "If yes, please specify:"],
+                  ["Do you have any allergies (medications, food, supplements)?", "allergies", "allergiesDetails", "If yes, please specify:"],
+                  ["Have you ever had an I.V. therapy before?", "priorIvTherapy", "priorIvTherapyDetails", "If yes, when and what type?"],
+                  ["Do you have a history of blood clots or vein issues?", "bloodClotHistory", "", ""]
+                ].map(([label, key, detailKey, detailLabel]) => <div className="customer-mobile-radio-group customer-iv-therapy-question" key={key}>
+                  <span>{label}</span>
+                  <div className="customer-mobile-inline-radios customer-iv-therapy-inline-radios">
+                    {IV_THERAPY_YES_NO_OPTIONS.map((choice) => <label key={choice}>
+                      <input
+                        type="radio"
+                        name={key}
+                        checked={ivTherapyForm.clinicalHistory[key] === choice}
+                        onChange={() => updateIvTherapyField("clinicalHistory", key, choice)}
+                      />
+                      <span className="customer-mobile-radio" aria-hidden="true" />
+                      {choice}
+                    </label>)}
+                  </div>
+                  {showIvTherapyFieldError(key) ? <small className="customer-mobile-field-error">{ivTherapyStepErrors[key]}</small> : null}
+                  {detailKey ? <>
+                    <label className="customer-mobile-field customer-iv-therapy-detail-field">
+                      <span>{detailLabel}</span>
+                      <textarea
+                        rows={5}
+                        value={ivTherapyForm.clinicalHistory[detailKey]}
+                        className={showIvTherapyFieldError(detailKey) ? "has-error" : ""}
+                        onChange={(event) => updateIvTherapyField("clinicalHistory", detailKey, event.target.value)}
+                      />
+                    </label>
+                    {showIvTherapyFieldError(detailKey) ? <small className="customer-mobile-field-error">{ivTherapyStepErrors[detailKey]}</small> : null}
+                  </> : null}
+                </div>)}
+              </div> : null}
+
+              {ivTherapyStep === 3 ? <div className="customer-mobile-flow-stack customer-iv-therapy-options">
+                <label className="customer-mobile-field customer-iv-therapy-selection-note">
+                  <span>Type of I.V. Therapy:</span>
+                  <small>You may select more than one.</small>
+                </label>
+                {IV_THERAPY_OPTIONS.map((option) => {
+                  const selected = ivTherapyForm.therapyTypes.includes(option);
+                  return <button key={option} type="button" className={`customer-mobile-option-row customer-iv-therapy-option ${selected ? "active" : ""}`} onClick={() => toggleIvTherapyType(option)}>
+                    <span>{option}</span>
+                    <span className={`customer-mobile-radio ${selected ? "selected" : ""}`} aria-hidden="true" />
+                  </button>;
+                })}
+                {showIvTherapyFieldError("therapyTypes") ? <small className="customer-mobile-field-error">{ivTherapyStepErrors.therapyTypes}</small> : null}
+              </div> : null}
+
+              {ivTherapyStep === 4 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
+                <label className="customer-mobile-field">
+                  <span>What is your main reason for seeking I.V. therapy?</span>
+                  <textarea rows={5} value={ivTherapyForm.goals.primaryReason} className={showIvTherapyFieldError("primaryReason") ? "has-error" : ""} onChange={(event) => updateIvTherapyField("goals", "primaryReason", event.target.value)} />
+                  {showIvTherapyFieldError("primaryReason") ? <small className="customer-mobile-field-error">{ivTherapyStepErrors.primaryReason}</small> : null}
+                </label>
+                <label className="customer-mobile-field">
+                  <span>What results do you hope to achieve?</span>
+                  <textarea rows={5} value={ivTherapyForm.goals.expectedResults} className={showIvTherapyFieldError("expectedResults") ? "has-error" : ""} onChange={(event) => updateIvTherapyField("goals", "expectedResults", event.target.value)} />
+                  {showIvTherapyFieldError("expectedResults") ? <small className="customer-mobile-field-error">{ivTherapyStepErrors.expectedResults}</small> : null}
+                </label>
+              </div> : null}
+
+              {ivTherapyStep === 5 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
+                <div className="customer-mobile-radio-group customer-iv-therapy-question">
+                  <span>I confirm that the information provided is accurate and I consent to receiving I.V. therapy as selected.</span>
+                  <div className="customer-mobile-inline-radios customer-iv-therapy-inline-radios">
+                    {IV_THERAPY_YES_NO_OPTIONS.map((choice) => <label key={choice}>
+                      <input
+                        type="radio"
+                        name="iv-therapy-consent"
+                        checked={ivTherapyForm.consent === choice}
+                        onChange={() => setIvTherapyConsent(choice)}
+                      />
+                      <span className="customer-mobile-radio" aria-hidden="true" />
+                      {choice}
+                    </label>)}
+                  </div>
+                  {showIvTherapyFieldError("consent") ? <small className="customer-mobile-field-error">{ivTherapyStepErrors.consent}</small> : null}
+                </div>
+              </div> : null}
+            </div>
+            <button className="customer-mobile-primary-button customer-iv-therapy-button" type="button" onClick={handleIvTherapyContinue}>
+              {ivTherapySubmitting ? <BrandedSpinner label="Submitting IV therapy request" /> : "Continue"}
+            </button>
+            {ivTherapySubmitError ? <small className="customer-mobile-field-error">{ivTherapySubmitError}</small> : null}
+            {ivTherapyStep > 1 ? <button className="customer-mobile-secondary-button customer-iv-therapy-button secondary" type="button" onClick={() => transitionToIvTherapyStep(Math.max(1, ivTherapyStep - 1))}>Go Back</button> : null}
+          </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="iv-therapy-confirmation-title">
+            <section className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell customer-nurse-request-confirmation-shell">
+              <div className="customer-confirmation-icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#22A06B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#22A06B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </div>
+              <h2 id="iv-therapy-confirmation-title">IV Therapy Request Submitted</h2>
+              <p>Your IV therapy request has been received. The care team will review it and contact you with the next steps.</p>
+              <div className="customer-confirmation-next">
+                <h3>Submission summary</h3>
+                <div className="customer-confirmation-next-row"><span>Request</span><strong>{ivTherapyLatestRequest?.request_reference || ivTherapyLatestRequest?.requestReference || "IV Therapy"}</strong></div>
+                <div className="customer-confirmation-next-row"><span>Status</span><strong className="badge">Submitted</strong></div>
+                <div className="customer-confirmation-next-row"><span>Therapies</span><strong>{ivTherapyForm.therapyTypes.length || 0} selected</strong></div>
+              </div>
+              <button className="customer-mobile-primary-button" type="button" onClick={() => goToPage("overview")}>Back to Home</button>
+            </section>
+          </div>}
+        </section>
       </main>
     </div>;
   }

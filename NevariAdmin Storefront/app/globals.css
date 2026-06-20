@@ -14923,6 +14923,58 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   gap: 8px;
 }
 
+.customer-iv-therapy-shell {
+  gap: 14px;
+}
+
+.customer-iv-therapy-panel {
+  gap: 14px;
+}
+
+.customer-iv-therapy-stack {
+  gap: 14px;
+}
+
+.customer-iv-therapy-question {
+  gap: 10px;
+}
+
+.customer-iv-therapy-detail-field {
+  margin-top: 2px;
+}
+
+.customer-iv-therapy-selection-note {
+  gap: 4px;
+}
+
+.customer-iv-therapy-selection-note small {
+  color: #98a2b3;
+  font-size: 13px;
+}
+
+.customer-iv-therapy-options {
+  gap: 10px;
+}
+
+.customer-iv-therapy-option {
+  min-height: 50px;
+  border-radius: 10px;
+  padding: 0 12px;
+}
+
+.customer-iv-therapy-inline-radios {
+  gap: 28px;
+}
+
+.customer-iv-therapy-button {
+  justify-content: center;
+  padding: 0 24px;
+}
+
+.customer-iv-therapy-button.secondary {
+  margin-top: 2px;
+}
+
 .customer-mobile-book-header {
   display: grid;
   gap: 8px;
