@@ -74,10 +74,10 @@ export default function DashboardSsoPageClient() {
   }, [config, router, state, transactionId]);
 
   return (
-    <main className="auth-gate">
-      <div className="auth-gate-shell">
-        <section className="auth-card auth-screen-card">
-          <div className="auth-card-body">
+    <main className="auth-gate auth-gate-sso">
+      <div className="auth-gate-shell auth-gate-shell-sso">
+        <section className="auth-card auth-screen-card auth-screen-card-sso">
+          <div className="auth-card-body auth-card-body-sso">
             <h1 className="auth-title">Secure sign-in</h1>
             <p className="auth-subtitle">{message}</p>
           </div>

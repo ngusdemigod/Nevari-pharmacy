@@ -26853,6 +26853,35 @@ button:focus-visible,
   place-items: center;
 }
 
+@media (max-width: 720px) {
+  .auth-gate.auth-gate-sso {
+    position: static;
+    inset: auto;
+    min-height: auto;
+    background: transparent;
+    padding: 16px 16px 0;
+    overflow: visible;
+  }
+
+  .auth-gate-shell.auth-gate-shell-sso {
+    width: 100%;
+    min-height: auto;
+    place-items: stretch;
+    align-content: start;
+  }
+
+  .auth-screen-card.auth-screen-card-sso {
+    max-width: 100%;
+    border-radius: 22px;
+    box-shadow: 0 16px 36px rgba(10, 42, 94, 0.08);
+  }
+
+  .auth-card-body.auth-card-body-sso {
+    padding: 18px 18px 20px;
+    text-align: center;
+  }
+}
+
 @keyframes nevariSpinnerRotate {
   to {
     transform: rotate(360deg);
