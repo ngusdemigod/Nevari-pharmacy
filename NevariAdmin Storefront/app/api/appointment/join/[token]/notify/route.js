@@ -1,10 +1,10 @@
 "use server";
 
 import { NextResponse } from "next/server";
-import { isAllowedUrl } from "../../../../lib/inputValidation";
-import { resolveApiBase } from "../../../customer/appointments/_shared";
+import { isAllowedUrl } from "../../../../../lib/inputValidation";
+import { resolveApiBase } from "../../../../customer/appointments/_shared";
 
-async function proxyJoinRequest(request, { params }, method = "GET", suffix = "") {
+export async function POST(request, { params }) {
   const resolvedParams = await params;
   const token = String(resolvedParams?.token || "").trim();
   if (!token) {
@@ -16,11 +16,11 @@ async function proxyJoinRequest(request, { params }, method = "GET", suffix = ""
     return NextResponse.json({ ok: false, error: { message: "Backend URL is invalid." } }, { status: 500 });
   }
 
-  const endpoint = new URL(`${baseUrl}/appointments/join/${encodeURIComponent(token)}${suffix}`);
+  const endpoint = new URL(`${baseUrl}/appointments/join/${encodeURIComponent(token)}/notify`);
   const response = await fetch(endpoint, {
-    method,
+    method: "POST",
     headers: { Accept: "application/json" },
-    body: method === "GET" ? undefined : await request.text().catch(() => ""),
+    body: await request.text().catch(() => ""),
     cache: "no-store",
   });
   const payload = await response.text().catch(() => "");
@@ -34,13 +34,5 @@ async function proxyJoinRequest(request, { params }, method = "GET", suffix = ""
     });
   }
 
-  return NextResponse.json({ ok: false, error: { message: "Unable to resolve appointment link." } }, { status: response.status || 500 });
-}
-
-export async function GET(request, context) {
-  return proxyJoinRequest(request, context, "GET");
-}
-
-export async function POST(request, context) {
-  return proxyJoinRequest(request, context, "POST");
+  return NextResponse.json({ ok: false, error: { message: "Unable to send appointment notification." } }, { status: response.status || 500 });
 }

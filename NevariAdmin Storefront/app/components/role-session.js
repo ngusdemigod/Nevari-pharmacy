@@ -2,7 +2,6 @@
 
 import { DEFAULT_NEVARI_BASE_URL, FRONTENDS } from "./frontend-config";
 
-export const PAIRING_REQUIRED_ERROR_CODE = "frontend_pairing_required";
 export const SESSION_MARKER = "server-session";
 const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
 
@@ -116,14 +115,14 @@ export function isPairingRequiredPayload(payload) {
   return false;
 }
 
-export function createPairingRequiredError(message = "This frontend is not paired with the pharmacy installation.") {
+export function createPairingRequiredError(message = "This frontend is not authorized to access the pharmacy installation.") {
   const error = new Error(message);
-  error.code = PAIRING_REQUIRED_ERROR_CODE;
+  error.code = "frontend_authorization_required";
   return error;
 }
 
 export function isPairingRequiredError(error) {
-  return error?.code === PAIRING_REQUIRED_ERROR_CODE;
+  return error?.code === "frontend_authorization_required";
 }
 
 export function clearStoredSessions() {
@@ -157,6 +156,7 @@ export function saveSession(config, session) {
       id: session.user.id || "",
       display_name: session.user.display_name || session.user.name || "",
       email: session.user.email || "",
+      avatar_url: session.user.avatar_url || session.user.avatarUrl || session.user.picture || "",
       role: session.user.role || "",
       roles
     } : null

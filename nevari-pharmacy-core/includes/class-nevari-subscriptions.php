@@ -151,14 +151,12 @@ final class Nevari_Subscriptions {
 
     private static function dispatch_subscription_webhook(string $event, array $payload = []): void {
         $secret = self::webhook_signing_secret();
-        if ($secret === '' || !class_exists('Nevari_Connections')) {
+        if ($secret === '') {
             return;
         }
 
-        $frontends = array_values(array_filter(Nevari_Connections::trusted_frontends(), static function ($frontend) {
-            return !empty($frontend['frontend_origin']) && (string) ($frontend['frontend_type'] ?? '') === 'storefront';
-        }));
-        if (empty($frontends)) {
+        $frontend_origin = rtrim(Nevari_Helpers::shared_frontend_base_url(), '/');
+        if ($frontend_origin === '') {
             return;
         }
 
@@ -175,22 +173,15 @@ final class Nevari_Subscriptions {
         $timestamp = (string) time();
         $signature = hash_hmac('sha256', $timestamp . "\n" . $body, $secret);
 
-        foreach ($frontends as $frontend) {
-            $origin = rtrim((string) ($frontend['frontend_origin'] ?? ''), '/');
-            if ($origin === '') {
-                continue;
-            }
-
-            wp_remote_post($origin . '/api/subscriptions/webhook', [
-                'timeout' => 15,
-                'headers' => [
-                    'Content-Type' => 'application/json',
-                    'X-Nevari-Webhook-Timestamp' => $timestamp,
-                    'X-Nevari-Webhook-Signature' => $signature,
-                ],
-                'body' => $body,
-            ]);
-        }
+        wp_remote_post($frontend_origin . '/api/subscriptions/webhook', [
+            'timeout' => 15,
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'X-Nevari-Webhook-Timestamp' => $timestamp,
+                'X-Nevari-Webhook-Signature' => $signature,
+            ],
+            'body' => $body,
+        ]);
     }
 
     private static function sanitize_subscription_text($value): string {
@@ -895,7 +886,8 @@ final class Nevari_Subscriptions {
 
         $frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$frontend) {
-            return new WP_Error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', ['status' => 403]);
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return new WP_Error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', ['status' => 403]);
         }
 
         $table = Nevari_Helpers::table('login_challenges');
@@ -2601,7 +2593,7 @@ final class Nevari_Subscriptions {
         $reset_at = self::subscription_quota_reset_at($claims);
         $cycle_start = self::subscription_quota_cycle_start($claims, $reset_at);
 
-        $sql = "SELECT COUNT(1) FROM {$table} WHERE patient_user_id = %d AND status IN ('confirmed', 'completed')";
+        $sql = "SELECT COUNT(1) FROM {$table} WHERE patient_user_id = %d AND status IN ('confirmed', 'completed') AND payment_status = 'paid'";
         $params = [$user_id];
         if ($cycle_start) {
             $sql .= " AND start_at >= %s";

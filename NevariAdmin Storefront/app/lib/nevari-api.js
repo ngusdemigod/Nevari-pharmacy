@@ -5,9 +5,139 @@ import { bytesToBase64, generateBrowserMtmPdf } from "./mtmPdfBrowser";
 
 const STORAGE_PREFIX = "nevari_subscription_state";
 const SUBSCRIPTION_UI_CACHE_TTL_MS = 10 * 60 * 1000;
+const SUBSCRIPTION_PLAN_DEFAULTS = {
+  pro: { monthlyAmount: 10000 },
+  nevari_access_pro: { monthlyAmount: 10000 },
+};
+
+function readFiniteAmount(value, { divideBy = 1 } = {}) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) {
+    return null;
+  }
+  return amount / divideBy;
+}
+
+function readFirstFiniteAmount(candidates = []) {
+  for (const candidate of candidates) {
+    const amount = readFiniteAmount(candidate.value, { divideBy: candidate.divideBy || 1 });
+    if (amount != null) {
+      return amount;
+    }
+  }
+  return null;
+}
+
+function resolveSubscriptionPlanDefault(subscription = {}) {
+  const planKey = String(subscription?.plan_key || subscription?.plan || "").trim().toLowerCase();
+  return SUBSCRIPTION_PLAN_DEFAULTS[planKey] || null;
+}
+
+function resolveSubscriptionBaseAmount(subscription = {}, { status = "" } = {}) {
+  if (String(status || subscription?.status || "").trim().toLowerCase() === "free") {
+    return 0;
+  }
+  const latestSubscription = subscription?.latest_subscription && typeof subscription.latest_subscription === "object"
+    ? subscription.latest_subscription
+    : null;
+  const resolved = readFirstFiniteAmount([
+    { value: subscription?.amount },
+    { value: subscription?.amount_ngn },
+    { value: subscription?.plan_amount },
+    { value: subscription?.planAmount },
+    { value: latestSubscription?.amount },
+    { value: latestSubscription?.amount_ngn },
+    { value: latestSubscription?.plan_amount },
+    { value: latestSubscription?.planAmount },
+    { value: subscription?.amount_kobo, divideBy: 100 },
+    { value: subscription?.amountKobo, divideBy: 100 },
+    { value: latestSubscription?.amount_kobo, divideBy: 100 },
+    { value: latestSubscription?.amountKobo, divideBy: 100 },
+  ]);
+  if (resolved != null) {
+    return resolved;
+  }
+  const planDefault = resolveSubscriptionPlanDefault(subscription);
+  return planDefault?.monthlyAmount ?? 0;
+}
+
+export function resolveSubscriptionMonthlyAmount(subscription = {}) {
+  const status = String(subscription?.status || "free").trim().toLowerCase();
+  if (status === "free") {
+    return 0;
+  }
+  const latestSubscription = subscription?.latest_subscription && typeof subscription.latest_subscription === "object"
+    ? subscription.latest_subscription
+    : null;
+  const directMonthlyAmount = readFirstFiniteAmount([
+    { value: subscription?.monthlyEquivalent },
+    { value: subscription?.monthly_equivalent },
+    { value: subscription?.monthly_equivalent_amount },
+    { value: subscription?.monthlyEquivalentAmount },
+    { value: subscription?.monthly_equivalent_kobo, divideBy: 100 },
+    { value: subscription?.monthlyEquivalentKobo, divideBy: 100 },
+    { value: latestSubscription?.monthlyEquivalent },
+    { value: latestSubscription?.monthly_equivalent },
+    { value: latestSubscription?.monthly_equivalent_amount },
+    { value: latestSubscription?.monthlyEquivalentAmount },
+    { value: latestSubscription?.monthly_equivalent_kobo, divideBy: 100 },
+    { value: latestSubscription?.monthlyEquivalentKobo, divideBy: 100 },
+  ]);
+  if (directMonthlyAmount != null) {
+    return directMonthlyAmount;
+  }
+  const frequency = String(subscription?.frequency || subscription?.interval || "monthly").trim().toLowerCase();
+  const baseAmount = resolveSubscriptionBaseAmount(subscription, { status });
+  if ((frequency === "yearly" || frequency === "year") && baseAmount > 0) {
+    return baseAmount / 12;
+  }
+  return baseAmount;
+}
 
 function storageKey(userId) {
   return `${STORAGE_PREFIX}:${String(userId || "guest")}`;
+}
+
+function subscriptionAllowedOrigins() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  const currentOrigin = window.location.origin;
+  const configured = String(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "")
+    .split(",")
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .map((value) => {
+      try {
+        return new URL(value).origin;
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean);
+  return Array.from(new Set([currentOrigin, ...configured]));
+}
+
+function sanitizeSubscriptionUrl(value, allowedOrigins = subscriptionAllowedOrigins()) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  try {
+    const url = new URL(text, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    if (!["http:", "https:"].includes(url.protocol)) {
+      return "";
+    }
+    if (url.username || url.password) {
+      return "";
+    }
+    if (allowedOrigins.length && !allowedOrigins.includes(url.origin)) {
+      return "";
+    }
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 export function defaultSubscriptionState() {
@@ -80,14 +210,14 @@ export function normalizeSubscriptionPayload(payload = {}) {
   const code = String(payload.paystack_subscription_code || payload.subscription_code || latestSubscription?.paystack_subscription_code || "").trim();
   const status = String(payload.status || base.status || "free").trim().toLowerCase();
   const frequency = String(payload.frequency || payload.interval || (status === "free" ? "free" : "monthly")).trim().toLowerCase();
-  const amount = Number(payload.amount ?? (status === "free" ? 0 : base.amount));
-  const monthlyEquivalent = Number(
-    payload.monthlyEquivalent
-    ?? payload.monthly_equivalent
-    ?? payload.monthly_equivalent_amount
-    ?? (frequency === "yearly" && Number.isFinite(amount) ? amount / 12 : amount)
-    ?? 0
-  );
+  const amount = resolveSubscriptionBaseAmount(payload, { status });
+  const monthlyEquivalent = resolveSubscriptionMonthlyAmount({
+    ...payload,
+    status,
+    frequency,
+    amount,
+    latest_subscription: latestSubscription,
+  });
   const nextPaymentDate = payload.nextPaymentDate
     ?? payload.next_payment_date
     ?? payload.renewal_date
@@ -108,14 +238,14 @@ export function normalizeSubscriptionPayload(payload = {}) {
     || payload.freeConsultationsResetLabel
     || ""
   ).trim();
-  const checkoutUrl = String(
+  const checkoutUrl = sanitizeSubscriptionUrl(
     payload.checkout_url
     || payload.authorization_url
     || payload.authorizationUrl
     || latestSubscription?.checkout_url
     || latestSubscription?.authorization_url
     || ""
-  ).trim();
+  );
   const checkoutExpiresAt = String(
     payload.checkout_expires_at
     || payload.checkoutExpiresAt
@@ -123,7 +253,7 @@ export function normalizeSubscriptionPayload(payload = {}) {
     || latestSubscription?.checkoutExpiresAt
     || ""
   ).trim();
-  const manageBillingUrl = String(payload.manage_billing_url || latestSubscription?.manage_billing_url || "").trim();
+  const manageBillingUrl = sanitizeSubscriptionUrl(payload.manage_billing_url || latestSubscription?.manage_billing_url || "");
   const protectedFeatures = payload.protected_features && typeof payload.protected_features === "object"
     ? payload.protected_features
     : {};
@@ -183,7 +313,7 @@ export function normalizeSubscriptionPayload(payload = {}) {
     authorization_url: checkoutUrl || String(payload.authorization_url || "").trim(),
     checkout_expires_at: checkoutExpiresAt,
     checkoutExpiresAt,
-    checkout_link: String(payload.checkout_link || checkoutUrl || "").trim(),
+    checkout_link: sanitizeSubscriptionUrl(payload.checkout_link || checkoutUrl || ""),
     manage_billing_url: manageBillingUrl,
     paystack_subscription_code: code,
     paystack_email_token: String(payload.paystack_email_token || latestSubscription?.paystack_email_token || "").trim(),
@@ -261,6 +391,31 @@ export async function cancelSubscription(session) {
 export async function fetchCustomerMtmRequests(session) {
   const payload = await apiRequest(session, "/mtm-requests", { suppressHttpError: true });
   return Array.isArray(payload?.items) ? payload.items : [];
+}
+
+async function parseLocalNurseRequestResponse(response, fallbackMessage) {
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.success) {
+    throw new Error(payload?.error?.message || fallbackMessage);
+  }
+  return payload?.data || {};
+}
+
+export async function fetchCustomerNurseRequests(session) {
+  const params = new URLSearchParams({
+    baseUrl: String(session?.baseUrl || ""),
+    frontendType: String(session?.frontendType || "patient"),
+  });
+  const response = await fetch(`/api/customer/nurse-requests?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Nevari-Frontend-Type": session?.frontendType || "patient",
+      "X-Nevari-Frontend-Origin": typeof window !== "undefined" ? window.location.origin : "",
+    },
+  });
+  const data = await parseLocalNurseRequestResponse(response, "Unable to load nurse requests.");
+  return Array.isArray(data?.items) ? data.items : [];
 }
 
 export async function fetchMtmRequest(session, id) {

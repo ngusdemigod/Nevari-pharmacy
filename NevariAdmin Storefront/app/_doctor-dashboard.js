@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import useSWR, { mutate as mutateSWRKey, useSWRConfig } from "swr";
@@ -13,6 +13,9 @@ import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
 import { apiRequest, buildDashboardCacheKey, buildUrl, DASHBOARD_CACHE_TTL_MS, describeDashboardFetchError, fitTextToContainer, hydrateStoredSession, isSessionUsable, money, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
 import { performGlobalLogout } from "./components/role-session";
+import { buildSWRRevealSignature, useSWRReveal } from "./components/useSWRReveal";
+import { BrandedSpinner } from "./components/BrandedSpinner";
+import ModalScrim from "./components/ModalScrim";
 
 const DOCTOR_SETTINGS_KEY = "nevari_doctor_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
@@ -133,11 +136,18 @@ function useAutoClearSnackbar(initialValue = null, timeoutMs = 3200) {
     if (!snackbar?.message) {
       return undefined;
     }
-    const timer = window.setTimeout(() => setSnackbar(null), timeoutMs);
+    const timer = window.setTimeout(
+      () => setSnackbar(null),
+      Number(snackbar.durationMs) > 0 ? Number(snackbar.durationMs) : timeoutMs
+    );
     return () => window.clearTimeout(timer);
   }, [snackbar, timeoutMs]);
 
   return [snackbar, setSnackbar];
+}
+
+function doctorNotificationEntityId(record) {
+  return String(record?.id || record?.reference || "").trim();
 }
 
 export default function DoctorDashboard() {
@@ -160,12 +170,20 @@ export default function DoctorDashboard() {
   const [snackbar, setSnackbar] = useAutoClearSnackbar(null);
   const [isDoctorMobile, setIsDoctorMobile] = useState(false);
   const [mobileSearchTerm, setMobileSearchTerm] = useState("");
+  const appointmentNotificationSeenRef = useRef(new Set());
+  const appointmentNotificationReadyRef = useRef(false);
 
-  function showDoctorNotice(message, tone = "warning") {
+  function showDoctorNotice(message, tone = "warning", options = {}) {
     if (!message) {
       return;
     }
-    setSnackbar({ tone, message });
+    setSnackbar({
+      tone,
+      message,
+      actionLabel: String(options.actionLabel || "").trim(),
+      onAction: typeof options.onAction === "function" ? options.onAction : null,
+      durationMs: Number(options.durationMs) > 0 ? Number(options.durationMs) : 0
+    });
   }
 
   useEffect(() => {
@@ -242,6 +260,9 @@ export default function DoctorDashboard() {
   const doctorSummaryKey = session && doctorId
     ? swrKeys.proxy.path("/dashboard/doctor", withBaseUrl(session, { doctor_id: doctorId }))
     : null;
+  const doctorAppointmentNotificationKey = session && doctorId
+    ? ["doctor-dashboard-appointment-notifications", session.baseUrl, doctorId]
+    : null;
   const doctorAppointmentsKey = session && doctorId && ["overview", "consultations", "settings"].includes(page)
     ? swrKeys.proxy.path("/appointments", withBaseUrl(session, { per_page: 40, page: 1, doctor_id: doctorId }))
     : null;
@@ -282,6 +303,14 @@ export default function DoctorDashboard() {
     () => fetchDoctorAppointments(session),
     { revalidateOnFocus: false, dedupingInterval: 45_000, keepPreviousData: true }
   );
+  const appointmentNotificationQuery = useSWR(
+    doctorAppointmentNotificationKey,
+    () => apiRequest(session, "/appointments", {
+      params: { per_page: 5, page: 1, doctor_id: doctorId },
+      suppressHttpError: true
+    }),
+    { refreshInterval: DOCTOR_DASHBOARD_REFRESH_MS, revalidateOnFocus: true, dedupingInterval: 30_000, keepPreviousData: true }
+  );
   const ordersQuery = useSWR(
     doctorOrdersKey,
     () => fetchDoctorOrders(session),
@@ -317,6 +346,58 @@ export default function DoctorDashboard() {
     reviews: reviewsQuery.data || summaryState.reviews || null,
     availability: availabilityQuery.data || summaryState.availability || {}
   }), [appointmentsQuery.data, availabilityQuery.data, ordersQuery.data, patientsQuery.data, productsQuery.data, reviewsQuery.data, summaryState]);
+
+  useEffect(() => {
+    const incomingAppointments = Array.isArray(appointmentNotificationQuery.data) ? appointmentNotificationQuery.data : [];
+    if (!incomingAppointments.length) {
+      return;
+    }
+
+    const seenIds = appointmentNotificationSeenRef.current;
+    const nextIds = incomingAppointments.map((appointment) => doctorNotificationEntityId(appointment)).filter(Boolean);
+    if (!appointmentNotificationReadyRef.current) {
+      nextIds.forEach((id) => seenIds.add(id));
+      appointmentNotificationReadyRef.current = true;
+      return;
+    }
+
+    const freshAppointments = incomingAppointments.filter((appointment) => {
+      const id = doctorNotificationEntityId(appointment);
+      return id && !seenIds.has(id);
+    });
+    nextIds.forEach((id) => seenIds.add(id));
+
+    if (!freshAppointments.length) {
+      return;
+    }
+
+    const latestAppointment = freshAppointments[0];
+    const patientName = String(latestAppointment?.patient?.display_name || "").trim() || "A customer";
+    showDoctorNotice(
+      `${patientName} scheduled an appointment with you on ${formatDoctorNotificationDate(latestAppointment?.start_at)}.`,
+      "info",
+      {
+        actionLabel: "View booking",
+        durationMs: 7000,
+        onAction: () => {
+          setPage("consultations");
+          setSnackbar(null);
+        }
+      }
+    );
+  }, [appointmentNotificationQuery.data]);
+
+  useEffect(() => {
+    const persistedDisplayName = String(state.doctor?.display_name || "").trim();
+    if (!persistedDisplayName) {
+      return;
+    }
+    setDoctorSettings((current) => (
+      current.displayName === persistedDisplayName
+        ? current
+        : { ...current, displayName: persistedDisplayName }
+    ));
+  }, [state.doctor?.display_name]);
   const mutate = async () => {
     await mutateSummary();
     if (page === "consultations") {
@@ -499,6 +580,56 @@ export default function DoctorDashboard() {
     }
   }
 
+  async function saveDoctorDisplayName(nextValue) {
+    const normalized = String(nextValue || "").trim();
+    const currentDisplayName = String(state.doctor?.display_name || "").trim();
+    if (!normalized) {
+      setDoctorSettings((current) => ({ ...current, displayName: currentDisplayName || current.displayName }));
+      showDoctorNotice("Display name is required.", "error");
+      return;
+    }
+    if (!session || !doctorId || normalized === currentDisplayName) {
+      return;
+    }
+
+    try {
+      const updatedDoctor = await apiRequest(session, `/doctors/${doctorId}`, {
+        method: "PUT",
+        body: { display_name: normalized }
+      });
+      if (!updatedDoctor) {
+        throw new Error("The doctor profile update returned no data.");
+      }
+
+      const persistedName = String(updatedDoctor.display_name || normalized);
+      setDoctorSettings((current) => ({ ...current, displayName: persistedName }));
+      setSession((current) => current ? {
+        ...current,
+        user: current.user ? { ...current.user, display_name: persistedName, name: persistedName } : current.user
+      } : current);
+      await mutateSummary((current) => current ? { ...current, doctor: updatedDoctor } : current, { revalidate: false });
+
+      if (typeof window !== "undefined") {
+        try {
+          const stored = JSON.parse(window.localStorage.getItem(FRONTENDS.doctor.storageKey) || "{}");
+          window.localStorage.setItem(FRONTENDS.doctor.storageKey, JSON.stringify({
+            ...stored,
+            user: stored.user ? { ...stored.user, display_name: persistedName, name: persistedName } : stored.user
+          }));
+        } catch {
+          // Keep the live state as the source of truth even if the local session cache cannot be rewritten.
+        }
+      }
+
+      revalidateDoctorGroups(isProxyDashboardDoctorKey);
+      await autoRefreshDoctorLists(doctorSummaryKey);
+      showDoctorNotice("Display name updated. Customers and emails will use this name.", "success");
+    } catch (error) {
+      setDoctorSettings((current) => ({ ...current, displayName: currentDisplayName || current.displayName }));
+      showDoctorNotice(error?.message || "The display name update failed.", "error");
+    }
+  }
+
   async function handleLogout() {
     if (logoutBusy) {
       return;
@@ -513,7 +644,7 @@ export default function DoctorDashboard() {
   }
 
   const sortedAppointments = useMemo(
-    () => [...state.appointments].sort((left, right) => new Date(left.start_at || 0) - new Date(right.start_at || 0)),
+    () => [...state.appointments].sort((left, right) => new Date(right.start_at || 0) - new Date(left.start_at || 0)),
     [state.appointments]
   );
   const reviews = state.reviews?.reviews || [];
@@ -521,6 +652,18 @@ export default function DoctorDashboard() {
   const paidAppointments = state.appointments.filter((item) => item.payment_status === "paid");
   const estimatedRevenue = paidAppointments.reduce((sum) => sum + doctorConsultationFee(state.doctor), 0);
   const storeCurrency = state.dashboard?.store_currency || storedStoreCurrency();
+  const dashboardRevealSignature = useMemo(
+    () => buildSWRRevealSignature([
+      state.appointments,
+      state.orders,
+      state.products,
+      state.patients,
+      reviews
+    ]),
+    [reviews, state.appointments, state.orders, state.patients, state.products]
+  );
+  const dashboardRevealActive = useSWRReveal(dashboardRevealSignature, { durationMs: 260 });
+  const dashboardRevealClassName = `dashboard-swr-reveal ${dashboardRevealActive ? "is-active" : ""}`.trim();
   useEffect(() => {
     rememberStoreContext(state.dashboard || state.doctor || {});
   }, [state.dashboard, state.doctor]);
@@ -557,8 +700,13 @@ export default function DoctorDashboard() {
 
   const dashboardContent = <>
     {snackbar ? <div className={`snackbar ${snackbar.tone || "warning"}`} role="status" aria-live="polite">
-      <strong className="snackbar-title">{snackbar.tone === "success" ? "Success" : snackbar.tone === "error" ? "Error" : snackbar.tone === "warning" ? "Warning" : "Notice"}</strong>
-      <span className="snackbar-message">{snackbar.message}</span>
+      <div className="snackbar-copy">
+        <strong className="snackbar-title">{snackbar.tone === "success" ? "Success" : snackbar.tone === "error" ? "Error" : snackbar.tone === "warning" ? "Warning" : "Notice"}</strong>
+        <span className="snackbar-message">{snackbar.message}</span>
+      </div>
+      {snackbar.actionLabel ? <div className="snackbar-actions">
+        <button className="snackbar-action" type="button" onClick={() => snackbar.onAction?.()}>{snackbar.actionLabel}</button>
+      </div> : null}
     </div> : null}
     {showSkeleton ? <DoctorDashboardSkeleton page={page} /> : null}
     {!showSkeleton && page === "overview" ? <DoctorOverview
@@ -590,6 +738,7 @@ export default function DoctorDashboard() {
       appointments={state.appointments}
       settings={doctorSettings}
       onSettingsChange={setDoctorSettings}
+      onSaveDisplayName={saveDoctorDisplayName}
       availabilityDraft={availabilityDraft}
       onOpenAvailability={() => setPage("availability")}
       estimatedRevenue={estimatedRevenue}
@@ -608,8 +757,13 @@ export default function DoctorDashboard() {
 
   const mobileDashboardContent = <>
     {snackbar ? <div className={`snackbar ${snackbar.tone || "warning"}`} role="status" aria-live="polite">
-      <strong className="snackbar-title">{snackbar.tone === "success" ? "Success" : snackbar.tone === "error" ? "Error" : snackbar.tone === "warning" ? "Warning" : "Notice"}</strong>
-      <span className="snackbar-message">{snackbar.message}</span>
+      <div className="snackbar-copy">
+        <strong className="snackbar-title">{snackbar.tone === "success" ? "Success" : snackbar.tone === "error" ? "Error" : snackbar.tone === "warning" ? "Warning" : "Notice"}</strong>
+        <span className="snackbar-message">{snackbar.message}</span>
+      </div>
+      {snackbar.actionLabel ? <div className="snackbar-actions">
+        <button className="snackbar-action" type="button" onClick={() => snackbar.onAction?.()}>{snackbar.actionLabel}</button>
+      </div> : null}
     </div> : null}
     {showSkeleton ? <DoctorDashboardSkeleton page={page} /> : null}
     {!showSkeleton && page === "overview" ? <DoctorMobileOverview
@@ -636,9 +790,9 @@ export default function DoctorDashboard() {
     /> : null}
     {!showSkeleton && page === "settings" ? <DoctorMobileSettingsPage
       doctor={state.doctor}
-      appointments={state.appointments}
       settings={doctorSettings}
       onSettingsChange={setDoctorSettings}
+      onSaveDisplayName={saveDoctorDisplayName}
       availabilityDraft={availabilityDraft}
       onOpenAvailability={() => setPage("availability")}
       estimatedRevenue={estimatedRevenue}
@@ -661,6 +815,7 @@ export default function DoctorDashboard() {
       pages={pages}
       active={page}
       onPageChange={setPage}
+      contentClassName={dashboardRevealClassName}
       pageLabels={doctorPageLabels}
       renderNavIcon={renderDoctorNavIcon}
       searchTerm={mobileSearchTerm}
@@ -677,6 +832,7 @@ export default function DoctorDashboard() {
     pages={pages}
     active={page}
     onPageChange={setPage}
+    pageBodyClassName={dashboardRevealClassName}
     renderNavIcon={renderDoctorNavIcon}
     pageLabels={doctorPageLabels}
     onLogout={handleLogout}
@@ -689,6 +845,7 @@ export default function DoctorDashboard() {
 
 function ConsultationsPage({ appointments, onConfirm, onComplete }) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [timeFilter, setTimeFilter] = useState("upcoming");
   const [filter, setFilter] = useState("all");
   const [pageNumber, setPageNumber] = useState(1);
   const [detailAppointment, setDetailAppointment] = useState(null);
@@ -706,10 +863,12 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
   }, [appointments]);
   const filteredAppointments = useMemo(() => {
     return sortedAppointments.filter((appointment) => {
+      const startAtMs = Date.parse(appointment?.start_at || "");
       const patientName = String(appointment.patient?.display_name || "").toLowerCase();
       const reason = String(appointment.reason || "").toLowerCase();
       const paymentStatus = String(appointment.payment_status || "").toLowerCase();
       const bookingStatus = String(appointment.status || "").toLowerCase();
+      const isPastAppointment = !Number.isFinite(startAtMs) || startAtMs <= Date.now();
       const matchesSearch = !searchTerm.trim()
         || patientName.includes(searchTerm.trim().toLowerCase())
         || reason.includes(searchTerm.trim().toLowerCase())
@@ -717,6 +876,12 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
         || bookingStatus.includes(searchTerm.trim().toLowerCase());
 
       if (!matchesSearch) {
+        return false;
+      }
+      if (timeFilter === "upcoming" && isPastAppointment) {
+        return false;
+      }
+      if (timeFilter === "past" && !isPastAppointment) {
         return false;
       }
       if (filter === "confirmed") {
@@ -730,7 +895,7 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
       }
       return true;
     });
-  }, [sortedAppointments, filter, searchTerm]);
+  }, [sortedAppointments, filter, searchTerm, timeFilter]);
 
   const stats = useMemo(() => ({
     total: sortedAppointments.length,
@@ -748,7 +913,7 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
 
   useEffect(() => {
     setPageNumber(1);
-  }, [filter, searchTerm]);
+  }, [filter, searchTerm, timeFilter]);
 
   useEffect(() => {
     if (pageNumber > pageCount) {
@@ -772,12 +937,7 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
           </div>
         </div>
         <div className="consultation-summary-grid">
-          <div className="consultation-day-summary" aria-label="Selected day appointment summary">
-            <div className="summary-row"><span>Total appointments</span><strong>{stats.total}</strong></div>
-            <div className="summary-row"><span>Filtered results</span><strong>{filteredAppointments.length}</strong></div>
-            <div className="summary-row"><span>Confirmed</span><strong>{stats.confirmed}</strong></div>
-            <div className="summary-row"><span>Requires review</span><strong>{stats.pending}</strong></div>
-          </div>
+          
           <div className="consultation-table-side">
             <div className="consultation-stats" aria-label="Appointment statistics">
               <div className="consultation-stat-card"><span className="consultation-stat-label">Paid</span><span className="consultation-stat-value">{stats.paid}</span></div>
@@ -785,13 +945,11 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
               <div className="consultation-stat-card"><span className="consultation-stat-label">Pending</span><span className="consultation-stat-value">{stats.pending}</span></div>
               <div className="consultation-stat-card"><span className="consultation-stat-label">Failed</span><span className="consultation-stat-value">{stats.failed}</span></div>
             </div>
-            <div className="consultation-filters" aria-label="Appointment filters">
+            <div className="consultation-filters consultation-time-filters" aria-label="Appointment time filters">
               {[
-                ["all", "All appointments"],
-                ["confirmed", "Confirmed"],
-                ["pending", "Pending review"],
-                ["payment-issue", "Payment issue"]
-              ].map(([value, label]) => <button className={`filter-pill ${filter === value ? "active" : ""}`.trim()} key={value} type="button" onClick={() => setFilter(value)}>{label}</button>)}
+                ["upcoming", "Upcoming"],
+                ["past", "Past"]
+              ].map(([value, label]) => <button className={`filter-pill ${timeFilter === value ? "active" : ""}`.trim()} key={value} type="button" onClick={() => setTimeFilter(value)}>{label}</button>)}
             </div>
           </div>
         </div>
@@ -805,6 +963,8 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
         onConfirm={onConfirm}
         onComplete={onComplete}
         onOpenDetails={setDetailAppointment}
+        filter={filter}
+        onFilterChange={setFilter}
       />
     </section>
     {detailAppointment ? <DoctorAppointmentDetailsModal
@@ -816,9 +976,9 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
   </section>;
 }
 
-function DoctorAppointmentsTable({ appointments, totalAppointments, page, pageCount, onPageChange, onConfirm, onComplete, onOpenDetails }) {
+function DoctorAppointmentsTable({ appointments, totalAppointments, page, pageCount, onPageChange, onConfirm, onComplete, onOpenDetails, filter = "all", onFilterChange = null }) {
   function renderActions(appointment) {
-    const joinUrl = resolveDoctorDashboardJoinUrl(appointment);
+    const joinUrl = doctorAppointmentIsUpcoming(appointment) ? resolveDoctorDashboardJoinUrl(appointment) : "";
     const canComplete = canDoctorAppointmentComplete(appointment);
     const stopRowClick = (event, action) => {
       event.stopPropagation();
@@ -827,17 +987,43 @@ function DoctorAppointmentsTable({ appointments, totalAppointments, page, pageCo
 
     return <div className="doctor-table-actions">
       {joinUrl ? <a className="btn primary small" href={joinUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Join now</a> : null}
-      {canComplete ? <button className="btn soft small" type="button" onClick={(event) => stopRowClick(event, () => onComplete(appointment.id))}>Complete</button> : null}
+      {canComplete ? <button className="btn primary small" type="button" onClick={(event) => stopRowClick(event, () => onComplete(appointment.id))}>Complete</button> : null}
     </div>;
   }
 
   return <section className="table-panel doctor-appointments-panel">
-    <div className="panel-header">
-      <h2>Appointments list</h2>
+    <div className="appointment-panel-header">
+      <div className="doctor-appointments-header-copy">
+        <h2>Appointments list</h2>
+        <div className="consultation-filters consultation-status-filters" aria-label="Appointment status filters">
+          {[
+            ["all", "All appointments"],
+            ["confirmed", "Confirmed"],
+            ["pending", "Pending review"],
+            ["payment-issue", "Payment issue"]
+          ].map(([value, label]) => <button
+            className={`filter-pill appointment-list-filter-pill ${filter === value ? "active" : ""}`.trim()}
+            key={value}
+            type="button"
+            onClick={() => onFilterChange?.(value)}
+          >
+            {label}
+          </button>)}
+        </div>
+      </div>
       <span className="doctor-table-count">{totalAppointments} {totalAppointments === 1 ? "appointment" : "appointments"}</span>
     </div>
     <div className="table-scroll doctor-appointments-table-wrap">
       <table className="doctor-appointments-table">
+        <colgroup>
+          <col className="doctor-col-patient" />
+          <col className="doctor-col-reason" />
+          <col className="doctor-col-scheduled" />
+          <col className="doctor-col-payment" />
+          <col className="doctor-col-status" />
+          <col className="doctor-col-contact" />
+          <col className="doctor-col-actions" />
+        </colgroup>
         <thead>
           <tr>
             {["Patient", "Reason", "Scheduled", "Payment", "Status", "Contact", "Actions"].map((column) => <th key={column}>{column}</th>)}
@@ -863,8 +1049,8 @@ function DoctorAppointmentsTable({ appointments, totalAppointments, page, pageCo
               <td><div className="doctor-table-meta"><strong className="doctor-table-cell-name">{patientName}</strong><span>{appointment.timezone || "UTC"}</span></div></td>
               <td><div className="doctor-table-meta"><strong className="doctor-table-cell-strong">{titleCase(appointment.type || "consultation")}</strong><span>{appointment.reason || "Consultation booking"}</span></div></td>
               <td><div className="doctor-table-meta"><strong className="doctor-table-cell-strong">{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</strong><span>{appointment.created_at ? `Booked ${formatDoctorDateTimeCompact(appointment.created_at)}` : "Booked time unavailable"}</span></div></td>
-              <td><span className={`status-pill ${appointment.payment_status === "paid" ? "success" : "warning"}`}>{titleCase(appointment.payment_status || "pending")}</span></td>
-              <td><span className={`status-pill ${["confirmed", "completed"].includes(String(appointment.status || "").toLowerCase()) ? "success" : "warning"}`}>{titleCase(appointment.status || "pending")}</span></td>
+              <td><span className={`status-pill ${doctorAppointmentPaymentTone(appointment)}`}>{titleCase(appointment.payment_status || "pending")}</span></td>
+              <td><span className={`status-pill ${doctorAppointmentDisplayStatusTone(appointment)}`}>{doctorAppointmentDisplayStatusLabel(appointment)}</span></td>
               <td><div className="doctor-table-meta"><strong className="doctor-table-cell-strong">{appointment.patient?.email || "Not available"}</strong><span>{appointment.order_id ? `Order #${appointment.order_id}` : "Order not linked"}</span></div></td>
               <td>{renderActions(appointment)}</td>
             </tr>;
@@ -894,7 +1080,7 @@ function DoctorAppointmentsTable({ appointments, totalAppointments, page, pageCo
               <strong>{patientName}</strong>
               <span>{titleCase(appointment.type || "consultation")}</span>
             </div>
-            <span className={`status-pill ${["confirmed", "completed"].includes(String(appointment.status || "").toLowerCase()) ? "success" : "warning"}`}>{titleCase(appointment.status || "pending")}</span>
+            <span className={`status-pill ${doctorAppointmentDisplayStatusTone(appointment)}`}>{doctorAppointmentDisplayStatusLabel(appointment)}</span>
           </div>
           <div className="doctor-mobile-appointment-grid">
             <div><span>Scheduled</span><strong>{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</strong></div>
@@ -928,11 +1114,11 @@ function DoctorAppointmentDetailsModal({ appointment, onConfirm, onComplete, onC
   const canComplete = canDoctorAppointmentComplete(appointment) && typeof onComplete === "function";
   const patientName = appointment?.patient?.display_name || `Patient #${appointment?.patient_user_id || ""}`;
   const paymentStatus = titleCase(appointment?.payment_status || "pending");
-  const bookingStatus = titleCase(appointment?.status || "pending");
+  const bookingStatus = doctorAppointmentDisplayStatusLabel(appointment);
   const singleStatusPill = appointment?.detailStatusMode === "single";
-  const primaryStatusTone = ["confirmed", "completed"].includes(String(appointment?.status || "").toLowerCase()) ? "success" : "warning";
+  const primaryStatusTone = doctorAppointmentDisplayStatusTone(appointment);
   const calendarUrl = buildUrl(session, `/appointments/${appointment?.id}/calendar`);
-  const joinUrl = resolveDoctorDashboardJoinUrl(appointment);
+  const joinUrl = doctorAppointmentIsUpcoming(appointment) ? resolveDoctorDashboardJoinUrl(appointment) : "";
   const detailRows = [
     ["Patient", patientName],
     ["Email", appointment?.patient?.email || "Not available"],
@@ -967,7 +1153,7 @@ function DoctorAppointmentDetailsModal({ appointment, onConfirm, onComplete, onC
   }
 
   return createPortal(<div className="customer-appointment-modal" role="dialog" aria-modal="true" aria-label="Appointment details">
-    <button className="customer-appointment-modal-backdrop" type="button" aria-label="Close appointment details" onClick={onClose} />
+    <ModalScrim className="customer-modal-scrim customer-appointment-modal-backdrop" label="Close appointment details" onDismiss={onClose} />
     <section className="customer-appointment-detail-card doctor-appointment-detail-popup">
       <div className="customer-panel-head">
         <div>
@@ -985,8 +1171,8 @@ function DoctorAppointmentDetailsModal({ appointment, onConfirm, onComplete, onC
           </div>
           <div className="doctor-detail-pill-stack">
             {singleStatusPill ? <span className={`doctor-detail-pill ${primaryStatusTone}`}>{bookingStatus}</span> : <>
-              <span className={`doctor-detail-pill ${appointment?.payment_status === "paid" ? "success" : "warning"}`}>{paymentStatus}</span>
-              <span className={`doctor-detail-pill ${["confirmed", "completed"].includes(String(appointment?.status || "").toLowerCase()) ? "success" : "warning"}`}>{bookingStatus}</span>
+              <span className={`doctor-detail-pill ${doctorAppointmentPaymentTone(appointment)}`}>{paymentStatus}</span>
+              <span className={`doctor-detail-pill ${doctorAppointmentDisplayStatusTone(appointment)}`}>{bookingStatus}</span>
             </>}
           </div>
         </div>
@@ -1007,7 +1193,7 @@ function DoctorAppointmentDetailsModal({ appointment, onConfirm, onComplete, onC
       <div className="action-stack">
         {joinUrl ? <a className="btn btn-primary btn-wide" href={joinUrl} target="_blank" rel="noreferrer">Join appointment</a> : null}
         <a className="btn btn-outline btn-wide" href={calendarUrl} target="_blank" rel="noreferrer">Download calendar file</a>
-        {canConfirm ? <button className="btn btn-outline btn-wide" type="button" onClick={() => onConfirm(appointment.id)}>Confirm appointment</button> : null}
+        {canConfirm ? <button className="btn btn-primary btn-wide" type="button" onClick={() => onConfirm(appointment.id)}>Confirm appointment</button> : null}
         {canComplete ? <button className="btn btn-primary btn-wide" type="button" onClick={() => onComplete(appointment.id)}>Complete appointment</button> : null}
       </div>
     </section>
@@ -1019,11 +1205,10 @@ function AppointmentDetailCard({ appointment, onConfirm, onComplete, featured = 
   const canConfirm = appointment.status === "requested";
   const canComplete = canDoctorAppointmentComplete(appointment);
   const calendarUrl = buildUrl(session, `/appointments/${appointment.id}/calendar`);
-  const joinUrl = [appointment?.join_url, appointment?.meet_link, appointment?.google_meet_link, appointment?.meeting_link, appointment?.meeting_url]
-    .find((value) => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
+  const joinUrl = doctorAppointmentIsUpcoming(appointment) ? resolveDoctorDashboardJoinUrl(appointment) : "";
   const patientName = appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`;
   const paymentStatus = titleCase(appointment.payment_status || "pending");
-  const bookingStatus = titleCase(appointment.status || "pending");
+  const bookingStatus = doctorAppointmentDisplayStatusLabel(appointment);
 
   return <details className={`appointment-card ${featured ? "featured" : ""}`.trim()} open={featured}>
     <summary className="appointment-top" aria-label={`Toggle appointment details for ${patientName}`}>
@@ -1032,8 +1217,8 @@ function AppointmentDetailCard({ appointment, onConfirm, onComplete, featured = 
         <p className="appointment-meta">{titleCase(appointment.type || "consultation")} - {formatDoctorDateTimeCompact(appointment.start_at)}</p>
       </div>
       <div className="consultation-badge-row" aria-label="Appointment status">
-        <span className={`consultation-badge ${appointment.payment_status === "paid" ? "success" : ["failed", "unpaid"].includes(String(appointment.payment_status || "").toLowerCase()) ? "danger" : "warning"}`}>{paymentStatus}</span>
-        <span className={`consultation-badge ${["confirmed", "completed"].includes(String(appointment.status || "").toLowerCase()) ? "success" : "warning"}`}>{bookingStatus}</span>
+        <span className={`consultation-badge ${doctorAppointmentPaymentTone(appointment)}`}>{paymentStatus}</span>
+        <span className={`consultation-badge ${doctorAppointmentDisplayStatusTone(appointment)}`}>{bookingStatus}</span>
       </div>
       <span className="appointment-collapse" aria-hidden="true">
         <svg className="appointment-chevron" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -1055,8 +1240,8 @@ function AppointmentDetailCard({ appointment, onConfirm, onComplete, featured = 
       <div className="appointment-actions">
         {joinUrl ? <a className="btn primary small" href={joinUrl} target="_blank" rel="noreferrer">Join appointment</a> : null}
         <a className="btn secondary small" href={calendarUrl} target="_blank" rel="noreferrer">Calendar file</a>
-        {canConfirm ? <button className="btn secondary small" type="button" onClick={() => onConfirm(appointment.id)}>Confirm</button> : null}
-        {canComplete ? <button className="btn soft small" type="button" onClick={() => onComplete(appointment.id)}>Mark complete</button> : null}
+        {canConfirm ? <button className="btn primary small" type="button" onClick={() => onConfirm(appointment.id)}>Confirm</button> : null}
+        {canComplete ? <button className="btn primary small" type="button" onClick={() => onComplete(appointment.id)}>Mark complete</button> : null}
       </div>
     </div>
   </details>;
@@ -1082,7 +1267,7 @@ function AppointmentCompletionModal({ appointment, products, draft, onChange, on
   }
 
   return <div className="doctor-completion-modal" role="dialog" aria-modal="true" aria-label="Complete appointment">
-    <button className="doctor-completion-backdrop" type="button" aria-label="Close completion modal" onClick={onClose} />
+    <ModalScrim className="doctor-completion-backdrop" label="Close completion modal" onDismiss={onClose} />
     <section className="doctor-completion-card">
       <div className="doctor-completion-head">
         <div>
@@ -1121,9 +1306,9 @@ function AppointmentCompletionModal({ appointment, products, draft, onChange, on
         )) : <p className="muted">No doctor-linked products are available.</p>}
       </div>
       <div className="doctor-completion-actions">
-        <button className="pill-button" type="button" onClick={onClose} disabled={submitting}>Cancel</button>
-        <button className="pill-button primary" type="button" onClick={onSubmit} disabled={submitting}>
-          {submitting ? "Saving..." : "Complete consultation"}
+        <button className="pill-button danger" type="button" onClick={onClose} disabled={submitting}>Cancel</button>
+        <button className="button-primary" type="button" onClick={onSubmit} disabled={submitting}>
+          {submitting ? <BrandedSpinner label="Completing consultation" /> : "Complete consultation"}
         </button>
       </div>
     </section>
@@ -1188,9 +1373,9 @@ function MtmQueuePage({ requests, selectedRequestId, onSelectRequest, onApprove,
           Adherence barriers: {(selectedRequest.adherence_assessment?.barriers || []).join(", ") || "None"}
         </div>
         <div className="doctor-appointment-actions">
-          <button className="pill-button" type="button" onClick={() => onApprove(selectedRequest.id)}>Approve</button>
+          <button className="button-primary" type="button" onClick={() => onApprove(selectedRequest.id)}>Approve</button>
           <button className="pill-button" type="button" onClick={() => onFollowUp(selectedRequest.id)}>Follow Up</button>
-          <button className="pill-button" type="button" onClick={() => onComplete(selectedRequest.id)}>Complete</button>
+          <button className="button-primary" type="button" onClick={() => onComplete(selectedRequest.id)}>Complete</button>
         </div>
         <div className="doctor-availability-note">Medication Action Plan</div>
         <label className="customer-mobile-field">
@@ -1288,7 +1473,7 @@ function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange,
         <span className="meta-chip"><strong>{totalSlots}</strong> live slots</span>
         <span className="meta-chip"><strong>{bookingIntervalMinutes}</strong> min interval</span>
       </div>
-      <button className="btn primary" type="button" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save changes"}</button>
+      <button className="btn primary" type="button" onClick={onSave} disabled={saving}>{saving ? <BrandedSpinner className="doctor-white-spinner" label="Saving availability" /> : "Save changes"}</button>
       <span className="save-state">{saving ? "Saving doctor availability" : "Changes are stored when you save"}</span>
     </div>
     <div className="availability-layout">
@@ -1408,7 +1593,7 @@ function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange,
   </section>;
 }
 
-function DoctorSettingsPage({ doctor, appointments, settings, onSettingsChange, availabilityDraft, onOpenAvailability, estimatedRevenue, storeCurrency }) {
+function DoctorSettingsPage({ doctor, appointments, settings, onSettingsChange, onSaveDisplayName, availabilityDraft, onOpenAvailability, estimatedRevenue, storeCurrency }) {
   const activeDays = weekdays.filter((day) => availabilityDraft[day]?.length).length;
   return <section className="page-view active" data-page-panel="settings">
     <section className="doctor-settings-grid flow-settings-grid">
@@ -1420,27 +1605,11 @@ function DoctorSettingsPage({ doctor, appointments, settings, onSettingsChange, 
           </div>
         </div>
         <div className="profile-form-grid">
-          <label className="profile-field"><span className="profile-label">Display name</span><input className="profile-input" value={settings.displayName} placeholder={doctor?.display_name || "Doctor"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: event.target.value }))} /></label>
+          <label className="profile-field"><span className="profile-label">Display name</span><input className="profile-input" value={settings.displayName} placeholder={doctor?.display_name || "Doctor"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: event.target.value }))} onBlur={(event) => onSaveDisplayName?.(event.target.value)} /></label>
           <label className="profile-field"><span className="profile-label">Specialization</span><input className="profile-input" value={settings.specialization} placeholder={(doctor?.specialties || []).join(", ") || "General practice"} onChange={(event) => onSettingsChange((current) => ({ ...current, specialization: event.target.value }))} /></label>
           <label className="profile-field full"><span className="profile-label">Bio</span><textarea className="profile-textarea" rows={4} value={settings.bio} onChange={(event) => onSettingsChange((current) => ({ ...current, bio: event.target.value }))} /></label>
           <label className="profile-field"><span className="profile-label">License number</span><input className="profile-input" value={settings.licenseNumber} onChange={(event) => onSettingsChange((current) => ({ ...current, licenseNumber: event.target.value }))} /></label>
           
-        </div>
-      </article>
-      
-      <article className="profile-details-card">
-        <div className="profile-card-header">
-          <div>
-            <p className="profile-helper">Notifications</p>
-            <h2 className="profile-card-title">Doctor alerts</h2>
-          </div>
-        </div>
-        <div className="flow-settings-stack">
-          <DoctorSettingToggle label="Email notifications" checked={settings.emailNotifications} onChange={(checked) => onSettingsChange((current) => ({ ...current, emailNotifications: checked }))} />
-          <DoctorSettingToggle label="Instant appointment alerts" checked={settings.instantAlerts} onChange={(checked) => onSettingsChange((current) => ({ ...current, instantAlerts: checked }))} />
-          <DoctorSettingToggle label="Reminder notifications" checked={settings.reminderNotifications} onChange={(checked) => onSettingsChange((current) => ({ ...current, reminderNotifications: checked }))} />
-          <DoctorSettingToggle label="Prescription builder visible" checked={settings.prescriptionBuilderEnabled} onChange={(checked) => onSettingsChange((current) => ({ ...current, prescriptionBuilderEnabled: checked }))} />
-          <p className="profile-helper">{appointments.filter((item) => item.status === "requested").length} requested consultations currently need review.</p>
         </div>
       </article>
       
@@ -1540,88 +1709,104 @@ function SkeletonTablePanel({ title, columns = 4, rows = 5 }) {
 }
 
 function DoctorOverviewSkeleton() {
-  return <>
-    <div className="app-header">
-      <div className="profile-mini">
-        <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
-        <div>
-          <SkeletonBox className="skeleton-line skeleton-line-xs" />
-          <SkeletonBox className="skeleton-line skeleton-line-md" />
-        </div>
-      </div>
-      <div className="cluster mobile-icon-cluster">
-        <SkeletonBox className="skeleton-circle skeleton-circle-xs" />
-      </div>
-    </div>
-    <div className="tiny-title">Today</div>
-    <div className="category-grid doctor-category-grid">
-      {Array.from({ length: 4 }, (_, index) => <div className="category-card skeleton-panel" key={`doctor-category-skeleton-${index}`}>
-        <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
-        <div>
-          <SkeletonBox className="skeleton-line skeleton-line-sm" />
-          <SkeletonBox className="skeleton-line skeleton-line-md" />
-        </div>
-      </div>)}
-    </div>
-    <div className="tiny-title doctor-clinical-title">Clinical profile</div>
-    <div className="plan-card purple doctor-clinical-card skeleton-panel" aria-hidden="true">
-      <div className="mini-person">
-        <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
-        <div>
-          <SkeletonBox className="skeleton-line skeleton-line-md" />
-          <SkeletonBox className="skeleton-line skeleton-line-sm" />
-        </div>
-      </div>
-      <SkeletonBox className="skeleton-line skeleton-line-lg skeleton-line-tall" />
-      <div className="plan-footer">
-        <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
-        <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
-      </div>
-    </div>
-    <div className="doctor-overview-insights">
-      {Array.from({ length: 3 }, (_, index) => <article className="doctor-insight-card skeleton-panel" key={`doctor-insight-skeleton-${index}`}>
-        <SkeletonBox className="skeleton-line skeleton-line-xs" />
-        <SkeletonBox className="skeleton-line skeleton-line-md skeleton-line-tall" />
-        <SkeletonBox className="skeleton-line skeleton-line-sm" />
-      </article>)}
-    </div>
-    <div className="tiny-title">Upcoming consultations</div>
-    <div className="doctor-list">
-      {Array.from({ length: 3 }, (_, index) => <div className="doctor-card skeleton-panel" key={`doctor-list-skeleton-${index}`}>
-        <div className="doctor-head">
-          <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
-          <div>
-            <SkeletonBox className="skeleton-line skeleton-line-md" />
-            <SkeletonBox className="skeleton-line skeleton-line-sm" />
+  return <section className="page-view active doctor-skeleton-page" data-page-panel="overview" aria-hidden="true">
+    <section className="overview-panel doctor-skeleton-layout">
+      <section className="overview-card doctor-skeleton-card doctor-skeleton-hero">
+        <div className="doctor-skeleton-welcome">
+          <div className="doctor-skeleton-profile">
+            <SkeletonBox className="skeleton-circle doctor-skeleton-avatar" />
+            <div className="doctor-skeleton-profile-copy">
+              <SkeletonBox className="skeleton-line skeleton-line-xs" />
+              <SkeletonBox className="skeleton-line doctor-skeleton-line-title" />
+              <SkeletonBox className="skeleton-line skeleton-line-sm" />
+            </div>
           </div>
+          <SkeletonBox className="skeleton-pill doctor-skeleton-chip" />
         </div>
-        <SkeletonBox className="skeleton-line skeleton-line-lg" />
-      </div>)}
-    </div>
-  </>;
+        <div className="doctor-overview-insights doctor-skeleton-insights">
+          {Array.from({ length: 3 }, (_, index) => <article className="doctor-insight-card doctor-skeleton-card" key={`doctor-overview-metric-${index}`}>
+            <SkeletonBox className="skeleton-line skeleton-line-xs" />
+            <SkeletonBox className="skeleton-line doctor-skeleton-line-value" />
+            <SkeletonBox className="skeleton-line skeleton-line-sm" />
+          </article>)}
+        </div>
+      </section>
+      <section className="overview-card doctor-skeleton-card">
+        <div className="doctor-skeleton-section-head">
+          <div>
+            <SkeletonBox className="skeleton-line skeleton-line-xs" />
+            <SkeletonBox className="skeleton-line skeleton-line-lg" />
+          </div>
+          <SkeletonBox className="skeleton-pill doctor-skeleton-chip" />
+        </div>
+        <div className="doctor-list doctor-skeleton-list">
+          {Array.from({ length: 3 }, (_, index) => <article className="overview-row doctor-skeleton-row" key={`doctor-overview-appointment-${index}`}>
+            <SkeletonBox className="skeleton-circle doctor-skeleton-row-avatar" />
+            <div className="doctor-skeleton-row-copy">
+              <SkeletonBox className="skeleton-line doctor-skeleton-line-name" />
+              <SkeletonBox className="skeleton-line skeleton-line-sm" />
+            </div>
+            <div className="doctor-skeleton-row-actions">
+              <SkeletonBox className="skeleton-pill doctor-skeleton-chip" />
+              <SkeletonBox className="skeleton-pill doctor-skeleton-chip" />
+            </div>
+          </article>)}
+        </div>
+      </section>
+    </section>
+  </section>;
 }
 
 function DoctorConsultationsSkeleton() {
-  return <section className="doctor-consultation-layout">
-    <aside className="panel role-calendar-panel skeleton-panel">
-      <div className="panel-header"><SkeletonBox className="skeleton-line skeleton-line-lg" /></div>
-      <div className="calendar-widget">
-        {Array.from({ length: 42 }, (_, index) => <SkeletonBox className="skeleton-circle skeleton-circle-xs" key={`calendar-skeleton-${index}`} />)}
+  return <section className="consultations-panel consultation-table-page doctor-skeleton-page" aria-hidden="true">
+    <section className="consultation-filter-card doctor-skeleton-card doctor-skeleton-consultation-shell">
+      <div className="consultation-pane-head doctor-skeleton-section-head">
+        <div>
+          <SkeletonBox className="skeleton-line skeleton-line-xs" />
+          <SkeletonBox className="skeleton-line doctor-skeleton-line-title" />
+        </div>
+        <SkeletonBox className="skeleton-line doctor-skeleton-search" />
       </div>
-    </aside>
-    <section className="doctor-appointment-stack">
-      <div className="panel-header"><SkeletonBox className="skeleton-line skeleton-line-md" /></div>
-      {Array.from({ length: 3 }, (_, index) => <article className="doctor-appointment-detail-card skeleton-panel" key={`appointment-detail-skeleton-${index}`}>
-        <div className="doctor-appointment-detail-head">
-          <div>
-            <SkeletonBox className="skeleton-line skeleton-line-md" />
-            <SkeletonBox className="skeleton-line skeleton-line-sm" />
+      <div className="consultation-summary-grid doctor-skeleton-summary-grid">
+        <div className="consultation-table-side doctor-skeleton-table-side">
+          <div className="consultation-stats">
+            {Array.from({ length: 4 }, (_, index) => <div className="consultation-stat-card doctor-skeleton-card" key={`doctor-consultation-stat-${index}`}>
+              <SkeletonBox className="skeleton-line skeleton-line-xs" />
+              <SkeletonBox className="skeleton-line doctor-skeleton-line-value" />
+            </div>)}
+          </div>
+          <div className="consultation-filters consultation-time-filters">
+            <SkeletonBox className="skeleton-pill doctor-skeleton-chip" />
+            <SkeletonBox className="skeleton-pill doctor-skeleton-chip" />
           </div>
         </div>
-        <div className="doctor-appointment-grid">
-          {Array.from({ length: 6 }, (_, itemIndex) => <div key={`appointment-grid-skeleton-${itemIndex}`}><SkeletonBox className="skeleton-line skeleton-line-xs" /><SkeletonBox className="skeleton-line skeleton-line-sm" /></div>)}
+      </div>
+    </section>
+    <section className="table-panel doctor-appointments-panel doctor-skeleton-card">
+      <div className="appointment-panel-header">
+        <div className="doctor-appointments-header-copy">
+          <SkeletonBox className="skeleton-line doctor-skeleton-line-title" />
+          <div className="consultation-filters consultation-status-filters">
+            {Array.from({ length: 4 }, (_, index) => <SkeletonBox className="skeleton-pill doctor-skeleton-chip" key={`doctor-filter-skeleton-${index}`} />)}
+          </div>
         </div>
-      </article>)}
+        <SkeletonBox className="skeleton-line skeleton-line-xs" />
+      </div>
+      <div className="table-scroll doctor-appointments-table-wrap">
+        <table className="doctor-appointments-table">
+          <thead>
+            <tr>{Array.from({ length: 7 }, (_, index) => <th key={`doctor-head-skeleton-${index}`}><SkeletonBox className="skeleton-line skeleton-line-xs" /></th>)}</tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: 5 }, (_, rowIndex) => <tr key={`doctor-row-skeleton-${rowIndex}`}>
+              {Array.from({ length: 7 }, (_, columnIndex) => <td key={`doctor-cell-skeleton-${rowIndex}-${columnIndex}`}>
+                <SkeletonBox className={`skeleton-line ${columnIndex === 0 ? "doctor-skeleton-line-name" : columnIndex === 6 ? "skeleton-line-sm" : "skeleton-line-md"}`} />
+                {columnIndex < 6 ? <SkeletonBox className="skeleton-line skeleton-line-xs doctor-skeleton-subline" /> : null}
+              </td>)}
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
     </section>
   </section>;
 }
@@ -1657,8 +1842,8 @@ function DoctorReviewsSkeleton() {
 }
 
 function DoctorAvailabilitySkeleton() {
-  return <section className="doctor-availability-shell">
-    <div className="appointment-surface-card skeleton-panel">
+  return <section className="doctor-availability-shell doctor-skeleton-page" aria-hidden="true">
+    <div className="appointment-surface-card doctor-skeleton-card">
       <div className="panel-header">
         <div>
           <SkeletonBox className="skeleton-line skeleton-line-xs" />
@@ -1667,7 +1852,7 @@ function DoctorAvailabilitySkeleton() {
         <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
       </div>
       <div className="doctor-availability-grid">
-        {Array.from({ length: 7 }, (_, index) => <article className="doctor-availability-card skeleton-panel" key={`availability-skeleton-${index}`}>
+        {Array.from({ length: 7 }, (_, index) => <article className="doctor-availability-card doctor-skeleton-card" key={`availability-skeleton-${index}`}>
           <div className="doctor-availability-head">
             <SkeletonBox className="skeleton-line skeleton-line-sm" />
             <SkeletonBox className="skeleton-circle skeleton-circle-xs" />
@@ -1683,8 +1868,8 @@ function DoctorAvailabilitySkeleton() {
 }
 
 function DoctorSettingsSkeleton() {
-  return <section className="doctor-settings-shell">
-    <div className="appointment-surface-card skeleton-panel">
+  return <section className="doctor-settings-shell doctor-skeleton-page" aria-hidden="true">
+    <div className="appointment-surface-card doctor-skeleton-card">
       <div className="panel-header">
         <div>
           <SkeletonBox className="skeleton-line skeleton-line-xs" />
@@ -1693,7 +1878,7 @@ function DoctorSettingsSkeleton() {
         <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
       </div>
       <div className="doctor-settings-grid">
-        {Array.from({ length: 3 }, (_, index) => <article className="doctor-settings-card skeleton-panel" key={`settings-card-skeleton-${index}`}>
+        {Array.from({ length: 3 }, (_, index) => <article className="doctor-settings-card doctor-skeleton-card" key={`settings-card-skeleton-${index}`}>
           <SkeletonBox className="skeleton-line skeleton-line-md" />
           {Array.from({ length: 5 }, (_, rowIndex) => <SkeletonBox className="skeleton-pill" key={`settings-pill-skeleton-${index}-${rowIndex}`} />)}
         </article>)}
@@ -1703,7 +1888,7 @@ function DoctorSettingsSkeleton() {
 }
 
 function DoctorProfileSkeleton() {
-  return <section className="panel role-profile skeleton-panel">
+  return <section className="panel role-profile doctor-skeleton-card doctor-skeleton-page" aria-hidden="true">
     <div className="panel-header">
       <div>
         <SkeletonBox className="skeleton-line skeleton-line-lg" />
@@ -1721,7 +1906,7 @@ function DoctorProfileSkeleton() {
 }
 
 function DoctorOverview({ doctor, dashboard, appointments, orders, patients, reviews, reviewSummary, estimatedRevenue, storeCurrency, onOpenConsultations }) {
-  const upcoming = appointments.filter((item) => ["requested", "confirmed", "awaiting_payment"].includes(item.status)).slice(0, 3);
+  const upcoming = getUpcomingDoctorAppointments(appointments).slice(0, 3);
   const todayKey = new Date().toISOString().slice(0, 10);
   const appointmentsToday = appointments.filter((item) => String(item.start_at || "").slice(0, 10) === todayKey).length;
   return <section className="page-view active" data-page-panel="overview">
@@ -1729,7 +1914,10 @@ function DoctorOverview({ doctor, dashboard, appointments, orders, patients, rev
       <div className="overview-card">
         <div className="overview-welcome-strip">
           <div className="overview-profile">
-            <div className="overview-avatar" aria-hidden="true">{initials(doctor?.display_name || "Doctor")}</div>
+            <div className="overview-avatar" aria-hidden="true">
+              {(doctor?.avatar_url || doctor?.profile_image) ? <img src={doctor.avatar_url || doctor.profile_image} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
+              <span style={{ display: (doctor?.avatar_url || doctor?.profile_image) ? "none" : "inline" }}>{initials(doctor?.display_name || "Doctor")}</span>
+            </div>
             <div>
               <p className="overview-label">Welcome back,</p>
               <p className="overview-name">{doctor?.display_name || "Doctor"}</p>
@@ -1843,6 +2031,27 @@ function formatDoctorDateTimeCompact(value) {
     return "Not available";
   }
   return `${formatDoctorDateLong(date)}, ${formatDoctorTime(date)}`;
+}
+
+function formatDoctorNotificationDate(value, timeZone = storedStoreTimeZone()) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "the scheduled date";
+  }
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "long",
+      month: "short",
+      day: "numeric"
+    }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat("en-US", {
+      weekday: "long",
+      month: "short",
+      day: "numeric"
+    }).format(date);
+  }
 }
 
 function formatDoctorAppointmentWindow(startAt, endAt) {
@@ -2064,6 +2273,7 @@ function buildDoctorBootstrapState(session, fallbackState = emptyDoctorState) {
       user_id: doctorId,
       display_name: fallbackDoctor.display_name || sessionUser.display_name || sessionUser.name || "Doctor",
       email: fallbackDoctor.email || sessionUser.email || "",
+      avatar_url: fallbackDoctor.avatar_url || sessionUser.avatar_url || sessionUser.avatarUrl || sessionUser.picture || "",
       specialties: Array.isArray(fallbackDoctor.specialties) ? fallbackDoctor.specialties : [],
       languages: Array.isArray(fallbackDoctor.languages) ? fallbackDoctor.languages : [],
       consultation_fee: doctorConsultationFee(fallbackDoctor),
@@ -2100,13 +2310,15 @@ export function RoleShell({
   active,
   onPageChange,
   children,
+  pageBodyClassName = "",
   headerAction = null,
   showHeader = true,
   topContent = null,
   pageLabels = {},
   renderNavIcon = null,
   onLogout = null,
-  logoutBusy = false
+  logoutBusy = false,
+  sidebarFooter = null
 }) {
   const roleLabel = title.replace(/^Nevari\s+/i, "");
   const visibleNavPages = navPages;
@@ -2114,7 +2326,7 @@ export function RoleShell({
   const [sideNavOpen, setSideNavOpen] = useState(false);
   return <div className="doctor-flow-shell">
     <section className="app-shell">
-      {sideNavOpen ? <button className="dashboard-side-nav-backdrop" type="button" aria-label="Close navigation" onClick={() => setSideNavOpen(false)} /> : null}
+      {sideNavOpen ? <ModalScrim className="dashboard-side-nav-backdrop" label="Close navigation" onDismiss={() => setSideNavOpen(false)} /> : null}
       <aside className={`sidebar dashboard-side-nav ${sideNavOpen ? "is-open" : ""}`} aria-label={`${roleLabel} sections`}>
         <div>
           <div className="brand">
@@ -2145,6 +2357,7 @@ export function RoleShell({
             <span>{logoutBusy ? "Logging out..." : "Logout"}</span>
           </button> : null}
         </div>
+        {sidebarFooter}
       </aside>
       <main className="main">
         <div className="dashboard-tablet-toolbar">
@@ -2156,7 +2369,7 @@ export function RoleShell({
         </div>
         {topContent}
         
-        <div className="page-body">
+        <div className={`page-body ${pageBodyClassName}`.trim()}>
           {children}
         </div>
         <nav className="bottom-nav desktop-bottom-nav" aria-label={`${roleLabel} dashboard navigation`}>
@@ -2178,6 +2391,7 @@ function DoctorMobileShell({
   active,
   onPageChange,
   children,
+  contentClassName = "",
   pageLabels = {},
   renderNavIcon = null,
   onLogout = null,
@@ -2199,7 +2413,7 @@ function DoctorMobileShell({
 
   return <div className="customer-mobile-app doctor-mobile-shell">
     <div className={`customer-mobile-drawer-layer ${sideNavOpen ? "open" : ""}`.trim()}>
-      <button className="customer-mobile-drawer-backdrop" type="button" aria-label="Close navigation" onClick={() => setSideNavOpen(false)} />
+      <ModalScrim className="customer-mobile-drawer-backdrop" label="Close navigation" onDismiss={() => setSideNavOpen(false)} />
       <aside className="customer-mobile-drawer doctor-mobile-drawer" aria-label="Doctor navigation">
         <div className="doctor-mobile-brand customer-mobile-drawer-brand">
           <div className="doctor-mobile-brand-mark">
@@ -2264,7 +2478,7 @@ function DoctorMobileShell({
       </div>
     </header>
     <div className="doctor-mobile-header-spacer customer-mobile-header-spacer is-overview" aria-hidden="true" />
-    <main className="customer-mobile-frame doctor-mobile-content">{children}</main>
+    <main className={`customer-mobile-frame doctor-mobile-content ${contentClassName}`.trim()}>{children}</main>
   </div>;
 }
 
@@ -2282,7 +2496,7 @@ function DoctorMobileOverview({ doctor, appointments, searchTerm, onOpenConsulta
   const [detailAppointment, setDetailAppointment] = useState(null);
   const filteredAppointments = useMemo(() => {
     const query = String(searchTerm || "").trim().toLowerCase();
-    const sorted = sortDoctorAppointments(appointments);
+    const sorted = getUpcomingDoctorAppointments(appointments);
     if (!query) {
       return sorted.slice(0, 4);
     }
@@ -2447,7 +2661,7 @@ function DoctorMobileConsultationsPage({ appointments, searchTerm, onComplete })
       </div>
       <div className="doctor-mobile-appointment-listing">
         {paginatedAppointments.length ? paginatedAppointments.map((appointment) => {
-          const joinUrl = resolveDoctorDashboardJoinUrl(appointment);
+          const joinUrl = doctorAppointmentIsUpcoming(appointment) ? resolveDoctorDashboardJoinUrl(appointment) : "";
           const canComplete = canDoctorAppointmentComplete(appointment);
           return <article
             className="doctor-mobile-consultation-card"
@@ -2466,18 +2680,19 @@ function DoctorMobileConsultationsPage({ appointments, searchTerm, onComplete })
             <div className="doctor-mobile-consultation-top">
               <div>
                 <strong>{appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`}</strong>
-                <span>{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</span>
-                <span>{appointment.reason || titleCase(appointment.type || "consultation")}</span>
+                <span className="consultation-email">{appointment.patient?.email || "No email available"}</span>
+                
+                <span className="consultation-reason">{appointment.reason || titleCase(appointment.type || "consultation")}</span>
               </div>
               <span className={`doctor-mobile-status-pill ${mobileDoctorStatusTone(appointment)}`.trim()}>{mobileDoctorStatusLabel(appointment)}</span>
             </div>
             <div className="doctor-mobile-consultation-meta">
-              <span>{appointment.patient?.email || "No email available"}</span>
-              <span>{appointment.timezone || "UTC"}</span>
+              <span className="consultation-window">{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</span>
+              <span className="consultation-timezone">{appointment.timezone || "UTC"}</span>
             </div>
             <div className="doctor-mobile-card-actions">
               {joinUrl ? <a className="doctor-mobile-action-button primary" href={joinUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Join now</a> : null}
-              {canComplete ? <button className="doctor-mobile-action-button secondary" type="button" onClick={(event) => {
+              {canComplete ? <button className="doctor-mobile-action-button primary" type="button" onClick={(event) => {
                 event.stopPropagation();
                 onComplete(appointment.id);
               }}>Complete</button> : null}
@@ -2560,7 +2775,7 @@ function DoctorMobileAvailabilityPage({ availabilityDraft, bookingIntervalMinute
   return <div className="doctor-mobile-page doctor-mobile-availability">
     <DoctorMobilePageSection
       title="Availability"
-      action={<button className="doctor-mobile-save-button" type="button" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save"}</button>}
+      action={<button className="doctor-mobile-save-button" type="button" onClick={onSave} disabled={saving}>{saving ? <BrandedSpinner className="doctor-white-spinner" label="Saving availability" /> : "Save"}</button>}
     >
       <div className="doctor-mobile-metric-grid compact">
         <article className="doctor-mobile-metric-card"><span className="doctor-mobile-metric-label">Active days</span><strong className="doctor-mobile-metric-value">{activeDays}</strong></article>
@@ -2635,7 +2850,7 @@ function DoctorMobileAvailabilityPage({ availabilityDraft, bookingIntervalMinute
   </div>;
 }
 
-function DoctorMobileSettingsPage({ doctor, appointments, settings, onSettingsChange, availabilityDraft, onOpenAvailability, estimatedRevenue, storeCurrency }) {
+function DoctorMobileSettingsPage({ doctor, settings, onSettingsChange, onSaveDisplayName, availabilityDraft, onOpenAvailability, estimatedRevenue, storeCurrency }) {
   const activeDays = weekdays.filter((day) => availabilityDraft[day]?.length).length;
 
   return <div className="doctor-mobile-page doctor-mobile-settings">
@@ -2647,7 +2862,7 @@ function DoctorMobileSettingsPage({ doctor, appointments, settings, onSettingsCh
             <p>Update the doctor information shown across the dashboard.</p>
           </div>
           <div className="doctor-mobile-form-stack">
-            <label className="doctor-mobile-form-field"><span>Display name</span><input value={settings.displayName} placeholder={doctor?.display_name || "Doctor"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: event.target.value }))} /></label>
+            <label className="doctor-mobile-form-field"><span>Display name</span><input value={settings.displayName} placeholder={doctor?.display_name || "Doctor"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: event.target.value }))} onBlur={(event) => onSaveDisplayName?.(event.target.value)} /></label>
             <label className="doctor-mobile-form-field"><span>Specialization</span><input value={settings.specialization} placeholder={(doctor?.specialties || []).join(", ") || "General practice"} onChange={(event) => onSettingsChange((current) => ({ ...current, specialization: event.target.value }))} /></label>
             <label className="doctor-mobile-form-field"><span>License number</span><input value={settings.licenseNumber} onChange={(event) => onSettingsChange((current) => ({ ...current, licenseNumber: event.target.value }))} /></label>
             <label className="doctor-mobile-form-field"><span>Bio</span><textarea rows={4} value={settings.bio} onChange={(event) => onSettingsChange((current) => ({ ...current, bio: event.target.value }))} /></label>
@@ -2663,18 +2878,6 @@ function DoctorMobileSettingsPage({ doctor, appointments, settings, onSettingsCh
             <article className="doctor-mobile-metric-card"><span className="doctor-mobile-metric-label">Active days</span><strong className="doctor-mobile-metric-value">{activeDays}</strong></article>
           </div>
           <button className="doctor-mobile-action-button secondary wide" type="button" onClick={onOpenAvailability}>Open availability</button>
-        </article>
-        <article className="doctor-mobile-surface-card">
-          <div className="doctor-mobile-surface-head">
-            <h2>Notifications</h2>
-            <p>{appointments.filter((item) => item.status === "requested").length} requested consultations currently need review.</p>
-          </div>
-          <div className="doctor-mobile-toggle-stack">
-            <DoctorSettingToggle label="Email notifications" checked={settings.emailNotifications} onChange={(checked) => onSettingsChange((current) => ({ ...current, emailNotifications: checked }))} />
-            <DoctorSettingToggle label="Instant appointment alerts" checked={settings.instantAlerts} onChange={(checked) => onSettingsChange((current) => ({ ...current, instantAlerts: checked }))} />
-            <DoctorSettingToggle label="Reminder notifications" checked={settings.reminderNotifications} onChange={(checked) => onSettingsChange((current) => ({ ...current, reminderNotifications: checked }))} />
-            <DoctorSettingToggle label="Prescription builder visible" checked={settings.prescriptionBuilderEnabled} onChange={(checked) => onSettingsChange((current) => ({ ...current, prescriptionBuilderEnabled: checked }))} />
-          </div>
         </article>
       </div>
     </DoctorMobilePageSection>
@@ -2694,8 +2897,34 @@ function sortDoctorAppointments(appointments) {
   });
 }
 
+function getUpcomingDoctorAppointments(appointments) {
+  const now = Date.now();
+  return [...appointments]
+    .filter((appointment) => {
+      const startAtMs = Date.parse(appointment?.start_at || "");
+      const status = String(appointment?.status || "").toLowerCase();
+      return Number.isFinite(startAtMs) && startAtMs > now && !["cancelled", "canceled", "failed"].includes(status);
+    })
+    .sort((left, right) => {
+      const leftStart = Date.parse(left?.start_at || "");
+      const rightStart = Date.parse(right?.start_at || "");
+      return rightStart - leftStart;
+    });
+}
+
+function doctorAppointmentIsUpcoming(appointment) {
+  const startAtMs = Date.parse(appointment?.start_at || "");
+  const status = String(appointment?.status || "").toLowerCase();
+  const displayStatus = String(appointment?.display_status_key || "").toLowerCase();
+  return Number.isFinite(startAtMs)
+    && startAtMs > Date.now()
+    && !["cancelled", "canceled", "failed", "completed"].includes(status)
+    && !["ended", "missed", "doctor_absent", "patient_absent"].includes(displayStatus);
+}
+
 function resolveDoctorDashboardJoinUrl(appointment) {
   const candidates = [
+    appointment?.doctor_join_url,
     appointment?.join_url,
     appointment?.meet_link,
     appointment?.google_meet_link,
@@ -2748,6 +2977,48 @@ function doctorAppointmentMatchesSearch(appointment, query) {
   ].some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
 }
 
+function doctorAppointmentDisplayStatusLabel(appointment) {
+  return String(appointment?.display_status_label || titleCase(appointment?.status || appointment?.payment_status || "pending"));
+}
+
+function doctorAppointmentDisplayStatusTone(appointment) {
+  const displayKey = String(appointment?.display_status_key || "").toLowerCase();
+  const displayLabel = String(appointment?.display_status_label || "").toLowerCase();
+  const rawStatus = String(appointment?.status || "").toLowerCase();
+  const paymentStatus = String(appointment?.payment_status || "").toLowerCase();
+
+  if (["failed"].includes(displayKey) || ["failed", "unpaid"].includes(paymentStatus) || displayLabel.includes("failed")) {
+    return "danger";
+  }
+  if (["cancelled", "canceled"].includes(displayKey) || ["cancelled", "canceled"].includes(rawStatus) || displayLabel.includes("canceled")) {
+    return "danger";
+  }
+  if (["upcoming"].includes(displayKey) || rawStatus === "confirmed" || displayLabel === "confirmed" || displayLabel === "upcoming") {
+    return "success";
+  }
+  if (["in_progress", "ended"].includes(displayKey) || ["checked_in", "completed"].includes(rawStatus) || displayLabel === "in progress" || displayLabel === "ended") {
+    return "processing";
+  }
+  if (["awaiting_payment"].includes(displayKey) || ["pending", "abandoned"].includes(paymentStatus) || displayLabel.includes("payment")) {
+    return "pending";
+  }
+  if (["awaiting_confirmation", "starting_soon", "doctor_absent", "patient_absent", "missed"].includes(displayKey)) {
+    return "warning";
+  }
+  return "warning";
+}
+
+function doctorAppointmentPaymentTone(appointment) {
+  const paymentStatus = String(appointment?.payment_status || "").toLowerCase();
+  if (["failed", "unpaid", "cancelled"].includes(paymentStatus)) {
+    return "danger";
+  }
+  if (paymentStatus === "paid") {
+    return "success";
+  }
+  return "warning";
+}
+
 function filterDoctorAppointments(sortedAppointments, searchTerm, filter) {
   const query = String(searchTerm || "").trim().toLowerCase();
   return sortedAppointments.filter((appointment) => {
@@ -2770,21 +3041,9 @@ function filterDoctorAppointments(sortedAppointments, searchTerm, filter) {
 }
 
 function mobileDoctorStatusLabel(appointment) {
-  const paymentStatus = String(appointment?.payment_status || "").toLowerCase();
-  if (["failed", "unpaid", "cancelled"].includes(paymentStatus)) {
-    return titleCase(paymentStatus);
-  }
-  return titleCase(appointment?.status || appointment?.payment_status || "pending");
+  return doctorAppointmentDisplayStatusLabel(appointment);
 }
 
 function mobileDoctorStatusTone(appointment) {
-  const paymentStatus = String(appointment?.payment_status || "").toLowerCase();
-  const bookingStatus = String(appointment?.status || "").toLowerCase();
-  if (["failed", "unpaid", "cancelled"].includes(paymentStatus) || ["cancelled", "failed"].includes(bookingStatus)) {
-    return "danger";
-  }
-  if (["confirmed", "completed"].includes(bookingStatus) && paymentStatus === "paid") {
-    return "success";
-  }
-  return "warning";
+  return doctorAppointmentDisplayStatusTone(appointment);
 }

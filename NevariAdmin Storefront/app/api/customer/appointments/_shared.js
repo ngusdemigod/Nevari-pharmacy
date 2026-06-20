@@ -86,6 +86,7 @@ export async function requestUpstreamJson(baseUrl, accessToken, path, { method =
   const response = await fetch(endpoint, {
     method,
     headers,
+    cache: "no-store",
     body: body ? JSON.stringify(body) : undefined
   });
   const raw = await response.text().catch(() => "");

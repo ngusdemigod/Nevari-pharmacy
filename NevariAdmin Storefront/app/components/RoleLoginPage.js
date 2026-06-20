@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { setDocumentMetadata } from "./page-metadata";
+import { buildTwoStepVerificationRequest, loadAuthSecuritySettings } from "./auth-security-settings";
 import { buildUrl, defaultSession, frontendContext, isPairingRequiredPayload, loadSession, resetToPairingState, saveSession } from "./role-session";
 
 function isSessionUsable(session) {
@@ -25,6 +26,66 @@ function AuthButtonContent({ loading, loadingText, idleText }) {
 }
 
 const RESEND_CODE_COOLDOWN_SECONDS = 60;
+const GOOGLE_IDENTITY_SCRIPT_SRC = "https://accounts.google.com/gsi/client";
+
+let googleIdentityScriptPromise = null;
+
+function loadGoogleIdentityScript() {
+  if (typeof window === "undefined") {
+    return Promise.reject(new Error("Google sign-in is available only in the browser."));
+  }
+  if (window.google?.accounts?.id) {
+    return Promise.resolve();
+  }
+  if (googleIdentityScriptPromise) {
+    return googleIdentityScriptPromise;
+  }
+  googleIdentityScriptPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${GOOGLE_IDENTITY_SCRIPT_SRC}"]`);
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Google sign-in script failed to load.")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = GOOGLE_IDENTITY_SCRIPT_SRC;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Google sign-in script failed to load."));
+    document.head.appendChild(script);
+  });
+  return googleIdentityScriptPromise;
+}
+
+function GoogleAuthPanel({ buttonRef, loading }) {
+  return (
+    <div className="auth-google-panel" aria-busy={loading ? "true" : "false"}>
+      <div className="auth-google-button-slot" ref={buttonRef} />
+      {loading ? <span className="auth-google-loading"><span className="auth-button-spinner" aria-hidden="true" /> Signing in with Google...</span> : null}
+    </div>
+  );
+}
+
+function resolveGoogleAuthConfig(payload, responseOk = false) {
+  const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+  const clientId = String(
+    data?.client_id
+    || data?.clientId
+    || data?.google_client_id
+    || data?.googleClientId
+    || ""
+  ).trim();
+  const enabledValue = data?.enabled;
+  const enabled = typeof enabledValue === "boolean"
+    ? enabledValue
+    : Boolean(responseOk && clientId);
+
+  return {
+    clientId,
+    enabled: Boolean(enabled && clientId),
+  };
+}
 
 function authScreenTitle(view) {
   if (view === "register") {
@@ -71,8 +132,12 @@ export default function RoleLoginPage({ config }) {
   const [resendLoading, setResendLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [loadingAction, setLoadingAction] = useState("");
+  const [googleAuth, setGoogleAuth] = useState({ checked: false, enabled: false, clientId: "" });
+  const googleButtonRef = useRef(null);
+  const [authSecuritySettings, setAuthSecuritySettings] = useState(() => loadAuthSecuritySettings());
   const dashboardName = authDashboardName(config);
   const screenTitle = authScreenTitle(view);
+  const globalTwoStepVerificationEnabled = Boolean(authSecuritySettings.globalTwoStepVerification);
   const showNotice = (message, tone = noticeTone(message)) => {
     if (!message) {
       return;
@@ -80,6 +145,15 @@ export default function RoleLoginPage({ config }) {
     setNotice({ message, tone });
   };
   const clearNotice = () => setNotice(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const syncAuthSecuritySettings = () => setAuthSecuritySettings(loadAuthSecuritySettings());
+    window.addEventListener("storage", syncAuthSecuritySettings);
+    return () => window.removeEventListener("storage", syncAuthSecuritySettings);
+  }, []);
 
   useEffect(() => {
     if (!notice?.message) {
@@ -144,6 +218,83 @@ export default function RoleLoginPage({ config }) {
     setDocumentMetadata(`${config.label} | ${viewLabel}`, `${viewLabel} for ${config.label}.`);
   }, [config.label, view]);
 
+  useEffect(() => {
+    let active = true;
+    async function loadGoogleConfig() {
+      if (!session.baseUrl) {
+        setGoogleAuth({ checked: true, enabled: false, clientId: "" });
+        return;
+      }
+      try {
+        const response = await fetch(buildUrl(session, "/auth/google-config"), {
+          headers: {
+            Accept: "application/json",
+            "X-Nevari-Frontend-Type": session.frontendType,
+            "X-Nevari-Frontend-Origin": window.location.origin
+          }
+        });
+        const payload = await response.json().catch(() => null);
+        if (!active) {
+          return;
+        }
+        const googleConfig = resolveGoogleAuthConfig(payload, response.ok);
+        setGoogleAuth({ checked: true, enabled: googleConfig.enabled, clientId: googleConfig.clientId });
+      } catch {
+        if (active) {
+          setGoogleAuth({ checked: true, enabled: false, clientId: "" });
+        }
+      }
+    }
+    loadGoogleConfig();
+    return () => {
+      active = false;
+    };
+  }, [session.baseUrl, session.frontendType]);
+
+  useEffect(() => {
+    if (!googleAuth.enabled || !googleAuth.clientId || !googleButtonRef.current || !["login", "register"].includes(view)) {
+      return undefined;
+    }
+    let cancelled = false;
+    async function renderGoogleButton() {
+      try {
+        await loadGoogleIdentityScript();
+      } catch {
+        if (!cancelled) {
+          showNotice("Google sign-in could not be loaded. Use email and password instead.", "error");
+        }
+        return;
+      }
+      if (cancelled || !window.google?.accounts?.id || !googleButtonRef.current) {
+        return;
+      }
+      googleButtonRef.current.innerHTML = "";
+      window.google.accounts.id.initialize({
+        client_id: googleAuth.clientId,
+        callback: (response) => {
+          if (response?.credential) {
+            signInWithGoogle(response.credential);
+          }
+        }
+      });
+      window.google.accounts.id.renderButton(googleButtonRef.current, {
+        type: "standard",
+        theme: "outline",
+        size: "large",
+        shape: "rectangular",
+        text: view === "register" ? "signup_with" : "signin_with",
+        width: 320
+      });
+    }
+    renderGoogleButton();
+    return () => {
+      cancelled = true;
+      if (googleButtonRef.current) {
+        googleButtonRef.current.innerHTML = "";
+      }
+    };
+  }, [googleAuth.enabled, googleAuth.clientId, view]);
+
   async function signIn(event) {
     event.preventDefault();
     if (!session.baseUrl) {
@@ -160,7 +311,12 @@ export default function RoleLoginPage({ config }) {
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
         },
-        body: JSON.stringify({ username, password, ...frontendContext(session) })
+        body: JSON.stringify({
+          username,
+          password,
+          ...frontendContext(session),
+          ...buildTwoStepVerificationRequest(authSecuritySettings)
+        })
       });
       const payload = await response.json();
       if (!response.ok || !payload?.success) {
@@ -178,6 +334,62 @@ export default function RoleLoginPage({ config }) {
           code: ""
         });
         setPassword("");
+        setView("verify");
+        setResendCooldown(Number(payload.data.resend_cooldown || RESEND_CODE_COOLDOWN_SECONDS));
+        showNotice(`Enter the code sent to ${payload.data.masked_email || "your email"}.`, "warning");
+        return;
+      }
+      const next = {
+        ...session,
+        accessToken: payload.data.access_token,
+        refreshToken: payload.data.refresh_token,
+        expiresAt: Date.now() + (Number(payload.data.expires_in || 0) * 1000),
+        user: payload.data.user
+      };
+      saveSession(config, next);
+      router.prefetch(config.dashboardPath);
+      router.replace(config.dashboardPath);
+    } finally {
+      setLoadingAction("");
+    }
+  }
+
+  async function signInWithGoogle(credential) {
+    if (!session.baseUrl) {
+      showNotice("Base API URL is not configured. Set NEXT_PUBLIC_NEVARI_BASE_URL and try again.", "error");
+      return;
+    }
+    setLoadingAction("google");
+    try {
+      const response = await fetch(buildUrl(session, "/auth/google-login"), {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Nevari-Frontend-Type": session.frontendType,
+          "X-Nevari-Frontend-Origin": window.location.origin
+        },
+        body: JSON.stringify({
+          credential,
+          ...frontendContext(session),
+          ...buildTwoStepVerificationRequest(authSecuritySettings)
+        })
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) {
+        if (isPairingRequiredPayload(payload)) {
+          resetToPairingState();
+          return;
+        }
+        showNotice(payload?.error?.message || "Google sign-in failed.", "error");
+        return;
+      }
+      if (payload.data?.verification_required) {
+        setVerification({
+          challengeId: payload.data.challenge_id,
+          maskedEmail: payload.data.masked_email || "",
+          code: ""
+        });
         setView("verify");
         setResendCooldown(Number(payload.data.resend_cooldown || RESEND_CODE_COOLDOWN_SECONDS));
         showNotice(`Enter the code sent to ${payload.data.masked_email || "your email"}.`, "warning");
@@ -376,6 +588,7 @@ export default function RoleLoginPage({ config }) {
             {view !== "verify" ? <h1 className="auth-title">{screenTitle}</h1> : null}
             {view === "login" ? (
               <form className="auth-form auth-reference-form" onSubmit={signIn}>
+                {globalTwoStepVerificationEnabled ? <p className="auth-subtitle">Two-step verification is enabled for this dashboard. After password sign-in, a one-time code will be sent to the account email.</p> : null}
                 <label className="form-group"><span>Email</span><div className="input-wrap"><input value={username} onChange={(event) => setUsername(event.target.value)} required /></div></label>
                 <label className="form-group"><span>Password</span><div className="input-wrap"><input type={passwordVisible ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} required /><button className="input-suffix auth-toggle-button" type="button" onClick={() => setPasswordVisible((value) => !value)}>{passwordVisible ? "Hide" : "Show"}</button></div></label>
                 <div className="auth-actions"><button className="auth-primary-button" type="submit" disabled={loadingAction === "signin"}><AuthButtonContent loading={loadingAction === "signin"} loadingText="Signing in..." idleText="Sign In" /></button></div>
@@ -383,6 +596,7 @@ export default function RoleLoginPage({ config }) {
                   <button className="auth-text-link" type="button" onClick={() => setView("reset")}>Reset password</button>
                   {config.allowRegistration ? <button className="auth-text-link" type="button" onClick={() => setView("register")}>Create account</button> : null}
                 </div>
+                {googleAuth.enabled ? <GoogleAuthPanel buttonRef={googleButtonRef} loading={loadingAction === "google"} /> : null}
               </form>
             ) : null}
             {view === "reset" ? (
@@ -436,12 +650,14 @@ export default function RoleLoginPage({ config }) {
             ) : null}
             {view === "register" && config.allowRegistration ? (
               <form className="auth-form auth-reference-form" onSubmit={registerCustomer}>
+                {globalTwoStepVerificationEnabled ? <p className="auth-subtitle">Two-step verification is enabled. New sign-ins will require a one-time verification code.</p> : null}
                 <label className="form-group"><span>First name</span><div className="input-wrap"><input value={registration.firstName} onChange={(event) => setRegistration((prev) => ({ ...prev, firstName: event.target.value }))} required /></div></label>
                 <label className="form-group"><span>Last name</span><div className="input-wrap"><input value={registration.lastName} onChange={(event) => setRegistration((prev) => ({ ...prev, lastName: event.target.value }))} required /></div></label>
                 <label className="form-group"><span>Email</span><div className="input-wrap"><input type="email" value={registration.email} onChange={(event) => setRegistration((prev) => ({ ...prev, email: event.target.value }))} required /></div></label>
                 <label className="form-group"><span>Password</span><div className="input-wrap"><input type={registrationPasswordVisible ? "text" : "password"} minLength={8} value={registration.password} onChange={(event) => setRegistration((prev) => ({ ...prev, password: event.target.value }))} required /><button className="input-suffix auth-toggle-button" type="button" onClick={() => setRegistrationPasswordVisible((value) => !value)}>{registrationPasswordVisible ? "Hide" : "Show"}</button></div></label>
                 <div className="auth-actions"><button className="auth-primary-button" type="submit" disabled={loadingAction === "register"}><AuthButtonContent loading={loadingAction === "register"} loadingText="Creating..." idleText="Create Account" /></button></div>
                 <div className="auth-inline-links"><button className="auth-text-link" type="button" onClick={() => setView("login")}>Back to login</button></div>
+                {googleAuth.enabled ? <GoogleAuthPanel buttonRef={googleButtonRef} loading={loadingAction === "google"} /> : null}
               </form>
             ) : null}
             {notice?.message ? (

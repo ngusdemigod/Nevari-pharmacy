@@ -3,6 +3,8 @@
 import { createPortal } from "react-dom";
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { GalleryThumbnailsIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import useSWR, { useSWRConfig } from "swr";
 import { DEFAULT_NEVARI_BASE_URL } from "../../components/frontend-config";
 import { removeById, replaceById, updateListPayload, upsertById } from "../../../lib/fetcher";
@@ -10,19 +12,30 @@ import { isAdminSummaryKey, isAppointmentListKey, isCustomerListKey, isDoctorLis
 import { useCreateProduct, useDeleteProduct, useUpdateProduct } from "../../../hooks/products";
 import { useUpdateOrderStatus } from "../../../hooks/orders/useUpdateOrderStatus";
 import { setDocumentMetadata } from "../../components/page-metadata";
+import ModalScrim from "../../components/ModalScrim";
+import { buildTwoStepVerificationRequest, loadAuthSecuritySettings, persistAuthSecuritySettings } from "../../components/auth-security-settings";
 import { getOrderTypeMeta } from "../../components/role-dashboard-utils";
 import { clearStoredSessions, createPairingRequiredError, isPairingRequiredError, isPairingRequiredPayload } from "../../components/role-session";
+import { buildSWRRevealSignature, useSWRReveal } from "../../components/useSWRReveal";
 
 const STORAGE_KEY = "nevari_admin_storefront_session";
 const STORE_CURRENCY_KEY = "nevari_store_currency";
 const STORE_TIMEZONE_KEY = "nevari_store_timezone";
+const SSR_SAFE_STORE_CURRENCY = "USD";
+const SSR_SAFE_STORE_TIMEZONE = "UTC";
 const API_NAMESPACE = "nevari/v1";
 const FRONTEND_TYPE = "storefront";
-const PAIRING_FRONTEND_TYPE = "custom_frontend";
+const PAIRING_FRONTEND_TYPE = FRONTEND_TYPE;
 const DEFAULT_SITE_NAME = "Nevari Pharmacy";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
 const EMAIL_TEMPLATE_STORAGE_KEY = "nevari_admin_email_templates";
+const CUSTOMER_PRIVILEGE_ROLE_OPTIONS = [
+  { value: "doctor", label: "Doctor" },
+  { value: "pharmacist", label: "Pharmacist" },
+  { value: "administrator", label: "Admin" }
+];
 const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
+let adminStorefrontClientHydrated = false;
 
 const EMAIL_HOOKS = [
   { key: "{content}", label: "Body content injected by the sending workflow." },
@@ -141,10 +154,11 @@ const SEARCH_PLACEHOLDERS = {
 };
 
 const EMPTY_ORDER_FORM = {
-  firstName: "",
-  lastName: "",
-  email: "",
-  phone: "",
+  firstName: "Customer",
+  lastName: "Guest",
+  email: "africanbursary@gmail.com",
+  phone: "0812 334 8821",
+  customerId: "",
   address: "",
   city: "",
   state: "",
@@ -152,9 +166,10 @@ const EMPTY_ORDER_FORM = {
   country: "US",
   productId: "",
   quantity: 1,
-  status: "awaiting-doctor",
+  status: "Awaiting payment",
   doctorId: "",
-  note: ""
+  deliveryMethod: "Pickup",
+  prescription: "No linked prescription"
 };
 
 const EMPTY_PRODUCT_FORM = {
@@ -164,7 +179,7 @@ const EMPTY_PRODUCT_FORM = {
   salePrice: "",
   status: "draft",
   stockQuantity: 0,
-  stockStatus: "instock",
+  stockStatus: "in stock",
   category: "",
   visibility: "visible"
 };
@@ -173,8 +188,12 @@ const EMPTY_PRODUCT_DRAFT = {
   title: "",
   shortDescription: "",
   longDescription: "",
+  prescriptionNotes: "",
   regularPrice: "",
   salePrice: "",
+  strengthDosage: "",
+  expiryDate: "",
+  prescriptionRule: "no_prescription_needed",
   categories: [],
   tags: [],
   brands: [],
@@ -185,6 +204,27 @@ const EMPTY_PRODUCT_DRAFT = {
   purchaseNotes: "",
   status: "draft"
 };
+
+const PRODUCT_CREATE_STEPS = [
+  {
+    key: "identity",
+    eyebrow: "Step 1",
+    label: "Product identity",
+    description: "Define what the product is, where it belongs, and how it is priced."
+  },
+  {
+    key: "description",
+    eyebrow: "Step 2",
+    label: "Prescription and description",
+    description: "Set the customer-facing copy and the prescription note for the product."
+  },
+  {
+    key: "media",
+    eyebrow: "Step 3",
+    label: "Media",
+    description: "Upload the featured image and gallery that will follow the product everywhere."
+  }
+];
 
 const EMPTY_ORDER_LINE = {
   key: "",
@@ -627,6 +667,7 @@ function sanitizedPersistedSession(session = {}) {
       id: session.user.id || "",
       display_name: session.user.display_name || session.user.name || "",
       email: session.user.email || "",
+      avatar_url: session.user.avatar_url || session.user.avatarUrl || session.user.picture || "",
       role: session.user.role || "",
       roles
     } : null
@@ -648,17 +689,17 @@ function clearDashboardCacheStorage() {
 }
 
 function storedStoreCurrency() {
-  if (typeof window === "undefined") {
-    return "USD";
+  if (typeof window === "undefined" || !adminStorefrontClientHydrated) {
+    return SSR_SAFE_STORE_CURRENCY;
   }
-  return normalizeCurrency(window.localStorage.getItem(STORE_CURRENCY_KEY)) || "USD";
+  return normalizeCurrency(window.localStorage.getItem(STORE_CURRENCY_KEY)) || SSR_SAFE_STORE_CURRENCY;
 }
 
 function storedStoreTimeZone() {
-  if (typeof window === "undefined") {
-    return "UTC";
+  if (typeof window === "undefined" || !adminStorefrontClientHydrated) {
+    return SSR_SAFE_STORE_TIMEZONE;
   }
-  return normalizeTimeZone(window.localStorage.getItem(STORE_TIMEZONE_KEY)) || "UTC";
+  return normalizeTimeZone(window.localStorage.getItem(STORE_TIMEZONE_KEY)) || SSR_SAFE_STORE_TIMEZONE;
 }
 
 function normalizeCurrency(value) {
@@ -735,9 +776,59 @@ function formatDate(value, withTime = false, timeZone = storedStoreTimeZone()) {
   }).format(date);
 }
 
+function notificationEntityId(record) {
+  return String(record?.id || record?.number || record?.reference || "").trim();
+}
+
+function primaryOrderItemName(order) {
+  const firstItem = Array.isArray(order?.items)
+    ? order.items[0]
+    : Array.isArray(order?.items_summary)
+      ? order.items_summary[0]
+      : null;
+
+  if (typeof firstItem === "string") {
+    return firstItem.trim();
+  }
+
+  return firstNonEmpty(
+    firstItem?.name,
+    firstItem?.title,
+    order?.item_name,
+    order?.line_item_name
+  );
+}
+
+function buildOrderNotificationMessage(order) {
+  const productName = primaryOrderItemName(order);
+  if (productName) {
+    return `${productName} has been purchased.`;
+  }
+  return `A new order${order?.number || order?.id ? ` (#${order.number || order.id})` : ""} has been placed.`;
+}
+
 function formatStatusLabel(value) {
   return String(value || "n/a")
     .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatPrescriptionRuleLabel(value) {
+  switch (String(value || "").trim().toLowerCase()) {
+    case "prescription_required":
+      return "Prescription required";
+    case "pharmacist_review_required":
+      return "Pharmacist review required";
+    case "no_prescription_needed":
+    default:
+      return "No prescription needed";
+  }
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase()
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
@@ -875,6 +966,75 @@ function joinNonEmpty(values, separator = " ") {
 
 function firstNonEmpty(...values) {
   return values.map((value) => String(value || "").trim()).find(Boolean) || "";
+}
+
+function collectRoleValues(value) {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(collectRoleValues);
+  }
+  if (typeof value === "object") {
+    return Object.entries(value).flatMap(([key, nestedValue]) => {
+      if (nestedValue === true || nestedValue === 1 || nestedValue === "1") {
+        return [key];
+      }
+      return collectRoleValues(nestedValue);
+    });
+  }
+  return [value];
+}
+
+function resolveRecordRoles(record = null) {
+  const values = [
+    record?.role,
+    record?.roles,
+    record?.wp_role,
+    record?.wp_roles,
+    record?.user_role,
+    record?.user_roles,
+    record?.role_slug,
+    record?.role_slugs,
+    record?.capabilities,
+    record?.user?.role,
+    record?.user?.roles,
+    record?.user?.wp_roles,
+    record?.user?.capabilities,
+    record?.wp_user?.role,
+    record?.wp_user?.roles,
+    record?.wp_user?.wp_roles,
+    record?.wp_user?.capabilities
+  ]
+    .flatMap(collectRoleValues)
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+
+  return Array.from(new Set(values));
+}
+
+function isAdminRoleValue(role) {
+  const normalized = String(role || "").trim().toLowerCase();
+  return normalized === "admin" || normalized === "administrator";
+}
+
+function formatRoleLabel(role) {
+  return titleCase(String(role || "").replace(/[_-]+/g, " "));
+}
+
+function primaryRoleValue(roles = []) {
+  if (roles.some(isAdminRoleValue)) {
+    return roles.find(isAdminRoleValue) || "administrator";
+  }
+  const clinicalRole = roles.find((role) => role.includes("doctor") || role.includes("pharmacist"));
+  if (clinicalRole) {
+    return clinicalRole;
+  }
+  const customerRole = roles.find((role) => role.includes("customer") || role.includes("patient"));
+  if (customerRole) {
+    return customerRole;
+  }
+  return roles[0] || "customer";
 }
 
 function metaValue(record, keys = []) {
@@ -1072,18 +1232,18 @@ function itemQuantityTotal(order) {
   return (order?.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 }
 
-function formatTopbarDate() {
+function formatTopbarDate(timeZone = storedStoreTimeZone()) {
   return new Intl.DateTimeFormat("en-US", {
-    timeZone: storedStoreTimeZone(),
+    timeZone: normalizeTimeZone(timeZone) || SSR_SAFE_STORE_TIMEZONE,
     month: "long",
     day: "numeric",
     year: "numeric"
   }).format(new Date());
 }
 
-function formatLiveLabel(value = new Date()) {
+function formatLiveLabel(value = new Date(), timeZone = storedStoreTimeZone()) {
   return new Intl.DateTimeFormat("en-US", {
-    timeZone: storedStoreTimeZone(),
+    timeZone: normalizeTimeZone(timeZone) || SSR_SAFE_STORE_TIMEZONE,
     hour: "numeric",
     minute: "2-digit"
   }).format(value);
@@ -1422,8 +1582,14 @@ function buildProductEditDraft(product) {
     title: product?.name || "",
     shortDescription: product?.short_description || product?.excerpt || "",
     longDescription: product?.description || product?.content || "",
+    prescriptionNotes: metaValue(product, ["prescription_notes", "rx_notes"]),
     regularPrice: String(getProductPrice(product, "regular_price") || product?.price || ""),
     salePrice: String(product?.sale_price || ""),
+    strengthDosage: metaValue(product, ["strength_dosage", "strength", "dosage"]),
+    expiryDate: metaValue(product, ["expiry_date", "expiry", "expiration_date"]),
+    prescriptionRule: product?.pharmacy_rules?.rx_required
+      ? "prescription_required"
+      : (metaValue(product, ["prescription_rule", "rx_rule"]) || "no_prescription_needed"),
     categories: getProductCategories(product).split(",").map((item) => item.trim()).filter(Boolean),
     tags: getProductTags(product).split(",").map((item) => item.trim()).filter(Boolean),
     brands: getProductBrands(product).split(",").map((item) => item.trim()).filter(Boolean),
@@ -1876,6 +2042,17 @@ function IconSprite() {
         <path d="M10.5 20.5 3.5 13.5a5 5 0 1 1 7-7l7 7a5 5 0 1 1-7 7Z" />
         <path d="m8 8 8 8" />
       </symbol>
+      <symbol id="i-products" viewBox="0 0 24 24">
+        <rect x="5" y="4" width="14" height="16" rx="4" />
+        <path d="M9 8h6" />
+        <path d="M9 12h6" />
+        <path d="M9 16h4" />
+      </symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24">
+        <path d="M12 16V5" />
+        <path d="m8 9 4-4 4 4" />
+        <path d="M5 16v2.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V16" />
+      </symbol>
       <symbol id="i-cart" viewBox="0 0 24 24">
         <circle cx="9" cy="20" r="1.5" />
         <circle cx="18" cy="20" r="1.5" />
@@ -2011,11 +2188,6 @@ function IconSprite() {
         <path d="m4 20 4.5-1 9.8-9.8a2.2 2.2 0 0 0-3.1-3.1L5.4 15.9 4 20Z" />
         <path d="m13.5 6.5 4 4" />
       </symbol>
-      <symbol id="i-upload" viewBox="0 0 24 24">
-        <path d="M12 16V5" />
-        <path d="m7.5 9.5 4.5-4.5 4.5 4.5" />
-        <path d="M5 19h14" />
-      </symbol>
       <symbol id="i-package" viewBox="0 0 24 24">
         <path d="m12 3 8 4-8 4-8-4 8-4Z" />
         <path d="M4 7v10l8 4 8-4V7" />
@@ -2025,11 +2197,24 @@ function IconSprite() {
   );
 }
 
-export default function Page() {
+export function AdminStorefrontDashboard({
+  embeddedProductOnly = false,
+  embeddedSession = null,
+  embeddedInitialPage = "",
+  embeddedCreateActions = null
+} = {}) {
   const router = useRouter();
   const { mutate: globalMutate } = useSWRConfig();
-  const [session, setSession] = useState(defaultSession);
-  const [currentPage, setCurrentPage] = useState("overview");
+  const resolvedEmbeddedPage = embeddedProductOnly
+    ? "products"
+    : (embeddedInitialPage ? normalizePageId(embeddedInitialPage) : "");
+  const isEmbeddedDashboard = embeddedProductOnly || Boolean(resolvedEmbeddedPage);
+  const createMenuItems = Array.isArray(embeddedCreateActions) && embeddedCreateActions.length
+    ? embeddedCreateActions
+    : (embeddedProductOnly ? ["product"] : ["product", "order", "consultation", "doctor", "customer"]);
+  const embeddedInitialSession = embeddedSession ? { ...defaultSession(), ...embeddedSession, paired: true } : null;
+  const [session, setSession] = useState(() => embeddedInitialSession || defaultSession());
+  const [currentPage, setCurrentPage] = useState(() => resolvedEmbeddedPage || "overview");
   const [trendMode, setTrendMode] = useState("week");
   const [data, setData] = useState(emptyData);
   const [audit, setAudit] = useState({ category: "orders", status: "all", source: "all" });
@@ -2037,9 +2222,10 @@ export default function Page() {
   const [liveSnapshots, setLiveSnapshots] = useState([]);
   const deferredSearch = useDeferredValue(search);
   const [selectedAuditIndex, setSelectedAuditIndex] = useState(0);
+  const [auditDetailModalOpen, setAuditDetailModalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [authGate, setAuthGate] = useState({ visible: false, stage: "auth" });
-  const [setupFeedback, setSetupFeedback] = useState("Enter the pairing code to trust this storefront.");
+  const [setupFeedback, setSetupFeedback] = useState("Dashboard configuration is ready.");
   const [authFeedback, setAuthFeedback] = useState("Not connected.");
   const [setupSubmitting, setSetupSubmitting] = useState(false);
   const [authSubmitting, setAuthSubmitting] = useState(false);
@@ -2067,8 +2253,8 @@ export default function Page() {
   const [resetSubmitting, setResetSubmitting] = useState(false);
   const [authView, setAuthView] = useState("login");
   const [syncStatus, setSyncStatus] = useState({ text: "Disconnected", mode: "" });
-  const [hydrated, setHydrated] = useState(false);
-  const [accessResolved, setAccessResolved] = useState(false);
+  const [hydrated, setHydrated] = useState(Boolean(isEmbeddedDashboard));
+  const [accessResolved, setAccessResolved] = useState(Boolean(isEmbeddedDashboard));
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [selectedOrderDetail, setSelectedOrderDetail] = useState(null);
   const [selectedOrderDoctorId, setSelectedOrderDoctorId] = useState("");
@@ -2094,6 +2280,8 @@ export default function Page() {
   const [createFeedback, setCreateFeedback] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
   const [orderCreateSearch, setOrderCreateSearch] = useState("");
+  const [orderCreateCustomerSearch, setOrderCreateCustomerSearch] = useState("Customer Guest");
+  const [orderCreateCustomerMenuOpen, setOrderCreateCustomerMenuOpen] = useState(false);
   const [productEditorMode, setProductEditorMode] = useState("edit");
   const [productCreateForm, setProductCreateForm] = useState(buildEmptyProductDraft());
   const [consultationCreateForm, setConsultationCreateForm] = useState(EMPTY_CONSULTATION_FORM);
@@ -2111,6 +2299,8 @@ export default function Page() {
   const [productEditForm, setProductEditForm] = useState(null);
   const [productEditMedia, setProductEditMedia] = useState([]);
   const [activeProductMediaId, setActiveProductMediaId] = useState("");
+  const [productCreateStep, setProductCreateStep] = useState(0);
+  const [productCreateValidationStep, setProductCreateValidationStep] = useState("");
   const [productEditTab, setProductEditTab] = useState("details");
   const [productEditSearch, setProductEditSearch] = useState({ categories: "", tags: "", brands: "" });
   const [productEditFeedback, setProductEditFeedback] = useState("");
@@ -2143,6 +2333,10 @@ export default function Page() {
   const [customerPage, setCustomerPage] = useState(1);
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [customerDetailTab, setCustomerDetailTab] = useState("details");
+  const [customerPrivilegeTargetRole, setCustomerPrivilegeTargetRole] = useState("doctor");
+  const [customerPrivilegeEscalationOpen, setCustomerPrivilegeEscalationOpen] = useState(false);
+  const [customerPrivilegeEscalationLoading, setCustomerPrivilegeEscalationLoading] = useState(false);
+  const [customerPrivilegeOtp, setCustomerPrivilegeOtp] = useState({ code: "", status: "", challengeId: "", maskedEmail: "" });
   const [customerOrderPage, setCustomerOrderPage] = useState(1);
   const [customerProductPage, setCustomerProductPage] = useState(1);
   const [customerHistoryOrders, setCustomerHistoryOrders] = useState([]);
@@ -2151,7 +2345,6 @@ export default function Page() {
   const [consultationFilter, setConsultationFilter] = useState("all");
   const [consultationPage, setConsultationPage] = useState(1);
   const [selectedConsultation, setSelectedConsultation] = useState(null);
-  const [selectedMtmRequestId, setSelectedMtmRequestId] = useState(null);
   const [mtmPage, setMtmPage] = useState(1);
   const [mtmPreviewRequestId, setMtmPreviewRequestId] = useState(null);
   const [consultationDetailForm, setConsultationDetailForm] = useState({ startAt: "", endAt: "", doctorNotes: "", cancellationReason: "" });
@@ -2173,14 +2366,19 @@ export default function Page() {
   const [orderCreateFeedback, setOrderCreateFeedback] = useState("");
   const [appDataLoaded, setAppDataLoaded] = useState(false);
   const [appointmentSettings, setAppointmentSettings] = useState(() => loadAdminAppointmentSettings());
+  const [authSecuritySettings, setAuthSecuritySettings] = useState(() => loadAuthSecuritySettings());
   const [doctorDetailTierLoading, setDoctorDetailTierLoading] = useState(false);
   const [staffPage, setStaffPage] = useState(1);
   const [globalConsultationFee, setGlobalConsultationFee] = useState("5000");
   const [globalConsultationFeeLoading, setGlobalConsultationFeeLoading] = useState(false);
   const [globalConsultationFeeFeedback, setGlobalConsultationFeeFeedback] = useState("");
+  adminStorefrontClientHydrated = hydrated;
   const latestSessionRef = useRef(session);
   const refreshPromiseRef = useRef(null);
   const bootstrapStartedRef = useRef(false);
+  const customerPrivilegeOtpInputRef = useRef(null);
+  const orderNotificationSeenRef = useRef(new Set());
+  const orderNotificationReadyRef = useRef(false);
   const categoryNameInputRef = useRef(null);
   const categoryPriceInputRef = useRef(null);
   const productMediaInputRef = useRef(null);
@@ -2267,7 +2465,12 @@ export default function Page() {
   const subscriptionSummaryPrice = formatNairaAmount(subscriptionAmountValue, subscriptionCurrencyValue || "NGN");
   const subscriptionSummaryFrequency = formatStatusLabel(subscriptionIntervalValue || subscriptionSettings.interval || "manual");
 
-  function forcePairingReset(message = "Frontend access was revoked. Pair this dashboard again to continue.") {
+  function forcePairingReset(message = "Frontend access was revoked. Sign in again to continue.") {
+    if (isEmbeddedDashboard) {
+      setAuthFeedback(message);
+      setSyncStatus({ text: "Disconnected", mode: "" });
+      return;
+    }
     const nextSession = defaultSession();
     clearStoredSessions();
     clearDashboardCacheStorage();
@@ -2278,10 +2481,10 @@ export default function Page() {
     setAppDataLoaded(false);
     hideAuthGate();
     setSetupFeedback(message);
-    setAuthFeedback("Pairing required.");
-    setSyncStatus({ text: "Pairing required", mode: "" });
+    setAuthFeedback("Sign in required.");
+    setSyncStatus({ text: "Disconnected", mode: "" });
     persistSessionSnapshot(nextSession, "overview");
-    router.replace("/admin/storefront/setup");
+    router.replace("/admin/storefront/login");
   }
 
   useEffect(() => {
@@ -2289,13 +2492,33 @@ export default function Page() {
   }, [session]);
 
   useEffect(() => {
+    if (!isEmbeddedDashboard || !embeddedSession) {
+      return;
+    }
+    const nextSession = { ...defaultSession(), ...embeddedSession, paired: true };
+    latestSessionRef.current = nextSession;
+    setSession(nextSession);
+    setCurrentPage(resolvedEmbeddedPage || "products");
+    setHydrated(true);
+    setAccessResolved(true);
+    setAuthGate({ visible: false, stage: "auth" });
+  }, [embeddedSession, isEmbeddedDashboard, resolvedEmbeddedPage]);
+
+  useEffect(() => {
     const pageLabel = FRONTEND_PAGES.flatMap((group) => group.items).find(([id]) => id === currentPage)?.[1] || "Dashboard";
-    setDocumentMetadata(`Nevari Admin | ${pageLabel}`, `${pageLabel} view for the Nevari Admin dashboard.`);
-  }, [currentPage]);
+    setDocumentMetadata(
+      `${isEmbeddedDashboard ? "Nevari Pharmacist" : "Nevari Admin"} | ${pageLabel}`,
+      `${pageLabel} view for the Nevari ${isEmbeddedDashboard ? "Pharmacist" : "Admin"} dashboard.`
+    );
+  }, [currentPage, isEmbeddedDashboard]);
 
   useEffect(() => {
     persistAdminAppointmentSettings(appointmentSettings);
   }, [appointmentSettings]);
+
+  useEffect(() => {
+    persistAuthSecuritySettings(authSecuritySettings);
+  }, [authSecuritySettings]);
 
   useEffect(() => {
     persistSubscriptionSettings(subscriptionSettings);
@@ -2599,7 +2822,10 @@ export default function Page() {
 
     setSubscriptionState((current) => ({ ...current, loading: true, error: "" }));
 
-    const eventSource = new EventSource("/api/subscriptions/events");
+    const eventUrl = new URL("/api/subscriptions/events", window.location.origin);
+    eventUrl.searchParams.set("baseUrl", String(session?.baseUrl || "").trim());
+    eventUrl.searchParams.set("frontendType", String(session?.frontendType || "storefront").trim());
+    const eventSource = new EventSource(eventUrl);
     const handleSubscriptionEvent = () => {
       const activeSession = latestSessionRef.current;
       if (activeSession?.accessToken) {
@@ -2631,11 +2857,17 @@ export default function Page() {
     if (!snackbar) {
       return undefined;
     }
-    const timeout = window.setTimeout(() => setSnackbar(null), 3200);
+    const timeout = window.setTimeout(() => setSnackbar(null), snackbar.durationMs || (snackbar.actionLabel ? 6400 : 3200));
     return () => window.clearTimeout(timeout);
   }, [snackbar]);
 
   useEffect(() => {
+    if (isEmbeddedDashboard) {
+      setHydrated(true);
+      setAccessResolved(true);
+      setCurrentPage(resolvedEmbeddedPage || "products");
+      return;
+    }
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -2662,24 +2894,27 @@ export default function Page() {
     } finally {
       setHydrated(true);
     }
-  }, []);
+  }, [isEmbeddedDashboard, resolvedEmbeddedPage]);
 
   useEffect(() => {
+    if (isEmbeddedDashboard) {
+      return;
+    }
     if (!hydrated) {
       return;
     }
     persistSessionSnapshot(session, currentPage);
-  }, [session, currentPage, hydrated]);
+  }, [session, currentPage, hydrated, isEmbeddedDashboard]);
 
   useEffect(() => {
-    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(selectedCustomerId) || Boolean(mtmPreviewRequestId);
+    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || auditDetailModalOpen || customerPrivilegeEscalationOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(selectedCustomerId) || Boolean(mtmPreviewRequestId);
     document.body.classList.toggle("auth-locked", authGate.visible);
     document.body.classList.toggle("modal-open", hasPopupOpen);
     return () => {
       document.body.classList.remove("auth-locked");
       document.body.classList.remove("modal-open");
     };
-  }, [authGate.visible, categoryCreateOpen, createModalType, doctorAssignmentModalOpen, orderControlsModalOpen, orderCreateModalOpen, orderModalOpen, paymentReceiptModalOpen, selectedConsultation, selectedCustomerId, selectedDoctorId, selectedProductEdit]);
+  }, [auditDetailModalOpen, authGate.visible, categoryCreateOpen, createModalType, customerPrivilegeEscalationOpen, doctorAssignmentModalOpen, orderControlsModalOpen, orderCreateModalOpen, orderModalOpen, paymentReceiptModalOpen, selectedConsultation, selectedCustomerId, selectedDoctorId, selectedProductEdit]);
 
   useEffect(() => {
     function handleStackedModalCtaClick(event) {
@@ -2775,9 +3010,151 @@ export default function Page() {
     setCustomerPage(1);
   }, [customerFilter, deferredSearch, data.customers, data.orderDetails, data.appointments, data.prescriptionDetails]);
 
+  const query = deferredSearch.trim().toLowerCase();
+  const matchesSearch = (text, enabled) => !enabled || !query || normalizeText(text).includes(query);
+
+  // Calculate allCustomerRows before it's used in dependent values
+  const allCustomerRows = (() => {
+    const customerMap = new Map();
+
+    (data.customers || []).forEach((customer) => {
+      const id = customer.id || customer.user_id || customer.customer_id;
+      if (!id) {
+        return;
+      }
+      const name = customerNameFromRecord(customer) || customerEmail(customer) || `Customer #${id}`;
+      const roles = resolveRecordRoles(customer);
+      customerMap.set(id, {
+        id,
+        label: name,
+        name,
+        email: customerEmail(customer) || "No email on file",
+        orders: Number(customer.orders || customer.order_count || 0),
+        spend: safeNumber(customer.spend || customer.total_spend || 0),
+        lastActivity: customer.updated_at || customer.created_at || null,
+        prescriptions: Number(customer.prescriptions || 0),
+        appointments: Number(customer.appointments || 0),
+        roles,
+        primaryRole: primaryRoleValue(roles),
+        hasAccountRecord: true
+      });
+    });
+
+    (data.orderDetails || []).forEach((order) => {
+      const summary = customerSummary(order);
+      const key = order.customer_id || `guest-${customerEmail(order) || order.number || order.id}`;
+      const current = customerMap.get(key) || {
+        id: key,
+        label: summary.name,
+        name: summary.name,
+        email: summary.email,
+        orders: 0,
+        spend: 0,
+        lastActivity: order.created_at || null,
+        prescriptions: 0,
+        appointments: 0,
+        roles: ["customer"],
+        primaryRole: "customer",
+        hasAccountRecord: false
+      };
+      current.orders += 1;
+      current.spend += safeNumber(order.total);
+      if (isPlaceholderCustomerName(current.name) || current.name === patientLabel(order.customer_id)) {
+        current.name = summary.name;
+      }
+      if (isPlaceholderCustomerName(current.label) || current.label === patientLabel(order.customer_id)) {
+        current.label = summary.name;
+      }
+      if (!current.email || current.email === "No email on file") {
+        current.email = customerEmail(order) || current.email;
+      }
+      if (order.created_at && (!current.lastActivity || new Date(order.created_at) > new Date(current.lastActivity))) {
+        current.lastActivity = order.created_at;
+      }
+      customerMap.set(key, current);
+    });
+
+    (data.prescriptionDetails || []).forEach((prescription) => {
+      const key = prescription.patient_user_id || `patient-rx-${prescription.id}`;
+      const current = customerMap.get(key) || {
+        id: key,
+        label: patientLabel(prescription.patient_user_id),
+        name: patientLabel(prescription.patient_user_id),
+        email: "No email on file",
+        orders: 0,
+        spend: 0,
+        lastActivity: prescription.updated_at || prescription.created_at || null,
+        prescriptions: 0,
+        appointments: 0,
+        roles: ["customer"],
+        primaryRole: "customer",
+        hasAccountRecord: false
+      };
+      current.prescriptions += 1;
+      if (prescription.updated_at && (!current.lastActivity || new Date(prescription.updated_at) > new Date(current.lastActivity))) {
+        current.lastActivity = prescription.updated_at;
+      }
+      customerMap.set(key, current);
+    });
+
+    (data.appointments || []).forEach((appointment) => {
+      const key = appointment.patient_user_id || `patient-appt-${appointment.id}`;
+      const current = customerMap.get(key) || {
+        id: key,
+        label: patientLabel(appointment.patient_user_id),
+        name: patientLabel(appointment.patient_user_id),
+        email: "No email on file",
+        orders: 0,
+        spend: 0,
+        lastActivity: appointment.updated_at || appointment.start_at || null,
+        prescriptions: 0,
+        appointments: 0,
+        roles: ["customer"],
+        primaryRole: "customer",
+        hasAccountRecord: false
+      };
+      current.appointments += 1;
+      if (appointment.start_at && (!current.lastActivity || new Date(appointment.start_at) > new Date(current.lastActivity))) {
+        current.lastActivity = appointment.start_at;
+      }
+      customerMap.set(key, current);
+    });
+
+    return [...customerMap.values()]
+      .filter((row) => matchesSearch(`${row.label} ${row.name} ${row.email} ${row.id}`, currentPage === "customers"))
+      .sort((a, b) => safeNumber(b.spend) - safeNumber(a.spend));
+  })();
+
+  // Calculate customer-related derived values
+  const selectedCustomerProfile = selectedCustomerId
+    ? allCustomerRows.find((row) => String(row.id) === String(selectedCustomerId))
+    : null;
+  const sessionRoleValues = resolveRecordRoles(session?.user);
+  const canEscalateCustomerPrivileges = sessionRoleValues.some(isAdminRoleValue);
+  const selectedCustomerPrimaryRole = selectedCustomerProfile ? primaryRoleValue(selectedCustomerProfile.roles || []) : "customer";
+  const selectedCustomerEscalationOptions = CUSTOMER_PRIVILEGE_ROLE_OPTIONS.filter((option) => option.value !== selectedCustomerPrimaryRole);
+
+  useEffect(() => {
+    if (!selectedCustomerEscalationOptions.length) {
+      setCustomerPrivilegeTargetRole("doctor");
+      return;
+    }
+    if (!selectedCustomerEscalationOptions.some((option) => option.value === customerPrivilegeTargetRole)) {
+      setCustomerPrivilegeTargetRole(selectedCustomerEscalationOptions[0].value);
+    }
+  }, [customerPrivilegeTargetRole, selectedCustomerEscalationOptions]);
+
   useEffect(() => {
     setConsultationPage(1);
   }, [consultationFilter, deferredSearch, data.appointments]);
+
+  useEffect(() => {
+    if (!customerPrivilegeEscalationOpen) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => customerPrivilegeOtpInputRef.current?.focus(), 40);
+    return () => window.clearTimeout(timer);
+  }, [customerPrivilegeEscalationOpen]);
 
   useEffect(() => {
     setMtmPage(1);
@@ -2868,11 +3245,17 @@ export default function Page() {
     setReceiptActionLoading("");
   }
 
-  function showSnackbar(message, tone = "info") {
+  function showSnackbar(message, tone = "info", options = {}) {
     if (!message) {
       return;
     }
-    setSnackbar({ message, tone });
+    setSnackbar({
+      message,
+      tone,
+      actionLabel: String(options.actionLabel || "").trim(),
+      onAction: typeof options.onAction === "function" ? options.onAction : null,
+      durationMs: Number(options.durationMs) > 0 ? Number(options.durationMs) : 0
+    });
   }
 
   function updateSelectedEmailTemplate(patch) {
@@ -3182,8 +3565,15 @@ export default function Page() {
   function openOrderCreateModal() {
     closeAllOrderPopups();
     setOrderCreateForm(EMPTY_ORDER_FORM);
-    setOrderCreateItems([]);
-    setOrderCreateSearch("");
+    setOrderCreateItems([{
+      ...EMPTY_ORDER_LINE,
+      key: "line-1",
+      productId: String((data.products || [])[0]?.id || ""),
+      quantity: 1
+    }]);
+    setOrderCreateSearch((data.products || [])[0]?.name || "");
+    setOrderCreateCustomerSearch("Customer Guest");
+    setOrderCreateCustomerMenuOpen(false);
     setOrderCreateFeedback("");
     setOrderCreateModalOpen(true);
   }
@@ -3246,6 +3636,90 @@ export default function Page() {
     setOrderCreateFeedback("");
     setOrderCreateItems([]);
     setOrderCreateSearch("");
+    setOrderCreateCustomerSearch("");
+    setOrderCreateCustomerMenuOpen(false);
+  }
+
+  function getOrderCreateCustomerName(form = orderCreateForm) {
+    return [form.firstName, form.lastName].filter(Boolean).join(" ").trim() || "Customer Guest";
+  }
+
+  function setOrderCreateCustomerName(value) {
+    const parts = String(value || "").trim().split(/\s+/).filter(Boolean);
+    const firstName = parts.shift() || "";
+    const lastName = parts.join(" ");
+    setOrderCreateForm((prev) => ({
+      ...prev,
+      customerId: "",
+      firstName,
+      lastName
+    }));
+  }
+
+  function customerPhoneFromRecord(record) {
+    return firstNonEmpty(
+      record?.billing?.phone,
+      record?.billing_phone,
+      record?.phone,
+      record?.mobile,
+      record?.customer?.billing?.phone
+    );
+  }
+
+  function setOrderCreateCustomer(customer) {
+    if (!customer) {
+      return;
+    }
+    const customerId = String(customer.id || customer.user_id || customer.customer_id || "");
+    const customerName = customerNameFromRecord(customer) || customer.display_name || customer.email || `Customer #${customerId}`;
+    const nameParts = customerName.trim().split(/\s+/).filter(Boolean);
+    const firstName = nameParts.shift() || "Customer";
+    const lastName = nameParts.join(" ") || "Guest";
+    const nextEmail = customerEmail(customer) || customer.email || "";
+    const nextPhone = customerPhoneFromRecord(customer) || "";
+    setOrderCreateForm((prev) => ({
+      ...prev,
+      customerId,
+      firstName,
+      lastName,
+      email: nextEmail || prev.email,
+      phone: nextPhone || prev.phone
+    }));
+    setOrderCreateCustomerSearch(customerName);
+    setOrderCreateCustomerMenuOpen(false);
+  }
+
+  function getOrderCreateSelectedLineItem() {
+    return orderCreateItems[0] || EMPTY_ORDER_LINE;
+  }
+
+  function getOrderCreateSelectedProductId() {
+    return String(getOrderCreateSelectedLineItem().productId || popupOrderProducts[0]?.id || "6005");
+  }
+
+  function setOrderCreateSelectedProduct(productId) {
+    const nextProductId = String(productId || "");
+    setOrderCreateItems((prev) => {
+      const current = prev[0] || EMPTY_ORDER_LINE;
+      return [{
+        ...current,
+        key: current.key || "line-1",
+        productId: nextProductId,
+        quantity: Math.max(1, Number(current.quantity || 1))
+      }];
+    });
+  }
+
+  function setOrderCreateSelectedQuantity(quantity) {
+    const nextQuantity = Math.max(1, Number(quantity || 1));
+    setOrderCreateItems((prev) => {
+      const current = prev[0] || EMPTY_ORDER_LINE;
+      return [{
+        ...current,
+        key: current.key || "line-1",
+        quantity: nextQuantity
+      }];
+    });
   }
 
   function addOrderCreateItem(product = null) {
@@ -3484,14 +3958,23 @@ export default function Page() {
 
   async function createOrderFromForm(event) {
     event.preventDefault();
-    const lineItems = orderCreateItems
+    const fallbackProduct = popupOrderProducts.find((product) => String(product.id) === String(getOrderCreateSelectedLineItem().productId))
+      || popupOrderProducts[0]
+      || null;
+    const fallbackQuantity = Math.max(1, Number(getOrderCreateSelectedLineItem().quantity || 1));
+    const lineItems = orderCreateItems.length ? orderCreateItems : [{
+      ...EMPTY_ORDER_LINE,
+      productId: String(fallbackProduct?.id || ""),
+      quantity: fallbackQuantity
+    }];
+    const normalizedLineItems = lineItems
       .map((item) => ({
         product_id: Number(item.productId || 0),
         quantity: Number(item.quantity || 1)
       }))
       .filter((item) => item.product_id && item.quantity > 0);
 
-    if (!lineItems.length) {
+    if (!normalizedLineItems.length) {
       setOrderCreateFeedback("Add at least one product before creating the order.");
       showSnackbar("Add at least one product before creating the order.", "warning");
       return;
@@ -3509,22 +3992,26 @@ export default function Page() {
     setOrderCreateLoading(true);
     setOrderCreateFeedback("");
     try {
+      const billingParts = getOrderCreateCustomerName().split(" ");
+      const paymentStatus = ORDER_CREATE_PAYMENT_STATUS_MAP[orderCreateForm.status] || "pending";
       const payload = await apiRequest("/orders", {
         method: "POST",
         body: {
-          product_id: lineItems[0].product_id,
-          quantity: lineItems[0].quantity,
-          items: lineItems,
-          status: orderCreateForm.status,
+          product_id: normalizedLineItems[0].product_id,
+          quantity: normalizedLineItems[0].quantity,
+          items: normalizedLineItems,
+          status: paymentStatus,
           notify_status_change: true,
           notify_doctor: true,
           notify_admin: true,
-          notify_customer: shouldNotifyCustomerForOrderStatus(orderCreateForm.status),
+          notify_customer: shouldNotifyCustomerForOrderStatus(paymentStatus),
           doctor_user_id: selectedDoctorId ? Number(selectedDoctorId) : 0,
-          customer_note: orderCreateForm.note,
+          customer_id: orderCreateForm.customerId ? Number(orderCreateForm.customerId) : 0,
+          delivery_method: orderCreateForm.deliveryMethod,
+          prescription: orderCreateForm.prescription,
           billing: {
-            first_name: orderCreateForm.firstName,
-            last_name: orderCreateForm.lastName,
+            first_name: billingParts[0] || "Customer",
+            last_name: billingParts.slice(1).join(" ") || "Guest",
             email: orderCreateForm.email,
             phone: orderCreateForm.phone,
             address_1: orderCreateForm.address,
@@ -4130,6 +4617,106 @@ export default function Page() {
     setCustomerHistoryOrders([]);
     setCustomerHistoryLoading(false);
     setCustomerHistoryFeedback("");
+    closeCustomerPrivilegeEscalationModal();
+  }
+
+  function closeCustomerPrivilegeEscalationModal() {
+    setCustomerPrivilegeEscalationOpen(false);
+    setCustomerPrivilegeEscalationLoading(false);
+    setCustomerPrivilegeOtp({ code: "", status: "", challengeId: "", maskedEmail: "" });
+  }
+
+  async function openCustomerPrivilegeEscalationModal() {
+    if (!selectedCustomerCanEscalate || !selectedCustomerProfile) {
+      return;
+    }
+
+    setCustomerPrivilegeEscalationOpen(true);
+    setCustomerPrivilegeEscalationLoading(false);
+    setCustomerPrivilegeOtp({ code: "", status: "Sending OTP to your email...", challengeId: "", maskedEmail: "" });
+
+    try {
+      const payload = await apiRequest("/auth/request-verification-code", {
+        method: "POST",
+        body: {
+          ...frontendContext(session)
+        }
+      }, session);
+      setCustomerPrivilegeOtp({
+        code: "",
+        challengeId: payload.data?.challenge_id || "",
+        maskedEmail: payload.data?.masked_email || "",
+        status: `OTP sent${payload.data?.masked_email ? ` to ${payload.data.masked_email}` : ""}.`
+      });
+    } catch (error) {
+      setCustomerPrivilegeOtp({ code: "", challengeId: "", maskedEmail: "", status: describeRequestError(error) });
+    }
+  }
+
+  async function submitCustomerPrivilegeEscalation() {
+    if (!selectedCustomerProfile || !selectedCustomerCanEscalate) {
+      return;
+    }
+    if (customerPrivilegeOtp.code.length !== 6) {
+      setCustomerPrivilegeOtp((current) => ({ ...current, status: "Enter the 6-digit code sent to your email." }));
+      return;
+    }
+
+    setCustomerPrivilegeEscalationLoading(true);
+    setCustomerPrivilegeOtp((current) => ({ ...current, status: `Verifying code and migrating customer to ${formatRoleLabel(customerPrivilegeTargetRole)}...` }));
+
+    try {
+      const response = await fetch(`/api/admin/customers/${encodeURIComponent(String(selectedCustomerProfile.id))}/privilege-escalation?baseUrl=${encodeURIComponent(normalizeBaseUrl(session.baseUrl))}`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Nevari-Frontend-Type": session.frontendType,
+          "X-Nevari-Frontend-Origin": window.location.origin
+        },
+        body: JSON.stringify({
+          target_role: customerPrivilegeTargetRole,
+          challenge_id: customerPrivilegeOtp.challengeId,
+          code: customerPrivilegeOtp.code
+        })
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.error?.message || "Customer privilege escalation failed.");
+      }
+
+      if (payload.data?.customer) {
+        setData((prev) => ({
+          ...prev,
+          customers: (prev.customers || []).some((customer) => String(customer.id || customer.user_id || customer.customer_id) === String(payload.data.customer.id || payload.data.customer.user_id || payload.data.customer.customer_id))
+            ? (prev.customers || []).map((customer) => (
+              String(customer.id || customer.user_id || customer.customer_id) === String(payload.data.customer.id || payload.data.customer.user_id || payload.data.customer.customer_id)
+                ? { ...customer, ...payload.data.customer }
+                : customer
+            ))
+            : [payload.data.customer, ...(prev.customers || [])]
+        }));
+        patchCustomerCache(payload.data.customer);
+      }
+
+      revalidateCacheGroups(isCustomerListKey, isDoctorListKey);
+      if (customersQuery?.mutate) {
+        customersQuery.mutate();
+      }
+      if (doctorsQuery?.mutate) {
+        doctorsQuery.mutate();
+      }
+
+      closeCustomerPrivilegeEscalationModal();
+      closeCustomerDetails();
+      showSnackbar(payload?.data?.message || `Customer migrated to ${formatRoleLabel(customerPrivilegeTargetRole)}.`, "success");
+    } catch (error) {
+      const message = describeRequestError(error);
+      setCustomerPrivilegeOtp((current) => ({ ...current, status: message }));
+      showSnackbar(message, "error");
+    } finally {
+      setCustomerPrivilegeEscalationLoading(false);
+    }
   }
 
   async function openCustomerOrderInOrdersPage(orderId) {
@@ -4185,6 +4772,8 @@ export default function Page() {
     setProductEditForm(null);
     setProductEditMedia([]);
     setActiveProductMediaId("");
+    setProductCreateStep(0);
+    setProductCreateValidationStep("");
     setProductEditTab("details");
     setProductEditSearch({ categories: "", tags: "", brands: "" });
     setProductEditFeedback("");
@@ -4215,11 +4804,56 @@ export default function Page() {
     setProductEditForm(buildEmptyProductDraft());
     setProductEditMedia([]);
     setActiveProductMediaId("");
+    setProductCreateStep(0);
+    setProductCreateValidationStep("");
     setProductEditTab("details");
     setProductEditSearch({ categories: "", tags: "", brands: "" });
     setProductEditFeedback("");
     setProductEditLoading(false);
     setProductMediaUploading(false);
+  }
+
+  function getProductCreateStepErrors(stepKey, form = productEditForm) {
+    const nextForm = form || {};
+    if (stepKey === "identity") {
+      return {
+        title: nextForm.title?.trim() ? "" : "Product name is required.",
+        category: nextForm.categories?.[0] ? "" : "Select a category.",
+        shortDescription: nextForm.shortDescription?.trim() ? "" : "Add a short description.",
+        regularPrice: String(nextForm.regularPrice || "").trim() !== "" ? "" : "Enter a unit price.",
+        salePrice: Number(nextForm.salePrice || 0) > Number(nextForm.regularPrice || 0)
+          ? "Sale price cannot be greater than unit price."
+          : ""
+      };
+    }
+    if (stepKey === "description") {
+      return {
+        longDescription: "",
+        prescriptionNotes: nextForm.prescriptionNotes?.trim() ? "" : "Add a prescription note."
+      };
+    }
+    if (stepKey === "media") {
+      return {};
+    }
+    return {};
+  }
+
+  function goToProductCreateStep(stepIndex, { validateCurrentStep = false } = {}) {
+    const nextStepIndex = Math.max(0, Math.min(stepIndex, PRODUCT_CREATE_STEPS.length - 1));
+    if (validateCurrentStep && nextStepIndex > productCreateStep) {
+      const validationStepKey = PRODUCT_CREATE_STEPS[productCreateStep]?.key || PRODUCT_CREATE_STEPS[0].key;
+      const errors = getProductCreateStepErrors(validationStepKey);
+      const firstError = Object.values(errors).find(Boolean);
+      setProductCreateValidationStep(validationStepKey);
+      if (firstError) {
+        setProductEditFeedback(firstError);
+        return false;
+      }
+    }
+    setProductEditFeedback("");
+    setProductCreateValidationStep("");
+    setProductCreateStep(nextStepIndex);
+    return true;
   }
 
   function triggerProductMediaUpload(type, index = null) {
@@ -4321,6 +4955,22 @@ export default function Page() {
     });
   }
 
+  function featureProductMediaItem(index) {
+    if (!index) {
+      return;
+    }
+    setProductEditMedia((prev) => {
+      if (!prev[index]) {
+        return prev;
+      }
+      const next = [...prev];
+      const [featured] = next.splice(index, 1);
+      next.unshift(featured);
+      setActiveProductMediaId(featured.id);
+      return next;
+    });
+  }
+
   function handleProductDescriptionInput(event) {
     const html = event.currentTarget.innerHTML;
     setProductEditForm((prev) => (prev ? { ...prev, longDescription: html } : prev));
@@ -4381,49 +5031,59 @@ export default function Page() {
     if (!productEditForm) {
       return;
     }
+    const submitIntent = String(event?.nativeEvent?.submitter?.dataset?.intent || "").toLowerCase();
+    const nextProductStatus = productEditorMode === "create"
+      ? (submitIntent === "draft" ? "draft" : "publish")
+      : productEditForm.status;
 
-    setProductEditLoading(true);
-    setProductEditFeedback("");
-    try {
-      const productPayload = {
-        name: productEditForm.title,
-        short_description: productEditForm.shortDescription,
-        description: productEditForm.longDescription,
-        status: productEditForm.status,
-        regular_price: productEditForm.regularPrice,
-        sale_price: productEditForm.salePrice,
-        sku: productEditForm.sku,
-        stock_quantity: Number(productEditForm.stockQuantity || 0),
-        categories: productEditForm.categories,
-        tags: productEditForm.tags,
-        brands: productEditForm.brands,
-        purchase_note: productEditForm.purchaseNotes,
-        shipping_information: productEditForm.shippingInfo,
-        linked_products: productEditForm.linkedProducts,
-        images: productEditMedia.map((item, index) => ({ id: item.attachmentId, src: item.src, position: index }))
-      };
-
-      if (productEditorMode === "create") {
-        const createdPayload = await createProductMutation.createProduct({
-          ...productPayload,
-          catalog_visibility: "visible"
-        });
-        const createdProduct = createdPayload?.data;
-        if (!createdProduct) {
-          throw new Error("Product creation returned no data.");
-        }
-        const mediaUpdatePayload = productEditMedia.length ? await updateProductMutation.updateProduct(
-          createdProduct.id,
-          {
-            images: productEditMedia.map((item, index) => ({ id: item.attachmentId, src: item.src, position: index }))
+      setProductEditLoading(true);
+      setProductEditFeedback("");
+        try {
+          const productPayload = {
+            name: productEditForm.title,
+            short_description: productEditForm.shortDescription,
+            description: productEditForm.longDescription,
+            status: nextProductStatus,
+            regular_price: productEditForm.regularPrice,
+            sale_price: productEditForm.salePrice,
+            stock_quantity: Number(productEditForm.stockQuantity || 0),
+            categories: productEditForm.categories,
+            tags: productEditForm.tags,
+            brands: productEditForm.brands,
+            pharmacy_rules: {
+            rx_required: productEditForm.prescriptionRule === "prescription_required",
+            consultation_required: productEditForm.prescriptionRule === "pharmacist_review_required",
+            otc: productEditForm.prescriptionRule === "no_prescription_needed"
           },
-          createdProduct
-        ) : null;
-        const nextProduct = mediaUpdatePayload?.data || createdProduct;
-        setData((prev) => ({
-          ...prev,
-          products: [nextProduct, ...(prev.products || [])]
-        }));
+            meta_data: [
+              { key: "strength_dosage", value: productEditForm.strengthDosage || "" },
+              { key: "expiry_date", value: productEditForm.expiryDate || "" },
+              { key: "prescription_rule", value: productEditForm.prescriptionRule || "no_prescription_needed" },
+              { key: "prescription_notes", value: productEditForm.prescriptionNotes || "" }
+            ],
+            purchase_note: productEditForm.purchaseNotes,
+            shipping_information: productEditForm.shippingInfo,
+            linked_products: productEditForm.linkedProducts,
+            images: productEditMedia.map((item, index) => ({ id: item.attachmentId, src: item.src, position: index }))
+          };
+          if (productEditorMode !== "create") {
+            productPayload.sku = productEditForm.sku;
+          }
+
+        if (productEditorMode === "create") {
+          const createdPayload = await createProductMutation.createProduct({
+            ...productPayload,
+            catalog_visibility: "visible"
+          });
+          const createdProduct = createdPayload?.data;
+          if (!createdProduct) {
+            throw new Error("Product creation returned no data.");
+          }
+          const nextProduct = createdProduct;
+          setData((prev) => ({
+            ...prev,
+            products: [nextProduct, ...(prev.products || [])]
+          }));
         setProductEditFeedback("Product created.");
         closeProductEditModal();
       } else {
@@ -5110,7 +5770,7 @@ export default function Page() {
           latestSessionRef.current = nextSession;
           setSession(nextSession);
           persistSessionSnapshot(nextSession, currentPage);
-          setSyncStatus({ text: nextSession.paired ? "Paired" : "Disconnected", mode: "" });
+          setSyncStatus({ text: "Disconnected", mode: "" });
           setAuthFeedback("Stored session expired. Sign in again.");
           showAuthGate("auth");
           throw new Error("Stored session expired. Sign in again.");
@@ -5325,57 +5985,22 @@ export default function Page() {
 
   async function handlePairingSubmit(event) {
     event.preventDefault();
-    setSetupSubmitting(true);
-    setSetupFeedback("Verifying pairing code...");
+    const baseUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL);
+    const nextSession = {
+      ...session,
+      baseUrl,
+      paired: true,
+      frontendType: FRONTEND_TYPE,
+      frontendOrigin: window.location.origin,
+      frontendUrl: window.location.href
+    };
 
-    try {
-      const baseUrl = decodePairingBaseUrl(setupPairingCode);
-      const workingSession = { ...session, baseUrl: normalizeBaseUrl(baseUrl) };
-      setSession(workingSession);
-      const pairingContext = {
-        frontend_type: PAIRING_FRONTEND_TYPE,
-        frontend_origin: window.location.origin,
-        frontend_url: window.location.href
-      };
-
-      const verifyPayload = await apiRequest("/connections/verify", {
-        method: "POST",
-        auth: false,
-        body: {
-          pairing_code: setupPairingCode,
-          ...pairingContext
-        }
-      }, workingSession);
-
-      const registerPayload = await apiRequest("/connections/register", {
-        method: "POST",
-        auth: false,
-        body: {
-          pairing_session_id: verifyPayload.data.pairing_session_id,
-          ...pairingContext,
-          connection_status: "trusted"
-        }
-      }, workingSession);
-
-      const nextSession = {
-        ...workingSession,
-        paired: true,
-        siteName: registerPayload.data.site_name || verifyPayload.data.site_name || "",
-        siteLogo: registerPayload.data.site_logo || verifyPayload.data.site_logo || ""
-      };
-
-      setSession(nextSession);
-      persistSessionSnapshot(nextSession, currentPage);
-      setSetupFeedback("Pairing verified. Continue to sign in.");
-      setSyncStatus({ text: "Paired", mode: "live" });
-      showAuthGate("auth");
-    } catch (error) {
-      console.error(error);
-      setSyncStatus({ text: "Pairing error", mode: "error" });
-      setSetupFeedback(describeRequestError(error));
-    } finally {
-      setSetupSubmitting(false);
-    }
+    setSession(nextSession);
+    persistSessionSnapshot(nextSession, currentPage);
+    setSetupSubmitting(false);
+    setSetupFeedback("Dashboard configuration saved. Continue to sign in.");
+    setSyncStatus({ text: "Connected", mode: "live" });
+    showAuthGate("auth");
   }
 
   async function handleLoginSubmit(event) {
@@ -5390,7 +6015,8 @@ export default function Page() {
         body: {
           username,
           password,
-          ...frontendContext(session)
+          ...frontendContext(session),
+          ...buildTwoStepVerificationRequest(authSecuritySettings)
         }
       }, session);
 
@@ -5548,9 +6174,9 @@ export default function Page() {
     setAppDataLoaded(false);
     persistSessionSnapshot(nextSession, currentPage);
     setData(emptyData());
-    setSyncStatus({ text: nextSession.paired ? "Paired" : "Disconnected", mode: "" });
+    setSyncStatus({ text: "Disconnected", mode: "" });
     setAuthFeedback("Session cleared.");
-    router.replace(nextSession.paired ? "/admin/storefront/login" : "/admin/storefront/setup");
+    router.replace("/admin/storefront/login");
   }
 
   async function handleRefresh() {
@@ -5567,6 +6193,11 @@ export default function Page() {
   }
 
   useEffect(() => {
+    if (isEmbeddedDashboard) {
+      setHydrated(true);
+      setAccessResolved(true);
+      return;
+    }
     if (!hydrated) {
       return;
     }
@@ -5581,71 +6212,28 @@ export default function Page() {
       let activeSession = session;
 
       if (activeSession.baseUrl) {
-        try {
-          const response = await fetch(buildUrl(activeSession, `/connections/status?frontend_type=${encodeURIComponent(activeSession.frontendType)}&probe=${Date.now()}`), {
-            cache: "no-store",
-            headers: {
-              Accept: "application/json",
-              "X-Nevari-Frontend-Type": activeSession.frontendType,
-              "X-Nevari-Frontend-Origin": window.location.origin
-            }
-          });
-          const payload = await response.json().catch(() => null);
-          if (!cancelled && response.ok && payload?.success && payload.data?.paired) {
-            activeSession = {
-              ...activeSession,
-              paired: true,
-              siteName: payload.data.site_name || "",
-              siteLogo: payload.data.site_logo || "",
-              frontendOrigin: window.location.origin,
-              frontendUrl: window.location.href
-            };
-            setSession(activeSession);
-            persistSessionSnapshot(activeSession, currentPage);
-          } else if (!cancelled && response.ok && payload?.success && payload.data?.paired === false) {
-            activeSession = { ...activeSession, paired: false, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
-            setSession(activeSession);
-            persistSessionSnapshot(activeSession, currentPage);
-          } else if (!cancelled) {
-            router.replace("/admin/storefront/login");
-            setSyncStatus({ text: "Connection check failed", mode: "error" });
-            setAuthFeedback(payload?.error?.message || "Unable to verify the trusted dashboard domain. Try again shortly.");
-            return;
-          }
-        } catch (error) {
-          console.error("Could not confirm trusted storefront origin", error);
-          if (!cancelled) {
-            router.replace("/admin/storefront/login");
-            setSyncStatus({ text: "Connection check failed", mode: "error" });
-            setAuthFeedback("Unable to verify the trusted dashboard domain. Try again shortly.");
-            return;
-          }
-        }
+        activeSession = {
+          ...activeSession,
+          paired: true,
+          frontendOrigin: window.location.origin,
+          frontendUrl: window.location.href
+        };
+        setSession(activeSession);
+        persistSessionSnapshot(activeSession, currentPage);
       }
 
       if (cancelled) {
         return;
       }
 
-      if (!activeSession.paired) {
-        router.replace("/admin/storefront/setup");
-        setSetupFeedback(
-          isFileProtocol()
-            ? "Enter the one-time pairing code to trust this storefront. If requests fail, serve this folder over http://localhost instead of opening index.html directly."
-            : "Enter the one-time pairing code to trust this storefront."
-        );
-        setSyncStatus({ text: "Pairing required", mode: "" });
-        return;
-      }
-
-      setSyncStatus({ text: "Paired", mode: "live" });
+      setSyncStatus({ text: "Connected", mode: "live" });
 
       if (!isSessionUsable(activeSession) && !activeSession.refreshToken) {
         router.replace("/admin/storefront/login");
         setAuthFeedback(
           isFileProtocol()
-            ? "The storefront is paired. Sign in to load live data. If requests fail from file://, serve this folder over http://localhost first."
-            : "The storefront is paired. Sign in to load live data."
+            ? "Sign in to load live data. If requests fail from file://, serve this folder over http://localhost first."
+            : "Sign in to load live data."
         );
         return;
       }
@@ -5672,7 +6260,7 @@ export default function Page() {
           setSession(nextSession);
           persistSessionSnapshot(nextSession, currentPage);
           router.replace("/admin/storefront/login");
-          setSyncStatus({ text: "Paired", mode: "live" });
+          setSyncStatus({ text: "Connected", mode: "live" });
           setAuthFeedback(error.message === "Unauthorized user" ? "Unauthorized user" : "Stored session expired. Sign in again.");
           return;
         }
@@ -5706,7 +6294,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, [hydrated, router]);
+  }, [hydrated, router, isEmbeddedDashboard]);
 
   useEffect(() => {
     if (!session.accessToken || currentPage !== "audit") {
@@ -5750,12 +6338,15 @@ export default function Page() {
     return () => window.clearInterval(intervalId);
   }, [trendMode, session.accessToken, refreshing, currentPage]);
 
-  const canLoadSections = hydrated && Boolean(session.accessToken) && !authGate.visible;
+  const canLoadSections = (isEmbeddedDashboard ? Boolean(session.accessToken) : hydrated && Boolean(session.accessToken) && !authGate.visible);
   const lazyQueryOptions = {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
     dedupingInterval: 10_000
   };
+  const orderNotificationFeedKey = canLoadSections
+    ? ["admin-dashboard-order-notifications", session.baseUrl, session.user?.id || "session"]
+    : null;
   const ordersApiStatusFilter = currentPage === "orders" ? upstreamOrderStatusFilter(orderQueueFilter) : "";
   const ordersListKey = canLoadSections && ["overview", "orders", "payments"].includes(currentPage)
     ? swrKeys.admin.orders(withBaseUrl(session, { per_page: 24, page: 1, status: ordersApiStatusFilter, search: deferredSearch }))
@@ -5794,6 +6385,11 @@ export default function Page() {
     ordersListKey,
     () => adminApiRequest("orders", { params: { per_page: 24, page: 1, status: ordersApiStatusFilter, search: deferredSearch } }, session),
     { ...lazyQueryOptions, refreshInterval: 0, dedupingInterval: 30_000 }
+  );
+  const orderNotificationFeedQuery = useSWR(
+    orderNotificationFeedKey,
+    () => adminApiRequest("orders", { params: { per_page: 5, page: 1 } }, session),
+    { ...lazyQueryOptions, refreshInterval: 45_000, dedupingInterval: 20_000, keepPreviousData: true, revalidateOnFocus: true }
   );
   const productsQuery = useSWR(
     productsListKey,
@@ -5852,10 +6448,10 @@ export default function Page() {
   };
   const orderCreateProductsQuery = useSWR(
     canLoadSections && orderCreateModalOpen
-      ? swrKeys.admin.products(withBaseUrl(session, { per_page: 20, page: 1, search: orderCreateSearch }))
+      ? swrKeys.admin.products(withBaseUrl(session, { per_page: 100, page: 1 }))
       : null,
-    () => adminApiRequest("products", { params: { per_page: 20, page: 1, search: orderCreateSearch } }, session),
-    { ...popupQueryOptions, fallbackData: data.products?.length ? { data: data.products.slice(0, 20) } : undefined }
+    () => adminApiRequest("products", { params: { per_page: 100, page: 1 } }, session),
+    { ...popupQueryOptions, fallbackData: data.products?.length ? { data: data.products } : undefined }
   );
   const orderCreateDoctorsQuery = useSWR(
     canLoadSections && orderCreateModalOpen
@@ -5873,10 +6469,10 @@ export default function Page() {
   );
   const orderCreateCustomersQuery = useSWR(
     canLoadSections && orderCreateModalOpen
-      ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 20, page: 1, search: orderCreateForm.email || `${orderCreateForm.firstName} ${orderCreateForm.lastName}`.trim() }))
+      ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 100, page: 1 }))
       : null,
-    () => adminApiRequest("customers", { params: { per_page: 20, page: 1, search: orderCreateForm.email || `${orderCreateForm.firstName} ${orderCreateForm.lastName}`.trim() } }, session),
-    { ...popupQueryOptions, fallbackData: data.customers?.length ? { data: data.customers.slice(0, 20) } : undefined }
+    () => adminApiRequest("customers", { params: { per_page: 100, page: 1 } }, session),
+    { ...popupQueryOptions, fallbackData: data.customers?.length ? { data: data.customers.slice(0, 100) } : undefined }
   );
   const productEditorCategoriesQuery = useSWR(
     canLoadSections && Boolean(productEditForm && (selectedProductEdit || productEditorMode === "create"))
@@ -6031,6 +6627,45 @@ export default function Page() {
   }, [consultationsQuery.data]);
 
   useEffect(() => {
+    const incomingOrders = Array.isArray(orderNotificationFeedQuery.data?.data) ? orderNotificationFeedQuery.data.data : [];
+    if (!incomingOrders.length) {
+      return;
+    }
+
+    const seenIds = orderNotificationSeenRef.current;
+    const nextIds = incomingOrders.map((order) => notificationEntityId(order)).filter(Boolean);
+    if (!orderNotificationReadyRef.current) {
+      nextIds.forEach((id) => seenIds.add(id));
+      orderNotificationReadyRef.current = true;
+      return;
+    }
+
+    const freshOrders = incomingOrders.filter((order) => {
+      const id = notificationEntityId(order);
+      return id && !seenIds.has(id);
+    });
+    nextIds.forEach((id) => seenIds.add(id));
+
+    if (!freshOrders.length) {
+      return;
+    }
+
+    const latestOrder = freshOrders[0];
+    if (!latestOrder?.id) {
+      return;
+    }
+
+    showSnackbar(buildOrderNotificationMessage(latestOrder), "info", {
+      actionLabel: "View order",
+      durationMs: 7000,
+      onAction: () => {
+        openOrderDetails(latestOrder.id);
+        setSnackbar(null);
+      }
+    });
+  }, [orderNotificationFeedQuery.data]);
+
+  useEffect(() => {
     if (!mtmQuery.data?.data) return;
     setData((prev) => ({ ...prev, mtmRequests: Array.isArray(mtmQuery.data.data) ? mtmQuery.data.data : [] }));
   }, [mtmQuery.data]);
@@ -6048,15 +6683,14 @@ export default function Page() {
 
   const dashboard = data.dashboard || {};
   const sales = dashboard.sales || {};
-  const storeCurrency = dashboard.store_currency || sales.currency || storedStoreCurrency();
+  const storeCurrency = dashboard.store_currency || sales.currency || (hydrated ? storedStoreCurrency() : SSR_SAFE_STORE_CURRENCY);
+  const renderStoreTimeZone = dashboard.store_timezone || (hydrated ? storedStoreTimeZone() : SSR_SAFE_STORE_TIMEZONE);
   const consultations = dashboard.consultations || {};
   const prescriptionsSummary = dashboard.prescriptions || {};
   const emailsSummary = dashboard.emails || {};
   const doctorMap = new Map((data.doctors || []).map((doctor) => [doctor.user_id || doctor.id, doctor.display_name]));
-  const query = deferredSearch.trim().toLowerCase();
   const showPageSearch = true;
   const searchPlaceholder = SEARCH_PLACEHOLDERS[currentPage] || "Search this page";
-  const matchesSearch = (text, enabled) => !enabled || !query || normalizeText(text).includes(query);
   const siteName = session.siteName || DEFAULT_SITE_NAME;
   const siteLogo = session.siteLogo || "/ne.webp";
 
@@ -6123,6 +6757,31 @@ export default function Page() {
   const trendSeries = trendMode === "live" ? liveTrend : trendMode === "month" ? monthlyTrend : weeklyTrend;
   const chartMax = Math.max(...trendSeries.map((day) => day.total), 1);
   const chartColors = ["#b9996d", "#d99860", "#d8cab6", "#344a6e", "#5c6d89", "#adb7c8", "#b9996d"];
+  const trendChartWidth = Math.max(720, trendSeries.length * 120);
+  const trendChartHeight = 220;
+  const trendChartPaddingX = 28;
+  const trendChartPaddingY = 20;
+  const trendChartUsableWidth = Math.max(1, trendChartWidth - (trendChartPaddingX * 2));
+  const trendChartUsableHeight = Math.max(1, trendChartHeight - (trendChartPaddingY * 2));
+  const trendChartPoints = trendSeries.map((day, index) => {
+    const x = trendSeries.length === 1
+      ? trendChartWidth / 2
+      : trendChartPaddingX + ((trendChartUsableWidth / (trendSeries.length - 1)) * index);
+    const normalizedTotal = Math.max(0, Number(day.total || 0));
+    const y = trendChartHeight - trendChartPaddingY - ((normalizedTotal / chartMax) * trendChartUsableHeight);
+    return {
+      ...day,
+      x,
+      y
+    };
+  });
+  const trendLinePath = trendChartPoints.length
+    ? trendChartPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ")
+    : "";
+  const trendAreaPath = trendChartPoints.length
+    ? `${trendLinePath} L ${trendChartPoints[trendChartPoints.length - 1].x} ${trendChartHeight - trendChartPaddingY} L ${trendChartPoints[0].x} ${trendChartHeight - trendChartPaddingY} Z`
+    : "";
+  const trendGridLines = [0.25, 0.5, 0.75].map((ratio) => trendChartPaddingY + (trendChartUsableHeight * ratio));
 
   const legendItems = [
     { color: "teal", label: "Orders awaiting review", value: (data.orderDetails || []).filter((order) => ["pending", "on-hold"].includes(order.status)).length },
@@ -6392,19 +7051,13 @@ export default function Page() {
   const filteredMtmRequests = (Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((request) =>
     matchesSearch(`${request.request_reference || ""} ${request.status || ""} ${request.patient?.name || ""} ${request.assigned_pharmacist_name || ""}`, ["overview", "mtm"].includes(currentPage))
   );
-  const selectedMtmRequest = filteredMtmRequests.find((request) => String(request.id) === String(selectedMtmRequestId || "")) || filteredMtmRequests[0] || null;
   const previewMtmRequest = filteredMtmRequests.find((request) => String(request.id) === String(mtmPreviewRequestId || "")) || null;
 
   useEffect(() => {
     if (!filteredMtmRequests.length) {
-      setSelectedMtmRequestId(null);
       setMtmPreviewRequestId(null);
-      return;
     }
-    if (!selectedMtmRequestId || !filteredMtmRequests.some((request) => String(request.id) === String(selectedMtmRequestId))) {
-      setSelectedMtmRequestId(filteredMtmRequests[0].id);
-    }
-  }, [filteredMtmRequests, selectedMtmRequestId]);
+  }, [filteredMtmRequests]);
 
   useEffect(() => {
     if (!mtmPreviewRequestId) return;
@@ -6417,8 +7070,8 @@ export default function Page() {
     all: (data.products || []).length,
     published: (data.products || []).filter((product) => getProductStatus(product) === "publish").length,
     draft: (data.products || []).filter((product) => getProductStatus(product) === "draft").length,
-    in_stock: (data.products || []).filter((product) => (product.stock_status || "instock") === "instock").length,
-    out_of_stock: (data.products || []).filter((product) => (product.stock_status || "instock") === "outofstock").length,
+    in_stock: (data.products || []).filter((product) => (product.stock_status || "in stock") === "in stock").length,
+    out_of_stock: (data.products || []).filter((product) => (product.stock_status || "in stock") === "out of stock").length,
     on_sale: (data.products || []).filter((product) => hasActiveSalePrice(product)).length
   };
   const getLowStockThreshold = (product) => {
@@ -6433,7 +7086,7 @@ export default function Page() {
   const outOfStockProducts = (data.products || []).filter((product) => {
     const stockQuantity = getProductStockQuantity(product);
     const status = String(product.stock_status || "").toLowerCase();
-    return status === "outofstock" || (stockQuantity !== null && stockQuantity <= 0);
+    return status === "out of stock" || (stockQuantity !== null && stockQuantity <= 0);
   }).length;
   const lowStockProducts = (data.products || []).filter((product) => {
     const stockQuantity = getProductStockQuantity(product);
@@ -6477,10 +7130,10 @@ export default function Page() {
       return getProductStatus(product) === "draft";
     }
     if (productListFilter === "in_stock") {
-      return (product.stock_status || "instock") === "instock";
+      return (product.stock_status || "in stock") === "in stock";
     }
     if (productListFilter === "out_of_stock") {
-      return (product.stock_status || "instock") === "outofstock";
+      return (product.stock_status || "in stock") === "out of stock";
     }
     if (productListFilter === "on_sale") {
       return hasActiveSalePrice(product);
@@ -6740,6 +7393,7 @@ export default function Page() {
   );
 
   const popupOrderProducts = orderCreateProductsQuery.data?.data || data.products || [];
+  const popupOrderCustomers = orderCreateCustomersQuery.data?.data || data.customers || [];
   const popupOrderDoctors = orderCreateDoctorsQuery.data?.data || data.doctors || [];
   const popupAssignmentDoctors = orderAssignmentDoctorsQuery.data?.data || data.doctors || [];
   const popupProductCategories = productEditorCategoriesQuery.data?.data || data.productCategories || [];
@@ -6788,9 +7442,16 @@ export default function Page() {
     .map((item) => item.trim())
     .filter(Boolean)
   ));
+  const activeProductCreateStep = PRODUCT_CREATE_STEPS[productCreateStep] || PRODUCT_CREATE_STEPS[0];
+  const productCreateStepErrors = productEditorMode === "create"
+    ? (productCreateValidationStep === activeProductCreateStep.key ? getProductCreateStepErrors(activeProductCreateStep.key) : {})
+    : {};
+  const pendingProductTag = String(productEditSearch.tags || "");
 
   const activeProductMedia = productEditMedia.find((item) => item.id === activeProductMediaId) || productEditMedia[0] || null;
   const activeProductMediaIndex = activeProductMedia ? productEditMedia.findIndex((item) => item.id === activeProductMedia.id) + 1 : 0;
+  const featuredProductMedia = productEditMedia[0] || null;
+  const galleryProductMedia = productEditMedia.slice(1);
   const productMediaSizing = productEditMedia.length > 18
     ? { thumbMin: "58px" }
     : productEditMedia.length > 12
@@ -6869,103 +7530,6 @@ export default function Page() {
   const activePaymentPage = Math.min(paymentPage, paymentPageCount);
   const paginatedPaymentRows = paymentRows.slice((activePaymentPage - 1) * paymentsPerPage, activePaymentPage * paymentsPerPage);
 
-  const allCustomerRows = (() => {
-    const customerMap = new Map();
-
-    (data.customers || []).forEach((customer) => {
-      const id = customer.id || customer.user_id || customer.customer_id;
-      if (!id) {
-        return;
-      }
-      const name = customerNameFromRecord(customer) || customerEmail(customer) || `Customer #${id}`;
-      customerMap.set(id, {
-        id,
-        label: name,
-        name,
-        email: customerEmail(customer) || "No email on file",
-        orders: Number(customer.orders || customer.order_count || 0),
-        spend: safeNumber(customer.spend || customer.total_spend || 0),
-        lastActivity: customer.updated_at || customer.created_at || null,
-        prescriptions: Number(customer.prescriptions || 0),
-        appointments: Number(customer.appointments || 0)
-      });
-    });
-
-    (data.orderDetails || []).forEach((order) => {
-      const summary = customerSummary(order);
-      const key = order.customer_id || `guest-${customerEmail(order) || order.number || order.id}`;
-      const current = customerMap.get(key) || {
-        id: key,
-        label: summary.name,
-        name: summary.name,
-        email: summary.email,
-        orders: 0,
-        spend: 0,
-        lastActivity: order.created_at || null,
-        prescriptions: 0,
-        appointments: 0
-      };
-      current.orders += 1;
-      current.spend += safeNumber(order.total);
-      if (isPlaceholderCustomerName(current.name) || current.name === patientLabel(order.customer_id)) {
-        current.name = summary.name;
-      }
-      if (isPlaceholderCustomerName(current.label) || current.label === patientLabel(order.customer_id)) {
-        current.label = summary.name;
-      }
-      if (!current.email || current.email === "No email on file") {
-        current.email = customerEmail(order) || current.email;
-      }
-      if (order.created_at && (!current.lastActivity || new Date(order.created_at) > new Date(current.lastActivity))) {
-        current.lastActivity = order.created_at;
-      }
-      customerMap.set(key, current);
-    });
-
-    (data.prescriptionDetails || []).forEach((prescription) => {
-      const key = prescription.patient_user_id || `patient-rx-${prescription.id}`;
-      const current = customerMap.get(key) || {
-        id: key,
-        label: patientLabel(prescription.patient_user_id),
-        name: patientLabel(prescription.patient_user_id),
-        email: "No email on file",
-        orders: 0,
-        spend: 0,
-        lastActivity: prescription.updated_at || prescription.created_at || null,
-        prescriptions: 0,
-        appointments: 0
-      };
-      current.prescriptions += 1;
-      if (prescription.updated_at && (!current.lastActivity || new Date(prescription.updated_at) > new Date(current.lastActivity))) {
-        current.lastActivity = prescription.updated_at;
-      }
-      customerMap.set(key, current);
-    });
-
-    (data.appointments || []).forEach((appointment) => {
-      const key = appointment.patient_user_id || `patient-appt-${appointment.id}`;
-      const current = customerMap.get(key) || {
-        id: key,
-        label: patientLabel(appointment.patient_user_id),
-        name: patientLabel(appointment.patient_user_id),
-        email: "No email on file",
-        orders: 0,
-        spend: 0,
-        lastActivity: appointment.updated_at || appointment.start_at || null,
-        prescriptions: 0,
-        appointments: 0
-      };
-      current.appointments += 1;
-      if (appointment.start_at && (!current.lastActivity || new Date(appointment.start_at) > new Date(current.lastActivity))) {
-        current.lastActivity = appointment.start_at;
-      }
-      customerMap.set(key, current);
-    });
-
-    return [...customerMap.values()]
-      .filter((row) => matchesSearch(`${row.label} ${row.name} ${row.email} ${row.id}`, currentPage === "customers"))
-      .sort((a, b) => safeNumber(b.spend) - safeNumber(a.spend));
-  })();
   const consultationDoctorProfile = popupConsultationDoctors.find((doctor) => String(doctor.user_id || doctor.id) === String(consultationCreateForm.doctorUserId)) || null;
   const consultationDoctorAppointments = popupConsultationAppointments
     .filter((appointment) => String(appointment.doctor_user_id) === String(consultationDoctorProfile?.user_id || consultationDoctorProfile?.id || ""))
@@ -7038,9 +7602,12 @@ export default function Page() {
     return true;
   });
 
-  const selectedCustomerProfile = selectedCustomerId
-    ? allCustomerRows.find((row) => String(row.id) === String(selectedCustomerId))
-    : null;
+  const selectedCustomerRoleLabel = formatRoleLabel(selectedCustomerPrimaryRole);
+  const selectedCustomerCanEscalate = Boolean(
+    selectedCustomerProfile
+    && selectedCustomerProfile.hasAccountRecord
+    && canEscalateCustomerPrivileges
+  );
   const selectedCustomerOrders = selectedCustomerProfile
     ? [...customerHistoryOrders]
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
@@ -7131,6 +7698,13 @@ export default function Page() {
     .slice(0, 8);
 
   const selectedAuditEvent = data.auditEvents[selectedAuditIndex] || null;
+
+  useEffect(() => {
+    if (auditDetailModalOpen && !selectedAuditEvent) {
+      setAuditDetailModalOpen(false);
+    }
+  }, [auditDetailModalOpen, selectedAuditEvent]);
+
   const selectedDoctorProfile = selectedDoctorId
     ? (data.doctors || []).find((doctor) => String(doctor.user_id || doctor.id) === String(selectedDoctorId))
     : null;
@@ -7168,6 +7742,24 @@ export default function Page() {
       .filter((product) => normalizeText(`${product.name || ""} ${product.sku || ""} ${getProductCategories(product)} ${getProductTags(product)} ${getProductBrands(product)}`).includes(query))
       .slice(0, 8);
   }, [popupOrderProducts, orderCreateSearch]);
+  const orderCustomerCandidates = useMemo(() => {
+    const query = normalizeText(orderCreateCustomerSearch).trim();
+    const customers = popupOrderCustomers || [];
+    if (!query) {
+      return customers.slice(0, 8);
+    }
+    return customers
+      .filter((customer) => normalizeText(`${customerNameFromRecord(customer)} ${customerEmail(customer)} ${customerPhoneFromRecord(customer)} ${customer.display_name || ""}`).includes(query))
+      .slice(0, 8);
+  }, [popupOrderCustomers, orderCreateCustomerSearch]);
+  const selectedOrderCreateCustomer = useMemo(
+    () => popupOrderCustomers.find((customer) => String(customer.id || customer.user_id || customer.customer_id) === String(orderCreateForm.customerId || "")) || null,
+    [popupOrderCustomers, orderCreateForm.customerId]
+  );
+  const selectedOrderCreateProduct = useMemo(
+    () => popupOrderProducts.find((product) => String(product.id) === String(getOrderCreateSelectedProductId())) || popupOrderProducts[0] || null,
+    [popupOrderProducts, orderCreateItems]
+  );
 
   const todayAppointments = filteredAppointments
     .filter((appointment) => {
@@ -7200,7 +7792,7 @@ export default function Page() {
   const getOverviewStockFlag = (product) => {
     const stockQuantity = getProductStockQuantity(product);
     const stockStatus = String(product.stock_status || "").toLowerCase().replace(/[_\s]+/g, "-");
-    if (["outofstock", "out-of-stock"].includes(stockStatus) || (!stockStatus && stockQuantity !== null && stockQuantity <= 0)) {
+    if (["out of stock", "out-of-stock"].includes(stockStatus) || (!stockStatus && stockQuantity !== null && stockQuantity <= 0)) {
       return { value: "failed", label: "Out" };
     }
     if (["lowstock", "low-stock", "onbackorder", "on-backorder"].includes(stockStatus)) {
@@ -7236,7 +7828,7 @@ export default function Page() {
     {
       label: "Frontend type",
       value: session.frontendType || FRONTEND_TYPE,
-      note: "paired storefront identity"
+      note: "storefront identity"
     },
     {
       label: "Connected base URL",
@@ -7252,6 +7844,11 @@ export default function Page() {
       label: "Session state",
       value: session.accessToken ? "Authenticated" : "Awaiting sign-in",
       note: "refresh token kept locally for this frontend"
+    },
+    {
+      label: "Two-step verification",
+      value: authSecuritySettings.globalTwoStepVerification ? "Enabled" : "Disabled",
+      note: "applies to customer, doctor, pharmacist, and admin sign-in"
     }
   ];
 
@@ -7274,11 +7871,25 @@ export default function Page() {
     {
       label: "Connection",
       value: session.baseUrl || "Not configured",
-      note: "paired WordPress environment"
+      note: "WordPress environment"
     }
   ];
+  const dashboardRevealSignature = useMemo(
+    () => buildSWRRevealSignature([
+      data.orderDetails?.length ? data.orderDetails : data.orders,
+      data.appointments,
+      data.products,
+      data.customers,
+      data.doctors,
+      data.mtmRequests,
+      data.emails
+    ]),
+    [data.appointments, data.customers, data.doctors, data.emails, data.mtmRequests, data.orderDetails, data.orders, data.products]
+  );
+  const dashboardRevealActive = useSWRReveal(dashboardRevealSignature, { durationMs: 260 });
+  const dashboardRevealClassName = `dashboard-swr-reveal ${dashboardRevealActive ? "is-active" : ""}`.trim();
 
-  const showPageSkeleton = Boolean(session.accessToken && !appDataLoaded);
+  const showPageSkeleton = Boolean(!isEmbeddedDashboard && session.accessToken && !appDataLoaded);
 
   if (!hydrated || !accessResolved) {
     return (
@@ -7978,12 +8589,28 @@ export default function Page() {
     );
   }
 
+  if (!isEmbeddedDashboard && !isSessionUsable(session) && !session.refreshToken) {
+    return (
+      <div className="auth-gate">
+        <div className="auth-gate-shell">
+          <section className="auth-card auth-screen-card">
+            <div className="auth-card-body">
+              <span className="auth-step-badge">Redirecting</span>
+              <h1>Opening sign in</h1>
+              <p>Redirecting to the admin login page.</p>
+            </div>
+          </section>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <IconSprite />
 
-      <div className="page-shell nevari-admin-storefront">
-        <aside className={`sidebar ${sidebarOpen ? "open" : ""}`} id="sidebar">
+      <div className={`page-shell nevari-admin-storefront ${isEmbeddedDashboard ? "embedded-dashboard-page" : ""} ${embeddedProductOnly ? "embedded-products-only" : ""}`}>
+        {!isEmbeddedDashboard ? <aside className={`sidebar ${sidebarOpen ? "open" : ""}`} id="sidebar">
           <div className="sidebar-top">
             <div className="brand-row">
               <div className="brand-mark brand-logo-shell">
@@ -8016,7 +8643,7 @@ export default function Page() {
           </div>
 
           
-        </aside>
+        </aside> : null}
 
         <main className="main-shell">
           <header className="topbar">
@@ -8045,38 +8672,41 @@ export default function Page() {
                 </button>
                 {createMenuOpen ? (
                   <div className="create-menu" role="menu">
-                    {[
-                      ["product", "New Product"],
-                      ["order", "New Order"],
-                      ["consultation", "New Consultation"],
-                      ["doctor", "New Doctor"],
-                      ["customer", "New Customer"]
-                    ].map(([type, label]) => (
+                    {createMenuItems.map((type) => (
                       <button key={type} type="button" role="menuitem" onClick={() => openCreateModal(type)}>
-                        {label}
+                        {type === "product"
+                          ? "New Product"
+                          : type === "order"
+                            ? "New Order"
+                            : type === "consultation"
+                              ? "New Consultation"
+                              : type === "doctor"
+                                ? "New Doctor"
+                                : "New Customer"}
                       </button>
                     ))}
                   </div>
                 ) : null}
               </div>
-              <button className="pill-button" type="button" onClick={() => switchPage("consultations")}>
+              {!isEmbeddedDashboard ? <button className="pill-button" type="button" onClick={() => switchPage("consultations")}>
                 <InlineIcon id="i-calendar" />
-                <span>{formatTopbarDate()}</span>
-              </button>
-              <button className="icon-button" type="button" onClick={() => switchPage("settings")}><InlineIcon id="i-settings" /></button>
-              <button className="user-chip user-chip-button" type="button" onClick={() => switchPage("profile")}>
+                <span>{formatTopbarDate(renderStoreTimeZone)}</span>
+              </button> : null}
+              {!isEmbeddedDashboard ? <button className="icon-button" type="button" onClick={() => switchPage("settings")}><InlineIcon id="i-settings" /></button> : null}
+              {!isEmbeddedDashboard ? <button className="user-chip user-chip-button" type="button" onClick={() => switchPage("profile")}>
                 <div className="user-avatar">
-                  {getInitials(session.user?.display_name || siteName)}
+                  {session.user?.avatar_url ? <img src={session.user.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
+                  <span style={{ display: session.user?.avatar_url ? "none" : "inline" }}>{getInitials(session.user?.display_name || siteName)}</span>
                 </div>
                 <div className="user-meta">
                   <strong>{session.user?.display_name || siteName}</strong>
-                  <span>{session.user?.roles?.join(", ") || (session.paired ? "Paired frontend" : "WordPress pairing required")}</span>
+                  <span>{session.user?.roles?.join(", ") || "Authorized dashboard session"}</span>
                 </div>
-              </button>
+              </button> : null}
             </div>
           </header>
 
-          <div className="pages-stack">
+          <div className={`pages-stack ${dashboardRevealClassName}`.trim()}>
             {showPageSkeleton ? renderPageSkeleton() : (
               <>
             {currentPage === "subscriptions" && renderPageSkeleton()}
@@ -8155,19 +8785,62 @@ export default function Page() {
                       </div>
                       <div className="overview-v2-revenue-layout">
                         <div className="chart-scroll">
-                          <div className="bar-chart">
-                            {trendSeries.map((day, index) => (
-                              <div className="bar-col" key={`${trendMode}-${day.label || "slot"}-${index}`}>
-                                <div className="bar-shell">
-                                  <div className={`bar-fill ${day.placeholder ? "placeholder" : ""}`} style={{ height: `${Math.max(16, (day.total / chartMax) * 190)}px`, backgroundColor: chartColors[index % chartColors.length] }} />
-                                </div>
-                                <div className="bar-note">
+                          <div className="trend-chart">
+                            <div className="trend-chart-surface">
+                              <svg className="trend-chart-svg" viewBox={`0 0 ${trendChartWidth} ${trendChartHeight}`} role="img" aria-label={`Revenue and orders ${trendMode} trend`}>
+                                <defs>
+                                  <linearGradient id={`trend-area-${trendMode}`} x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#16356d" stopOpacity="0.28" />
+                                    <stop offset="100%" stopColor="#16356d" stopOpacity="0.04" />
+                                  </linearGradient>
+                                </defs>
+                                {trendGridLines.map((y, index) => (
+                                  <line
+                                    key={`trend-grid-${index}`}
+                                    className="trend-chart-grid-line"
+                                    x1={trendChartPaddingX}
+                                    y1={y}
+                                    x2={trendChartWidth - trendChartPaddingX}
+                                    y2={y}
+                                  />
+                                ))}
+                                <line
+                                  className="trend-chart-grid-line trend-chart-grid-line-base"
+                                  x1={trendChartPaddingX}
+                                  y1={trendChartHeight - trendChartPaddingY}
+                                  x2={trendChartWidth - trendChartPaddingX}
+                                  y2={trendChartHeight - trendChartPaddingY}
+                                />
+                                {trendAreaPath ? <path className="trend-chart-area" d={trendAreaPath} fill={`url(#trend-area-${trendMode})`} /> : null}
+                                {trendLinePath ? <path className="trend-chart-line" d={trendLinePath} /> : null}
+                                {trendChartPoints.map((point, index) => (
+                                  <g key={`${trendMode}-${point.label || "slot"}-${index}`}>
+                                    <circle
+                                      className={`trend-chart-point-halo ${point.placeholder ? "placeholder" : ""}`.trim()}
+                                      cx={point.x}
+                                      cy={point.y}
+                                      r="8"
+                                    />
+                                    <circle
+                                      className={`trend-chart-point ${point.placeholder ? "placeholder" : ""}`.trim()}
+                                      cx={point.x}
+                                      cy={point.y}
+                                      r="4.5"
+                                      fill={chartColors[index % chartColors.length]}
+                                    />
+                                  </g>
+                                ))}
+                              </svg>
+                            </div>
+                            <div className="trend-chart-notes" style={{ gridTemplateColumns: `repeat(${trendSeries.length}, minmax(0, 1fr))` }}>
+                              {trendSeries.map((day, index) => (
+                                <div className="trend-chart-note" key={`${trendMode}-note-${day.label || "slot"}-${index}`}>
                                   <strong>{formatCompactMoney(day.total, storeCurrency)}</strong>
                                   <span>{day.label}</span>
                                   <small>{day.volume ? `${formatNumber(day.volume)} orders` : (trendMode === "live" ? "Loading" : "N/A")}</small>
                                 </div>
-                              </div>
-                            ))}
+                              ))}
+                            </div>
                           </div>
                         </div>
                         <aside className="overview-v2-summary-card">
@@ -8310,11 +8983,11 @@ export default function Page() {
 
             {currentPage === "orders" && (
               <section className="page-view active">
-                <section className="panel table-panel">
+                <section className="table-panel dashboard-table-shell orders-table-shell">
                   <div className="panel-header">
                     <div>
-                      <p className="section-kicker">Fulfillment queue</p>
-                      <h2>Orders requiring operational review</h2>
+                      
+                      <h2>Nevari Pharmacy Orders</h2>
                     </div>
                     <div className="toolbar">
                       
@@ -8415,7 +9088,7 @@ export default function Page() {
             {currentPage === "payments" && (
               <section className="page-view active">
                 <section className="operations-grid">
-                  <article className="panel compact">
+                  <article className="panel compact dashboard-stats-shell payments-stats-shell">
                     <div className="panel-header">
                       <div>
                         <p className="section-kicker">Payment summary</p>
@@ -8430,7 +9103,7 @@ export default function Page() {
                     </div>
                   </article>
                 </section>
-                <section className="panel table-panel">
+                <section className="table-panel dashboard-table-shell payments-table-shell">
                   <div className="panel-header">
                     <div>
                       <p className="section-kicker"> Store Payments</p>
@@ -8590,10 +9263,10 @@ export default function Page() {
             {currentPage === "consultations" && (
               <section className="page-view active">
                 <section className="operations-grid">
-                  <article className="panel compact">
+                  <article className="panel compact dashboard-stats-shell mtm-stats-shell">
                     <div className="panel-header">
                       <div>
-                        <p className="section-kicker">Consultation status</p>
+
                         <h2>Care schedule summary</h2>
                       </div>
                     </div>
@@ -8613,11 +9286,11 @@ export default function Page() {
                     </div>
                   </article>
                 </section>
-                <section className="dual-table-grid">
+                <section className="consultation-table">
                   <article className="panel table-panel">
                     <div className="panel-header">
                       <div>
-                        <p className="section-kicker">Consultation flow</p>
+
                         <h2>{formatStatusLabel(consultationFilter)} consultations</h2>
                       </div>
                     </div>
@@ -8681,15 +9354,15 @@ export default function Page() {
 
             {currentPage === "mtm" && (
               <section className="page-view active">
-                <section className="operations-grid">
-                  <article className="panel compact">
+                <section className="operations-grid mtm-summary-row">
+                  <article className="panel compact mtm-summary-panel">
                     <div className="panel-header">
                       <div>
                         <p className="section-kicker">Medical Therapy Management</p>
                         <h2>Status summary</h2>
                       </div>
                     </div>
-                    <div className="mini-stat-grid">
+                    <div className="mini-stat-grid mtm-summary-grid">
                       <div className="mini-stat"><span>Total</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).length)}</strong><small>tracked MTM requests</small></div>
                       <div className="mini-stat"><span>Submitted</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "submitted").length)}</strong><small>awaiting pharmacist review</small></div>
                       <div className="mini-stat"><span>Scheduled</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "scheduled").length)}</strong><small>consultations booked</small></div>
@@ -8697,8 +9370,8 @@ export default function Page() {
                     </div>
                   </article>
                 </section>
-                <section className="operations-grid">
-                  <section className="panel table-panel">
+                <section className="operations-grid mtm-registry-row">
+                  <section className="table-panel dashboard-table-shell mtm-table-shell mtm-table-panel">
                     <div className="panel-header">
                       <div>
                         <p className="section-kicker">MTM registry</p>
@@ -8721,12 +9394,10 @@ export default function Page() {
                         <tbody>
                           {mtmLoading ? renderTableRowSkeletons(6, 7) : filteredMtmRequests.length ? paginatedMtmRequests.map((item) => (
                             <tr key={item.id} role="button" tabIndex={0} onClick={() => {
-                              setSelectedMtmRequestId(item.id);
                               setMtmPreviewRequestId(item.id);
                             }} onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                setSelectedMtmRequestId(item.id);
                                 setMtmPreviewRequestId(item.id);
                               }
                             }}>
@@ -8753,23 +9424,6 @@ export default function Page() {
                       <div className="pagination-summary">Showing {filteredMtmRequests.length ? `${formatNumber(((activeMtmPage - 1) * mtmPerPage) + 1)}-${formatNumber(Math.min(activeMtmPage * mtmPerPage, filteredMtmRequests.length))}` : "0"} of {formatNumber(filteredMtmRequests.length)} requests</div>
                     </div>
                   </section>
-                  <article className="panel compact">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Preview</p>
-                        <h2>{selectedMtmRequest?.request_reference || "Select an MTM request"}</h2>
-                      </div>
-                    </div>
-                    {selectedMtmRequest ? <div className="stacked-detail-list">
-                      <div className="detail-item-card"><strong>Patient</strong><span>{selectedMtmRequest.patient?.name || patientLabel(selectedMtmRequest.customer_user_id)}</span></div>
-                      <div className="detail-item-card"><strong>Status</strong><span>{selectedMtmRequest.status_label || titleCase(selectedMtmRequest.status)}</span></div>
-                      <div className="detail-item-card"><strong>Attendance</strong><span>{titleCase(selectedMtmRequest.attendance_status || "pending")}</span></div>
-                      <div className="detail-item-card"><strong>Medications</strong><span>{Array.isArray(selectedMtmRequest.medication_profile?.medications) ? selectedMtmRequest.medication_profile.medications.length : 0}</span></div>
-                      <button className="button-primary" type="button" onClick={() => setMtmPreviewRequestId(selectedMtmRequest.id)}>
-                        Open preview
-                      </button>
-                    </div> : <div className="muted">Select an MTM request to preview the submitted form details.</div>}
-                  </article>
                 </section>
               </section>
             )}
@@ -8781,35 +9435,35 @@ export default function Page() {
                     <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-plus" /></span><StatusPill value="info">catalog</StatusPill></div>
                     <span className="metric-label">In stock products</span>
                     <strong className="metric-value">{formatNumber(productFilterCounts.in_stock || 0)}</strong>
-                    <small className="metric-note">products currently available for fulfilment</small>
+
                   </article>
                   <article className="metric-card primary">
                     <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-pill" /></span><StatusPill value="success">catalog</StatusPill></div>
                     <span className="metric-label">Published products</span>
                     <strong className="metric-value">{formatNumber(productFilterCounts.published || 0)}</strong>
-                    <small className="metric-note">visible in storefront and checkout flows</small>
+
                   </article>
                   <article className="metric-card">
                     <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-clipboard" /></span><StatusPill value="pending">rx</StatusPill></div>
                     <span className="metric-label">Low stock products</span>
                     <strong className="metric-value">{formatNumber(lowStockProducts)}</strong>
-                    <small className="metric-note">below threshold (default under 5)</small>
+
                   </article>
-                  
+
                   <article className="metric-card accent">
                     <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-mail" /></span><StatusPill value="warning">watchlist</StatusPill></div>
                     <span className="metric-label">Total inventory value</span>
                     <strong className="metric-value">{formatCompactMoney(totalInventoryValue, storeCurrency)}</strong>
-                    <small className="metric-note">capital currently tied down in stock</small>
+
                   </article>
                   <article className="metric-card most-sold">
                     <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-cart" /></span><StatusPill value="processing">sales</StatusPill></div>
                     <span className="metric-label">Most sold products</span>
                     <strong className="metric-value">{mostSoldProducts[0]?.name || "No sales data"}</strong>
-                    <small className="metric-note">{mostSoldLabel}</small>
+
                   </article>
                 </section>
-                <section className="panel table-panel">
+                <section className="table-panel dashboard-table-shell products-table-shell">
                   <div className="panel-header products-panel-header">
                     <div>
                       <p className="section-kicker">All Products</p>
@@ -8890,7 +9544,7 @@ export default function Page() {
                         {productsLoading ? renderTableRowSkeletons(8, 11) : paginatedProducts.length ? paginatedProducts.map((product) => {
                           const actionLinks = buildProductActionLinks(product, session);
                           const stockQuantity = getProductStockQuantity(product);
-                          const stockStatus = product.stock_status || "instock";
+                          const stockStatus = product.stock_status || "in stock";
                           const isDraftProduct = getProductStatus(product) === "draft";
                           const tags = getProductTags(product);
                           const brands = getProductBrands(product);
@@ -9205,10 +9859,7 @@ export default function Page() {
                 <section className="operations-grid staffs-hero-grid">
                   <article className="panel compact">
                     <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Staffs</p>
-                        <h2>Doctor and pharmacist coverage</h2>
-                      </div>
+                     
                     </div>
                     {renderTeamBlock()}
                   </article>
@@ -9500,7 +10151,10 @@ export default function Page() {
                               <tr
                                 key={`${event.request_id || event.created_at}-${index}`}
                                 className={`audit-row ${selectedAuditIndex === index ? "active" : ""}`}
-                                onClick={() => setSelectedAuditIndex(index)}
+                                onClick={() => {
+                                  setSelectedAuditIndex(index);
+                                  setAuditDetailModalOpen(true);
+                                }}
                               >
                                 <td>{formatDate(event.created_at, true)}</td>
                                 <td><StatusPill value={event.status === "error" ? "error" : event.severity} className="audit-pill">{event.status}</StatusPill></td>
@@ -9516,36 +10170,6 @@ export default function Page() {
                         </table>
                       </div>
                     </div>
-
-                    <aside className="audit-detail">
-                      {!selectedAuditEvent ? (
-                        <div className="audit-detail-empty">
-                          <span className="detail-icon"><InlineIcon id="i-shield" /></span>
-                          <strong>Select an event</strong>
-                          <p>View metadata, request id, IP address, and related pharmacy objects.</p>
-                        </div>
-                      ) : (
-                        <div className="audit-detail-content">
-                          <div>
-                            <span className="section-kicker">Event detail</span>
-                            <h3>{selectedAuditEvent.action}</h3>
-                          </div>
-                          <StatusPill value={selectedAuditEvent.status === "error" ? "error" : selectedAuditEvent.severity} className="audit-pill">
-                            {selectedAuditEvent.status} • {selectedAuditEvent.severity}
-                          </StatusPill>
-                          <div className="detail-grid">
-                            <div className="detail-block"><span>Timestamp</span><strong>{formatDate(selectedAuditEvent.created_at, true)}</strong></div>
-                            <div className="detail-block"><span>Source</span><strong>{selectedAuditEvent.source}</strong></div>
-                            <div className="detail-block"><span>Actor</span><strong>{selectedAuditEvent.actor_user_id ? `User #${selectedAuditEvent.actor_user_id}` : "system"}</strong></div>
-                            <div className="detail-block"><span>Role</span><strong>{selectedAuditEvent.actor_role || "n/a"}</strong></div>
-                            <div className="detail-block"><span>Request ID</span><strong>{selectedAuditEvent.request_id || "n/a"}</strong></div>
-                            <div className="detail-block"><span>IP Address</span><strong>{selectedAuditEvent.actor_ip || "n/a"}</strong></div>
-                          </div>
-                          <div className="meta-block"><span>Message</span><pre>{selectedAuditEvent.message || selectedAuditEvent.error_message || "No message stored."}</pre></div>
-                          <div className="meta-block"><span>Metadata JSON</span><pre>{JSON.stringify(selectedAuditEvent.metadata || {}, null, 2)}</pre></div>
-                        </div>
-                      )}
-                    </aside>
                   </div>
                 </section>
               </section>
@@ -9578,13 +10202,14 @@ export default function Page() {
                   <button className="filter-btn" type="button">Reminders <span className="filter-count">3</span></button>
                   <button className="filter-btn" type="button">Pricing <span className="filter-count">2</span></button>
                   <div className="filter-divider" />
-                  <button className="filter-btn" type="button">Security <span className="filter-count">3</span></button>
+                  <button className="filter-btn" type="button">Security <span className="filter-count">4</span></button>
                 </div>
                 <div className="status-pill-grid admin-settings-status-grid">
                   <div className={`status-pill ${appointmentSettings.googleMeetEnabled ? "success" : "error"}`}><span className="dot" />Meeting service</div>
                   <div className={`status-pill ${appointmentSettings.emailNotificationsEnabled ? "info" : "warning"}`}><span className="dot" />Notifications</div>
                   <div className={`status-pill ${appointmentSettings.livePaymentsEnabled ? "success" : "warning"}`}><span className="dot" />{appointmentSettings.livePaymentsEnabled ? "Live payments" : "Test mode"}</div>
                   <div className={`status-pill ${appointmentSettings.idempotencyProtection ? "success" : "warning"}`}><span className="dot" />Idempotency</div>
+                  <div className={`status-pill ${authSecuritySettings.globalTwoStepVerification ? "success" : "warning"}`}><span className="dot" />{authSecuritySettings.globalTwoStepVerification ? "Global OTP on" : "Global OTP off"}</div>
                 </div>
                 <section className="doctor-settings-grid admin-settings-grid">
                   <article className="doctor-settings-card">
@@ -9618,8 +10243,10 @@ export default function Page() {
 
                   <article className="doctor-settings-card">
                     <h3>Security and logging</h3>
+                    <label className="customer-toggle-row"><span>Global two-step verification</span><input type="checkbox" checked={authSecuritySettings.globalTwoStepVerification} onChange={(event) => setAuthSecuritySettings((current) => ({ ...current, globalTwoStepVerification: event.target.checked }))} /></label>
                     <label className="customer-toggle-row"><span>Role permissions locked</span><input type="checkbox" checked={appointmentSettings.rolePermissionsLocked} onChange={(event) => setAppointmentSettings((current) => ({ ...current, rolePermissionsLocked: event.target.checked }))} /></label>
                     <label><span>Audit log retention (days)</span><input type="number" min="7" value={appointmentSettings.auditLogRetention} onChange={(event) => setAppointmentSettings((current) => ({ ...current, auditLogRetention: event.target.value }))} /></label>
+                    <div className="muted">When enabled, all customer, doctor, pharmacist, and admin sign-in forms request an email OTP challenge after credentials are accepted.</div>
                     <div className="doctor-settings-summary"><span>Visible consultations</span><strong>{formatNumber((data.appointments || []).length)}</strong></div>
                     <div className="doctor-settings-summary"><span>Doctors in scope</span><strong>{formatNumber((data.doctors || []).length)}</strong></div>
                     <div className="doctor-settings-summary"><span>Queued emails</span><strong>{formatNumber(emailItems[0]?.value || 0)}</strong></div>
@@ -9634,7 +10261,7 @@ export default function Page() {
                   <div>
                     <p className="section-kicker">Profile</p>
                     <h2>Storefront account and identity</h2>
-                    <p className="hero-text">Review the current signed-in user, paired environment, and storefront identity in one place.</p>
+                    <p className="hero-text">Review the current signed-in user, WordPress environment, and storefront identity in one place.</p>
                   </div>
                   <div className="banner-actions">
                     <button className="button-primary" type="button" onClick={() => showAuthGate("auth")}>Manage session</button>
@@ -9663,13 +10290,13 @@ export default function Page() {
       {orderCreateModalOpen ? (
       <div className="app-modal-stack">
         <div className="app-modal-layer">
-          <button className="app-modal-backdrop" type="button" aria-label="Close order creation" onClick={closeOrderCreateModal} />
+          <ModalScrim className="app-modal-backdrop" label="Close order creation" onDismiss={closeOrderCreateModal} />
           <section className="detail-section stacked-order-popup order-create-popup admin-surface-modal modal-frame creation-frame" role="dialog" aria-modal="true" aria-label="Create order">
             <form className="order-create-form" onSubmit={createOrderFromForm}>
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
-                  <p className="section-kicker">Order creation</p>
-                  <h3>Create pharmacy order</h3>
+                  <h3>Create order</h3>
+                  <p className="popup-support-copy modal-intro-copy">Create a manual storefront order, link products, define payment state and prepare fulfilment.</p>
                 </div>
                 <button className="icon-button" type="button" aria-label="Close order creation" onClick={closeOrderCreateModal}>
                   <InlineIcon id="i-x" />
@@ -9677,254 +10304,220 @@ export default function Page() {
               </div>
 
               <div className="order-create-shell modal-body creation-popup-layout">
-                <section className="order-create-customer-column creation-main">
+                <section className="creation-main">
                   <div className="creation-section-title">
-                    <InlineIcon id="i-user" />
+                    <InlineIcon id="i-cart" />
                     <span>Customer and order details</span>
                   </div>
-                  <div className="profile-create-preview order-create-preview">
-                    <div className="profile-avatar">
-                      <span>{getNameInitials([orderCreateForm.firstName, orderCreateForm.lastName].filter(Boolean).join(" "))}</span>
-                    </div>
-                    <div className="order-create-profile-details">
-                      <strong>{[orderCreateForm.firstName, orderCreateForm.lastName].filter(Boolean).join(" ") || "Customer name"}</strong>
-                      <span>{orderCreateForm.email || "customer@email.com"}</span>
+                  <div className="creation-field-grid">
+                    <div className="creation-field">
+                      <label>Customer name</label>
+                      <div className="consultation-search-combo order-create-combo">
+                        <input
+                          className="form-control"
+                          value={orderCreateCustomerSearch}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setOrderCreateCustomerSearch(value);
+                            setOrderCreateCustomerMenuOpen(true);
+                            setOrderCreateForm((prev) => ({
+                              ...prev,
+                              customerId: "",
+                              firstName: "",
+                              lastName: "",
+                              email: "",
+                              phone: ""
+                            }));
+                          }}
+                          onFocus={() => setOrderCreateCustomerMenuOpen(true)}
+                          placeholder="Search customer by name, email, or phone"
+                          autoComplete="off"
+                        />
+                        {orderCreateCustomerMenuOpen ? (
+                          <div className="consultation-search-results order-create-results">
+                            {orderCreateCustomersQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading customers"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
+                            {orderCustomerCandidates.length ? orderCustomerCandidates.map((customer) => {
+                              const customerId = customer.id || customer.user_id || customer.customer_id;
+                              const customerName = customerNameFromRecord(customer) || customer.display_name || customer.email || `Customer #${customerId}`;
+                              const customerEmailValue = customerEmail(customer) || "No email on file";
+                              const customerPhoneValue = customerPhoneFromRecord(customer) || "No phone on file";
+                              const customerAvatar = firstNonEmpty(customer.avatar_url, customer.avatar, customer.image_url, customer.photo_url);
+                              return (
+                                <button
+                                  key={customerId}
+                                  type="button"
+                                  className={`consultation-search-result consultation-strip-result ${String(orderCreateForm.customerId) === String(customerId) ? "active" : ""}`}
+                                  onClick={() => setOrderCreateCustomer(customer)}
+                                >
+                                  <span className="consultation-strip-avatar consultation-strip-avatar-customer patient">
+                                    {customerAvatar ? <img src={customerAvatar} alt={customerName} /> : getNameInitials(customerName || "CU", "CU")}
+                                  </span>
+                                  <span className="consultation-strip-copy">
+                                    <strong>{customerName}</strong>
+                                    <span>{customerEmailValue} • {customerPhoneValue}</span>
+                                  </span>
+                                </button>
+                              );
+                            }) : <div className="order-create-empty-results">No matching customers found.</div>}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
-
-                  <div className="detail-form-grid order-create-grid">
-                    <label className="detail-field">
-                      <span>First Name</span>
+                  <div className="creation-field-grid creation-field-grid-two">
+                    <div className="creation-field">
+                      <label>Email address</label>
                       <input
-                        value={orderCreateForm.firstName}
-                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, firstName: event.target.value }))}
-                        required
-                      />
-                    </label>
-                    <label className="detail-field">
-                      <span>Last Name</span>
-                      <input
-                        value={orderCreateForm.lastName}
-                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, lastName: event.target.value }))}
-                        required
-                      />
-                    </label>
-                    <label className="detail-field">
-                      <span>Email Address</span>
-                      <input
+                        className="form-control"
                         type="email"
                         value={orderCreateForm.email}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, email: event.target.value }))}
-                        required
                       />
-                    </label>
-                    <label className="detail-field">
-                      <span>Phone Number</span>
+                    </div>
+                    <div className="creation-field">
+                      <label>Phone number</label>
                       <input
+                        className="form-control"
                         value={orderCreateForm.phone}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, phone: event.target.value }))}
                       />
-                    </label>
-                    <label className="detail-field detail-field-wide">
-                      <span>Delivery Address</span>
-                      <input
-                        value={orderCreateForm.address}
-                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, address: event.target.value }))}
-                      />
-                    </label>
-                    <label className="detail-field">
-                      <span>City</span>
-                      <input
-                        value={orderCreateForm.city}
-                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, city: event.target.value }))}
-                      />
-                    </label>
-                    <label className="detail-field">
-                      <span>State</span>
-                      <input
-                        value={orderCreateForm.state}
-                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, state: event.target.value }))}
-                      />
-                    </label>
-                    <label className="detail-field">
-                      <span>Postcode</span>
-                      <input
-                        value={orderCreateForm.postcode}
-                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, postcode: event.target.value }))}
-                      />
-                    </label>
-                    <label className="detail-field">
-                      <span>Country</span>
-                      <input
-                        value={orderCreateForm.country}
-                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, country: event.target.value.toUpperCase() }))}
-                        maxLength={2}
-                      />
-                    </label>
-                    <label className="detail-field">
-                      <span>Order Status</span>
-                      <div className="select-wrap">
-                        <select
-                          value={orderCreateForm.status}
-                          onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, status: event.target.value }))}
-                        >
-                            {["awaiting-doctor", "pending", "processing", "in-delivery", "on-hold", "completed", "failed", "refunded"].map((status) => (
-                            <option key={status} value={status}>{formatStatusLabel(status)}</option>
-                          ))}
-                        </select>
+                    </div>
+                  </div>
+                  <div className="creation-field-grid">
+                    <div className="creation-field">
+                      <label>Payment status</label>
+                      <select
+                        className="form-control"
+                        value={orderCreateForm.status}
+                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, status: event.target.value }))}
+                      >
+                        {ORDER_CREATE_PAYMENT_STATUS_OPTIONS.map((status) => (
+                          <option key={status} value={status}>{status}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="creation-field-grid creation-field-grid-three">
+                    <div className="creation-field">
+                      <label>Product</label>
+                      <div className="consultation-search-combo order-create-combo">
+                        <input
+                          className="form-control"
+                          value={orderCreateSearch}
+                          onChange={(event) => setOrderCreateSearch(event.target.value)}
+                          placeholder="Search product by name, SKU, or brand"
+                          autoComplete="off"
+                        />
+                        <div className="consultation-search-results order-create-results">
+                          {(orderProductCandidates.length ? orderProductCandidates : (popupOrderProducts || []).slice(0, 8)).map((product) => {
+                            const productId = String(product.id);
+                            const productName = product.name || `Product #${productId}`;
+                            const productImage = getProductImage(product);
+                            const productMeta = [product.sku, getProductCategories(product), getProductBrands(product), getProductPrice(product, "regular_price") ? formatMoney(getProductPrice(product, "regular_price"), storeCurrency) : ""]
+                              .filter(Boolean)
+                              .join(" • ");
+                            return (
+                              <button
+                                key={productId}
+                                type="button"
+                                className={`consultation-search-result consultation-strip-result ${String(getOrderCreateSelectedProductId()) === productId ? "active" : ""}`}
+                                onClick={() => {
+                                  setOrderCreateSelectedProduct(productId);
+                                  setOrderCreateSearch(productName);
+                                }}
+                              >
+                                <span className="consultation-strip-avatar order-create-product-thumb">
+                                  {productImage ? <img src={productImage} alt={productName} /> : <InlineIcon id="i-pill" />}
+                                </span>
+                                <span className="consultation-strip-copy">
+                                  <strong>{productName}</strong>
+                                  <span>{productMeta || "Product catalog item"}</span>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </label>
-                    <label className="detail-field detail-field-wide">
-                      <span>Assign Doctor</span>
-                      {orderCreateDoctorsQuery.isLoading ? <small className="product-field-note">Loading doctors...</small> : null}
-                      <div className="select-wrap">
-                        <select
-                          value={orderCreateForm.doctorId}
-                          onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, doctorId: event.target.value }))}
-                        >
-                          <option value="">No doctor assigned</option>
-                          {popupOrderDoctors.map((doctor) => (
-                            <option key={doctor.user_id} value={doctor.user_id}>{doctor.display_name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </label>
-                    <label className="detail-field detail-field-wide">
-                      <span>Customer Note</span>
+                    </div>
+                    <div className="creation-field">
+                      <label>Quantity</label>
+                      <input
+                        className="form-control"
+                        type="number"
+                        min="1"
+                        value={getOrderCreateSelectedLineItem().quantity || 1}
+                        onChange={(event) => setOrderCreateSelectedQuantity(event.target.value)}
+                      />
+                    </div>
+                    <div className="creation-field">
+                      <label>Delivery method</label>
+                      <select
+                        className="form-control"
+                        value={orderCreateForm.deliveryMethod}
+                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, deliveryMethod: event.target.value }))}
+                      >
+                        <option>Pickup</option>
+                        <option>Home delivery</option>
+                        <option>Dispatch rider</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="creation-field-grid creation-field-grid-two">
+                    <div className="creation-field">
+                      <label>Prescription note</label>
                       <textarea
-                        value={orderCreateForm.note}
-                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, note: event.target.value }))}
+                        className="form-control"
                         rows={4}
+                        value={orderCreateForm.prescription}
+                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, prescription: event.target.value }))}
                       />
-                    </label>
+                    </div>
                   </div>
                 </section>
 
-                <aside className="order-create-items-column creation-side">
-                  <div className="creation-summary-card order-create-summary-card">
-                    <div className="creation-summary-icon">
-                      <InlineIcon id="i-package" />
-                    </div>
-                    <strong>{[orderCreateForm.firstName, orderCreateForm.lastName].filter(Boolean).join(" ") || "Customer Guest"}</strong>
-                    <span>{orderCreateForm.status ? formatStatusLabel(orderCreateForm.status) : "Draft order"}</span>
-                    <div className="creation-summary-list">
-                      <div><span>Items</span><strong>{formatNumber(orderCreateItems.length)}</strong></div>
-                      <div><span>Doctor</span><strong>{popupOrderDoctors.find((doctor) => String(doctor.user_id) === String(orderCreateForm.doctorId))?.display_name || "Unassigned"}</strong></div>
-                      <div><span>Estimated total</span><strong>{formatMoney(orderCreateItems.reduce((sum, item) => {
-                        const product = popupOrderProducts.find((entry) => String(entry.id) === String(item.productId));
-                        const quantity = Math.max(1, Number(item.quantity || 1));
-                        const unitPrice = product ? Number(hasActiveSalePrice(product) ? getProductPrice(product, "sale_price") : (getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0)) : 0;
-                        return sum + (unitPrice * quantity);
-                      }, 0), storeCurrency)}</strong></div>
-                    </div>
-                    <div className="creation-popup-note">This popup supports manual orders while preserving the existing multi-product search and fulfilment workflow.</div>
+                <aside className="creation-side">
+                  <div className="creation-product-preview">
+                    {getProductImage(selectedOrderCreateProduct) ? (
+                      <img src={getProductImage(selectedOrderCreateProduct)} alt={selectedOrderCreateProduct?.name || "Selected product"} />
+                    ) : (
+                      <InlineIcon id="i-cart" />
+                    )}
                   </div>
-
-                  <div className="panel-header order-create-items-header">
+                  <div>
+                    <h4 id="order-customer">{getOrderCreateCustomerName()}</h4>
+                    <p>Manual order draft</p>
+                  </div>
+                  <div className="creation-summary-list">
                     <div>
-                      <p className="section-kicker">Products</p>
-                      <h4>Search and add products</h4>
+                      <span>Product</span>
+                      <strong id="order-product-summary">
+                        {popupOrderProducts.find((product) => String(product.id) === String(getOrderCreateSelectedProductId()))?.name || "Paracetamol 500mg"}
+                      </strong>
                     </div>
-                    <span className="order-create-line-count">{orderCreateItems.length} item{orderCreateItems.length === 1 ? "" : "s"}</span>
-                  </div>
-                  {orderCreateProductsQuery.isLoading ? <p className="muted popup-support-copy">Loading product matches...</p> : null}
-                  {orderCreateProductsQuery.error ? <p className="muted popup-support-copy">Products could not be loaded. Try again shortly.</p> : null}
-
-                  <label className="detail-field detail-field-wide order-product-search-field">
-                    <span>Search product</span>
-                    <div className="product-term-search-row">
-                      <input
-                        value={orderCreateSearch}
-                        onChange={(event) => setOrderCreateSearch(event.target.value)}
-                        placeholder="Search by name, SKU, brand, or category"
-                      />
-                    </div>
-                  </label>
-
-                  {orderCreateSearch ? (
-                    <div className="product-term-options order-product-search-results" role="listbox" aria-label="Product search results">
-                      {orderProductCandidates.length ? orderProductCandidates.map((product) => {
-                        const productId = String(product.id);
-                        const alreadySelected = orderCreateItems.some((item) => String(item.productId) === productId);
-                        return (
-                          <button
-                            key={productId}
-                            className={`product-term-option order-product-search-result ${alreadySelected ? "active" : ""}`}
-                            type="button"
-                            onClick={() => addOrderCreateItem(product)}
-                          >
-                            <strong>{product.name || `Product #${productId}`}</strong>
-                            <span>{getProductPriceLabel(product, storeCurrency)}</span>
-                          </button>
-                        );
-                      }) : <div className="empty-card compact-empty"><div className="card-title">No matching products found.</div></div>}
-                    </div>
-                  ) : null}
-
-                  <div className="order-create-line-summary">
-                    <span>Added items</span>
-                    <strong>{orderCreateItems.length}</strong>
-                  </div>
-
-                  <div className="table-scroll order-create-table-scroll">
-                    <table className="order-create-items-table">
-                      <thead>
-                        <tr>
-                          <th>Product</th>
-                          <th>Qty</th>
-                          <th>Price</th>
-                          <th>Total</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {orderCreateItems.length ? orderCreateItems.map((item, index) => {
-                          const product = popupOrderProducts.find((entry) => String(entry.id) === String(item.productId)) || null;
-                          const quantity = Math.max(1, Number(item.quantity || 1));
-                          const unitPrice = product ? Number(hasActiveSalePrice(product) ? getProductPrice(product, "sale_price") : (getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0)) : 0;
-                          const lineTotal = unitPrice * quantity;
-                          return (
-                            <tr key={item.key || index}>
-                              <td>
-                                <div className="order-product-cell">
-                                  <div className="order-product-media order-product-list-media">
-                                    {product ? (
-                                      getProductImage(product) ? <img src={getProductImage(product)} alt={product.name || "Product"} className="order-product-image" /> : <div className="order-product-image order-product-fallback"><InlineIcon id="i-pill" /></div>
-                                    ) : (
-                                      <div className="order-product-image order-product-fallback"><InlineIcon id="i-pill" /></div>
-                                    )}
-                                  </div>
-                                  <div className="order-product-copy">
-                                    <strong>{product ? (product.name || `Product #${item.productId}`) : "Choose a product"}</strong>
-                                    <span className="muted order-product-meta">
-                                      {product ? getProductPriceLabel(product, storeCurrency) : "Add products using the search bar above"}
-                                    </span>
-                                  </div>
-                                </div>
-                              </td>
-                              <td>
-                                <div className="qty-widget">
-                                  <button type="button" aria-label="Decrease quantity" onClick={() => updateOrderCreateItem(index, { quantity: Math.max(1, quantity - 1) })}>−</button>
-                                  <span>{quantity}</span>
-                                  <button type="button" aria-label="Increase quantity" onClick={() => updateOrderCreateItem(index, { quantity: quantity + 1 })}>+</button>
-                                </div>
-                              </td>
-                              <td>{product ? formatMoney(unitPrice, storeCurrency) : "—"}</td>
-                              <td>{product ? formatMoney(lineTotal, storeCurrency) : "—"}</td>
-                              <td>
-                                <button className="icon-button order-line-remove" type="button" aria-label="Remove product" onClick={() => removeOrderCreateItem(index)}>
-                                  <InlineIcon id="i-x" />
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        }) : (
-                          <tr>
-                            <td colSpan="5" className="muted">Add products using the search bar above.</td>
-                          </tr>
+                    <div>
+                      <span>Total</span>
+                      <strong id="order-total-summary">
+                        {formatMoney(
+                          (() => {
+                            const product = popupOrderProducts.find((entry) => String(entry.id) === String(getOrderCreateSelectedProductId())) || null;
+                            const quantity = Math.max(1, Number(getOrderCreateSelectedLineItem().quantity || 1));
+                            const unitPrice = product ? Number(hasActiveSalePrice(product)
+                              ? getProductPrice(product, "sale_price")
+                              : (getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0)) : 6005;
+                            return unitPrice * quantity;
+                          })(),
+                          storeCurrency
                         )}
-                      </tbody>
-                    </table>
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Payment</span>
+                      <strong id="order-payment">{orderCreateForm.status}</strong>
+                    </div>
+                  </div>
+                  <div className="creation-popup-note">
+                    <strong>Prescription preview</strong>
+                    <p>{orderCreateForm.prescription || "No prescription note entered yet."}</p>
                   </div>
                 </aside>
               </div>
@@ -9945,7 +10538,7 @@ export default function Page() {
       {orderModalOpen ? (
       <div className="app-modal-stack">
         <div className="app-modal-layer app-modal-layer-base">
-          <button className="app-modal-backdrop" type="button" aria-label="Close order details" onClick={closeOrderModal} />
+          <ModalScrim className="app-modal-backdrop" label="Close order details" onDismiss={closeOrderModal} />
           <section
             className={`panel order-detail-panel order-modal admin-surface-modal modal-frame detail-frame ${orderModalOpen ? "is-open" : "is-hidden"} ${selectedOrderDetail && deletingOrderIds.includes(selectedOrderDetail.id) ? "order-modal-deleting" : ""}`}
             role="dialog"
@@ -9955,9 +10548,9 @@ export default function Page() {
             <div className="panel-header order-modal-topbar modal-head">
               {selectedOrderDetail ? (
                 <div className="order-modal-topbar-content">
-                  <div className="toolbar order-modal-topbar-primary">
-                    <button className="button-primary" type="button" onClick={openOrderPrescriptionView}>Open Prescriptions</button>
-                    <button className="button-primary" type="button" onClick={openOrderConsultationView}>Open Consultations</button>
+                  <div className="toolbar order-modal-topbar-primary order-modal-topbar-title">
+                    <p className="section-kicker">Order details</p>
+                    <h3>Order #{selectedOrderDetail.number}</h3>
                   </div>
                   <div className="toolbar order-modal-topbar-actions">
                     <button className="icon-button" type="button" aria-label="Close order details" onClick={closeOrderModal}>
@@ -10003,15 +10596,10 @@ export default function Page() {
               <div className="order-detail-page">
                 <div className="order-detail-hero">
                   <div className="order-detail-meta-card">
-                    <div className="order-detail-title-row">
-                      <div>
-                        <h3>Order #{selectedOrderDetail.number}</h3>
-                        <div className="order-detail-meta">
-                          <StatusPill value={selectedOrderDetail.status}>{formatStatusLabel(selectedOrderDetail.status)}</StatusPill>
-                          <span>{formatDate(selectedOrderDetail.created_at, true)}</span>
-                          <span>Payment: {formatStatusLabel(selectedOrderDetail.payment_status)}</span>
-                        </div>
-                      </div>
+                    <div className="order-detail-meta">
+                      <StatusPill value={selectedOrderDetail.status}>{formatStatusLabel(selectedOrderDetail.status)}</StatusPill>
+                      <span>{formatDate(selectedOrderDetail.created_at, true)}</span>
+                      <span>Payment: {formatStatusLabel(selectedOrderDetail.payment_status)}</span>
                     </div>
                   </div>
 
@@ -10192,7 +10780,7 @@ export default function Page() {
 
         {orderControlsModalOpen && selectedOrderDetail ? (
         <div className="app-modal-layer app-modal-layer-nested is-open">
-          <button className="app-modal-backdrop nested" type="button" aria-label="Close order controls" onClick={() => setOrderControlsModalOpen(false)} />
+          <ModalScrim className="app-modal-backdrop nested" label="Close order controls" onDismiss={() => setOrderControlsModalOpen(false)} />
           <section className="detail-section stacked-order-popup" role="dialog" aria-modal="true" aria-label="Order controls">
             <div className="panel-header stacked-order-popup-header">
               <div>
@@ -10238,7 +10826,7 @@ export default function Page() {
 
         {doctorAssignmentModalOpen && selectedOrderDetail ? (
         <div className="app-modal-layer app-modal-layer-nested app-modal-layer-top is-open">
-          <button className="app-modal-backdrop nested" type="button" aria-label="Close doctor assignment" onClick={() => setDoctorAssignmentModalOpen(false)} />
+          <ModalScrim className="app-modal-backdrop nested" label="Close doctor assignment" onDismiss={() => setDoctorAssignmentModalOpen(false)} />
           <section className="detail-section stacked-order-popup assignment-popup" role="dialog" aria-modal="true" aria-label="Assign doctor">
             <div className="panel-header stacked-order-popup-header">
               <div>
@@ -10284,7 +10872,7 @@ export default function Page() {
       {previewMtmRequest && typeof document !== "undefined" ? createPortal(
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
-            <button className="app-modal-backdrop" type="button" aria-label="Close MTM preview" onClick={() => setMtmPreviewRequestId(null)} />
+            <ModalScrim className="app-modal-backdrop" label="Close MTM preview" onDismiss={() => setMtmPreviewRequestId(null)} />
             <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`MTM preview for ${previewMtmRequest.request_reference || `MTM-${String(previewMtmRequest.id || "").padStart(6, "0")}`}`}>
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
@@ -10345,7 +10933,7 @@ export default function Page() {
       {paymentReceiptModalOpen && selectedPaymentReceipt && typeof document !== "undefined" ? createPortal(
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
-            <button className="app-modal-backdrop" type="button" aria-label="Close payment receipt" onClick={closePaymentReceiptModal} />
+            <ModalScrim className="app-modal-backdrop" label="Close payment receipt" onDismiss={closePaymentReceiptModal} />
             <section className="detail-section stacked-order-popup receipt-popup receipt-popup-redesign admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`Receipt for order #${selectedPaymentReceipt.number}`}>
             <div className="receipt-hero modal-head">
               <div>
@@ -10488,268 +11076,649 @@ export default function Page() {
       {productEditForm && (selectedProductEdit || productEditorMode === "create") ? (
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
-            <button className="app-modal-backdrop" type="button" aria-label="Close product editor" onClick={closeProductEditModal} />
-            <section className={`detail-section product-editor-popup product-editor-modal admin-surface-modal modal-frame detail-frame ${selectedProductEdit && deletingProductIds.includes(selectedProductEdit.id) ? "product-editor-modal-deleting" : ""}`} role="dialog" aria-modal="true" aria-label={productEditorMode === "create" ? "Create product" : `Edit ${selectedProductEdit?.name || "product"}`}>
+            <ModalScrim className="app-modal-backdrop" label="Close product editor" onDismiss={closeProductEditModal} />
+              <section id={productEditorMode === "create" ? "popup-template-product" : undefined} data-popup={productEditorMode === "create" ? "product" : undefined} className={`detail-section product-editor-popup product-editor-modal admin-surface-modal modal-frame detail-frame ${productEditorMode === "create" ? "product-editor-create-mode" : "product-editor-edit-mode"} ${productEditorMode === "create" && !isEmbeddedDashboard ? "product-editor-admin-parity" : ""} ${selectedProductEdit && deletingProductIds.includes(selectedProductEdit.id) ? "product-editor-modal-deleting" : ""}`.trim()} role="dialog" aria-modal="true" aria-label={productEditorMode === "create" ? "Create product" : `Edit ${selectedProductEdit?.name || "product"}`}>
               <form className="product-editor-form" onSubmit={saveProductEdits}>
                 <input ref={productMediaInputRef} type="file" accept="image/*" multiple hidden onChange={handleProductMediaUpload} />
                 <div className="panel-header stacked-order-popup-header product-editor-header modal-head">
                   <div>
-                    <p className="section-kicker">{productEditorMode === "create" ? "New product" : "Product editor"}</p>
-                    <h3>{productEditorMode === "create" ? (productEditForm.title || "New Product") : (productEditForm.title || selectedProductEdit?.name || "Untitled product")}</h3>
+                    {productEditorMode === "create" ? (
+                      <>
+                        <h3>Create product</h3>
+                        <p className="popup-support-copy modal-intro-copy">Add a medicine or pharmacy product with image, stock, pricing and catalogue details.</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="section-kicker">Product editor</p>
+                        <h3>{productEditForm.title || selectedProductEdit?.name || "Untitled product"}</h3>
+                      </>
+                    )}
                   </div>
                   <div className="toolbar product-editor-top-actions">
-                    <button
-                      className={`product-status-toggle ${productEditForm.status === "publish" ? "active" : ""}`}
-                      type="button"
-                      role="switch"
-                      aria-checked={productEditForm.status === "publish"}
-                      aria-label={`Product status: ${productEditForm.status === "publish" ? "Published" : "Draft"}`}
-                      disabled={productEditLoading}
-                      onClick={() => setProductEditForm((prev) => ({ ...prev, status: prev.status === "publish" ? "draft" : "publish" }))}
-                    >
-                      <span className="product-status-toggle-track">
-                        <span className="product-status-toggle-thumb" />
-                      </span>
-                      <span className="product-status-toggle-label">{productEditForm.status === "publish" ? "Published" : "Draft"}</span>
-                    </button>
-                    <button className="icon-button" type="button" aria-label={productEditorMode === "create" ? "Close product creator" : "Close product editor"} disabled={productEditLoading} onClick={closeProductEditModal}><InlineIcon id="i-x" /></button>
+                    {productEditorMode === "create" ? null : (
+                      <button
+                        className={`product-status-toggle ${productEditForm.status === "publish" ? "active" : ""}`}
+                        type="button"
+                        role="switch"
+                        aria-checked={productEditForm.status === "publish"}
+                        aria-label={`Product status: ${productEditForm.status === "publish" ? "Published" : "Draft"}`}
+                        disabled={productEditLoading}
+                        onClick={() => setProductEditForm((prev) => ({ ...prev, status: prev.status === "publish" ? "draft" : "publish" }))}
+                      >
+                        <span className="product-status-toggle-track">
+                          <span className="product-status-toggle-thumb" />
+                        </span>
+                        <span className="product-status-toggle-label">{productEditForm.status === "publish" ? "Published" : "Draft"}</span>
+                      </button>
+                    )}
+                    <button className="icon-button" type="button" data-popup-close={productEditorMode === "create" ? "product" : undefined} aria-label={productEditorMode === "create" ? "Close product creator" : "Close product editor"} disabled={productEditLoading} onClick={closeProductEditModal}><InlineIcon id="i-x" /></button>
                   </div>
                 </div>
 
-                <div className="product-editor-shell modal-body detail-modal-shell">
-                  <aside
-                    className="product-editor-media-column"
-                    style={{ "--product-thumb-min": productMediaSizing.thumbMin }}
-                  >
-                    <div className="detail-section product-editor-panel product-media-panel">
-                      <div className="panel-header product-editor-panel-header">
-                        <div>
-                          <p className="section-kicker">Media gallery</p>
-                        </div>
-                        <span className="chip processing">
-                          {productEditMedia.length ? `${productEditMedia.length} image${productEditMedia.length === 1 ? "" : "s"}` : "0 images"}
-                        </span>
-                      </div>
-                      <div className="product-photo-shell">
-                        <div className={`product-photo-stage ${activeProductMedia ? "has-media" : "is-empty"}`}>
-                          <button
-                            className={`product-photo ${activeProductMedia ? "has-image" : "is-empty"}`}
-                            type="button"
-                            onClick={() => activeProductMedia && setActiveProductMediaId(activeProductMedia.id)}
-                            aria-label={activeProductMedia ? `Select ${activeProductMedia.alt}` : "No product images available"}
-                          >
-                            {activeProductMedia ? (
-                              <img src={activeProductMedia.src} alt={activeProductMedia.alt} />
-                            ) : (
-                              <div className="product-photo-placeholder">
-                                <InlineIcon id="i-pill" />
-                                <span>No media yet</span>
-                              </div>
-                            )}
-                          </button>
+                  <div className="product-editor-shell modal-body detail-modal-shell">
+                    {productEditorMode === "create" ? (
+                      <>
+                        <div className="product-editor-form-column">
+                          <div className="product-editor-form-card creation-main product-create-form-layout">
+                            <div className="product-create-stepper" role="tablist" aria-label="Create product steps">
+                              {PRODUCT_CREATE_STEPS.map((step, index) => (
+                                <button
+                                  key={step.key}
+                                  className={`product-create-step-pill ${productCreateStep === index ? "active" : ""}`}
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={productCreateStep === index}
+                                  onClick={() => {
+                                    setProductEditFeedback("");
+                                    setProductCreateValidationStep("");
+                                    setProductCreateStep(index);
+                                  }}
+                                >
+                                  <span>{step.eyebrow}</span>
+                                  <strong>{step.label}</strong>
+                                </button>
+                              ))}
+                            </div>
 
-                          {activeProductMedia ? (
-                            <>
-                              <span className="product-photo-index">{activeProductMediaIndex || 1}</span>
-                              <div className="product-photo-actions" aria-label="Active media actions">
-                                <button
-                                  className="product-photo-action"
-                                  type="button"
-                                  aria-label={`Replace ${activeProductMedia.alt}`}
-                                  onClick={() => triggerProductMediaUpload("replace", activeProductMediaIndex - 1)}
-                                >
-                                  <InlineIcon id="i-pencil" />
-                                </button>
-                                <button
-                                  className="product-photo-action danger"
-                                  type="button"
-                                  aria-label={`Remove ${activeProductMedia.alt}`}
-                                  onClick={() => removeProductMediaItem(activeProductMediaIndex - 1)}
-                                >
-                                  <InlineIcon id="i-x" />
-                                </button>
+                            <div className="product-create-step-head">
+                              <div>
+                                <span className="customer-section-kicker">{activeProductCreateStep.eyebrow}</span>
+                                <h4 className="creation-section-title">
+                                  <InlineIcon id="i-products" />
+                                  {activeProductCreateStep.label}
+                                </h4>
                               </div>
-                            </>
-                          ) : null}
+                              <p className="popup-support-copy">{activeProductCreateStep.description}</p>
+                            </div>
+
+                            <div className="product-create-step-scroll">
+                            {activeProductCreateStep.key === "identity" ? (
+                              <div className="product-create-step-panel">
+                                <div className="creation-field-grid product-create-field-grid">
+                                    <div className="creation-field-row creation-field-row-two full-width">
+                                      <label className="creation-field">
+                                        <span>Product name</span>
+                                        <input className="form-control" value={productEditForm.title} onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} required />
+                                        {productCreateStepErrors.title ? <small className="field-error">{productCreateStepErrors.title}</small> : null}
+                                      </label>
+                                      <label className="creation-field">
+                                        <span>SKU</span>
+                                        <input className="form-control" value={productEditForm.sku || "Generated securely by the server"} disabled readOnly />
+                                        <small className="field-hint">This is generated server-side after save or publish.</small>
+                                      </label>
+                                    </div>
+                                    <div className="creation-field-row creation-field-row-two full-width">
+                                      <label className="creation-field">
+                                        <span>Category assignment</span>
+                                        <div className="select-wrap">
+                                          <select
+                                            className="form-control"
+                                            value={productEditForm.categories?.[0] || ""}
+                                            onChange={(event) => setProductEditForm((prev) => ({ ...prev, categories: event.target.value ? [event.target.value] : [] }))}
+                                            required
+                                          >
+                                            <option value="">Select category</option>
+                                            {productCategoryOptions.map((option) => (
+                                              <option key={option} value={option}>{option}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                        {productCreateStepErrors.category ? <small className="field-error">{productCreateStepErrors.category}</small> : null}
+                                      </label>
+                                    <div className="creation-field">
+                                      <span>Tags assignment</span>
+                                      <div className="product-create-tag-picker">
+                                          <div className="select-wrap">
+                                            <select
+                                              className="form-control"
+                                              value={pendingProductTag}
+                                              onChange={(event) => setProductEditSearch((prev) => ({ ...prev, tags: event.target.value }))}
+                                            >
+                                              <option value="">Select tag</option>
+                                              {productTagOptions.map((option) => (
+                                                <option key={option} value={option}>{option}</option>
+                                              ))}
+                                            </select>
+                                          </div>
+                                          <button
+                                            className="pill-button"
+                                            type="button"
+                                            disabled={!pendingProductTag}
+                                            onClick={() => {
+                                              if (!pendingProductTag) {
+                                                return;
+                                              }
+                                              setProductEditForm((prev) => (
+                                                prev && prev.tags.includes(pendingProductTag)
+                                                  ? prev
+                                                  : { ...prev, tags: [...(prev?.tags || []), pendingProductTag] }
+                                              ));
+                                              setProductEditSearch((prev) => ({ ...prev, tags: "" }));
+                                            }}
+                                          >
+                                            Add tag
+                                          </button>
+                                        </div>
+                                        {productEditForm.tags?.length ? (
+                                          <div className="product-create-chip-row">
+                                            {productEditForm.tags.map((tag) => (
+                                              <button
+                                                key={tag}
+                                                className="product-create-chip"
+                                                type="button"
+                                                onClick={() => setProductEditForm((prev) => ({ ...prev, tags: prev.tags.filter((item) => item !== tag) }))}
+                                              >
+                                                <span>{tag}</span>
+                                                <InlineIcon id="i-x" />
+                                              </button>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <small className="field-hint">Selected tags will appear here.</small>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <label className="creation-field full-width">
+                                      <span>Short description</span>
+                                      <textarea className="form-control" rows={4} maxLength={160} value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} />
+                                      <small className={productCreateStepErrors.shortDescription ? "field-error" : "field-hint"}>
+                                        {productCreateStepErrors.shortDescription || `${productEditForm.shortDescription.length}/160`}
+                                      </small>
+                                    </label>
+                                    <div className="creation-field-row creation-field-row-three full-width">
+                                      <label className="creation-field">
+                                        <span>Unit price</span>
+                                        <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} />
+                                        {productCreateStepErrors.regularPrice ? <small className="field-error">{productCreateStepErrors.regularPrice}</small> : null}
+                                      </label>
+                                      <label className="creation-field">
+                                        <span>Sales price</span>
+                                        <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} />
+                                        {productCreateStepErrors.salePrice ? <small className="field-error">{productCreateStepErrors.salePrice}</small> : null}
+                                      </label>
+                                      <label className="creation-field">
+                                        <span>Stock quantity</span>
+                                        <input className="form-control" type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
+                                      </label>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {activeProductCreateStep.key === "description" ? (
+                                <div className="product-create-step-panel">
+                                  <div className="creation-field-grid product-create-field-grid">
+                                    <label className="creation-field full-width">
+                                      <span>Long description</span>
+                                      <textarea className="form-control" rows={8} value={productEditForm.longDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, longDescription: event.target.value }))} />
+                                      <small className="field-hint">Optional. Use this for extended product details.</small>
+                                    </label>
+                                    <label className="creation-field full-width">
+                                      <span>Prescription note</span>
+                                      <textarea className="form-control" rows={5} value={productEditForm.prescriptionNotes} onChange={(event) => setProductEditForm((prev) => ({ ...prev, prescriptionNotes: event.target.value }))} required />
+                                      <small className="field-hint">These notes are persisted by the server and can be used in downstream pharmacy workflows.</small>
+                                      {productCreateStepErrors.prescriptionNotes ? <small className="field-error">{productCreateStepErrors.prescriptionNotes}</small> : null}
+                                    </label>
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {activeProductCreateStep.key === "media" ? (
+                                <div className="product-create-step-panel">
+                                  <div className="product-create-media-grid">
+                                    <section className="product-create-media-card">
+                                      <div className="product-create-media-head">
+                                        <strong>Featured image</strong>
+                                        <span>The first image becomes the primary storefront thumbnail.</span>
+                                      </div>
+                                      <button
+                                        className={`product-create-featured-picker ${featuredProductMedia ? "has-image" : "is-empty"}`}
+                                        type="button"
+                                        disabled={productMediaUploading || productEditLoading}
+                                        onClick={() => triggerProductMediaUpload(featuredProductMedia ? "replace" : "append", featuredProductMedia ? 0 : null)}
+                                      >
+                                        {featuredProductMedia ? (
+                                          <img src={featuredProductMedia.src} alt={featuredProductMedia.alt} />
+                                        ) : (
+                                          <div className="product-photo-placeholder product-create-photo-placeholder">
+                                            <div className="product-create-photo-placeholder-tile" aria-hidden="true">
+                                              <HugeiconsIcon icon={GalleryThumbnailsIcon} size={30} strokeWidth={1.8} />
+                                            </div>
+                                          </div>
+                                        )}
+                                      </button>
+                                      <div className="product-create-inline-actions">
+                                        <button className="pill-button" type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload(featuredProductMedia ? "replace" : "append", featuredProductMedia ? 0 : null)}>
+                                          {featuredProductMedia ? "Replace" : "Upload"}
+                                        </button>
+                                        {featuredProductMedia ? (
+                                          <button className="pill-button danger" type="button" disabled={productMediaUploading || productEditLoading} onClick={() => removeProductMediaItem(0)}>
+                                            Remove
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    </section>
+
+                                    <section className="product-create-media-card">
+                                      <div className="product-create-media-head">
+                                        <strong>Product gallery</strong>
+                                        <span>Upload the additional images customers will see inside the catalogue.</span>
+                                      </div>
+                                      <button className={`product-upload-dropzone upload-box product-create-upload-box ${galleryProductMedia.length ? "active" : ""}`} type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload("append")}>
+                                        <span className="product-upload-dropzone-icon"><InlineIcon id="i-upload" /></span>
+                                        <span className="product-upload-dropzone-copy">
+                                          <strong>{productMediaUploading ? "Uploading images..." : (galleryProductMedia.length ? "Add more gallery images" : "Upload gallery images")}</strong>
+                                          <small>Images are uploaded to WordPress media and ordered server-side with the product.</small>
+                                        </span>
+                                      </button>
+                                      {galleryProductMedia.length ? (
+                                        <div className="product-create-gallery-manager">
+                                          {galleryProductMedia.map((item, index) => {
+                                            const actualIndex = index + 1;
+                                            return (
+                                              <div className={`product-thumbnail ${activeProductMedia?.id === item.id ? "active" : ""}`} key={item.id}>
+                                                <button className="product-thumbnail-surface" type="button" onClick={() => setActiveProductMediaId(item.id)} aria-label={`Select ${item.alt}`}>
+                                                  <img src={item.src} alt={item.alt} />
+                                                </button>
+                                                <div className="product-create-gallery-actions">
+                                                  <button className="product-thumbnail-feature" type="button" onClick={() => featureProductMediaItem(actualIndex)}>Feature</button>
+                                                  <button className="product-thumbnail-edit" type="button" onClick={() => triggerProductMediaUpload("replace", actualIndex)} aria-label={`Replace ${item.alt}`}>
+                                                    <InlineIcon id="i-pencil" />
+                                                  </button>
+                                                  <button className="product-thumbnail-remove" type="button" onClick={() => removeProductMediaItem(actualIndex)} aria-label={`Remove ${item.alt}`}>
+                                                    <InlineIcon id="i-x" />
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      ) : (
+                                        <div className="product-create-gallery-empty">No gallery images uploaded yet.</div>
+                                      )}
+                                    </section>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
                         </div>
 
-                        {productEditMedia.length > 1 ? (
-                          <div className="product-thumbnail-strip" aria-label="Additional product images">
-                            {productEditMedia.map((item, index) => (
-                              <div
-                                className={`product-thumbnail ${activeProductMedia?.id === item.id ? "active" : ""}`}
-                                key={item.id}
-                                draggable
-                                onDragStart={() => {
-                                  productMediaDragIndexRef.current = index;
-                                }}
-                                onDragOver={(event) => event.preventDefault()}
-                                onDrop={() => {
-                                  moveProductMediaItem(productMediaDragIndexRef.current, index);
-                                  productMediaDragIndexRef.current = null;
-                                }}
-                              >
+                        <aside className="product-editor-media-column product-create-preview-column">
+                          <div className="detail-section product-editor-panel product-media-panel product-create-preview-panel creation-side">
+                            <div className="creation-summary-card product-create-summary-card">
+                              <div className={`product-photo-stage product-featured-photo-stage product-create-featured-stage ${featuredProductMedia ? "has-media" : "is-empty"}`}>
                                 <button
-                                  className="product-thumbnail-surface"
+                                  className={`product-photo product-featured-photo product-create-featured-photo ${featuredProductMedia ? "has-image" : "is-empty"}`}
                                   type="button"
-                                  onClick={() => setActiveProductMediaId(item.id)}
-                                  aria-label={`Select ${item.alt}`}
+                                  onClick={() => {
+                                    if (featuredProductMedia) {
+                                      setActiveProductMediaId(featuredProductMedia.id);
+                                      return;
+                                    }
+                                    setProductEditFeedback("");
+                                    setProductCreateValidationStep("");
+                                    setProductCreateStep(2);
+                                  }}
+                                  aria-label={featuredProductMedia ? `Select featured image ${featuredProductMedia.alt}` : "Open media step"}
                                 >
-                                  <img src={item.src} alt={item.alt} />
+                                  {featuredProductMedia ? (
+                                    <img src={featuredProductMedia.src} alt={featuredProductMedia.alt} />
+                                    ) : (
+                                          <div className="product-photo-placeholder product-create-photo-placeholder">
+                                        <div className="product-create-photo-placeholder-tile" aria-hidden="true">
+                                          <HugeiconsIcon icon={GalleryThumbnailsIcon} size={30} strokeWidth={1.8} />
+                                        </div>
+                                      </div>
+                                    )}
                                 </button>
-                                <span className="product-thumbnail-index">{index + 1}</span>
-                                <div className="product-thumbnail-actions">
-                                  <button
-                                    className="product-thumbnail-edit"
-                                    type="button"
-                                    aria-label={`Replace ${item.alt}`}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      triggerProductMediaUpload("replace", index);
-                                    }}
-                                  >
-                                    <InlineIcon id="i-pencil" />
-                                  </button>
-                                  <button
-                                    className="product-thumbnail-remove"
-                                    type="button"
-                                    aria-label={`Remove ${item.alt}`}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      removeProductMediaItem(index);
-                                    }}
-                                  >
-                                    <InlineIcon id="i-x" />
-                                  </button>
+                              </div>
+
+                              <strong id="product-name">{productEditForm.title || "Product name"}</strong>
+                              <span id="product-category">{productEditForm.categories?.[0] || "Choose a category"}</span>
+                              <div className="creation-summary-list">
+                                <div><span>SKU</span><strong>{productEditForm.sku || "Server generated"}</strong></div>
+                                <div><span>Price</span><strong id="product-price">{formatMoney(Number(productEditForm.regularPrice || 0), productEditorCurrency)}</strong></div>
+                                <div><span>Sale</span><strong>{Number(productEditForm.salePrice || 0) > 0 ? formatMoney(Number(productEditForm.salePrice || 0), productEditorCurrency) : "No sale price"}</strong></div>
+                                <div><span>Stock</span><strong id="product-stock">{formatNumber(Number(productEditForm.stockQuantity || 0))}</strong></div>
+                              </div>
+                            <div className="creation-popup-note">
+                                <strong>Prescription note</strong>
+                                <p>{productEditForm.prescriptionNotes || "Add prescription notes to preview them here."}</p>
+                              </div>
+                            </div>
+
+                            <div className="product-create-preview-copy">
+                              <strong>Description preview</strong>
+                              <p>{productEditForm.shortDescription || "Add a short description to preview customer-facing summary copy."}</p>
+                            </div>
+
+                            {galleryProductMedia.length ? (
+                              <div className="product-create-preview-gallery">
+                                <div className="product-media-subheader product-gallery-subheader">
+                                  <span>Product gallery</span>
+                                  <small>{`${galleryProductMedia.length} image${galleryProductMedia.length === 1 ? "" : "s"}`}</small>
+                                </div>
+                                <div className="product-thumbnail-strip product-thumbnail-grid product-create-preview-grid" aria-label="Product gallery images">
+                                  {galleryProductMedia.map((item, index) => (
+                                    <div className={`product-thumbnail ${activeProductMedia?.id === item.id ? "active" : ""}`} key={item.id}>
+                                      <button
+                                        className="product-thumbnail-surface"
+                                        type="button"
+                                        onClick={() => setActiveProductMediaId(item.id)}
+                                        aria-label={`Select ${item.alt}`}
+                                      >
+                                        <img src={item.src} alt={item.alt} />
+                                      </button>
+                                      <span className="product-thumbnail-index">{index + 2}</span>
+                                    </div>
+                                  ))}
                                 </div>
                               </div>
-                            ))}
+                            ) : null}
                           </div>
-                        ) : null}
-                      </div>
-                      <button className="product-upload-dropzone" type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload("append")}>
-                        <span className="product-upload-dropzone-icon">+</span>
-                        <span className="product-upload-dropzone-copy">
-                          <strong>{productMediaUploading ? "Uploading images..." : "Upload images"}</strong>
-                          <small>PNG, JPG up to 10MB each</small>
-                        </span>
-                      </button>
-                    </div>
-                  </aside>
+                        </aside>
+                      </>
+                    ) : (
+                    <>
+                      <aside
+                        className="product-editor-media-column"
+                        style={{ "--product-thumb-min": productMediaSizing.thumbMin }}
+                      >
+                        <div className="detail-section product-editor-panel product-media-panel">
+                          <div className="panel-header product-editor-panel-header">
+                            <div>
+                              <p className="section-kicker">Media gallery</p>
+                            </div>
+                            <span className="chip processing">
+                              {productEditMedia.length ? `${productEditMedia.length} image${productEditMedia.length === 1 ? "" : "s"}` : "0 images"}
+                            </span>
+                          </div>
+                          <div className="product-photo-shell">
+                            <div className="product-media-subheader">
+                              <span>Featured image</span>
+                            </div>
+                            <div className={`product-photo-stage product-featured-photo-stage ${featuredProductMedia ? "has-media" : "is-empty"}`}>
+                              <button
+                                className={`product-photo product-featured-photo ${featuredProductMedia ? "has-image" : "is-empty"}`}
+                                type="button"
+                                onClick={() => featuredProductMedia && setActiveProductMediaId(featuredProductMedia.id)}
+                                aria-label={featuredProductMedia ? `Select featured image ${featuredProductMedia.alt}` : "No featured image available"}
+                              >
+                                {featuredProductMedia ? (
+                                  <img src={featuredProductMedia.src} alt={featuredProductMedia.alt} />
+                                ) : (
+                                  <div className="product-photo-placeholder">
+                                    <InlineIcon id="i-pill" />
+                                    <span>No featured image</span>
+                                  </div>
+                                )}
+                              </button>
 
-                  <div className="product-editor-form-column">
-                    <div className="product-editor-form-card">
-                      <div className="product-editor-tablist" aria-label="Product editor tabs">
-                      {[
-                        ["details", "Details"],
-                        ["organization", "Tags & Organization"],
-                        ["inventory", "Inventory & Shipping"]
-                      ].map(([key, label]) => (
-                        <button className={`product-editor-tab ${productEditTab === key ? "active" : ""}`} type="button" key={key} disabled={productEditLoading} onClick={() => setProductEditTab(key)}>
-                          {label}
-                        </button>
-                      ))}
-                      </div>
+                              {featuredProductMedia ? (
+                                <>
+                                  <span className="product-photo-index">1</span>
+                                  <div className="product-photo-actions" aria-label="Active media actions">
+                                    <button
+                                      className="product-photo-action"
+                                      type="button"
+                                      aria-label={`Replace featured image ${featuredProductMedia.alt}`}
+                                      onClick={() => triggerProductMediaUpload("replace", 0)}
+                                    >
+                                      <InlineIcon id="i-pencil" />
+                                    </button>
+                                    <button
+                                      className="product-photo-action danger"
+                                      type="button"
+                                      aria-label={`Remove featured image ${featuredProductMedia.alt}`}
+                                      onClick={() => removeProductMediaItem(0)}
+                                    >
+                                      <InlineIcon id="i-x" />
+                                    </button>
+                                  </div>
+                                </>
+                              ) : null}
+                            </div>
 
-                      <div className="product-editor-form-scroll">
-                      {productEditTab === "details" ? (
-                        <div className="product-editor-tab-grid product-editor-tab-grid-details">
-                          <label className="detail-field detail-field-wide">
-                            <span>Product Title *</span>
-                            <input value={productEditForm.title} onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} required />
-                          </label>
-                          <label className="detail-field">
-                            <span>Short Description</span>
-                            <textarea rows={3} maxLength={160} value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} />
-                            <small className="product-field-note">{`${productEditForm.shortDescription.length}/160`}</small>
-                          </label>
-                          <div className="detail-field detail-field-wide product-long-description-field">
-                            <span>Long Description</span>
-                            <div className="product-rich-editor product-rich-editor-card">
-                              <div className="product-rich-toolbar product-rich-toolbar-reference">
-                                <button type="button" onClick={() => formatProductBlock("p")}>Paragraph</button>
-                                <button type="button" onClick={() => formatProductDescription("bold")}><strong>B</strong></button>
-                                <button type="button" onClick={() => formatProductDescription("italic")}><em>I</em></button>
-                                <button type="button" onClick={() => formatProductDescription("underline")}><span className="text-underline">U</span></button>
-                                <button type="button" onClick={() => formatProductDescription("insertOrderedList")}>1.</button>
-                                <button type="button" onClick={() => formatProductBlock("blockquote")}>Quote</button>
-                                <button type="button" onClick={insertProductDescriptionLink}>Link</button>
-                                <button type="button" onClick={() => triggerProductMediaUpload("append")}>Image</button>
-                                <button type="button" onClick={() => formatProductDescription("insertUnorderedList")}>• List</button>
+                            <div className="product-gallery-section">
+                              <div className="product-media-subheader product-gallery-subheader">
+                                <span>Product gallery</span>
+                                <small>{galleryProductMedia.length ? `${galleryProductMedia.length} image${galleryProductMedia.length === 1 ? "" : "s"}` : "No gallery images"}</small>
                               </div>
-                              <div
-                                ref={productDescriptionEditorRef}
-                                className="product-rich-surface"
-                                contentEditable
-                                suppressContentEditableWarning
-                                onInput={handleProductDescriptionInput}
-                              />
+                              {galleryProductMedia.length ? (
+                                <div className="product-thumbnail-strip product-thumbnail-grid" aria-label="Product gallery images">
+                                  {galleryProductMedia.map((item, index) => {
+                                    const actualIndex = index + 1;
+                                    return (
+                                  <div
+                                    className={`product-thumbnail ${activeProductMedia?.id === item.id ? "active" : ""}`}
+                                    key={item.id}
+                                    draggable
+                                    onDragStart={() => {
+                                      productMediaDragIndexRef.current = actualIndex;
+                                    }}
+                                    onDragOver={(event) => event.preventDefault()}
+                                    onDrop={() => {
+                                      moveProductMediaItem(productMediaDragIndexRef.current, actualIndex);
+                                      productMediaDragIndexRef.current = null;
+                                    }}
+                                  >
+                                    <button
+                                      className="product-thumbnail-surface"
+                                      type="button"
+                                      onClick={() => setActiveProductMediaId(item.id)}
+                                      aria-label={`Select ${item.alt}`}
+                                    >
+                                      <img src={item.src} alt={item.alt} />
+                                    </button>
+                                    <span className="product-thumbnail-index">{actualIndex + 1}</span>
+                                    <div className="product-thumbnail-actions">
+                                      <button
+                                        className="product-thumbnail-feature"
+                                        type="button"
+                                        aria-label={`Set ${item.alt} as featured image`}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          featureProductMediaItem(actualIndex);
+                                        }}
+                                      >
+                                        Feature
+                                      </button>
+                                      <button
+                                        className="product-thumbnail-edit"
+                                        type="button"
+                                        aria-label={`Replace ${item.alt}`}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          triggerProductMediaUpload("replace", actualIndex);
+                                        }}
+                                      >
+                                        <InlineIcon id="i-pencil" />
+                                      </button>
+                                      <button
+                                        className="product-thumbnail-remove"
+                                        type="button"
+                                        aria-label={`Remove ${item.alt}`}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          removeProductMediaItem(actualIndex);
+                                        }}
+                                      >
+                                        <InlineIcon id="i-x" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="product-gallery-empty">Uploaded gallery images will appear here.</div>
+                              )}
                             </div>
                           </div>
-                          <label className="detail-field">
-                            <span>Regular Price *</span>
-                            <div className="currency-input">
-                              <span>{productEditorCurrency}</span>
-                              <input type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} />
-                            </div>
-                          </label>
-                          <label className="detail-field">
-                            <span>Sale Price</span>
-                            <div className="currency-input">
-                              <span>{productEditorCurrency}</span>
-                              <input type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} />
-                            </div>
-                            <small className="product-field-note">Leave empty if product is not on sale</small>
-                          </label>
+                          <button className="product-upload-dropzone" type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload("append")}>
+                            <span className="product-upload-dropzone-icon">+</span>
+                            <span className="product-upload-dropzone-copy">
+                              <strong>{productMediaUploading ? "Uploading images..." : "Upload images"}</strong>
+                              <small>PNG, JPG up to 10MB each</small>
+                            </span>
+                          </button>
                         </div>
-                      ) : null}
+                      </aside>
 
-                      {productEditTab === "organization" ? (
-                        <div className="product-editor-stack product-editor-stack-inline">
-                          {productEditorCategoriesQuery.isLoading || productEditorTagsQuery.isLoading ? <p className="muted popup-support-copy">Loading taxonomy options...</p> : null}
-                          {productEditorCategoriesQuery.error || productEditorTagsQuery.error ? <p className="muted popup-support-copy">Some taxonomy options could not be loaded.</p> : null}
-                          {renderProductTermField("categories", "Category", productCategoryOptions)}
-                          {renderProductTermField("tags", "Tags", productTagOptions)}
-                          {renderProductTermField("brands", "Brand", productBrandOptions)}
-                        </div>
-                      ) : null}
+                      <div className="product-editor-form-column">
+                        <div className="product-editor-form-card">
+                          <div className="product-editor-tablist" aria-label="Product editor tabs">
+                          {[
+                            ["details", "Details"],
+                            ["organization", "Tags & Organization"],
+                            ["inventory", "Inventory & Shipping"]
+                          ].map(([key, label]) => (
+                            <button className={`product-editor-tab ${productEditTab === key ? "active" : ""}`} type="button" key={key} disabled={productEditLoading} onClick={() => setProductEditTab(key)}>
+                              {label}
+                            </button>
+                          ))}
+                          </div>
 
-                      {productEditTab === "inventory" ? (
-                        <div className="product-editor-tab-grid product-editor-tab-grid-inventory">
-                          <label className="detail-field detail-field-wide">
-                            <span>Shipping Information</span>
-                            <textarea rows={3} value={productEditForm.shippingInfo} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shippingInfo: event.target.value }))} />
-                          </label>
-                          <label className="detail-field">
-                            <span>Inventory / Stock Quantity</span>
-                            <input type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
-                          </label>
-                          <label className="detail-field">
-                            <span>SKU</span>
-                            <input value={productEditForm.sku} onChange={(event) => setProductEditForm((prev) => ({ ...prev, sku: event.target.value }))} />
-                          </label>
-                          <label className="detail-field detail-field-wide">
-                            <span>Linked Products</span>
-                            <input value={productEditForm.linkedProducts} onChange={(event) => setProductEditForm((prev) => ({ ...prev, linkedProducts: event.target.value }))} placeholder="Search or comma-separate related products" />
-                          </label>
-                          <label className="detail-field detail-field-wide">
-                            <span>Purchase Notes</span>
-                            <textarea rows={3} value={productEditForm.purchaseNotes} onChange={(event) => setProductEditForm((prev) => ({ ...prev, purchaseNotes: event.target.value }))} />
-                          </label>
+                          <div className="product-editor-form-scroll">
+                          {productEditTab === "details" ? (
+                            <div className="product-editor-tab-grid product-editor-tab-grid-details">
+                              <label className="detail-field detail-field-wide">
+                                <span>Product Title *</span>
+                                <input value={productEditForm.title} onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} required />
+                              </label>
+                              <label className="detail-field">
+                                <span>Short Description</span>
+                                <textarea rows={3} maxLength={160} value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} />
+                                <small className="product-field-note">{`${productEditForm.shortDescription.length}/160`}</small>
+                              </label>
+                              <div className="detail-field detail-field-wide product-long-description-field">
+                                <span>Long Description</span>
+                                <div className="product-rich-editor product-rich-editor-card">
+                                  <div className="product-rich-toolbar product-rich-toolbar-reference">
+                                    <button type="button" onClick={() => formatProductBlock("p")}>Paragraph</button>
+                                    <button type="button" onClick={() => formatProductDescription("bold")}><strong>B</strong></button>
+                                    <button type="button" onClick={() => formatProductDescription("italic")}><em>I</em></button>
+                                    <button type="button" onClick={() => formatProductDescription("underline")}><span className="text-underline">U</span></button>
+                                    <button type="button" onClick={() => formatProductDescription("insertOrderedList")}>1.</button>
+                                    <button type="button" onClick={() => formatProductBlock("blockquote")}>Quote</button>
+                                    <button type="button" onClick={insertProductDescriptionLink}>Link</button>
+                                    <button type="button" onClick={() => triggerProductMediaUpload("append")}>Image</button>
+                                    <button type="button" onClick={() => formatProductDescription("insertUnorderedList")}>• List</button>
+                                  </div>
+                                  <div
+                                    ref={productDescriptionEditorRef}
+                                    className="product-rich-surface"
+                                    contentEditable
+                                    suppressContentEditableWarning
+                                    onInput={handleProductDescriptionInput}
+                                  />
+                                </div>
+                              </div>
+                              <label className="detail-field">
+                                <span>Regular Price *</span>
+                                <div className="currency-input">
+                                  <span>{productEditorCurrency}</span>
+                                  <input type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} />
+                                </div>
+                              </label>
+                              <label className="detail-field">
+                                <span>Sale Price</span>
+                                <div className="currency-input">
+                                  <span>{productEditorCurrency}</span>
+                                  <input type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} />
+                                </div>
+                                <small className="product-field-note">Leave empty if product is not on sale</small>
+                              </label>
+                            </div>
+                          ) : null}
+
+                          {productEditTab === "organization" ? (
+                            <div className="product-editor-stack product-editor-stack-inline">
+                              {productEditorCategoriesQuery.isLoading || productEditorTagsQuery.isLoading ? <p className="muted popup-support-copy">Loading taxonomy options...</p> : null}
+                              {productEditorCategoriesQuery.error || productEditorTagsQuery.error ? <p className="muted popup-support-copy">Some taxonomy options could not be loaded.</p> : null}
+                              {renderProductTermField("categories", "Category", productCategoryOptions)}
+                              {renderProductTermField("tags", "Tags", productTagOptions)}
+                              {renderProductTermField("brands", "Brand", productBrandOptions)}
+                            </div>
+                          ) : null}
+
+                          {productEditTab === "inventory" ? (
+                            <div className="product-editor-tab-grid product-editor-tab-grid-inventory">
+                              <label className="detail-field detail-field-wide">
+                                <span>Shipping Information</span>
+                                <textarea rows={3} value={productEditForm.shippingInfo} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shippingInfo: event.target.value }))} />
+                              </label>
+                              <label className="detail-field">
+                                <span>Inventory / Stock Quantity</span>
+                                <input type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
+                              </label>
+                              <label className="detail-field">
+                                <span>SKU</span>
+                                <input value={productEditForm.sku} onChange={(event) => setProductEditForm((prev) => ({ ...prev, sku: event.target.value }))} />
+                              </label>
+                              <label className="detail-field detail-field-wide">
+                                <span>Linked Products</span>
+                                <input value={productEditForm.linkedProducts} onChange={(event) => setProductEditForm((prev) => ({ ...prev, linkedProducts: event.target.value }))} placeholder="Search or comma-separate related products" />
+                              </label>
+                              <label className="detail-field detail-field-wide">
+                                <span>Purchase Notes</span>
+                                <textarea rows={3} value={productEditForm.purchaseNotes} onChange={(event) => setProductEditForm((prev) => ({ ...prev, purchaseNotes: event.target.value }))} />
+                              </label>
+                            </div>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </div>
-                  </div>
-                  </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="product-editor-footer modal-actions">
                   {productEditorMode === "create" ? <div /> : <button className="pill-button danger product-delete-button" type="button" onClick={deleteSelectedProduct} disabled={productEditLoading}>Delete Product</button>}
                   <div className="product-editor-footer-end">
                     <div className="product-editor-feedback">{productEditFeedback ? <p className="muted popup-support-copy">{productEditFeedback}</p> : null}</div>
-                    <div className="stacked-order-popup-actions product-editor-actions">
-                      <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={closeProductEditModal}>Cancel</button>
-                      <button className="button-primary product-save-button" type="submit" disabled={productEditLoading}>{productEditLoading ? "Saving..." : (productEditorMode === "create" ? "Create Product" : "Save Changes")}</button>
+                      <div className="stacked-order-popup-actions product-editor-actions">
+                        {productEditorMode === "create" ? (
+                          <>
+                            {productCreateStep > 0 ? (
+                              <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={() => setProductCreateStep((prev) => Math.max(0, prev - 1))}>Go back</button>
+                            ) : <div />}
+                            <button className="pill-button product-draft-button" type="submit" data-intent="draft" disabled={productEditLoading}>{productEditLoading ? "Saving..." : "Save draft"}</button>
+                            {productCreateStep < PRODUCT_CREATE_STEPS.length - 1 ? (
+                              <button className="button-primary product-save-button" type="button" disabled={productEditLoading} onClick={() => goToProductCreateStep(productCreateStep + 1, { validateCurrentStep: true })}>
+                                Continue
+                              </button>
+                            ) : (
+                              <button className="button-primary product-save-button" type="submit" data-intent="publish" data-popup-submit="Product created" disabled={productEditLoading}>{productEditLoading ? "Saving..." : "Publish"}</button>
+                            )}
+                          </>
+                        ) : (
+                        <>
+                          <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={closeProductEditModal}>Cancel</button>
+                          <button className="button-primary product-save-button" type="submit" disabled={productEditLoading}>{productEditLoading ? "Saving..." : "Save Changes"}</button>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -10762,7 +11731,7 @@ export default function Page() {
       {createModalType ? (
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
-            <button className="app-modal-backdrop" type="button" aria-label="Close create form" onClick={closeCreateModal} />
+            <ModalScrim className="app-modal-backdrop" label="Close create form" onDismiss={closeCreateModal} />
             <section className={`detail-section stacked-order-popup create-record-popup admin-surface-modal modal-frame creation-frame ${createModalType === "consultation" ? "consultation-create-popup consultation-design-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-label={`Create ${createModalType}`}>
               <form className="create-record-form" onSubmit={submitGenericCreate}>
                 <div className="panel-header stacked-order-popup-header modal-head">
@@ -11086,7 +12055,7 @@ export default function Page() {
       {selectedConsultation ? (
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
-            <button className="app-modal-backdrop" type="button" aria-label="Close consultation details" onClick={() => setSelectedConsultation(null)} />
+            <ModalScrim className="app-modal-backdrop" label="Close consultation details" onDismiss={() => setSelectedConsultation(null)} />
             <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label="Consultation details">
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div><p className="section-kicker">Consultation</p><h3>{patientLabel(selectedConsultation.patient_user_id)}</h3></div>
@@ -11156,10 +12125,48 @@ export default function Page() {
         </div>
       ) : null}
 
+      {auditDetailModalOpen && selectedAuditEvent ? (
+        <div className="app-modal-stack">
+          <div className="app-modal-layer app-modal-layer-top is-open">
+            <ModalScrim className="app-modal-backdrop" label="Close audit event details" onDismiss={() => setAuditDetailModalOpen(false)} />
+            <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label="Audit event details">
+              <div className="panel-header stacked-order-popup-header modal-head">
+                <div>
+                  <p className="section-kicker">Compliance</p>
+                  <h3>{selectedAuditEvent.action}</h3>
+                </div>
+                <button className="icon-button" type="button" onClick={() => setAuditDetailModalOpen(false)}>
+                  <InlineIcon id="i-x" />
+                </button>
+              </div>
+              <div className="app-modal-scroll modal-body">
+                <div className="audit-detail-content">
+                  <StatusPill value={selectedAuditEvent.status === "error" ? "error" : selectedAuditEvent.severity} className="audit-pill">
+                    {selectedAuditEvent.status} • {selectedAuditEvent.severity}
+                  </StatusPill>
+                  <div className="detail-grid">
+                    <div className="detail-block"><span>Timestamp</span><strong>{formatDate(selectedAuditEvent.created_at, true)}</strong></div>
+                    <div className="detail-block"><span>Source</span><strong>{selectedAuditEvent.source}</strong></div>
+                    <div className="detail-block"><span>Actor</span><strong>{selectedAuditEvent.actor_user_id ? `User #${selectedAuditEvent.actor_user_id}` : "system"}</strong></div>
+                    <div className="detail-block"><span>Role</span><strong>{selectedAuditEvent.actor_role || "n/a"}</strong></div>
+                    <div className="detail-block"><span>Request ID</span><strong>{selectedAuditEvent.request_id || "n/a"}</strong></div>
+                    <div className="detail-block"><span>IP Address</span><strong>{selectedAuditEvent.actor_ip || "n/a"}</strong></div>
+                    <div className="detail-block"><span>Object</span><strong>{selectedAuditEvent.object_type || "n/a"}{selectedAuditEvent.object_id ? ` #${selectedAuditEvent.object_id}` : ""}</strong></div>
+                    <div className="detail-block"><span>Severity</span><strong>{selectedAuditEvent.severity || "n/a"}</strong></div>
+                  </div>
+                  <div className="meta-block"><span>Message</span><pre>{selectedAuditEvent.message || selectedAuditEvent.error_message || "No message stored."}</pre></div>
+                  <div className="meta-block"><span>Metadata JSON</span><pre>{JSON.stringify(selectedAuditEvent.metadata || {}, null, 2)}</pre></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      ) : null}
+
       {selectedDoctorProfile ? (
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
-            <button className="app-modal-backdrop" type="button" aria-label="Close staff details" onClick={() => setSelectedDoctorId(null)} />
+            <ModalScrim className="app-modal-backdrop" label="Close staff details" onDismiss={() => setSelectedDoctorId(null)} />
             <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label="Staff details">
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div><p className="section-kicker">Staff details</p><h3>{selectedDoctorProfile.display_name}</h3></div>
@@ -11264,7 +12271,7 @@ export default function Page() {
       {selectedCustomerProfile ? (
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
-            <button className="app-modal-backdrop" type="button" aria-label="Close customer details" onClick={closeCustomerDetails} />
+            <ModalScrim className="app-modal-backdrop" label="Close customer details" onDismiss={closeCustomerDetails} />
             <section className="detail-section stacked-order-popup receipt-popup customer-detail-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`Customer details for ${selectedCustomerProfile.name}`}>
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
@@ -11286,11 +12293,35 @@ export default function Page() {
                   <div className="customer-detail-grid">
                     <div className="detail-item-card"><strong>Customer</strong><span className="muted">{selectedCustomerProfile.label}</span></div>
                     <div className="detail-item-card"><strong>Email</strong><span className="muted">{selectedCustomerProfile.email}</span></div>
+                    <div className="detail-item-card"><strong>Current role</strong><span className="muted">{selectedCustomerRoleLabel}</span></div>
                     <div className="detail-item-card"><strong>Total orders</strong><span className="muted">{formatNumber(selectedCustomerProfile.orders)}</span></div>
                     <div className="detail-item-card"><strong>Total spend</strong><span className="muted">{formatMoney(selectedCustomerProfile.spend, storeCurrency)}</span></div>
                     <div className="detail-item-card"><strong>Prescriptions</strong><span className="muted">{formatNumber(selectedCustomerProfile.prescriptions)}</span></div>
                     <div className="detail-item-card"><strong>Appointments</strong><span className="muted">{formatNumber(selectedCustomerProfile.appointments)}</span></div>
                     <div className="detail-item-card customer-detail-wide"><strong>Last activity</strong><span className="muted">{formatDate(selectedCustomerProfile.lastActivity, true)}</span></div>
+                    {canEscalateCustomerPrivileges ? (
+                      <div className="detail-item-card customer-detail-wide customer-privilege-card">
+                        <strong>Privilege escalation</strong>
+                        <span className="muted">Migrate this customer account into an admin, doctor, or pharmacist account after OTP verification.</span>
+                        {selectedCustomerCanEscalate ? (
+                          <div className="customer-privilege-actions">
+                            <label className="customer-privilege-field">
+                              <span>Target role</span>
+                              <select value={customerPrivilegeTargetRole} onChange={(event) => setCustomerPrivilegeTargetRole(event.target.value)}>
+                                {selectedCustomerEscalationOptions.map((option) => (
+                                  <option key={option.value} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <button className="button-primary" type="button" onClick={openCustomerPrivilegeEscalationModal}>
+                              Escalate with OTP
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="muted">This record is not linked to a customer account that can be migrated.</span>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -11387,13 +12418,60 @@ export default function Page() {
               </div>
             </section>
           </div>
+          {customerPrivilegeEscalationOpen ? (
+            <div className="app-modal-layer app-modal-layer-top is-open">
+              <ModalScrim className="app-modal-backdrop" label="Close privilege escalation verification" onDismiss={closeCustomerPrivilegeEscalationModal} />
+              <article className="subscription-modal-frame subscription-protection-frame subscription-otp-card-frame" role="dialog" aria-modal="true" aria-labelledby="customerPrivilegeOtpTitle">
+                <div className="subscription-otp-topbar">
+                  <button className="btn btn-outline btn-icon subscription-otp-close" type="button" onClick={closeCustomerPrivilegeEscalationModal} aria-label="Close privilege escalation verification">
+                    <span aria-hidden="true">×</span>
+                  </button>
+                </div>
+                <div className="subscription-otp-card">
+                  <h2 id="customerPrivilegeOtpTitle">Approve role migration</h2>
+                  <p className="subscription-copy">
+                    Verify this action to migrate <strong>{selectedCustomerProfile.name}</strong> from <strong>{selectedCustomerRoleLabel}</strong> to <strong>{formatRoleLabel(customerPrivilegeTargetRole)}</strong>.
+                  </p>
+                  <p className="subscription-helper-text">Recipient: {customerPrivilegeOtp.maskedEmail || "Waiting for OTP"}</p>
+                  <input
+                    ref={customerPrivilegeOtpInputRef}
+                    className="subscription-otp-hidden-input"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={customerPrivilegeOtp.code}
+                    onChange={(event) => setCustomerPrivilegeOtp((current) => ({ ...current, code: event.target.value.replace(/\D/g, "").slice(0, 6), status: "" }))}
+                  />
+                  <div className="subscription-otp-boxes" role="group" aria-label="One time password digits">
+                    {Array.from({ length: 6 }, (_, index) => (
+                      <button
+                        className={`subscription-otp-box ${customerPrivilegeOtp.code[index] ? "filled" : ""}`}
+                        key={`customer-privilege-otp-box-${index}`}
+                        type="button"
+                        onClick={() => customerPrivilegeOtpInputRef.current?.focus()}
+                      >
+                        {customerPrivilegeOtp.code[index] || ""}
+                      </button>
+                    ))}
+                  </div>
+                  {customerPrivilegeOtp.status ? <p className="subscription-otp-status">{customerPrivilegeOtp.status}</p> : null}
+                </div>
+                <div className="modal-actions sticky-modal-actions subscription-otp-actions">
+                  <button className="pill-button" type="button" onClick={closeCustomerPrivilegeEscalationModal}>Cancel</button>
+                  <button className="btn btn-primary subscription-otp-submit" type="button" disabled={customerPrivilegeEscalationLoading || customerPrivilegeOtp.code.length !== 6} onClick={submitCustomerPrivilegeEscalation}>
+                    {customerPrivilegeEscalationLoading ? "Approving..." : `Approve ${formatRoleLabel(customerPrivilegeTargetRole)}`}
+                  </button>
+                </div>
+              </article>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
       {categoryCreateOpen ? (
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
-            <button className="app-modal-backdrop" type="button" aria-label="Close create category" onClick={closeCategoryCreateForm} />
+            <ModalScrim className="app-modal-backdrop" label="Close create category" onDismiss={closeCategoryCreateForm} />
             <form className="category-create-popup" role="dialog" aria-modal="true" aria-label="Create new category" onSubmit={saveNewCategory}>
               <div className="category-create-copy">
                 <h3>Create new category</h3>
@@ -11429,8 +12507,21 @@ export default function Page() {
 
       {snackbar ? (
         <div className={`snackbar ${snackbar.tone || "info"}`} role="status" aria-live="polite">
-          <strong className="snackbar-title">{snackbar.tone === "success" ? "Success" : snackbar.tone === "error" ? "Error" : snackbar.tone === "warning" ? "Warning" : "Notice"}</strong>
-          <span className="snackbar-message">{snackbar.message}</span>
+          <div className="snackbar-copy">
+            <strong className="snackbar-title">{snackbar.tone === "success" ? "Success" : snackbar.tone === "error" ? "Error" : snackbar.tone === "warning" ? "Warning" : "Notice"}</strong>
+            <span className="snackbar-message">{snackbar.message}</span>
+          </div>
+          {snackbar.actionLabel ? (
+            <div className="snackbar-actions">
+              <button
+                className="snackbar-action"
+                type="button"
+                onClick={() => snackbar.onAction?.()}
+              >
+                {snackbar.actionLabel}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -11447,6 +12538,7 @@ export default function Page() {
               <section hidden={authGate.stage !== "auth"}>
                 {authView === "login" ? (
                   <form className="auth-form auth-reference-form" onSubmit={handleLoginSubmit}>
+                    {authSecuritySettings.globalTwoStepVerification ? <p className="auth-subtitle">Two-step verification is enabled for all dashboards. After password sign-in, a one-time code will be sent to the account email.</p> : null}
                     <label className="form-group">
                       <span>Username or email</span>
                       <div className="input-wrap">
@@ -11559,3 +12651,14 @@ export default function Page() {
   );
 }
 
+export default function Page() {
+  return <AdminStorefrontDashboard />;
+}
+
+const ORDER_CREATE_PAYMENT_STATUS_OPTIONS = ["Awaiting payment", "Paid", "Payment slip uploaded", "Refunded"];
+const ORDER_CREATE_PAYMENT_STATUS_MAP = {
+  "Awaiting payment": "pending",
+  Paid: "completed",
+  "Payment slip uploaded": "on-hold",
+  Refunded: "refunded"
+};

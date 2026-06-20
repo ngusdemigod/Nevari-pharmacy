@@ -12,6 +12,8 @@ Desktop.ini
 .env
 .env.*
 !.env.example
+__pycache__/
+*.pyc
 
 # PHP dependencies and tooling
 vendor/

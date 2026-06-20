@@ -68,29 +68,10 @@ final class Nevari_Admin {
             wp_die(esc_html__('You do not have permission to view this page.', 'nevari-pharmacy-core'));
         }
 
-        $generated = null;
         if ('POST' === strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') && isset($_POST['nevari_connections_action'])) {
             check_admin_referer('nevari_connections_action');
             $action = sanitize_key(wp_unslash($_POST['nevari_connections_action']));
-            if ($action === 'generate_pairing_code') {
-                try {
-                    $generated = Nevari_Connections::create_pairing_code('custom_frontend', get_current_user_id());
-                } catch (InvalidArgumentException $exception) {
-                    echo '<div class="notice notice-error"><p>' . esc_html($exception->getMessage()) . '</p></div>';
-                }
-            } elseif ($action === 'revoke_frontend') {
-                $connection_id = isset($_POST['connection_id']) ? (int) $_POST['connection_id'] : 0;
-                if ($connection_id && Nevari_Connections::revoke_frontend($connection_id)) {
-                    echo '<div class="notice notice-success"><p>' . esc_html__('Frontend access revoked. The paired frontend is now disconnected and must complete initial setup again before it can reconnect.', 'nevari-pharmacy-core') . '</p></div>';
-                }
-            } elseif ($action === 'delete_revoked_frontend') {
-                $connection_id = isset($_POST['connection_id']) ? (int) $_POST['connection_id'] : 0;
-                if ($connection_id && Nevari_Connections::delete_revoked_frontend($connection_id)) {
-                    echo '<div class="notice notice-success"><p>' . esc_html__('Revoked frontend domain has been deleted.', 'nevari-pharmacy-core') . '</p></div>';
-                } else {
-                    echo '<div class="notice notice-error"><p>' . esc_html__('Only revoked frontend domains can be deleted.', 'nevari-pharmacy-core') . '</p></div>';
-                }
-            } elseif ($action === 'save_google_meet_oauth') {
+            if ($action === 'save_google_meet_oauth') {
                 self::handle_google_meet_oauth_settings_save();
                 echo '<div class="notice notice-success"><p>' . esc_html__('Google Meet OAuth settings saved.', 'nevari-pharmacy-core') . '</p></div>';
             } elseif ($action === 'save_frontend_base_url') {
@@ -99,8 +80,6 @@ final class Nevari_Admin {
             }
         }
 
-        $pairings = Nevari_Connections::recent_pairing_sessions(8);
-        $connections = Nevari_Connections::trusted_frontends();
         $oauth = Nevari_Helpers::google_meet_oauth_settings();
         $stored_shared_frontend_base_url = (string) get_option(self::SHARED_FRONTEND_BASE_URL_OPTION, '');
         $shared_frontend_base_url = $stored_shared_frontend_base_url !== ''
@@ -111,7 +90,7 @@ final class Nevari_Admin {
         ?>
         <div class="wrap nevari-admin-wrap">
             <h1><?php echo esc_html__('Nevari Pharmacy Connections', 'nevari-pharmacy-core'); ?></h1>
-            <p><?php echo esc_html__('Generate a one-time pairing code for each frontend application. The code includes this site URL, expires after 10 minutes, and is invalidated immediately after successful use.', 'nevari-pharmacy-core'); ?></p>
+            <p><?php echo esc_html__('Frontend access is validated with the shared frontend base URL plus signed origin headers derived from NEVARI_PROXY_SIGNING_SECRET.', 'nevari-pharmacy-core'); ?></p>
 
             <h2 style="margin-top:24px;"><?php echo esc_html__('Shared Frontend Base URL', 'nevari-pharmacy-core'); ?></h2>
             <p><?php echo esc_html__('All email dashboard links are built from this one frontend base URL plus fixed dashboard paths.', 'nevari-pharmacy-core'); ?></p>
@@ -218,7 +197,7 @@ final class Nevari_Admin {
                 </tbody>
             </table>
 
-            <?php if ($generated) : ?>
+            <?php if (false && $generated) : ?>
                 <div class="notice notice-success">
                     <p><strong><?php echo esc_html(Nevari_Connections::frontend_types()[$generated['frontend_type']] ?? $generated['frontend_type']); ?></strong></p>
                     <p><code style="font-size:18px;"><?php echo esc_html($generated['code']); ?></code></p>
@@ -227,6 +206,7 @@ final class Nevari_Admin {
                 </div>
             <?php endif; ?>
 
+            <?php if (false) : ?>
             <div class="notice notice-info inline">
                 <p><?php echo esc_html__('Debug tip: generate a new code, then confirm a fresh pending session appears below with a new session UUID and hash prefix. If verification still returns pairing_not_found, generation and verification are not using the same stored pairing record.', 'nevari-pharmacy-core'); ?></p>
             </div>
@@ -330,6 +310,7 @@ final class Nevari_Admin {
                     <?php endif; ?>
                 </tbody>
             </table>
+            <?php endif; ?>
         </div>
         <?php
     }
@@ -928,8 +909,6 @@ final class Nevari_Admin {
             'auth_refresh_token' => ['label' => 'Token refresh by token', 'default_limit' => 10, 'default_window' => 15 * MINUTE_IN_SECONDS],
             'auth_logout_ip' => ['label' => 'Logout by IP', 'default_limit' => 30, 'default_window' => 15 * MINUTE_IN_SECONDS],
             'auth_logout_token' => ['label' => 'Logout by token', 'default_limit' => 10, 'default_window' => 15 * MINUTE_IN_SECONDS],
-            'pairing_verify' => ['label' => 'Pairing verification attempts', 'default_limit' => 20, 'default_window' => 10 * MINUTE_IN_SECONDS],
-            'pairing_register' => ['label' => 'Frontend registration attempts', 'default_limit' => 20, 'default_window' => 10 * MINUTE_IN_SECONDS],
             'rest_orders_read' => ['label' => 'Orders read', 'default_limit' => 120, 'default_window' => MINUTE_IN_SECONDS],
             'rest_orders_write' => ['label' => 'Orders write', 'default_limit' => 20, 'default_window' => MINUTE_IN_SECONDS],
             'rest_orders_action' => ['label' => 'Order actions', 'default_limit' => 20, 'default_window' => MINUTE_IN_SECONDS],

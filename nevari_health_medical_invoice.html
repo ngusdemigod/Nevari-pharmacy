@@ -1,0 +1,277 @@
+
+<link href="https://fonts.googleapis.com/css2?family=Product+Sans:wght@400;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body, .inv-wrap { font-family: 'Product Sans', 'Google Sans', sans-serif; }
+.inv-wrap {
+  background: #fff;
+  color: #1a1a1a;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 40px;
+}
+.inv-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 48px;
+}
+.brand-name {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0A2A5E;
+  letter-spacing: -0.3px;
+}
+.brand-sub {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 3px;
+  letter-spacing: 0.5px;
+}
+.inv-badge {
+  background: #0A2A5E;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.inv-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  margin-bottom: 40px;
+}
+.meta-label {
+  font-size: 11px;
+  color: #9ca3af;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.meta-value {
+  font-size: 14px;
+  color: #1a1a1a;
+}
+.meta-value.highlight {
+  color: #0A2A5E;
+  font-weight: 700;
+}
+.divider {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 0 0 32px;
+}
+.section-label {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #9ca3af;
+  margin-bottom: 16px;
+}
+.items-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 32px;
+}
+.items-table thead th {
+  font-size: 11px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #9ca3af;
+  padding: 0 0 10px;
+  text-align: left;
+  font-weight: 400;
+  border-bottom: 1px solid #e5e7eb;
+}
+.items-table thead th:last-child { text-align: right; }
+.items-table tbody td {
+  padding: 14px 0;
+  font-size: 14px;
+  color: #1a1a1a;
+  border-bottom: 1px solid #f3f4f6;
+  vertical-align: top;
+}
+.items-table tbody td:last-child { text-align: right; }
+.item-name { font-size: 14px; color: #1a1a1a; }
+.item-desc { font-size: 12px; color: #9ca3af; margin-top: 2px; }
+.tag {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  background: #EEF2FF;
+  color: #0A2A5E;
+  padding: 2px 8px;
+  border-radius: 3px;
+  margin-top: 4px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.totals {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 40px;
+}
+.total-row {
+  display: flex;
+  gap: 48px;
+  font-size: 14px;
+  color: #6b7280;
+}
+.total-row span:last-child { min-width: 80px; text-align: right; color: #1a1a1a; }
+.total-row.grand {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0A2A5E;
+  padding-top: 12px;
+  border-top: 2px solid #0A2A5E;
+  margin-top: 4px;
+}
+.total-row.grand span:last-child { color: #0A2A5E; }
+.inv-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding-top: 24px;
+  border-top: 1px solid #e5e7eb;
+}
+.footer-note {
+  font-size: 12px;
+  color: #9ca3af;
+  max-width: 280px;
+  line-height: 1.6;
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #059669;
+  background: #ECFDF5;
+  border: 1px solid #6ee7b7;
+  padding: 6px 14px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #059669; }
+@media (max-width: 560px) {
+  .inv-wrap { padding: 28px 20px; }
+  .inv-meta { grid-template-columns: 1fr; gap: 16px; }
+  .inv-header { flex-direction: column; gap: 16px; }
+  .items-table thead th:nth-child(2),
+  .items-table tbody td:nth-child(2) { display: none; }
+  .inv-footer { flex-direction: column; gap: 16px; align-items: flex-start; }
+}
+</style>
+
+<div class="inv-wrap">
+  <h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);">Nevari Health medical invoice for patient Adaeze Okonkwo</h2>
+
+  <div class="inv-header">
+    <div>
+      <div class="brand-name">Nevari Health</div>
+      <div class="brand-sub">12 Adeola Odeku St, Victoria Island · Lagos, NG</div>
+    </div>
+    <div class="inv-badge">Invoice</div>
+  </div>
+
+  <div class="inv-meta">
+    <div>
+      <div class="meta-label">Billed to</div>
+      <div class="meta-value" style="font-size:15px; font-weight:700;">Adaeze Okonkwo</div>
+      <div class="meta-value" style="color:#6b7280; margin-top:2px;">adaeze.o@email.com</div>
+      <div class="meta-value" style="color:#6b7280;">+234 803 555 0101</div>
+    </div>
+    <div style="text-align:right;">
+      <div>
+        <div class="meta-label">Invoice no.</div>
+        <div class="meta-value highlight">#NVH-2026-0041</div>
+      </div>
+      <div style="margin-top:16px;">
+        <div class="meta-label">Issue date</div>
+        <div class="meta-value">June 16, 2026</div>
+      </div>
+      <div style="margin-top:16px;">
+        <div class="meta-label">Due date</div>
+        <div class="meta-value">June 30, 2026</div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <div class="section-label">Appointments & Services</div>
+  <table class="items-table">
+    <thead>
+      <tr>
+        <th style="width:45%;">Description</th>
+        <th style="width:20%;">Date</th>
+        <th style="width:15%;">Qty</th>
+        <th>Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <div class="item-name">General Consultation</div>
+          <div class="item-desc">Dr. Emeka Nwosu · Internal Medicine</div>
+          <span class="tag">Appointment</span>
+        </td>
+        <td style="color:#6b7280; font-size:13px;">Jun 10</td>
+        <td style="color:#6b7280;">1</td>
+        <td>₦15,000</td>
+      </tr>
+      <tr>
+        <td>
+          <div class="item-name">Full Blood Count (FBC)</div>
+          <div class="item-desc">Haematology lab panel</div>
+          <span class="tag">Lab Test</span>
+        </td>
+        <td style="color:#6b7280; font-size:13px;">Jun 10</td>
+        <td style="color:#6b7280;">1</td>
+        <td>₦8,500</td>
+      </tr>
+      <tr>
+        <td>
+          <div class="item-name">Vitamin D3 Supplement</div>
+          <div class="item-desc">2000 IU capsules · 30-day supply</div>
+          <span class="tag">Product</span>
+        </td>
+        <td style="color:#6b7280; font-size:13px;">Jun 11</td>
+        <td style="color:#6b7280;">2</td>
+        <td>₦6,000</td>
+      </tr>
+      <tr>
+        <td>
+          <div class="item-name">Follow-up Teleconsult</div>
+          <div class="item-desc">Dr. Emeka Nwosu · 30-min video session</div>
+          <span class="tag">Appointment</span>
+        </td>
+        <td style="color:#6b7280; font-size:13px;">Jun 18</td>
+        <td style="color:#6b7280;">1</td>
+        <td>₦8,000</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <div class="total-row"><span>Subtotal</span><span>₦37,500</span></div>
+    <div class="total-row"><span>VAT (7.5%)</span><span>₦2,813</span></div>
+    <div class="total-row"><span>Discount</span><span>−₦1,000</span></div>
+    <div class="total-row grand"><span>Total Due</span><span>₦39,313</span></div>
+  </div>
+
+  <div class="inv-footer">
+    <div class="footer-note">
+      Payment via bank transfer to <strong style="color:#1a1a1a;">Nevari Health Ltd</strong><br>
+      GTBank · 0123456789<br>
+      For queries: billing@nevarihealth.com
+    </div>
+    <div class="status-pill"><span class="dot"></span>Unpaid</div>
+  </div>
+</div>

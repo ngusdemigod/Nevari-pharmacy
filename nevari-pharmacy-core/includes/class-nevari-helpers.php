@@ -346,8 +346,6 @@ final class Nevari_Helpers {
             'sso_start' => ['limit' => 20, 'window' => 15 * MINUTE_IN_SECONDS],
             'sso_exchange' => ['limit' => 20, 'window' => 15 * MINUTE_IN_SECONDS],
             'sso_logout' => ['limit' => 20, 'window' => 15 * MINUTE_IN_SECONDS],
-            'pairing_verify' => ['limit' => 20, 'window' => 10 * MINUTE_IN_SECONDS],
-            'pairing_register' => ['limit' => 20, 'window' => 10 * MINUTE_IN_SECONDS],
             'rest_orders_read' => ['limit' => 120, 'window' => MINUTE_IN_SECONDS],
             'rest_orders_show' => ['limit' => 180, 'window' => MINUTE_IN_SECONDS],
             'rest_orders_write' => ['limit' => 20, 'window' => MINUTE_IN_SECONDS],
@@ -922,6 +920,8 @@ final class Nevari_Helpers {
             ? $doctor_join_url
             : $patient_join_url;
         $attendance_status = self::appointment_attendance_status($row);
+        $payment_status = self::appointment_payment_status($row, $order, $invoice);
+        $display_status = self::appointment_display_status($row, $payment_status, $attendance_status);
         return [
             'id' => (int) $row->id,
             'patient_user_id' => (int) $row->patient_user_id,
@@ -932,7 +932,10 @@ final class Nevari_Helpers {
             'type' => $row->type,
             'title' => isset($row->title) ? trim((string) $row->title) : '',
             'status' => $row->status,
-            'payment_status' => self::appointment_payment_status($row, $order, $invoice),
+            'payment_status' => $payment_status,
+            'display_status_key' => $display_status['key'],
+            'display_status_label' => $display_status['label'],
+            'display_status_tone' => $display_status['tone'],
             'payment_required' => isset($row->payment_required) ? (bool) $row->payment_required : true,
             'start_at' => self::iso_datetime($row->start_at),
             'end_at' => self::iso_datetime($row->end_at),
@@ -983,6 +986,57 @@ final class Nevari_Helpers {
             'created_at' => self::iso_datetime($row->created_at),
             'updated_at' => self::iso_datetime($row->updated_at),
         ];
+    }
+
+    public static function appointment_display_status($appointment, string $payment_status = '', string $attendance_status = ''): array {
+        $status = strtolower((string) ($appointment->status ?? ''));
+        $payment_status = strtolower($payment_status !== '' ? $payment_status : self::appointment_payment_status($appointment));
+        $attendance_status = strtolower($attendance_status !== '' ? $attendance_status : self::appointment_attendance_status($appointment));
+        $start_at = isset($appointment->start_at) ? strtotime((string) $appointment->start_at . ' UTC') : false;
+        $end_at = isset($appointment->end_at) ? strtotime((string) $appointment->end_at . ' UTC') : false;
+        $now = time();
+        $minutes_to_start = ($start_at && $start_at > $now)
+            ? max(1, (int) round(($start_at - $now) / 60))
+            : null;
+
+        if ($attendance_status === 'doctor_absent') {
+            return ['key' => 'doctor_absent', 'label' => 'Doctor Missed', 'tone' => 'warning'];
+        }
+        if ($attendance_status === 'patient_absent') {
+            return ['key' => 'patient_absent', 'label' => 'You Missed', 'tone' => 'warning'];
+        }
+        if ($attendance_status === 'missed') {
+            return ['key' => 'missed', 'label' => 'Missed Session', 'tone' => 'warning'];
+        }
+        if (in_array($status, ['cancelled', 'canceled'], true)) {
+            return ['key' => 'cancelled', 'label' => 'Canceled', 'tone' => 'danger'];
+        }
+        if ($payment_status === 'failed' || $status === 'failed') {
+            return ['key' => 'failed', 'label' => 'Failed', 'tone' => 'danger'];
+        }
+        if ((in_array($status, ['awaiting_payment'], true) || in_array($payment_status, ['pending', 'abandoned'], true)) && $payment_status !== 'paid') {
+            return ['key' => 'awaiting_payment', 'label' => 'Awaiting Payment', 'tone' => 'pending'];
+        }
+        if (in_array($status, ['requested', 'awaiting_confirmation'], true)) {
+            return ['key' => 'awaiting_confirmation', 'label' => 'Awaiting Confirmation', 'tone' => 'warning'];
+        }
+        if ($status === 'confirmed' && $start_at && $start_at > $now) {
+            return ['key' => 'upcoming', 'label' => 'Upcoming', 'tone' => 'success'];
+        }
+        if ($status === 'checked_in' && (!$end_at || $now < $end_at)) {
+            return ['key' => 'in_progress', 'label' => 'In progress', 'tone' => 'processing'];
+        }
+        if ($start_at && $start_at > $now && $minutes_to_start !== null && $minutes_to_start <= 30) {
+            return ['key' => 'starting_soon', 'label' => sprintf('In %d min', $minutes_to_start), 'tone' => 'warning'];
+        }
+        if ($start_at && $end_at && $now >= $start_at && $now < $end_at) {
+            return ['key' => 'in_progress', 'label' => 'In progress', 'tone' => 'processing'];
+        }
+        if ($status === 'completed' || ($end_at && $end_at > 0 && $now >= $end_at)) {
+            return ['key' => 'ended', 'label' => 'Ended', 'tone' => 'processing'];
+        }
+
+        return ['key' => 'awaiting_confirmation', 'label' => 'Awaiting Confirmation', 'tone' => 'warning'];
     }
 
     public static function appointment_payment_status($appointment, $order = null, $invoice = null): string {
@@ -1037,23 +1091,7 @@ final class Nevari_Helpers {
     }
 
     public static function payment_frontend_origin(): string {
-        if (class_exists('Nevari_Connections')) {
-            foreach (Nevari_Connections::trusted_frontends() as $connection) {
-                if (($connection['trust_status'] ?? '') !== 'trusted') {
-                    continue;
-                }
-                $frontend_type = (string) ($connection['frontend_type'] ?? '');
-                if (!in_array($frontend_type, ['storefront', 'patient_dashboard', 'custom_frontend'], true)) {
-                    continue;
-                }
-                $origin = !empty($connection['frontend_origin']) ? rtrim((string) $connection['frontend_origin'], '/') : '';
-                if ($origin !== '') {
-                    return $origin;
-                }
-            }
-        }
-
-        return rtrim(home_url(), '/');
+        return rtrim(self::shared_frontend_base_url(), '/');
     }
 
     public static function shared_frontend_base_url(): string {
@@ -1099,24 +1137,6 @@ final class Nevari_Helpers {
     }
 
     public static function appointment_frontend_origin(): string {
-        if (class_exists('Nevari_Connections')) {
-            $preferred_types = ['storefront', 'patient_dashboard', 'custom_frontend'];
-            foreach ($preferred_types as $preferred_type) {
-                foreach (Nevari_Connections::trusted_frontends() as $connection) {
-                    if (($connection['trust_status'] ?? '') !== 'trusted') {
-                        continue;
-                    }
-                    if ((string) ($connection['frontend_type'] ?? '') !== $preferred_type) {
-                        continue;
-                    }
-                    $origin = !empty($connection['frontend_origin']) ? rtrim((string) $connection['frontend_origin'], '/') : '';
-                    if ($origin !== '') {
-                        return $origin;
-                    }
-                }
-            }
-        }
-
         return self::shared_frontend_base_url();
     }
 

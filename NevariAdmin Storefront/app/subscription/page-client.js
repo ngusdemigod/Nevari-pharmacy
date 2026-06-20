@@ -21,7 +21,7 @@ function resolveCustomerSession() {
   const roles = Array.isArray(session?.user?.roles) ? session.user.roles : [];
   const directRole = typeof session?.user?.role === "string" ? [session.user.role] : [];
   const normalizedRoles = [...roles, ...directRole].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
-  if (!session?.paired || !session?.accessToken || !normalizedRoles.some((role) => ["customer", "patient"].includes(role))) {
+  if (!session?.baseUrl || !session?.accessToken || !normalizedRoles.some((role) => ["customer", "patient"].includes(role))) {
     return null;
   }
   return session;

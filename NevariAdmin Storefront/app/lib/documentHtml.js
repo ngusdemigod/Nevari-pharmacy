@@ -1,5 +1,11 @@
 function money(value, currency = "USD") {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(value || 0));
+  const code = String(currency || "USD").trim().toUpperCase();
+  const locale = code === "NGN" ? "en-NG" : "en-US";
+  try {
+    return new Intl.NumberFormat(locale, { style: "currency", currency: code }).format(Number(value || 0));
+  } catch {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value || 0));
+  }
 }
 
 function escapeHtml(value) {
@@ -20,6 +26,27 @@ function shortDate(value) {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(value));
+}
+
+function dateOnly(value) {
+  if (!value) return "n/a";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "n/a";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric"
+  }).format(date);
+}
+
+function itemDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric"
+  }).format(date);
 }
 
 function canShowPayNow(data, documentType) {
@@ -130,6 +157,177 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
       </tr>
     `;
     }).join("") || '<tr><td colspan="6">No items found.</td></tr>';
+
+  if (!isPrescription) {
+    const displayNumber = docNumber || data?.order_number || data?.order_id || "";
+    const badgeLabel = documentType === "receipt" ? "Receipt" : "Invoice";
+    const documentTitle = `${badgeLabel} #${displayNumber || ""}`.trim();
+    const customer = data?.customer || {};
+    const statusLabel = documentType === "receipt" ? "Paid" : (status.label || "Processing");
+    const statusTone = String(documentType === "receipt" ? "success" : status.tone || "warning");
+    const statusClass = statusTone === "success" ? "success" : statusTone === "error" ? "error" : "warning";
+    const issueDate = dateOnly(data?.invoice_date || data?.created_at);
+    const dueDate = documentType === "receipt" ? issueDate : dateOnly(data?.due_date || data?.invoice_date || data?.created_at);
+    const footerNote = showPayNow
+      ? `Payment link: <a href="${escapeHtml(payUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(payUrl)}</a><br>`
+      : "";
+    const itemRows = (data?.items || []).map((item) => {
+      const tag = item?.tag || item?.type || (item?.is_consultation ? "Appointment" : "Product");
+      const description = [
+        item?.description,
+        item?.consultation_type ? `Consultation: ${item.consultation_type}` : "",
+        item?.consultation_brief ? `Brief: ${item.consultation_brief}` : "",
+        item?.doctor_name || data?.doctor_name ? `Doctor: ${item?.doctor_name || data?.doctor_name}` : "",
+      ].filter(Boolean).join(" · ");
+      return `
+      <tr>
+        <td>
+          <div class="item-name">${escapeHtml(item.name || "Item")}</div>
+          ${description ? `<div class="item-desc">${escapeHtml(description)}</div>` : ""}
+          <span class="tag">${escapeHtml(tag)}</span>
+        </td>
+        <td style="color:#6b7280; font-size:13px;">${escapeHtml(itemDate(item.date || item.created_at || item.consultation_when || data?.invoice_date))}</td>
+        <td style="color:#6b7280;">${escapeHtml(item.qty || 1)}</td>
+        <td>${escapeHtml(money(item.total ?? ((Number(item.qty || 1) || 1) * Number(item.rate || 0)), currency))}</td>
+      </tr>`;
+    }).join("") || '<tr><td colspan="4">No items found.</td></tr>';
+    const subtotal = Number(data?.totals?.subtotal || 0);
+    const tax = Number(data?.totals?.tax || 0);
+    const shipping = Number(data?.totals?.shipping || 0);
+    const discount = Number(data?.totals?.discount || 0);
+    const total = Number(data?.totals?.total || 0);
+    const balance = documentType === "receipt" ? Number(data?.totals?.amount_paid || total || 0) : Number(data?.totals?.balance_due || total || 0);
+    const totalLabel = documentType === "receipt" ? "Total Paid" : "Total Due";
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(documentTitle)}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Product+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body, .inv-wrap { font-family: 'Product Sans', 'Google Sans', Inter, Arial, sans-serif; }
+    body { background: #fff; color: #1a1a1a; }
+    .inv-wrap { background: #fff; color: #1a1a1a; max-width: 720px; margin: 0 auto; padding: 48px 40px; }
+    .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
+    .inv-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 48px; }
+    .brand-lockup { display: inline-flex; align-items: flex-start; gap: 14px; }
+    .brand-logo { width: 42px; height: 42px; object-fit: contain; flex-shrink: 0; }
+    .brand-name { font-size: 22px; font-weight: 700; color: #0A2A5E; letter-spacing: -0.3px; }
+    .brand-sub { font-size: 12px; color: #6b7280; margin-top: 3px; letter-spacing: 0.5px; }
+    .inv-badge { background: #0A2A5E; color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; padding: 6px 14px; border-radius: 4px; text-transform: uppercase; }
+    .inv-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-bottom: 40px; }
+    .meta-label { font-size: 11px; color: #9ca3af; letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 4px; }
+    .meta-value { font-size: 14px; color: #1a1a1a; }
+    .meta-value.highlight { color: #0A2A5E; font-weight: 700; }
+    .divider { border: none; border-top: 1px solid #e5e7eb; margin: 0 0 32px; }
+    .section-label { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: #9ca3af; margin-bottom: 16px; }
+    .items-table { width: 100%; border-collapse: collapse; margin-bottom: 32px; }
+    .items-table thead th { font-size: 11px; letter-spacing: 0.8px; text-transform: uppercase; color: #9ca3af; padding: 0 0 10px; text-align: left; font-weight: 400; border-bottom: 1px solid #e5e7eb; }
+    .items-table thead th:last-child { text-align: right; }
+    .items-table tbody td { padding: 14px 0; font-size: 14px; color: #1a1a1a; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+    .items-table tbody td:last-child { text-align: right; }
+    .item-name { font-size: 14px; color: #1a1a1a; }
+    .item-desc { font-size: 12px; color: #9ca3af; margin-top: 2px; }
+    .tag { display: inline-block; font-size: 10px; letter-spacing: 0.5px; background: #EEF2FF; color: #0A2A5E; padding: 2px 8px; border-radius: 3px; margin-top: 4px; text-transform: uppercase; font-weight: 700; }
+    .totals { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-bottom: 40px; }
+    .total-row { display: flex; gap: 48px; font-size: 14px; color: #6b7280; }
+    .total-row span:last-child { min-width: 96px; text-align: right; color: #1a1a1a; }
+    .total-row.grand { font-size: 18px; font-weight: 700; color: #0A2A5E; padding-top: 12px; border-top: 2px solid #0A2A5E; margin-top: 4px; }
+    .total-row.grand span:last-child { color: #0A2A5E; }
+    .inv-footer { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding-top: 24px; border-top: 1px solid #e5e7eb; }
+    .footer-note { font-size: 12px; color: #9ca3af; max-width: 360px; line-height: 1.6; }
+    .footer-note a { color: #0A2A5E; word-break: break-all; }
+    .status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 20px; letter-spacing: 0.3px; }
+    .status-pill.success { color: #059669; background: #ECFDF5; border: 1px solid #6ee7b7; }
+    .status-pill.warning { color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; }
+    .status-pill.error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    @media (max-width: 560px) {
+      .inv-wrap { padding: 28px 20px; }
+      .inv-meta { grid-template-columns: 1fr; gap: 16px; }
+      .inv-header { flex-direction: column; gap: 16px; }
+      .inv-meta > div:last-child { text-align: left !important; }
+      .items-table thead th:nth-child(2), .items-table tbody td:nth-child(2) { display: none; }
+      .inv-footer { flex-direction: column; gap: 16px; align-items: flex-start; }
+    }
+    @media print {
+      @page { margin: 0; }
+      body { background: #fff; }
+      .inv-wrap { max-width: 720px; padding: 40px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="inv-wrap">
+    <h2 class="sr-only">Nevari Health ${escapeHtml(badgeLabel.toLowerCase())} for ${escapeHtml(customer.name || "Customer")}</h2>
+    <div class="inv-header">
+      <div class="brand-lockup">
+        <img src="${escapeHtml(appOrigin)}/ne.webp" alt="Nevari logo" class="brand-logo" />
+        <div>
+          <div class="brand-name">Nevari Health</div>
+          <div class="brand-sub">12 Adeola Odeku St, Victoria Island · Lagos, NG</div>
+        </div>
+      </div>
+      <div class="inv-badge">${escapeHtml(badgeLabel)}</div>
+    </div>
+    <div class="inv-meta">
+      <div>
+        <div class="meta-label">Billed to</div>
+        <div class="meta-value" style="font-size:15px; font-weight:700;">${escapeHtml(customer.name || "Customer")}</div>
+        <div class="meta-value" style="color:#6b7280; margin-top:2px;">${escapeHtml(customer.email || "")}</div>
+        <div class="meta-value" style="color:#6b7280;">${escapeHtml(customer.phone || "")}</div>
+        ${customer.address ? `<div class="meta-value" style="color:#6b7280; margin-top:6px;">${escapeHtml(customer.address)}</div>` : ""}
+      </div>
+      <div style="text-align:right;">
+        <div>
+          <div class="meta-label">${escapeHtml(badgeLabel)} no.</div>
+          <div class="meta-value highlight">#${escapeHtml(displayNumber || "Pending")}</div>
+        </div>
+        <div style="margin-top:16px;">
+          <div class="meta-label">Issue date</div>
+          <div class="meta-value">${escapeHtml(issueDate)}</div>
+        </div>
+        <div style="margin-top:16px;">
+          <div class="meta-label">${documentType === "receipt" ? "Paid date" : "Due date"}</div>
+          <div class="meta-value">${escapeHtml(dueDate)}</div>
+        </div>
+      </div>
+    </div>
+    <hr class="divider">
+    <div class="section-label">Appointments & Services</div>
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th style="width:45%;">Description</th>
+          <th style="width:20%;">Date</th>
+          <th style="width:15%;">Qty</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>${itemRows}</tbody>
+    </table>
+    <div class="totals">
+      <div class="total-row"><span>Subtotal</span><span>${escapeHtml(money(subtotal, currency))}</span></div>
+      ${tax ? `<div class="total-row"><span>Tax</span><span>${escapeHtml(money(tax, currency))}</span></div>` : ""}
+      ${shipping ? `<div class="total-row"><span>Shipping</span><span>${escapeHtml(money(shipping, currency))}</span></div>` : ""}
+      ${discount ? `<div class="total-row"><span>Discount</span><span>-${escapeHtml(money(discount, currency))}</span></div>` : ""}
+      <div class="total-row grand"><span>${escapeHtml(totalLabel)}</span><span>${escapeHtml(money(balance, currency))}</span></div>
+    </div>
+    <div class="inv-footer">
+      <div class="footer-note">
+        ${footerNote}
+        Payment via approved Nevari Health payment channels.<br>
+        For queries: billing@nevarihealth.com
+      </div>
+      <div class="status-pill ${escapeHtml(statusClass)}"><span class="dot"></span>${escapeHtml(statusLabel)}</div>
+    </div>
+  </div>
+</body>
+</html>`;
+  }
 
   return `<!doctype html>
 <html lang="en">

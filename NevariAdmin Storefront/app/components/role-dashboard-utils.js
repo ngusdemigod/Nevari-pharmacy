@@ -32,7 +32,7 @@ export const DEFAULT_SESSION = {
   frontendType: FRONTENDS.patient.type,
   frontendOrigin: "",
   frontendUrl: "",
-  paired: false,
+  paired: true,
   siteName: "",
   siteLogo: "",
   accessToken: "",
@@ -70,7 +70,7 @@ export function hydrateStoredSession(frontend = "patient") {
       baseUrl: ownSession.baseUrl || adminSession.baseUrl || configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
       frontendOrigin: ownSession.frontendOrigin || adminSession.frontendOrigin || "",
       frontendUrl: ownSession.frontendUrl || adminSession.frontendUrl || "",
-      paired: Boolean(ownSession.paired || adminSession.paired),
+      paired: true,
       siteName: ownSession.siteName || adminSession.siteName || "",
       siteLogo: ownSession.siteLogo || adminSession.siteLogo || ""
     } : {};
@@ -78,10 +78,12 @@ export function hydrateStoredSession(frontend = "patient") {
 
     if (isSharedFrontend) {
       nextSession.baseUrl = sharedConnection.baseUrl;
-      nextSession.paired = sharedConnection.paired;
+      nextSession.paired = true;
       nextSession.siteName = sharedConnection.siteName;
       nextSession.siteLogo = sharedConnection.siteLogo;
     }
+
+    nextSession.paired = true;
 
     nextSession.frontendOrigin = currentOriginValue();
     nextSession.frontendUrl = nextSession.frontendOrigin === "null" ? "null" : window.location.href;

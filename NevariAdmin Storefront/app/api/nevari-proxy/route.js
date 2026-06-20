@@ -4,6 +4,7 @@ import {
   isValidPath,
   sanitizeText
 } from "../../lib/inputValidation";
+import { DEFAULT_NEVARI_BASE_URL } from "../../components/frontend-config";
 
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
@@ -19,10 +20,14 @@ function normalizeBaseUrl(value) {
 }
 
 function allowedOrigins() {
-  return String(process.env.NEVARI_PROXY_ALLOWED_ORIGINS || "")
-    .split(",")
-    .map((value) => normalizeBaseUrl(value))
-    .filter(Boolean);
+  return Array.from(new Set([
+    ...String(process.env.NEVARI_PROXY_ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((value) => normalizeBaseUrl(value))
+      .filter(Boolean),
+    normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+    normalizeBaseUrl(DEFAULT_NEVARI_BASE_URL)
+  ].filter(Boolean)));
 }
 
 function proxySigningSecret() {
@@ -145,8 +150,11 @@ function buildTargetUrl(requestUrl) {
   const baseUrl = normalizeBaseUrl(url.searchParams.get("baseUrl"));
   const path = sanitizeText(url.searchParams.get("path"), { max: 240 });
 
-  if (!baseUrl || !isAllowedUrl(baseUrl, allowedOrigins())) {
+  if (!baseUrl) {
     throw new Error("Missing baseUrl.");
+  }
+  if (!isAllowedUrl(baseUrl, allowedOrigins())) {
+    throw new Error(`Configured baseUrl is not allowed: ${baseUrl}`);
   }
   if (!path || !isValidPath(path)) {
     throw new Error("Missing path.");
@@ -276,7 +284,7 @@ async function proxyRequest(request, { params } = {}) {
   }
 
   if (contentType.toLowerCase().includes("application/json")
-      && ["/auth/login", "/auth/verify-code", "/auth/refresh", "/auth/logout", "/sso/logout"].some((path) => targetUrl.pathname.endsWith(path))) {
+      && ["/auth/login", "/auth/google-login", "/auth/verify-code", "/auth/refresh", "/auth/logout", "/sso/logout"].some((path) => targetUrl.pathname.endsWith(path))) {
     const payload = await response.json().catch(() => null);
     const outgoing = Response.json(payload || {}, {
       status: withSoftFailStatus(response.status, softFail),

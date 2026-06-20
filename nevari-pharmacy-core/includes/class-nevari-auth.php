@@ -20,6 +20,18 @@ final class Nevari_Auth {
             'permission_callback' => '__return_true',
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/google-config', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'google_config'],
+            'permission_callback' => '__return_true',
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/google-login', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'google_login'],
+            'permission_callback' => '__return_true',
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/verify-code', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'verify_code'],
@@ -149,16 +161,17 @@ final class Nevari_Auth {
 
         $frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$frontend) {
+            $frontend_error = Nevari_Connections::request_authorization_error();
             Nevari_Audit::log('security', 'nevari', 'auth.untrusted_frontend', 'error', [
                 'severity' => 'warning',
-                'error_code' => 'untrusted_frontend',
-                'message' => 'Login attempt from an untrusted frontend.',
+                'error_code' => $frontend_error['code'] ?? 'untrusted_frontend',
+                'message' => $frontend_error['message'] ?? 'Login attempt from an untrusted frontend.',
                 'metadata' => [
                     'frontend_type' => $params['frontend_type'] ?? null,
                     'frontend_url' => $params['frontend_url'] ?? null,
                 ],
             ]);
-            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
         }
 
         $user = wp_authenticate($username, $password);
@@ -231,6 +244,112 @@ final class Nevari_Auth {
         ]);
     }
 
+    public static function google_config(WP_REST_Request $request): WP_REST_Response {
+        $params = $request->get_params();
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend) {
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
+        }
+
+        $client_id = self::google_signin_client_id();
+        return Nevari_Helpers::success([
+            'enabled' => $client_id !== '',
+            'client_id' => $client_id,
+        ]);
+    }
+
+    public static function google_login(WP_REST_Request $request): WP_REST_Response {
+        $params = Nevari_Helpers::get_json_params($request);
+        $credential = isset($params['credential']) ? sanitize_text_field((string) $params['credential']) : '';
+        $ip = Nevari_Helpers::client_ip();
+
+        if ($response = Nevari_Helpers::rate_limit('auth_google_login_ip', 12, 15 * MINUTE_IN_SECONDS, [$ip])) {
+            return $response;
+        }
+        if (!$credential) {
+            return Nevari_Helpers::error('validation_error', 'Google credential is required.', 422);
+        }
+
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend) {
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
+        }
+
+        $google_payload = self::verify_google_id_token($credential);
+        if (is_wp_error($google_payload)) {
+            return Nevari_Helpers::error($google_payload->get_error_code(), $google_payload->get_error_message(), 401);
+        }
+
+        $email = sanitize_email((string) ($google_payload['email'] ?? ''));
+        if (!$email || !is_email($email)) {
+            return Nevari_Helpers::error('google_email_missing', 'Google did not return a valid email address.', 401);
+        }
+
+        $user = get_user_by('email', $email);
+        if (!$user && (string) $frontend['frontend_type'] === 'patient_dashboard') {
+            $given_name = sanitize_text_field((string) ($google_payload['given_name'] ?? ''));
+            $family_name = sanitize_text_field((string) ($google_payload['family_name'] ?? ''));
+            $display_name = sanitize_text_field((string) ($google_payload['name'] ?? trim($given_name . ' ' . $family_name)));
+            if ($display_name === '') {
+                $display_name = preg_replace('/@.+$/', '', $email);
+            }
+            $email_parts = explode('@', $email);
+            $user_id = wp_insert_user([
+                'user_login' => sanitize_user($email_parts[0] . '_' . wp_generate_password(4, false)),
+                'user_email' => $email,
+                'user_pass' => wp_generate_password(32, true),
+                'display_name' => $display_name,
+                'first_name' => $given_name,
+                'last_name' => $family_name,
+                'role' => 'customer',
+            ]);
+            if (is_wp_error($user_id)) {
+                return Nevari_Helpers::error('customer_create_failed', $user_id->get_error_message(), 400);
+            }
+            update_user_meta((int) $user_id, 'billing_email', $email);
+            $user = get_user_by('id', (int) $user_id);
+        }
+
+        if (!$user || !self::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
+            Nevari_Audit::log('security', 'nevari', 'auth.google_forbidden', 'error', [
+                'severity' => 'warning',
+                'error_code' => 'role_not_allowed',
+                'message' => 'Google login was blocked because the user is not allowed for the requested frontend.',
+                'metadata' => [
+                    'email_hash' => hash('sha256', strtolower($email)),
+                    'frontend_type' => $frontend['frontend_type'],
+                ],
+            ]);
+            return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
+        }
+
+        self::store_google_profile($user, $google_payload);
+        $tokens = self::issue_token_pair((int) $user->ID, $frontend, ['issued_for' => 'google_login', 'source_app' => 'google_login']);
+        Nevari_Audit::log('security', 'nevari', 'auth.google_login_success', 'success', [
+            'actor_user_id' => (int) $user->ID,
+            'related_user_id' => (int) $user->ID,
+            'message' => 'Google login successful.',
+            'metadata' => [
+                'frontend_type' => $frontend['frontend_type'],
+                'frontend_origin' => $frontend['frontend_origin'],
+            ],
+        ]);
+
+        return Nevari_Helpers::success([
+            'access_token' => $tokens['access_token'],
+            'refresh_token' => $tokens['refresh_token'],
+            'expires_in' => $tokens['expires_in'],
+            'frontend' => [
+                'type' => $frontend['frontend_type'],
+                'origin' => $frontend['frontend_origin'],
+                'url' => $frontend['frontend_url'],
+            ],
+            'user' => self::format_user($user),
+        ]);
+    }
+
     public static function verify_code(WP_REST_Request $request): WP_REST_Response {
         global $wpdb;
         $params = Nevari_Helpers::get_json_params($request);
@@ -250,7 +369,8 @@ final class Nevari_Auth {
 
         $frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$frontend) {
-            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
         }
 
         $table = Nevari_Helpers::table('login_challenges');
@@ -331,7 +451,8 @@ final class Nevari_Auth {
 
         $frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$frontend) {
-            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
         }
 
         $reset_user = self::find_user_by_login_or_email($username);
@@ -448,7 +569,8 @@ final class Nevari_Auth {
 
         $frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$frontend) {
-            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
         }
 
         $table = Nevari_Helpers::table('refresh_tokens');
@@ -530,7 +652,8 @@ final class Nevari_Auth {
         }
         $frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$frontend) {
-            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
         }
         $current_payload = self::current_token_payload();
         $session_family_uuid = self::session_family_from_payload($current_payload);
@@ -598,7 +721,8 @@ final class Nevari_Auth {
 
         $frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$frontend) {
-            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
         }
 
         $table = Nevari_Helpers::table('login_challenges');
@@ -658,7 +782,8 @@ final class Nevari_Auth {
         $params = Nevari_Helpers::get_json_params($request);
         $frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$frontend) {
-            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
         }
 
         $user_id = self::api_session_user_id();
@@ -692,7 +817,7 @@ final class Nevari_Auth {
     }
 
     public static function frontend_requires_email_verification(string $frontend_type): bool {
-        return in_array($frontend_type, ['storefront', 'doctors_dashboard', 'pharmacist_dashboard'], true);
+        return in_array($frontend_type, ['storefront', 'doctors_dashboard'], true);
     }
 
     public static function create_login_challenge(WP_User $user, array $frontend) {
@@ -806,15 +931,93 @@ final class Nevari_Auth {
 
     public static function format_user(WP_User $user): array {
         $all_caps = array_keys(array_filter((array) $user->allcaps));
+        $avatar_url = esc_url_raw((string) get_user_meta((int) $user->ID, 'nevari_google_picture', true));
+        if ($avatar_url === '') {
+            $avatar_url = get_avatar_url((int) $user->ID, ['size' => 128]) ?: '';
+        }
         return [
             'id' => (int) $user->ID,
             'email' => $user->user_email,
             'display_name' => $user->display_name,
+            'avatar_url' => $avatar_url,
             'roles' => array_values((array) $user->roles),
             'capabilities' => array_values(array_filter($all_caps, static function ($cap) {
                 return strpos($cap, 'nevari_') === 0 || in_array($cap, ['manage_woocommerce', 'edit_products', 'edit_shop_orders'], true);
             })),
         ];
+    }
+
+    private static function google_signin_client_id(): string {
+        $settings = Nevari_Helpers::google_meet_oauth_settings();
+        $client_id = !empty($settings['client_id']) ? sanitize_text_field((string) $settings['client_id']) : '';
+        $client_id = (string) apply_filters('nevari_google_signin_client_id', $client_id);
+        return sanitize_text_field($client_id);
+    }
+
+    private static function verify_google_id_token(string $credential) {
+        $client_id = self::google_signin_client_id();
+        if ($client_id === '') {
+            return new WP_Error('google_signin_not_configured', 'Google sign-in is not configured.');
+        }
+
+        $response = wp_remote_get(add_query_arg(['id_token' => $credential], 'https://oauth2.googleapis.com/tokeninfo'), [
+            'timeout' => 10,
+        ]);
+        if (is_wp_error($response)) {
+            return new WP_Error('google_token_verification_failed', $response->get_error_message());
+        }
+
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $payload = json_decode((string) wp_remote_retrieve_body($response), true);
+        if ($status < 200 || $status >= 300 || !is_array($payload)) {
+            return new WP_Error('google_token_verification_failed', 'Google credential could not be verified.');
+        }
+
+        $audience = isset($payload['aud']) ? sanitize_text_field((string) $payload['aud']) : '';
+        $issuer = isset($payload['iss']) ? (string) $payload['iss'] : '';
+        $expires_at = isset($payload['exp']) ? (int) $payload['exp'] : 0;
+        $email_verified = isset($payload['email_verified'])
+            ? filter_var($payload['email_verified'], FILTER_VALIDATE_BOOLEAN)
+            : false;
+
+        if (!hash_equals($client_id, $audience)) {
+            return new WP_Error('google_token_audience_mismatch', 'Google credential is not intended for this application.');
+        }
+        if (!in_array($issuer, ['accounts.google.com', 'https://accounts.google.com'], true)) {
+            return new WP_Error('google_token_issuer_invalid', 'Google credential issuer is invalid.');
+        }
+        if ($expires_at > 0 && time() >= $expires_at) {
+            return new WP_Error('google_token_expired', 'Google credential has expired.');
+        }
+        if (!$email_verified) {
+            return new WP_Error('google_email_unverified', 'Google account email is not verified.');
+        }
+
+        return $payload;
+    }
+
+    private static function store_google_profile(WP_User $user, array $payload): void {
+        $sub = isset($payload['sub']) ? sanitize_text_field((string) $payload['sub']) : '';
+        $picture = isset($payload['picture']) ? esc_url_raw((string) $payload['picture']) : '';
+        $given_name = isset($payload['given_name']) ? sanitize_text_field((string) $payload['given_name']) : '';
+        $family_name = isset($payload['family_name']) ? sanitize_text_field((string) $payload['family_name']) : '';
+        $name = isset($payload['name']) ? sanitize_text_field((string) $payload['name']) : '';
+
+        if ($sub !== '') {
+            update_user_meta((int) $user->ID, 'nevari_google_sub', $sub);
+        }
+        if ($picture !== '') {
+            update_user_meta((int) $user->ID, 'nevari_google_picture', $picture);
+        }
+        if ($given_name !== '' && get_user_meta((int) $user->ID, 'first_name', true) === '') {
+            update_user_meta((int) $user->ID, 'first_name', $given_name);
+        }
+        if ($family_name !== '' && get_user_meta((int) $user->ID, 'last_name', true) === '') {
+            update_user_meta((int) $user->ID, 'last_name', $family_name);
+        }
+        if ($name !== '' && trim((string) $user->display_name) === '') {
+            wp_update_user(['ID' => (int) $user->ID, 'display_name' => $name]);
+        }
     }
 
     public static function current_token_payload(): ?array {

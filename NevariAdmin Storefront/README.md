@@ -39,20 +39,10 @@ docker compose up -d --build
 
 ## Live WordPress connection
 
-The storefront now uses a first-time pairing flow before login:
-
-1. In WordPress Admin, open `Nevari Pharmacy -> Connections`
-2. Generate a one-time code for `Storefront`
-3. Open this frontend and enter the pairing code
-4. After pairing succeeds, sign in with WordPress credentials
-
-The storefront then authenticates against the plugin REST API:
+The storefront authenticates directly against the plugin REST API:
 
 - `POST /wp-json/nevari/v1/auth/login`
 - `POST /wp-json/nevari/v1/auth/refresh`
-- `POST /wp-json/nevari/v1/connections/verify`
-- `POST /wp-json/nevari/v1/connections/register`
-- `GET /wp-json/nevari/v1/connections/status`
 - `GET /wp-json/nevari/v1/dashboard/store-admin`
 - supporting live data endpoints for orders, appointments, prescriptions, doctors, emails, products, and audit logs
 

@@ -5,7 +5,6 @@ function getHub() {
     globalThis[GLOBAL_KEY] = {
       listeners: new Set(),
       sequence: 0,
-      lastEvent: null,
     };
   }
   return globalThis[GLOBAL_KEY];
@@ -19,7 +18,6 @@ export function publishAppointmentEvent(payload = {}) {
     payload,
     timestamp: new Date().toISOString(),
   };
-  hub.lastEvent = event;
   hub.listeners.forEach((listener) => {
     try {
       listener(event);
@@ -34,8 +32,4 @@ export function subscribeAppointmentEvents(listener) {
   const hub = getHub();
   hub.listeners.add(listener);
   return () => hub.listeners.delete(listener);
-}
-
-export function getLastAppointmentEvent() {
-  return getHub().lastEvent;
 }

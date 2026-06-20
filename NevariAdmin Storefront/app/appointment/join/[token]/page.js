@@ -4,15 +4,6 @@ import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { BrandedSpinner } from "../../../components/BrandedSpinner";
-import { DEFAULT_NEVARI_BASE_URL } from "../../../components/frontend-config";
-
-function resolveApiBase(baseUrl) {
-  const cleaned = String(baseUrl || "").trim().replace(/\/+$/, "");
-  if (!cleaned) return "";
-  if (cleaned.includes("/wp-json/nevari/v1")) return cleaned;
-  if (cleaned.includes("/wp-json/")) return `${cleaned}/nevari/v1`;
-  return `${cleaned}/wp-json/nevari/v1`;
-}
 
 const BRAND = {
   shell: {
@@ -43,6 +34,12 @@ const BRAND = {
     lineHeight: 1.35,
     maxWidth: "220px",
   },
+  actions: {
+    display: "grid",
+    gap: "10px",
+    width: "min(320px, 100%)",
+    marginTop: "4px",
+  },
   button: {
     display: "inline-flex",
     alignItems: "center",
@@ -54,6 +51,26 @@ const BRAND = {
     color: "#ffffff",
     textDecoration: "none",
     fontWeight: 600,
+    border: "1px solid #0E2955",
+    cursor: "pointer",
+  },
+  secondaryButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: "48px",
+    padding: "0 22px",
+    borderRadius: "999px",
+    background: "#ffffff",
+    color: "#0E2955",
+    border: "1px solid #0E2955",
+    textDecoration: "none",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  disabledButton: {
+    opacity: 0.55,
+    cursor: "not-allowed",
   },
   srOnly: {
     position: "absolute",
@@ -71,27 +88,23 @@ const BRAND = {
 export default function AppointmentJoinPage({ params }) {
   const resolvedParams = use(params);
   const token = String(resolvedParams?.token || "").trim();
-  const [state, setState] = useState({ loading: true, view: "loading", message: "Checking appointment access...", redirectUrl: "", bookUrl: "/dashboard" });
+  const [state, setState] = useState({
+    loading: true,
+    view: "loading",
+    message: "Checking appointment access...",
+    redirectUrl: "",
+    bookUrl: "/dashboard",
+    notifyDisabled: false,
+    notifyCooldownSeconds: 0,
+  });
+  const [actionBusy, setActionBusy] = useState("");
+  const [cooldown, setCooldown] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const apiBase = resolveApiBase(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL);
-      if (!apiBase) {
-        if (!cancelled) {
-          setState({
-            loading: false,
-            view: "unavailable",
-            message: "Appointment service is not configured.",
-            redirectUrl: "",
-            bookUrl: "/dashboard",
-          });
-        }
-        return;
-      }
       try {
-        const endpoint = `${apiBase}/appointments/join/${encodeURIComponent(token)}`;
-        const response = await fetch(endpoint, {
+        const response = await fetch(`/api/appointment/join/${encodeURIComponent(token)}`, {
           method: "GET",
           headers: { Accept: "application/json" },
           cache: "no-store",
@@ -111,15 +124,16 @@ export default function AppointmentJoinPage({ params }) {
           });
           return;
         }
-        if (data?.state === "active" && data?.redirect_url) {
+        if (data?.state === "active") {
           setState({
             loading: false,
-            view: "redirecting",
-            message: "Redirecting you to the appointment...",
-            redirectUrl: data.redirect_url,
+            view: "active",
+            message: data?.message || "Your appointment is ready.",
+            redirectUrl: data?.redirect_url || "",
             bookUrl: data?.book_url || "/dashboard",
+            notifyDisabled: Boolean(data?.notify?.disabled),
+            notifyCooldownSeconds: Number(data?.notify?.cooldown_seconds || 0),
           });
-          window.location.replace(data.redirect_url);
           return;
         }
         setState({
@@ -128,6 +142,8 @@ export default function AppointmentJoinPage({ params }) {
           message: data?.message || (data?.state === "ended" ? "Meeting has ended" : "Kindly check back on your appointment time"),
           redirectUrl: "",
           bookUrl: data?.book_url || "/dashboard",
+          notifyDisabled: Boolean(data?.notify?.disabled),
+          notifyCooldownSeconds: Number(data?.notify?.cooldown_seconds || 0),
         });
       } catch {
         if (!cancelled) {
@@ -147,10 +163,71 @@ export default function AppointmentJoinPage({ params }) {
     };
   }, [token]);
 
-  const showBusyState = state.loading || state.view === "redirecting";
+  useEffect(() => {
+    setCooldown(Math.max(0, Number(state.notifyCooldownSeconds || 0)));
+  }, [state.notifyCooldownSeconds]);
+
+  useEffect(() => {
+    if (cooldown <= 0) return undefined;
+    const timer = window.setTimeout(() => setCooldown((current) => Math.max(0, current - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [cooldown]);
+
+  async function goToMeeting() {
+    if (!state.redirectUrl || actionBusy) return;
+    setActionBusy("join");
+    try {
+      const response = await fetch(`/api/appointment/join/${encodeURIComponent(token)}`, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({}));
+      const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+      if (response.ok && data?.redirect_url) {
+        window.location.assign(data.redirect_url);
+        return;
+      }
+      setState((current) => ({
+        ...current,
+        view: response.status === 410 ? "ended" : "unavailable",
+        message: data?.error?.message || payload?.error?.message || "Kindly check back on your appointment time",
+        redirectUrl: "",
+      }));
+    } finally {
+      setActionBusy("");
+    }
+  }
+
+  async function notifyOthers() {
+    if (state.notifyDisabled || cooldown > 0 || actionBusy) return;
+    setActionBusy("notify");
+    try {
+      const response = await fetch(`/api/appointment/join/${encodeURIComponent(token)}/notify`, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({}));
+      const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+      const details = payload?.error?.details || data?.error?.details || {};
+      const nextCooldown = Number(data?.cooldown_seconds || data?.notify?.cooldown_seconds || details.cooldown_seconds || 60);
+      setCooldown(Math.max(0, nextCooldown));
+      setState((current) => ({
+        ...current,
+        notifyDisabled: Boolean(data?.disabled || data?.notify?.disabled || details.disabled),
+        message: response.ok ? "Reminder sent." : (data?.error?.message || payload?.error?.message || current.message),
+      }));
+    } finally {
+      setActionBusy("");
+    }
+  }
+
+  const showBusyState = state.loading;
   const message = state.view === "ended"
     ? "Meeting has ended"
     : state.message;
+  const notifyLocked = state.notifyDisabled || cooldown > 0 || actionBusy === "notify";
 
   return (
     <main style={BRAND.shell}>
@@ -165,6 +242,21 @@ export default function AppointmentJoinPage({ params }) {
         ) : (
           <p style={BRAND.body}>{message}</p>
         )}
+        {state.view === "active" && !showBusyState ? (
+          <div style={BRAND.actions}>
+            <button type="button" style={BRAND.button} onClick={goToMeeting} disabled={actionBusy === "join" || !state.redirectUrl}>
+              {actionBusy === "join" ? "Opening..." : "Go to meeting"}
+            </button>
+            <button
+              type="button"
+              style={{ ...BRAND.secondaryButton, ...(notifyLocked ? BRAND.disabledButton : {}) }}
+              onClick={notifyOthers}
+              disabled={notifyLocked}
+            >
+              {cooldown > 0 ? `${cooldown}s` : actionBusy === "notify" ? "Sending..." : "Notify others"}
+            </button>
+          </div>
+        ) : null}
         {state.view === "ended" ? <Link href={state.bookUrl || "/dashboard"} style={BRAND.button}>Book appointment</Link> : null}
       </section>
     </main>

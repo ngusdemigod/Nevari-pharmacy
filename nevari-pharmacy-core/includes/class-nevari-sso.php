@@ -224,7 +224,7 @@ final class Nevari_SSO {
 
         $frontend = Nevari_Connections::trusted_frontend_for_type($target_frontend);
         if (!$frontend) {
-            return Nevari_Helpers::error('untrusted_frontend', 'The dashboard frontend is not paired with this pharmacy installation.', 403);
+            return Nevari_Helpers::error('untrusted_frontend', 'The dashboard frontend is not authorized for this pharmacy installation.', 403);
         }
 
         $return_path = self::sanitize_return_path(isset($params['return_path']) ? (string) $params['return_path'] : '');
@@ -271,7 +271,8 @@ final class Nevari_SSO {
 
         $frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$frontend) {
-            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
         }
 
         $transaction = self::load_transaction($transaction_uuid);
@@ -291,11 +292,6 @@ final class Nevari_SSO {
         $user = get_user_by('id', (int) $transaction->user_id);
         if (!$user || !Nevari_Auth::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
             return Nevari_Helpers::error('forbidden', 'Unauthorized user.', 403);
-        }
-
-        $challenge = Nevari_Auth::create_login_challenge($user, $frontend);
-        if (is_wp_error($challenge)) {
-            return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
         }
 
         global $wpdb;
@@ -321,6 +317,31 @@ final class Nevari_SSO {
             ],
         ]);
 
+        if (!Nevari_Auth::frontend_requires_email_verification((string) $frontend['frontend_type'])) {
+            $issue_context = self::consume_dashboard_verification_context($transaction_uuid, (int) $user->ID, $frontend);
+            if (is_wp_error($issue_context)) {
+                return Nevari_Helpers::error($issue_context->get_error_code(), $issue_context->get_error_message(), 403);
+            }
+
+            $tokens = Nevari_Auth::issue_token_pair((int) $user->ID, $frontend, is_array($issue_context) ? $issue_context : []);
+            return Nevari_Helpers::success([
+                'access_token' => $tokens['access_token'],
+                'refresh_token' => $tokens['refresh_token'],
+                'expires_in' => $tokens['expires_in'],
+                'frontend' => [
+                    'type' => $frontend['frontend_type'],
+                    'origin' => $frontend['frontend_origin'],
+                    'url' => $frontend['frontend_url'],
+                ],
+                'user' => Nevari_Auth::format_user($user),
+            ]);
+        }
+
+        $challenge = Nevari_Auth::create_login_challenge($user, $frontend);
+        if (is_wp_error($challenge)) {
+            return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
+        }
+
         return Nevari_Helpers::success([
             'verification_required' => true,
             'challenge_id' => $challenge['challenge_id'],
@@ -345,7 +366,8 @@ final class Nevari_SSO {
         $params = Nevari_Helpers::get_json_params($request);
         $source_frontend = Nevari_Connections::resolve_request_frontend($params);
         if (!$source_frontend) {
-            return Nevari_Helpers::error('untrusted_frontend', 'This frontend is not paired with the pharmacy installation.', 403);
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
         }
 
         $family_uuid = Nevari_Auth::current_session_family_uuid();

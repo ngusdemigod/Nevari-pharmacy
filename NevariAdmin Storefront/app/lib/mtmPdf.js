@@ -20,10 +20,17 @@ const GENERATED_ROOT = path.join(CACHE_ROOT, "generated");
 const VERIFIED_ROOT = path.join(CACHE_ROOT, "verified");
 const AUDIT_LOG_PATH = path.join(CACHE_ROOT, "audit-log.jsonl");
 const PRIVATE_PDF_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const TEMPLATE_CANDIDATES = [
-  path.resolve(process.cwd(), "../MTM_Patient_Intake_Form.pdf"),
-  path.resolve(process.cwd(), "MTM_Patient_Intake_Form.pdf"),
-];
+function mtmTemplateCandidates() {
+  const configuredPath = String(process.env.MTM_PDF_TEMPLATE_PATH || "").trim();
+  return [
+    configuredPath ? path.resolve(configuredPath) : "",
+    path.resolve(process.cwd(), "MTM_Patient_Intake_Form.pdf"),
+    path.resolve(process.cwd(), "public", "MTM_Patient_Intake_Form.pdf"),
+    path.resolve(process.cwd(), "..", "MTM_Patient_Intake_Form.pdf"),
+    path.resolve(process.cwd(), "..", "public", "MTM_Patient_Intake_Form.pdf"),
+    path.resolve(process.cwd(), "..", "..", "MTM_Patient_Intake_Form.pdf"),
+  ].filter(Boolean);
+}
 
 function generatedPdfPath(requestId, fingerprint) {
   const safeId = safeFileName(String(requestId || "request"));
@@ -66,7 +73,7 @@ async function cleanupPrivatePdfCache(root) {
 }
 
 async function resolveTemplatePath() {
-  for (const candidate of TEMPLATE_CANDIDATES) {
+  for (const candidate of mtmTemplateCandidates()) {
     try {
       await fs.access(candidate);
       return candidate;

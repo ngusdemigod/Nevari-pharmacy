@@ -36,7 +36,6 @@ export const FRONTENDS = {
     loginPrompt: "Sign in to your admin dashboard",
     storageKey: "nevari_admin_storefront_session",
     loginPath: "/admin/storefront/login",
-    setupPath: "/admin/storefront/setup",
     dashboardPath: "/admin/storefront"
   }
 };

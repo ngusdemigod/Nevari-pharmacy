@@ -1,4 +1,4 @@
-import { getLastAppointmentEvent, subscribeAppointmentEvents } from "../_hub";
+import { subscribeAppointmentEvents } from "../_hub";
 
 const encoder = new TextEncoder();
 
@@ -15,12 +15,6 @@ export async function GET(request) {
         write("event: appointment\n");
         write(`data: ${JSON.stringify(event)}\n\n`);
       });
-
-      const lastEvent = getLastAppointmentEvent();
-      if (lastEvent) {
-        write("event: appointment\n");
-        write(`data: ${JSON.stringify(lastEvent)}\n\n`);
-      }
 
       const heartbeat = setInterval(() => {
         write(": keep-alive\n\n");

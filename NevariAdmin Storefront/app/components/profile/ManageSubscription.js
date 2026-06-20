@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { resolveSubscriptionMonthlyAmount } from "../../lib/nevari-api";
 import { BrandedSpinner } from "../BrandedSpinner";
 
 function formatDate(value) {
@@ -64,13 +65,8 @@ export default function ManageSubscription({
   const isPendingCancellation = isCancelled && Boolean(subscription?.accessEndsAt || subscription?.access_ends_at || subscription?.renewal_date);
   const isActive = !isFree && (status === "active" || status === "trialing" || isPendingCancellation || status === "past_due");
   const currency = String(subscription?.currency || "NGN").trim().toUpperCase() || "NGN";
-
-  const amount = Number(
-    subscription?.monthlyEquivalent
-    ?? subscription?.monthly_equivalent
-    ?? subscription?.amount
-    ?? 0
-  );
+  const planName = String(subscription?.plan || subscription?.plan_name || (isFree ? "Free plan" : "Nevari Access Pro")).trim();
+  const amount = resolveSubscriptionMonthlyAmount(subscription);
   const nextPaymentDate = subscription?.nextPaymentDate
     ?? subscription?.next_payment_date
     ?? subscription?.renewal_date
@@ -85,6 +81,13 @@ export default function ManageSubscription({
     : frequencyRaw === "yearly" || frequencyRaw === "year"
       ? "Yearly"
       : "Monthly";
+  const statusLabel = isFree
+    ? "Included"
+    : isPendingCancellation
+      ? "Ending soon"
+      : isActive
+        ? "Active"
+        : "Inactive";
   const billingUnit = isFree
     ? "month"
     : frequencyRaw === "yearly" || frequencyRaw === "year"
@@ -158,13 +161,19 @@ export default function ManageSubscription({
 
   return (
     <>
-      <article className="customer-profile-card customer-profile-card-wide subscription-manage-card">
+      <article className="user-subscriptioncard">
         <div className="subscription-top">
           <div className="plan-info">
-            <span className="frequency">{frequencyLabel}</span>
+            <span className="subscription-kicker">Subscription management</span>
+            <div className="subscription-plan-row">
+              <h3 className="subscription-plan-name">{planName}</h3>
+              <span className={`subscription-status-badge is-${statusLabel.toLowerCase().replace(/\s+/g, "-")}`}>{statusLabel}</span>
+            </div>
+            <span className="frequency">{frequencyLabel} plan</span>
             <span className="monthly-price">
               {isFree ? "NGN0 / month" : `${formattedAmount} / ${billingUnit}`}
             </span>
+            <p className="next-subscription">{nextBillingLabel}</p>
           </div>
           <div className="total-price">
             <button
@@ -177,9 +186,22 @@ export default function ManageSubscription({
                 ? "Redirecting..."
                 : actionBusy === "cancel"
                   ? "Cancelling..."
-                  : actionLabel}
+                : actionLabel}
             </button>
-            <p className="next-subscription">{nextBillingLabel}</p>
+          </div>
+        </div>
+        <div className="subscription-summary-grid">
+          <div className="subscription-summary-item">
+            <span>Billing cycle</span>
+            <strong>{frequencyLabel}</strong>
+          </div>
+          <div className="subscription-summary-item">
+            <span>Status</span>
+            <strong>{statusLabel}</strong>
+          </div>
+          <div className="subscription-summary-item">
+            <span>Plan price</span>
+            <strong>{isFree ? "NGN0 / month" : `${formattedAmount} / ${billingUnit}`}</strong>
           </div>
         </div>
 

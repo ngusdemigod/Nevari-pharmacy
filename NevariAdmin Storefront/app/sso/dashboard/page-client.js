@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { buildTwoStepVerificationRequest, loadAuthSecuritySettings } from "../../components/auth-security-settings";
 import { FRONTEND_BY_TYPE } from "../../components/frontend-config";
 import { buildUrl, defaultSession, frontendContext } from "../../components/role-session";
 
@@ -25,6 +26,7 @@ export default function DashboardSsoPageClient() {
       }
 
       const session = defaultSession(config);
+      const authSecuritySettings = loadAuthSecuritySettings();
 
       try {
         const response = await fetch(buildUrl(session, "/sso/dashboard/exchange"), {
@@ -38,7 +40,8 @@ export default function DashboardSsoPageClient() {
           body: JSON.stringify({
             transaction_id: transactionId,
             state,
-            ...frontendContext(session)
+            ...frontendContext(session),
+            ...buildTwoStepVerificationRequest(authSecuritySettings)
           })
         });
         const payload = await response.json().catch(() => null);

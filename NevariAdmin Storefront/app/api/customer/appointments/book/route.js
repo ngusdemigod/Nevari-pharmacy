@@ -27,6 +27,7 @@ import {
   sendUpstreamEmail,
   upstreamErrorMessage
 } from "../_shared";
+import { sendConfirmationEmails } from "../notify/route";
 
 const DEFAULT_ADMIN_EMAIL = "careteam@nevarihealth.com";
 
@@ -409,19 +410,37 @@ export async function POST(request) {
     status: confirmationData?.appointment?.status || (String(confirmationData?.appointment?.payment_status || normalizedCheckoutData?.payment_status || created?.payment_status || "").toLowerCase() === "paid" ? "confirmed" : (created?.status || "awaiting_payment"))
   };
   const quotaCovered = String(resolvedAppointment.payment_status || "").toLowerCase() === "paid";
+  const isConfirmed = Boolean(
+    confirmationData?.is_confirmed
+    || String(confirmationData?.appointment?.status || resolvedAppointment?.status || "").toLowerCase() === "confirmed"
+    || String(resolvedAppointment.payment_status || "").toLowerCase() === "paid"
+  );
   const meetingUrl = findMeetLink(confirmationData?.appointment, confirmationData, checkoutData?.appointment, checkoutData, resolvedAppointment);
-  const emailDispatch = await sendBookingEmails({
-    baseUrl: resolvedBaseUrl,
-    appOrigin: body.appOrigin || new URL(request.url).origin,
-    accessToken,
-    adminEmail,
-    customerEmail,
-    customerName,
-    appointment: resolvedAppointment,
-    checkout: normalizedCheckoutData,
-    confirmation: confirmationData,
-    quotaCovered
-  });
+  const confirmationEmailResult = isConfirmed
+    ? await sendConfirmationEmails({
+      baseUrl: resolvedBaseUrl,
+      appOrigin: body.appOrigin || new URL(request.url).origin,
+      accessToken,
+      appointmentId: appointmentId || resolvedAppointment?.id,
+      customerEmail,
+      customerName,
+      adminEmail
+    })
+    : null;
+  const emailDispatch = confirmationEmailResult?.ok
+    ? confirmationEmailResult.emailDispatch
+    : await sendBookingEmails({
+      baseUrl: resolvedBaseUrl,
+      appOrigin: body.appOrigin || new URL(request.url).origin,
+      accessToken,
+      adminEmail,
+      customerEmail,
+      customerName,
+      appointment: resolvedAppointment,
+      checkout: normalizedCheckoutData,
+      confirmation: confirmationData,
+      quotaCovered
+    });
 
   return NextResponse.json({
     ok: true,

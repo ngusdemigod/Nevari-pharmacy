@@ -12,6 +12,18 @@ import {
   verifySubscription,
 } from "../lib/nevari-api";
 
+function subscriptionStreamCookieName(frontendType = "patient_dashboard") {
+  return `nevari_access_${String(frontendType || "patient_dashboard").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`;
+}
+
+function hasSubscriptionStreamCookie(frontendType = "patient_dashboard") {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  const name = subscriptionStreamCookieName(frontendType).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|;\\s*)${name}=`).test(document.cookie || "");
+}
+
 function buildDefaultCallbackUrl() {
   if (typeof window === "undefined") {
     return "";
@@ -67,7 +79,15 @@ export function useSubscription(session) {
       return undefined;
     }
 
-    const eventSource = new EventSource("/api/subscriptions/events");
+    const frontendType = String(session?.frontendType || "patient_dashboard").trim();
+    if (!hasSubscriptionStreamCookie(frontendType)) {
+      return undefined;
+    }
+
+    const eventUrl = new URL("/api/subscriptions/events", window.location.origin);
+    eventUrl.searchParams.set("baseUrl", String(session?.baseUrl || "").trim());
+    eventUrl.searchParams.set("frontendType", frontendType);
+    const eventSource = new EventSource(eventUrl);
     const handleSubscriptionEvent = async () => {
       try {
         const nextSubscription = await mutateSubscription();
@@ -86,11 +106,11 @@ export function useSubscription(session) {
       eventSource.removeEventListener("subscription", handleSubscriptionEvent);
       eventSource.close();
     };
-  }, [mutateSubscription, shouldFetch]);
+  }, [mutateSubscription, session?.baseUrl, session?.frontendType, shouldFetch]);
 
   async function refresh() {
     setActionError("");
-    return mutateSubscription();
+    return mutateSubscription(undefined, { revalidate: true });
   }
 
   async function launchCheckout({ callbackUrl = "" } = {}) {

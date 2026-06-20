@@ -31,7 +31,7 @@ const productSans = localFont({
 
 export const metadata = {
   title: "Nevari Dashboard",
-  description: "Nevari dashboard and pairing experience."
+  description: "Nevari dashboard."
 };
 
 export default function RootLayout({ children }) {

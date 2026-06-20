@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { publishSubscriptionEvent } from "../_hub";
 
 const MAX_SKEW_SECONDS = 300;
@@ -16,8 +16,11 @@ function validateSignature(timestamp, rawBody, signature) {
   if (!Number.isFinite(numericTimestamp) || Math.abs(Date.now() / 1000 - numericTimestamp) > MAX_SKEW_SECONDS) {
     return false;
   }
-  const expected = createHmac("sha256", secret).update(`${timestamp}\n${rawBody}`).digest("hex");
-  return expected === signature;
+  const expected = createHmac("sha256", secret).update(`${timestamp}\n${rawBody}`).digest("hex").toLowerCase();
+  if (expected.length !== signature.length) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(expected, "utf8"), Buffer.from(signature, "utf8"));
 }
 
 export const dynamic = "force-dynamic";
