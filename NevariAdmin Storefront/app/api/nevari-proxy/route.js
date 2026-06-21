@@ -19,13 +19,29 @@ function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function configuredBaseUrl() {
+  return normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL);
+}
+
+function resolveLegacyBaseUrl(value) {
+  const normalized = normalizeBaseUrl(value);
+  const configured = configuredBaseUrl();
+  if (!normalized) {
+    return configured;
+  }
+  if (normalized === "https://demo.nevarihealth.com" && configured && configured !== normalized) {
+    return configured;
+  }
+  return normalized;
+}
+
 function allowedOrigins() {
   return Array.from(new Set([
     ...String(process.env.NEVARI_PROXY_ALLOWED_ORIGINS || "")
       .split(",")
       .map((value) => normalizeBaseUrl(value))
       .filter(Boolean),
-    normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+    configuredBaseUrl(),
     normalizeBaseUrl(DEFAULT_NEVARI_BASE_URL)
   ].filter(Boolean)));
 }
@@ -147,7 +163,7 @@ function assertAllowedTarget(target) {
 
 function buildTargetUrl(requestUrl) {
   const url = new URL(requestUrl);
-  const baseUrl = normalizeBaseUrl(url.searchParams.get("baseUrl"));
+  const baseUrl = resolveLegacyBaseUrl(url.searchParams.get("baseUrl"));
   const path = sanitizeText(url.searchParams.get("path"), { max: 240 });
 
   if (!baseUrl) {

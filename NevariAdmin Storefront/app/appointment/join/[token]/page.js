@@ -199,6 +199,13 @@ export default function AppointmentJoinPage({ params }) {
     }
   }
 
+  useEffect(() => {
+    if (state.view !== "active" || !state.redirectUrl || actionBusy) {
+      return;
+    }
+    goToMeeting();
+  }, [actionBusy, state.redirectUrl, state.view]);
+
   async function notifyOthers() {
     if (state.notifyDisabled || cooldown > 0 || actionBusy) return;
     setActionBusy("notify");

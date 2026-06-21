@@ -643,10 +643,17 @@ final class Nevari_Helpers {
         if (!$user) {
             return null;
         }
+        $avatar_url = (string) get_user_meta((int) $user->ID, 'nevari_google_picture', true);
+        if ($avatar_url === '') {
+            $avatar_url = (string) get_avatar_url((int) $user->ID);
+        }
         return [
             'id' => (int) $user->ID,
             'email' => $user->user_email,
             'display_name' => $user->display_name,
+            'avatar_url' => esc_url_raw($avatar_url),
+            'phone' => (string) get_user_meta((int) $user->ID, 'billing_phone', true),
+            'address' => (string) get_user_meta((int) $user->ID, 'billing_address_1', true),
             'roles' => array_values((array) $user->roles),
         ];
     }

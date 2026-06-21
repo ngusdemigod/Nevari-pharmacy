@@ -16,6 +16,18 @@ function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function resolveRuntimeBaseUrl(value) {
+  const configured = configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "");
+  const normalized = normalizeBaseUrl(value);
+  if (!normalized) {
+    return configured;
+  }
+  if (normalized === normalizeBaseUrl(DEFAULT_NEVARI_BASE_URL) && configured !== normalized) {
+    return configured;
+  }
+  return normalized;
+}
+
 function configuredBaseUrl(value) {
   return normalizeBaseUrl(value || DEFAULT_NEVARI_BASE_URL);
 }
@@ -28,7 +40,7 @@ function currentOriginValue() {
 }
 
 export const DEFAULT_SESSION = {
-  baseUrl: configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+  baseUrl: resolveRuntimeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
   frontendType: FRONTENDS.patient.type,
   frontendOrigin: "",
   frontendUrl: "",
@@ -67,7 +79,7 @@ export function hydrateStoredSession(frontend = "patient") {
     const adminSession = JSON.parse(localStorage.getItem(FRONTENDS.admin.storageKey) || "{}");
     const isSharedFrontend = config.type !== FRONTENDS.admin.type;
     const sharedConnection = isSharedFrontend ? {
-      baseUrl: ownSession.baseUrl || adminSession.baseUrl || configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+      baseUrl: resolveRuntimeBaseUrl(ownSession.baseUrl || adminSession.baseUrl || process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
       frontendOrigin: ownSession.frontendOrigin || adminSession.frontendOrigin || "",
       frontendUrl: ownSession.frontendUrl || adminSession.frontendUrl || "",
       paired: true,
@@ -77,12 +89,13 @@ export function hydrateStoredSession(frontend = "patient") {
     const nextSession = { ...DEFAULT_SESSION, ...sharedConnection, ...ownSession, frontendType: config.type };
 
     if (isSharedFrontend) {
-      nextSession.baseUrl = sharedConnection.baseUrl;
+      nextSession.baseUrl = resolveRuntimeBaseUrl(sharedConnection.baseUrl);
       nextSession.paired = true;
       nextSession.siteName = sharedConnection.siteName;
       nextSession.siteLogo = sharedConnection.siteLogo;
     }
 
+    nextSession.baseUrl = resolveRuntimeBaseUrl(nextSession.baseUrl);
     nextSession.paired = true;
 
     nextSession.frontendOrigin = currentOriginValue();

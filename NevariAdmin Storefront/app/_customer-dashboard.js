@@ -18,7 +18,7 @@ import { buildSWRRevealSignature, useSWRReveal } from "./components/useSWRReveal
 import SubscriptionGate from "./components/subscription/SubscriptionGate";
 import { useSubscription } from "./hooks/use-subscription";
 import { RoleShell, SkeletonBox } from "./_doctor-dashboard";
-import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, requestMtmReschedule, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest } from "./lib/nevari-api";
+import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, normalizeCustomerSettingsPayload, requestMtmReschedule, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest, updateCustomerSettings } from "./lib/nevari-api";
 
 const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
@@ -238,6 +238,7 @@ function resolveUserRoles(user = null) {
 const emptyCustomerState = {
   error: "",
   dashboard: null,
+  settings: defaultCustomerSettings(),
   orders: [],
   appointments: [],
   doctors: [],
@@ -310,6 +311,7 @@ async function fetchCustomerDashboardPayload(session, settings, fallbackState = 
   return {
     error: blockingErrors[0] || "",
     dashboard: { ...resolvedDashboard, profile: { ...fallbackProfile, ...(resolvedDashboard.profile || {}) } },
+    settings: normalizeCustomerSettingsPayload(resolvedDashboard.settings || fallbackState.settings || settings),
     orders: resolvedOrders,
     appointments: resolvedAppointments,
     doctors: resolvedDoctors,
@@ -670,37 +672,26 @@ const MTM_ADHERENCE_OPTIONS = [
 ];
 
 function defaultCustomerSettings() {
-  return {
-    displayName: "",
-    email: "",
-    phone: "",
-    address: "",
-    timezone: storedStoreTimeZone(),
-    preferredConsultationType: "video",
-    preferredDoctorIds: [],
-    emailReminders: true,
-    appointmentReminders: true,
-    prescriptionAlerts: true,
-    paymentReceipts: true,
-    marketingOptIn: false,
-    refundTracking: true,
-    twoFactorEnabled: false,
-    savedMethods: ["Card ending 4242"]
-  };
+  return normalizeCustomerSettingsPayload({ timezone: storedStoreTimeZone() });
+}
+
+function readStoredCustomerSettingsPayload() {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(CUSTOMER_SETTINGS_KEY) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function loadCustomerSettings() {
-  if (typeof window === "undefined") {
-    return defaultCustomerSettings();
-  }
-  try {
-    return {
-      ...defaultCustomerSettings(),
-      ...JSON.parse(window.localStorage.getItem(CUSTOMER_SETTINGS_KEY) || "{}")
-    };
-  } catch {
-    return defaultCustomerSettings();
-  }
+  return normalizeCustomerSettingsPayload({
+    ...defaultCustomerSettings(),
+    ...readStoredCustomerSettingsPayload()
+  });
 }
 
 function loadStorefrontSettings() {
@@ -723,7 +714,7 @@ function persistCustomerSettings(settings) {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(CUSTOMER_SETTINGS_KEY, JSON.stringify(settings));
+  window.localStorage.setItem(CUSTOMER_SETTINGS_KEY, JSON.stringify(normalizeCustomerSettingsPayload(settings)));
 }
 
 export default function CustomerDashboard({ initialPage = "overview", initialMtmRequestId = "" } = {}) {
@@ -751,6 +742,9 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const [journey, setJourney] = useState(createJourneyState());
   const [reviewDeepLinkHandled, setReviewDeepLinkHandled] = useState(false);
   const [settings, setSettings] = useState(() => loadCustomerSettings());
+  const customerSettingsHydratedRef = useRef(false);
+  const customerSettingsFingerprintRef = useRef(JSON.stringify(defaultCustomerSettings()));
+  const customerSettingsSessionRef = useRef("");
   const [isCustomerMobile, setIsCustomerMobile] = useState(true);
   const storefrontSettings = useMemo(() => loadStorefrontSettings(), []);
   const minimumBookingMinutes = useMemo(() => normalizeBookingMinutes(storefrontSettings.minimumConsultationMinutes), [storefrontSettings.minimumConsultationMinutes]);
@@ -789,8 +783,33 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   }, [isCustomerMobile]);
 
   useEffect(() => {
-    persistCustomerSettings(settings);
-  }, [settings]);
+    const normalizedSettings = normalizeCustomerSettingsPayload(settings);
+    const hasStoredCustomerSettings = Object.keys(readStoredCustomerSettingsPayload()).length > 0;
+    if (customerSettingsHydratedRef.current || hasStoredCustomerSettings) {
+      persistCustomerSettings(normalizedSettings);
+    }
+    if (!session?.accessToken || !customerSettingsHydratedRef.current || typeof window === "undefined") {
+      return undefined;
+    }
+    const nextFingerprint = JSON.stringify(normalizedSettings);
+    if (nextFingerprint === customerSettingsFingerprintRef.current) {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const savedSettings = normalizeCustomerSettingsPayload(await updateCustomerSettings(session, normalizedSettings));
+        customerSettingsFingerprintRef.current = JSON.stringify(savedSettings);
+        persistCustomerSettings(savedSettings);
+        setSettings((current) => {
+          const currentFingerprint = JSON.stringify(normalizeCustomerSettingsPayload(current));
+          return currentFingerprint === customerSettingsFingerprintRef.current ? current : savedSettings;
+        });
+      } catch (error) {
+        console.error("Unable to save customer settings.", error);
+      }
+    }, 500);
+    return () => window.clearTimeout(timeoutId);
+  }, [session, settings]);
 
   useEffect(() => {
     const hydratedSession = hydrateStoredSession("patient");
@@ -811,6 +830,16 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     setCacheKey(cacheUserKey ? buildDashboardCacheKey("patient", CUSTOMER_DASHBOARD_CACHE_SCOPE, String(cacheUserKey)) : null);
     setAuthResolved(true);
   }, [router]);
+
+  useEffect(() => {
+    const nextSessionKey = String(session?.user?.id || "");
+    if (customerSettingsSessionRef.current === nextSessionKey) {
+      return;
+    }
+    customerSettingsSessionRef.current = nextSessionKey;
+    customerSettingsHydratedRef.current = false;
+    customerSettingsFingerprintRef.current = JSON.stringify(loadCustomerSettings());
+  }, [session?.user?.id]);
 
   const cachedCustomerState = (cacheKey && isSessionUsable(session))
     ? readDashboardCache(cacheKey, DASHBOARD_CACHE_TTL_MS)?.state
@@ -935,6 +964,33 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   }
 
   const profile = state.dashboard?.profile || {};
+  useEffect(() => {
+    if (!session?.user?.id || customerSettingsHydratedRef.current) {
+      return;
+    }
+    const summarySettings = normalizeCustomerSettingsPayload(summaryState.settings || state.dashboard?.settings || {});
+    const storedSettingsPayload = readStoredCustomerSettingsPayload();
+    const storedSettings = normalizeCustomerSettingsPayload(storedSettingsPayload);
+    const storedSettingKeys = new Set(Object.keys(storedSettingsPayload));
+    const mergedSettings = normalizeCustomerSettingsPayload({
+      ...defaultCustomerSettings(),
+      ...summarySettings,
+      displayName: summarySettings.displayName || profile.display_name || session.user?.display_name || session.user?.name || settings.displayName || "",
+      email: summarySettings.email || profile.email || session.user?.email || settings.email || "",
+      phone: summarySettings.phone || profile.phone || settings.phone || "",
+      address: summarySettings.address || profile.address || settings.address || "",
+      timezone: summarySettings.timezone || settings.timezone || storedStoreTimeZone(),
+    });
+    Object.keys(storedSettingsPayload).forEach((key) => {
+      if (storedSettingKeys.has(key) && Object.prototype.hasOwnProperty.call(mergedSettings, key)) {
+        mergedSettings[key] = storedSettings[key];
+      }
+    });
+    customerSettingsHydratedRef.current = true;
+    customerSettingsFingerprintRef.current = JSON.stringify(mergedSettings);
+    persistCustomerSettings(mergedSettings);
+    setSettings(mergedSettings);
+  }, [profile.address, profile.display_name, profile.email, profile.phone, session?.user?.display_name, session?.user?.email, session?.user?.id, session?.user?.name, settings, state.dashboard?.settings, summaryState.settings]);
   const visibleDoctors = useMemo(() => sortPreferredDoctors(state.doctors, settings.preferredDoctorIds), [settings.preferredDoctorIds, state.doctors]);
   const subscriptionState = useSubscription(session);
   const mtmRequestsKey = session && page === "therapy"
@@ -2247,6 +2303,7 @@ function buildCustomerBootstrapState(session, settings, fallbackState = emptyCus
 
   return {
     error: fallbackState?.error || "",
+    settings: normalizeCustomerSettingsPayload(fallbackState?.settings || settings),
     dashboard: {
       ...(fallbackState?.dashboard || {}),
       store_currency: fallbackState?.dashboard?.store_currency || SSR_SAFE_STORE_CURRENCY,
@@ -2927,7 +2984,7 @@ function AppointmentPage({
   onDismissConsultationQuotaNotice = null,
   embeddedDesktop = false,
 }) {
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("upcoming");
   const [bookingOpen, setBookingOpen] = useState(false);
   const [bookingDate, setBookingDate] = useState(() => localDateInputValue(new Date()));
   const [bookingTime, setBookingTime] = useState("");
@@ -3134,6 +3191,7 @@ function AppointmentPage({
         </div>
       </div>
     </header>}
+    {!embeddedDesktop ? <div className="customer-mobile-header-spacer customer-appointment-page-spacer" aria-hidden="true" /> : null}
 
     <div className="customer-appointment-layout">
       {!replaceListWithBooking ? <section className="customer-list-shell book-doctor-shell customer-appointment-history-shell customer-appointment-list-panel">
@@ -3882,6 +3940,25 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, subscri
             await subscriptionState?.cancelCurrentSubscription?.();
           }}
         />
+      </article>
+      <article className="customer-profile-card customer-profile-card-wide customer-profile-upload-card">
+        <div className="customer-mobile-upload-group">
+          <div>
+            <strong>Your photo</strong>
+            <p>This will be displayed on your profile.</p>
+          </div>
+          <div className="customer-mobile-upload-row customer-profile-upload-row">
+            <div className="customer-mobile-avatar large customer-profile-upload-avatar">
+              {profile.avatar_url ? <img src={profile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
+              <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(settings.displayName || profile.display_name || "Customer")}</span>
+            </div>
+            <button className="customer-mobile-dropzone customer-profile-dropzone" type="button">
+              <div className="customer-mobile-upload-icon"><MobileIcon name="upload" /></div>
+              <span><strong>Click to upload</strong> or drag and drop</span>
+              <small>SVG, PNG, JPG or GIF (max. 800x400px)</small>
+            </button>
+          </div>
+        </div>
       </article>
       <article className="customer-profile-card customer-profile-card-wide">
         <span>Display name</span>
@@ -4816,7 +4893,7 @@ function CustomerMobileDashboard({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [previousPage, setPreviousPage] = useState("overview");
   const [searchQuery, setSearchQuery] = useState("");
-  const [appointmentTab, setAppointmentTab] = useState(initialPage === "request" ? "request" : "all");
+  const [appointmentTab, setAppointmentTab] = useState(initialPage === "request" ? "request" : "upcoming");
   const [appointmentComposerOpen, setAppointmentComposerOpen] = useState(false);
   const [appointmentComposerLoading, setAppointmentComposerLoading] = useState(false);
   const [appointmentComposerMonth, setAppointmentComposerMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
@@ -5058,7 +5135,7 @@ function CustomerMobileDashboard({
 
   useEffect(() => {
     if (!["all", "request", "upcoming", "previous"].includes(appointmentTab)) {
-      setAppointmentTab("all");
+      setAppointmentTab("upcoming");
     }
   }, [appointmentTab, page]);
 
@@ -6063,7 +6140,8 @@ function CustomerMobileDashboard({
 
   function renderHeader(title, showBack = false, onBack = onResetJourney, headerAction = null) {
     const greetingName = firstName(settings.displayName || profile.display_name || "Tee");
-    const isOverviewHeader = ["overview", "iv-therapy"].includes(page);
+    const isOverviewHeader = ["overview", "iv-therapy", "therapy"].includes(page);
+    const spacerClass = page === "appointment" ? "is-appointment" : isOverviewHeader ? "is-overview" : "is-compact";
     const searchbar = page === "search" ? <div className="customer-mobile-searchbar is-search-page">
       <MobileIcon name="search" />
       <input
@@ -6103,7 +6181,7 @@ function CustomerMobileDashboard({
           <h1>{title}</h1>
         </div> : null}
       </header>
-      <div className={`customer-mobile-header-spacer ${isOverviewHeader ? "is-overview" : "is-compact"}`} aria-hidden="true" />
+      <div className={`customer-mobile-header-spacer ${spacerClass}`} aria-hidden="true" />
     </>;
   }
 
@@ -6427,15 +6505,7 @@ function CustomerMobileDashboard({
             {embeddedDesktop ? <header className="customer-request-desktop-header customer-therapy-desktop-header">
               <span>Welcome back, {firstName(settings.displayName || profile.display_name || "Tee")}</span>
               <h1>Medical Therapy Management</h1>
-            </header> : <header className="therapy-page-head">
-              <button className="customer-mobile-icon-button" type="button" aria-label="Open menu" onClick={() => setDrawerOpen(true)}>
-                <MobileIcon name="menu" />
-              </button>
-              <div>
-                <h1>Medical Therapy Management</h1>
-
-              </div>
-            </header>}
+            </header> : renderHeader("Medical Therapy Management")}
             <div className="customer-mobile-pill-tabs" role="tablist" aria-label="MTM tabs">
               {[
                 ["request", "Request"],
@@ -6676,7 +6746,6 @@ function CustomerMobileDashboard({
                       </select> : <input type={key === "startDate" ? "date" : "text"} max={key === "startDate" ? todayInputDate() : undefined} value={mtmForm.medicationProfile[key]} className={showMtmFieldError(key) ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("medicationProfile", key)} onChange={(event) => updateMtmField("medicationProfile", key, event.target.value)} />}
                       {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                   </label>)}
-                  <button className="customer-mobile-add-medication-button" type="button" onClick={addMtmMedicationEntry}><span aria-hidden="true">+</span> Add Medication</button>
                     {showMtmFieldError("medications") ? <small className="customer-mobile-field-error">{mtmStepErrors.medications}</small> : null}
                   <div className="customer-mobile-subsection-title">
                     <strong>Additional Medication Information</strong>
@@ -6725,15 +6794,17 @@ function CustomerMobileDashboard({
                 {showMtmFieldError("barriers") ? <small className="customer-mobile-field-error">{mtmStepErrors.barriers}</small> : null}
                 {showMtmFieldError("reasonForDiscontinuation") ? <small className="customer-mobile-field-error">{mtmStepErrors.reasonForDiscontinuation}</small> : null}
               {mtmSnackbar ? <div className="customer-mobile-snackbar" role="status" aria-live="polite">{mtmSnackbar}</div> : null}
-              <button className="customer-mobile-primary-button" type="button" disabled={mtmSubmitting || (mtmStep < 6 ? !mtmStepIsValid : !mtmCanSubmit)} onClick={() => {
-                if (mtmStep < 6) {
-                  if (!validateMtmStep(mtmStep)) return;
-                  transitionToMtmStep(mtmStep + 1);
-                  return;
-                }
-                submitMtmRequest();
-              }}>{mtmSubmitting ? <BrandedSpinner label="Submitting MTM assessment" /> : (mtmStep < 6 ? "Continue" : "Submit MTM Assessment")}</button>
-              {mtmStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToMtmStep(Math.max(1, mtmStep - 1))}>Go Back</button> : null}
+              <div className="customer-mobile-sticky-actions customer-mtm-sticky-actions">
+                <button className="customer-mobile-primary-button" type="button" disabled={mtmSubmitting || (mtmStep < 6 ? !mtmStepIsValid : !mtmCanSubmit)} onClick={() => {
+                  if (mtmStep < 6) {
+                    if (!validateMtmStep(mtmStep)) return;
+                    transitionToMtmStep(mtmStep + 1);
+                    return;
+                  }
+                  submitMtmRequest();
+                }}>{mtmSubmitting ? <BrandedSpinner label="Submitting MTM assessment" /> : (mtmStep < 6 ? "Continue" : "Submit MTM Assessment")}</button>
+                {mtmStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToMtmStep(Math.max(1, mtmStep - 1))}>Go Back</button> : null}
+              </div>
             </section> : null}
             {mtmTab === "request" && showMtmSuccessState ? <div className="customer-confirmation-modal customer-mtm-success-modal" role="dialog" aria-modal="true" aria-labelledby="mtm-success-title">
               <section className="customer-flow-status-card customer-flow-status-card-mtm is-success customer-mobile-full-therapy-shell customer-mtm-success-shell">
@@ -6849,6 +6920,9 @@ function CustomerMobileDashboard({
           </section>
         </SubscriptionGate>
       </main>
+      {!embeddedDesktop && mtmTab === "request" && !showMtmSuccessState && mtmStep === 4 && typeof document !== "undefined" ? createPortal(<div className="customer-mtm-floating-add-dock">
+        <button className="customer-mobile-add-medication-button" type="button" onClick={addMtmMedicationEntry}><span aria-hidden="true">+</span> Add Medication</button>
+      </div>, document.body) : null}
     </div>;
   }
 
@@ -7136,12 +7210,16 @@ function CustomerMobileDashboard({
           onResetJourney,
           null
         )}
-        {showNurseRequestFlow ? <div className="customer-request-tabs" role="tablist" aria-label="Nurse request tabs">
-          {[
+        <div className={showNurseRequestFlow ? "customer-request-tabs" : "customer-mobile-appointment-tabs"} role="tablist" aria-label={showNurseRequestFlow ? "Nurse request tabs" : "Appointment tabs"}>
+          {(showNurseRequestFlow ? [
             ["request", "Request"],
             ["upcoming", "Upcoming Visits"],
             ["previous", "Previous Visits"]
-          ].map(([id, label]) => <button
+          ] : [
+            ["upcoming", "Upcoming"],
+            ["previous", "Previous"],
+            ["all", "All"]
+          ]).map(([id, label]) => <button
             key={id}
             className={`customer-mobile-pill-tab ${appointmentTab === id ? "active" : ""}`}
             type="button"
@@ -7149,7 +7227,7 @@ function CustomerMobileDashboard({
             aria-selected={appointmentTab === id}
             onClick={() => setAppointmentTab(id)}
           >{label}</button>)}
-        </div> : null}
+        </div>
         {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
         {showNurseRequestFlow && appointmentTab === "request" ? <section className="customer-mobile-flow">
           {!requestSubmitted ? <>
@@ -7380,6 +7458,19 @@ function CustomerMobileDashboard({
             </section>
             : <NurseRequestHistorySection title="Previous Visits" items={pastNurseRequests} />
         ) : null}
+
+        {!showNurseRequestFlow && appointmentTab !== "request" ? <section className="customer-mobile-list-section customer-mobile-appointment-pane">
+          <AppointmentSection
+            title="Appointments"
+            items={visibleAppointments}
+            doctors={state.doctors}
+            storeTimeZone={storeTimeZone}
+            loading={appointmentsLoading}
+            emptyCtaLabel="Book an appointment"
+            onEmptyCta={() => setAppointmentComposerOpen(true)}
+            onOpenAppointment={openAppointment}
+          />
+        </section> : null}
 
         {!showNurseRequestFlow && appointmentTab === "request" ? <section className="customer-mobile-flow">
           {!requestSubmitted ? <>

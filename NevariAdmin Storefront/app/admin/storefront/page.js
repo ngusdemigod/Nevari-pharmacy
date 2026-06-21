@@ -317,7 +317,7 @@ function defaultSession() {
   const href = hasWindow ? window.location.href : "";
 
   return {
-    baseUrl: normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL),
+    baseUrl: resolveRuntimeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL),
     frontendType: FRONTEND_TYPE,
     frontendOrigin: origin === "null" ? "null" : origin,
     frontendUrl: origin === "null" ? "null" : href,
@@ -599,6 +599,18 @@ function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function resolveRuntimeBaseUrl(value) {
+  const configured = normalizeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL);
+  const normalized = normalizeBaseUrl(value);
+  if (!normalized) {
+    return configured;
+  }
+  if (normalized === normalizeBaseUrl(DEFAULT_NEVARI_BASE_URL) && configured !== normalized) {
+    return configured;
+  }
+  return normalized;
+}
+
 function normalizePairingCode(value) {
   const raw = String(value || "").trim();
   const match = raw.match(/NV1\.[A-Za-z0-9_-]+\.[A-Za-z0-9]+/i);
@@ -664,6 +676,7 @@ function sanitizedPersistedSession(session = {}) {
     : [];
   return {
     ...session,
+    baseUrl: resolveRuntimeBaseUrl(session.baseUrl),
     accessToken: session.accessToken ? "server-session" : "",
     refreshToken: session.refreshToken ? "server-session" : "",
     user: session?.user ? {
@@ -2218,7 +2231,7 @@ export function AdminStorefrontDashboard({
   const embeddedInitialSession = embeddedSession ? { ...defaultSession(), ...embeddedSession, paired: true } : null;
   const [session, setSession] = useState(() => embeddedInitialSession || defaultSession());
   const [currentPage, setCurrentPage] = useState(() => resolvedEmbeddedPage || "overview");
-  const [trendMode, setTrendMode] = useState("week");
+  const [trendMode, setTrendMode] = useState("yearly");
   const [data, setData] = useState(emptyData);
   const [audit, setAudit] = useState({ category: "orders", status: "all", source: "all" });
   const [search, setSearch] = useState("");
@@ -2882,6 +2895,7 @@ export function AdminStorefrontDashboard({
         const merged = {
           ...runtimeSession,
           ...parsed,
+          baseUrl: resolveRuntimeBaseUrl(parsed.baseUrl || runtimeSession.baseUrl),
           frontendOrigin: runtimeSession.frontendOrigin,
           frontendUrl: runtimeSession.frontendUrl
         };
@@ -4475,14 +4489,6 @@ export function AdminStorefrontDashboard({
     setOrderCreateModalOpen(false);
     setDoctorAssignmentModalOpen(false);
     setOrderControlsModalOpen(true);
-  }
-
-  function openDoctorAssignmentPopup() {
-    if (!selectedOrderDetail) {
-      return;
-    }
-    setOrderCreateModalOpen(false);
-    setDoctorAssignmentModalOpen(true);
   }
 
   async function openPaymentReceipt(order) {
@@ -6324,7 +6330,7 @@ export function AdminStorefrontDashboard({
   }, [audit.category, audit.status, audit.source, currentPage, deferredSearch, session.accessToken]);
 
   useEffect(() => {
-    if (trendMode !== "live" || !session.accessToken) {
+    if (trendMode !== "weekly" || !session.accessToken) {
       return;
     }
 
@@ -6764,19 +6770,27 @@ export function AdminStorefrontDashboard({
     });
   })();
 
-  const liveTrend = (() => {
-    const placeholders = Array.from({ length: Math.max(0, 7 - liveSnapshots.length) }, (_, index) => ({
-      label: index === 0 ? "Live" : "",
-      total: 0,
-      volume: 0,
-      placeholder: true
-    }));
-    return [...placeholders, ...liveSnapshots];
+  const yearlyTrend = (() => {
+    const orders = data.orderDetails || [];
+    const now = new Date();
+    return Array.from({ length: 12 }, (_, index) => {
+      const monthDate = new Date(now.getFullYear(), index, 1);
+      const nextMonthDate = new Date(now.getFullYear(), index + 1, 1);
+      const monthOrders = orders.filter((order) => {
+        const created = new Date(order.created_at);
+        return !Number.isNaN(created.getTime()) && created >= monthDate && created < nextMonthDate;
+      });
+      return {
+        label: monthDate.toLocaleDateString("en-US", { month: "short" }),
+        total: monthOrders.reduce((sum, order) => sum + Number(order.total || 0), 0),
+        volume: monthOrders.length
+      };
+    });
   })();
 
-  const trendSeries = trendMode === "live" ? liveTrend : trendMode === "month" ? monthlyTrend : weeklyTrend;
+  const trendSeries = trendMode === "yearly" ? yearlyTrend : trendMode === "monthly" ? monthlyTrend : weeklyTrend;
   const chartMax = Math.max(...trendSeries.map((day) => day.total), 1);
-  const chartColors = ["#b9996d", "#d99860", "#d8cab6", "#344a6e", "#5c6d89", "#adb7c8", "#b9996d"];
+  const chartColors = ["#0e2955", "#15407f", "#1f5fb4", "#7d96c6", "#c5d4ec", "#8ab5f9", "#0e2955", "#15407f", "#1f5fb4", "#7d96c6", "#c5d4ec", "#8ab5f9"];
   const trendChartWidth = Math.max(720, trendSeries.length * 120);
   const trendChartHeight = 220;
   const trendChartPaddingX = 28;
@@ -8821,11 +8835,14 @@ export function AdminStorefrontDashboard({
                           <p className="section-kicker">Revenue and orders</p>
                           
                         </div>
-                        <div className="overview-v2-tabs" aria-label="Revenue range">
-                          <button className={`segment ${trendMode === "week" ? "active" : ""}`} type="button" onClick={() => setTrendMode("week")}>Week</button>
-                          <button className={`segment ${trendMode === "month" ? "active" : ""}`} type="button" onClick={() => setTrendMode("month")}>Month</button>
-                          <button className={`segment ${trendMode === "live" ? "active" : ""}`} type="button" onClick={() => { setTrendMode("live"); handleRefresh(); }}>Live</button>
-                        </div>
+                        <label className="overview-v2-trend-select" aria-label="Revenue range">
+                          <span className="sr-only">Revenue range</span>
+                          <select value={trendMode} onChange={(event) => setTrendMode(event.target.value)}>
+                            <option value="yearly">Yearly</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="weekly">Weekly</option>
+                          </select>
+                        </label>
                       </div>
                       <div className="overview-v2-revenue-layout">
                         <div className="chart-scroll">
@@ -8834,8 +8851,9 @@ export function AdminStorefrontDashboard({
                               <svg className="trend-chart-svg" viewBox={`0 0 ${trendChartWidth} ${trendChartHeight}`} role="img" aria-label={`Revenue and orders ${trendMode} trend`}>
                                 <defs>
                                   <linearGradient id={`trend-area-${trendMode}`} x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="0%" stopColor="#16356d" stopOpacity="0.28" />
-                                    <stop offset="100%" stopColor="#16356d" stopOpacity="0.04" />
+                                    <stop offset="0%" stopColor="#0e2955" stopOpacity="0.26" />
+                                    <stop offset="55%" stopColor="#2f5da8" stopOpacity="0.14" />
+                                    <stop offset="100%" stopColor="#0e2955" stopOpacity="0.02" />
                                   </linearGradient>
                                 </defs>
                                 {trendGridLines.map((y, index) => (
@@ -8881,7 +8899,7 @@ export function AdminStorefrontDashboard({
                                 <div className="trend-chart-note" key={`${trendMode}-note-${day.label || "slot"}-${index}`}>
                                   <strong>{formatCompactMoney(day.total, storeCurrency)}</strong>
                                   <span>{day.label}</span>
-                                  <small>{day.volume ? `${formatNumber(day.volume)} orders` : (trendMode === "live" ? "Loading" : "N/A")}</small>
+                                  <small>{day.volume ? `${formatNumber(day.volume)} orders` : "N/A"}</small>
                                 </div>
                               ))}
                             </div>
@@ -8889,7 +8907,7 @@ export function AdminStorefrontDashboard({
                         </div>
                         <aside className="overview-v2-summary-card">
                           <div>
-                            <span>{trendMode === "month" ? "Month revenue" : trendMode === "live" ? "Live captured revenue" : "Week revenue"}</span>
+                            <span>{trendMode === "yearly" ? "Year revenue" : trendMode === "monthly" ? "Month revenue" : "Week revenue"}</span>
                             <strong>{formatCompactMoney(overviewRevenueTotal, storeCurrency)}</strong>
                           </div>
                           <div className="overview-v2-summary-list">
@@ -10697,9 +10715,6 @@ export function AdminStorefrontDashboard({
                     <button className="icon-button order-header-action-button" type="button" title="Refund" aria-label="Refund" onClick={refundSelectedOrder} disabled={orderMutationLoading}>
                       <InlineIcon id="i-refresh-cw" />
                     </button>
-                    <button className="icon-button order-header-action-button" type="button" title="Assign Doctor" aria-label="Assign Doctor" onClick={openDoctorAssignmentPopup} disabled={orderMutationLoading}>
-                      <InlineIcon id="i-user" />
-                    </button>
                     <button className="pill-button danger" type="button" onClick={deleteSelectedOrder} disabled={orderMutationLoading}>
                       Delete Order
                     </button>
@@ -10902,8 +10917,8 @@ export function AdminStorefrontDashboard({
           <section className="detail-section stacked-order-popup" role="dialog" aria-modal="true" aria-label="Order controls">
             <div className="panel-header stacked-order-popup-header">
               <div>
-                <p className="section-kicker">Order controls</p>
-                <h3>Operational updates</h3>
+                
+                <h3>Update Order Status</h3>
               </div>
               <button className="icon-button" type="button" aria-label="Close order controls" onClick={() => setOrderControlsModalOpen(false)}>
                 <InlineIcon id="i-x" />
@@ -10920,12 +10935,7 @@ export function AdminStorefrontDashboard({
                   </select>
                 </div>
               </label>
-              <div className="detail-field">
-                <span>Doctor Assignment</span>
-                <button className="pill-button popup-link-button" type="button" onClick={openDoctorAssignmentPopup}>
-                  {selectedOrderDetail?.assigned_doctor?.display_name || "Select doctor"}
-                </button>
-              </div>
+              
               <label className="detail-field detail-field-wide">
                 <span>Customer Note</span>
                 <textarea value={selectedOrderNote} onChange={(event) => setSelectedOrderNote(event.target.value)} rows={4} />
@@ -10936,48 +10946,6 @@ export function AdminStorefrontDashboard({
               <button className="pill-button" type="button" onClick={() => setOrderControlsModalOpen(false)}>Cancel</button>
               <button className="button-primary" type="button" onClick={saveSelectedOrder} disabled={orderMutationLoading}>
                 {orderMutationLoading ? "Updating..." : "Save Changes"}
-              </button>
-            </div>
-          </section>
-        </div>
-        ) : null}
-
-        {doctorAssignmentModalOpen && selectedOrderDetail ? (
-        <div className="app-modal-layer app-modal-layer-nested app-modal-layer-top is-open">
-          <ModalScrim className="app-modal-backdrop nested" label="Close doctor assignment" onDismiss={() => setDoctorAssignmentModalOpen(false)} />
-          <section className="detail-section stacked-order-popup assignment-popup" role="dialog" aria-modal="true" aria-label="Assign doctor">
-            <div className="panel-header stacked-order-popup-header">
-              <div>
-                <p className="section-kicker">Doctor assignment</p>
-                <h3>Assign clinician to this order</h3>
-              </div>
-              <button className="icon-button" type="button" aria-label="Close doctor assignment" onClick={() => setDoctorAssignmentModalOpen(false)}>
-                <InlineIcon id="i-x" />
-              </button>
-            </div>
-            <div className="detail-form-grid">
-              <label className="detail-field detail-field-wide">
-                <span>Select doctor</span>
-                {orderAssignmentDoctorsQuery.isLoading ? <small className="product-field-note">Loading doctors...</small> : null}
-                {orderAssignmentDoctorsQuery.error ? <small className="product-field-note">Doctor list could not be refreshed. Cached doctors are shown.</small> : null}
-                <div className="select-wrap">
-                  <select value={selectedOrderDoctorId} onChange={(event) => setSelectedOrderDoctorId(event.target.value)}>
-                    <option value="">Select doctor</option>
-                    {popupAssignmentDoctors.map((doctor) => (
-                      <option key={doctor.user_id || doctor.id} value={doctor.user_id || doctor.id}>{doctor.display_name}</option>
-                    ))}
-                  </select>
-                </div>
-              </label>
-              <div className="detail-item-card detail-field-wide assignment-summary-card">
-                <strong>Current assignment</strong>
-                <span className="muted">{selectedOrderDetail?.assigned_doctor?.display_name || "No doctor assigned yet."}</span>
-              </div>
-            </div>
-            <div className="stacked-order-popup-actions">
-              <button className="pill-button" type="button" onClick={() => setDoctorAssignmentModalOpen(false)}>Cancel</button>
-              <button className="button-primary" type="button" onClick={assignSelectedOrderDoctor} disabled={orderMutationLoading || !selectedOrderDoctorId}>
-                {orderMutationLoading ? "Assigning..." : "Assign Doctor"}
               </button>
             </div>
           </section>

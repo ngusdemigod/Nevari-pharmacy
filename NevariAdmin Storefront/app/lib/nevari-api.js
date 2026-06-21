@@ -9,6 +9,23 @@ const SUBSCRIPTION_PLAN_DEFAULTS = {
   pro: { monthlyAmount: 10000 },
   nevari_access_pro: { monthlyAmount: 10000 },
 };
+const CUSTOMER_SETTINGS_DEFAULTS = {
+  displayName: "",
+  email: "",
+  phone: "",
+  address: "",
+  timezone: "UTC",
+  preferredConsultationType: "video",
+  preferredDoctorIds: [],
+  emailReminders: true,
+  appointmentReminders: true,
+  prescriptionAlerts: true,
+  paymentReceipts: true,
+  marketingOptIn: false,
+  refundTracking: true,
+  twoFactorEnabled: false,
+  savedMethods: [],
+};
 
 function readFiniteAmount(value, { divideBy = 1 } = {}) {
   const amount = Number(value);
@@ -386,6 +403,47 @@ export async function cancelSubscription(session) {
     body: {},
   });
   return persistSubscription(session?.user?.id, payload || {});
+}
+
+export function normalizeCustomerSettingsPayload(payload = {}) {
+  return {
+    ...CUSTOMER_SETTINGS_DEFAULTS,
+    ...payload,
+    displayName: String(payload?.displayName || payload?.display_name || "").trim(),
+    email: String(payload?.email || "").trim(),
+    phone: String(payload?.phone || "").trim(),
+    address: String(payload?.address || "").trim(),
+    timezone: String(payload?.timezone || "UTC").trim() || "UTC",
+    preferredConsultationType: String(payload?.preferredConsultationType || payload?.preferred_consultation_type || "video").trim() || "video",
+    preferredDoctorIds: Array.isArray(payload?.preferredDoctorIds || payload?.preferred_doctor_ids)
+      ? (payload.preferredDoctorIds || payload.preferred_doctor_ids).map((value) => String(value || "").trim()).filter(Boolean)
+      : [],
+    emailReminders: Boolean(payload?.emailReminders ?? payload?.email_reminders ?? true),
+    appointmentReminders: Boolean(payload?.appointmentReminders ?? payload?.appointment_reminders ?? true),
+    prescriptionAlerts: Boolean(payload?.prescriptionAlerts ?? payload?.prescription_alerts ?? true),
+    paymentReceipts: Boolean(payload?.paymentReceipts ?? payload?.payment_receipts ?? true),
+    marketingOptIn: Boolean(payload?.marketingOptIn ?? payload?.marketing_opt_in ?? false),
+    refundTracking: Boolean(payload?.refundTracking ?? payload?.refund_tracking ?? true),
+    twoFactorEnabled: Boolean(payload?.twoFactorEnabled ?? payload?.two_factor_enabled ?? false),
+    savedMethods: Array.isArray(payload?.savedMethods || payload?.saved_methods)
+      ? (payload.savedMethods || payload.saved_methods).map((value) => String(value || "").trim()).filter(Boolean)
+      : [],
+  };
+}
+
+export async function fetchCustomerSettings(session) {
+  const payload = await apiRequest(session, "/customers/me/settings", { suppressHttpError: true });
+  return normalizeCustomerSettingsPayload(payload || {});
+}
+
+export async function updateCustomerSettings(session, body = {}) {
+  const normalizedBody = normalizeCustomerSettingsPayload(body);
+  const payload = await apiRequest(session, "/customers/me/settings", {
+    method: "POST",
+    body: normalizedBody,
+    suppressHttpError: true,
+  });
+  return normalizeCustomerSettingsPayload(payload || normalizedBody);
 }
 
 export async function fetchCustomerMtmRequests(session) {

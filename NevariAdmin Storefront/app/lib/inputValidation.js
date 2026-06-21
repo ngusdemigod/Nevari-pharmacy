@@ -1,4 +1,6 @@
-const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f\u2028\u2029]/g;
+const HTML_TAGS = /<\/?[^>]+>/g;
+const SCRIPT_PROTOCOLS = /\b(?:javascript|vbscript|data\s*:\s*text\/html)\s*:/gi;
 const DANGEROUS_MARKUP = /[<>`]/g;
 const PRIVATE_HOST_PATTERNS = [
   /^localhost$/i,
@@ -12,7 +14,10 @@ const PRIVATE_HOST_PATTERNS = [
 
 export function sanitizeText(value, { max = 500, allowMarkup = false } = {}) {
   const text = String(value ?? "")
+    .normalize("NFKC")
     .replace(CONTROL_CHARS, " ")
+    .replace(HTML_TAGS, " ")
+    .replace(SCRIPT_PROTOCOLS, "")
     .replace(/\s+/g, " ")
     .trim();
   const cleaned = allowMarkup ? text : text.replace(DANGEROUS_MARKUP, "");

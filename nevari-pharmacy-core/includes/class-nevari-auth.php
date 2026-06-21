@@ -195,7 +195,7 @@ final class Nevari_Auth {
             return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
         }
 
-        if (self::frontend_requires_email_verification((string) $frontend['frontend_type'])) {
+        if (self::login_requires_email_verification($frontend)) {
             $challenge = self::create_login_challenge($user, $frontend);
             if (is_wp_error($challenge)) {
                 return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
@@ -818,6 +818,28 @@ final class Nevari_Auth {
 
     public static function frontend_requires_email_verification(string $frontend_type): bool {
         return in_array($frontend_type, ['storefront', 'doctors_dashboard'], true);
+    }
+
+    private static function login_requires_email_verification(array $frontend): bool {
+        $frontend_type = (string) ($frontend['frontend_type'] ?? '');
+        if (!self::frontend_requires_email_verification($frontend_type)) {
+            return false;
+        }
+
+        if ($frontend_type !== 'storefront') {
+            return true;
+        }
+
+        $frontend_url = strtolower((string) ($frontend['frontend_url'] ?? ''));
+        $frontend_origin = strtolower((string) ($frontend['frontend_origin'] ?? ''));
+        if (
+            strpos($frontend_url, '/admin/storefront') !== false
+            || strpos($frontend_origin, 'dash.nevarihealth.com') !== false
+        ) {
+            return false;
+        }
+
+        return true;
     }
 
     public static function create_login_challenge(WP_User $user, array $frontend) {

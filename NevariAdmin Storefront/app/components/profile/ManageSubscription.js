@@ -161,7 +161,7 @@ export default function ManageSubscription({
 
   return (
     <>
-      <article className="user-subscriptioncard">
+      <article className="user-subscriptioncard subscription-manage-card">
         <div className="subscription-top">
           <div className="plan-info">
             <span className="subscription-kicker">Subscription management</span>

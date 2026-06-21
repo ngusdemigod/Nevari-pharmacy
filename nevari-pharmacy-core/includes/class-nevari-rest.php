@@ -4,6 +4,8 @@ if (!defined('ABSPATH')) {
 }
 
 final class Nevari_Rest {
+    private const CUSTOMER_SETTINGS_META_KEY = '_nevari_customer_dashboard_settings';
+
     public static function init(): void {
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
     }
@@ -259,6 +261,19 @@ final class Nevari_Rest {
                 'methods' => WP_REST_Server::CREATABLE,
                 'callback' => [__CLASS__, 'customers_create'],
                 'permission_callback' => [__CLASS__, 'store_admin_required'],
+            ],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/customers/me/settings', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'customers_settings_show'],
+                'permission_callback' => [__CLASS__, 'auth_required'],
+            ],
+            [
+                'methods' => WP_REST_Server::EDITABLE,
+                'callback' => [__CLASS__, 'customers_settings_update'],
+                'permission_callback' => [__CLASS__, 'auth_required'],
             ],
         ]);
     }
@@ -3987,6 +4002,52 @@ final class Nevari_Rest {
         ], [], 201);
     }
 
+    public static function customers_settings_show(WP_REST_Request $request): WP_REST_Response {
+        $user_id = get_current_user_id();
+        if ($response = Nevari_Helpers::rate_limit('rest_customer_settings_read', 60, MINUTE_IN_SECONDS, ['user:' . $user_id])) {
+            return $response;
+        }
+        if (!$user_id || !Nevari_Helpers::is_patient($user_id)) {
+            return Nevari_Helpers::error('forbidden', 'Customer settings are only available to authenticated patients.', 403);
+        }
+
+        return Nevari_Helpers::success(self::customer_settings_payload($user_id));
+    }
+
+    public static function customers_settings_update(WP_REST_Request $request): WP_REST_Response {
+        $user_id = get_current_user_id();
+        if ($response = Nevari_Helpers::rate_limit('rest_customer_settings_write', 24, MINUTE_IN_SECONDS, ['user:' . $user_id])) {
+            return $response;
+        }
+        if (!$user_id || !Nevari_Helpers::is_patient($user_id)) {
+            return Nevari_Helpers::error('forbidden', 'Customer settings can only be updated by authenticated patients.', 403);
+        }
+
+        $params = Nevari_Helpers::get_json_params($request);
+        $settings = self::sanitize_customer_settings_payload($params, $user_id);
+        if (is_wp_error($settings)) {
+            return Nevari_Helpers::error(
+                $settings->get_error_code(),
+                $settings->get_error_message(),
+                (int) ($settings->get_error_data('status') ?: 422)
+            );
+        }
+
+        $display_name = trim((string) ($settings['displayName'] ?? ''));
+        if ($display_name !== '') {
+            wp_update_user([
+                'ID' => (int) $user_id,
+                'display_name' => $display_name,
+            ]);
+        }
+
+        update_user_meta($user_id, self::CUSTOMER_SETTINGS_META_KEY, $settings);
+        update_user_meta($user_id, 'billing_phone', (string) ($settings['phone'] ?? ''));
+        update_user_meta($user_id, 'billing_address_1', (string) ($settings['address'] ?? ''));
+
+        return Nevari_Helpers::success(self::customer_settings_payload($user_id));
+    }
+
     public static function doctors_update(WP_REST_Request $request): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('rest_doctors_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id()])) {
             return $response;
@@ -5993,9 +6054,136 @@ final class Nevari_Rest {
             'store_currency' => self::store_currency(),
             'store_timezone' => self::store_timezone(),
             'profile' => Nevari_Helpers::user_summary($user_id),
+            'settings' => self::customer_settings_payload($user_id),
             'prescriptions' => ['recent' => array_slice($prescriptions, 0, 5)],
             'appointments' => ['recent' => array_slice($appointments, 0, 5)],
         ]);
+    }
+
+    private static function customer_settings_payload(int $user_id): array {
+        $defaults = self::customer_settings_defaults($user_id);
+        $stored = get_user_meta($user_id, self::CUSTOMER_SETTINGS_META_KEY, true);
+        if (!is_array($stored)) {
+            return $defaults;
+        }
+
+        $sanitized = self::sanitize_customer_settings_payload($stored, $user_id, true);
+        if (is_wp_error($sanitized)) {
+            return $defaults;
+        }
+
+        return array_merge($defaults, $sanitized);
+    }
+
+    private static function customer_settings_defaults(int $user_id): array {
+        $user = get_user_by('id', $user_id);
+        $timezone = wp_timezone_string();
+        if (!$timezone) {
+            $timezone = 'UTC';
+        }
+
+        return [
+            'displayName' => $user ? (string) $user->display_name : '',
+            'email' => $user ? (string) $user->user_email : '',
+            'phone' => (string) get_user_meta($user_id, 'billing_phone', true),
+            'address' => (string) get_user_meta($user_id, 'billing_address_1', true),
+            'timezone' => $timezone,
+            'preferredConsultationType' => 'video',
+            'preferredDoctorIds' => [],
+            'emailReminders' => true,
+            'appointmentReminders' => true,
+            'prescriptionAlerts' => true,
+            'paymentReceipts' => true,
+            'marketingOptIn' => false,
+            'refundTracking' => true,
+            'twoFactorEnabled' => false,
+            'savedMethods' => [],
+        ];
+    }
+
+    private static function sanitize_customer_settings_payload(array $params, int $user_id, bool $allow_partial = false) {
+        $defaults = self::customer_settings_defaults($user_id);
+        $settings = $allow_partial ? [] : $defaults;
+
+        $text_fields = [
+            'displayName' => 120,
+            'email' => 254,
+            'phone' => 24,
+            'address' => 200,
+            'timezone' => 80,
+        ];
+        foreach ($text_fields as $field => $max_length) {
+            if (!array_key_exists($field, $params)) {
+                continue;
+            }
+            $value = (string) $params[$field];
+            $value = $field === 'address'
+                ? sanitize_textarea_field($value)
+                : sanitize_text_field($value);
+            $value = trim(wp_html_excerpt($value, $max_length, ''));
+            if ($field === 'email' && $value !== '' && !is_email($value)) {
+                return new WP_Error('validation_error', 'A valid notification email is required.', ['status' => 422]);
+            }
+            if ($field === 'phone') {
+                $value = preg_replace('/[^0-9+\-\s()]/', '', $value);
+            }
+            $settings[$field] = $value;
+        }
+
+        if (array_key_exists('preferredConsultationType', $params)) {
+            $preferred_consultation_type = sanitize_key((string) $params['preferredConsultationType']);
+            $allowed_types = ['video', 'phone', 'in_person'];
+            $settings['preferredConsultationType'] = in_array($preferred_consultation_type, $allowed_types, true)
+                ? $preferred_consultation_type
+                : $defaults['preferredConsultationType'];
+        }
+
+        if (array_key_exists('preferredDoctorIds', $params)) {
+            $doctor_ids = [];
+            if (is_array($params['preferredDoctorIds'])) {
+                foreach ($params['preferredDoctorIds'] as $raw_doctor_id) {
+                    $doctor_id = (int) preg_replace('/\D+/', '', (string) $raw_doctor_id);
+                    if ($doctor_id <= 0) {
+                        continue;
+                    }
+                    $doctor = get_user_by('id', $doctor_id);
+                    if ($doctor && in_array('doctor', (array) $doctor->roles, true)) {
+                        $doctor_ids[] = (string) $doctor_id;
+                    }
+                }
+            }
+            $settings['preferredDoctorIds'] = array_values(array_unique($doctor_ids));
+        }
+
+        $boolean_fields = [
+            'emailReminders',
+            'appointmentReminders',
+            'prescriptionAlerts',
+            'paymentReceipts',
+            'marketingOptIn',
+            'refundTracking',
+            'twoFactorEnabled',
+        ];
+        foreach ($boolean_fields as $field) {
+            if (array_key_exists($field, $params)) {
+                $settings[$field] = (bool) Nevari_Helpers::bool_param($params[$field]);
+            }
+        }
+
+        if (array_key_exists('savedMethods', $params)) {
+            $saved_methods = [];
+            if (is_array($params['savedMethods'])) {
+                foreach ($params['savedMethods'] as $raw_method) {
+                    $method = trim(wp_html_excerpt(sanitize_text_field((string) $raw_method), 80, ''));
+                    if ($method !== '') {
+                        $saved_methods[] = $method;
+                    }
+                }
+            }
+            $settings['savedMethods'] = array_values(array_unique($saved_methods));
+        }
+
+        return $settings;
     }
 
     public static function dashboard_doctor(WP_REST_Request $request): WP_REST_Response {

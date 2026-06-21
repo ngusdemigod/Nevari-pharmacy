@@ -9,6 +9,18 @@ function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function resolveRuntimeBaseUrl(value) {
+  const configured = configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "");
+  const normalized = normalizeBaseUrl(value);
+  if (!normalized) {
+    return configured;
+  }
+  if (normalized === normalizeBaseUrl(DEFAULT_NEVARI_BASE_URL) && configured !== normalized) {
+    return configured;
+  }
+  return normalized;
+}
+
 function configuredBaseUrl(value) {
   return normalizeBaseUrl(value || DEFAULT_NEVARI_BASE_URL);
 }
@@ -50,7 +62,7 @@ export function defaultSession(config) {
   const origin = hasWindow ? currentOriginValue() : "";
   const href = hasWindow ? window.location.href : "";
   return {
-    baseUrl: configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+    baseUrl: resolveRuntimeBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
     frontendType: config.type,
     frontendOrigin: origin,
     frontendUrl: origin === "null" ? "null" : href,
@@ -80,7 +92,7 @@ export function loadSession(config) {
     const adminSession = JSON.parse(localStorage.getItem("nevari_admin_storefront_session") || "{}");
     const isSharedFrontend = config.type !== "storefront";
     const sharedConnection = isSharedFrontend ? {
-      baseUrl: ownSession.baseUrl || adminSession.baseUrl || configuredBaseUrl(process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
+      baseUrl: resolveRuntimeBaseUrl(ownSession.baseUrl || adminSession.baseUrl || process.env.NEXT_PUBLIC_NEVARI_BASE_URL || ""),
       frontendOrigin: ownSession.frontendOrigin || adminSession.frontendOrigin || "",
       frontendUrl: ownSession.frontendUrl || adminSession.frontendUrl || "",
       paired: Boolean(ownSession.paired || adminSession.paired),
@@ -90,11 +102,12 @@ export function loadSession(config) {
     const nextSession = { ...defaultSession(config), ...sharedConnection, ...ownSession, frontendType: config.type };
 
     if (isSharedFrontend) {
-      nextSession.baseUrl = sharedConnection.baseUrl;
+      nextSession.baseUrl = resolveRuntimeBaseUrl(sharedConnection.baseUrl);
       nextSession.paired = true;
       nextSession.siteName = sharedConnection.siteName;
       nextSession.siteLogo = sharedConnection.siteLogo;
     }
+    nextSession.baseUrl = resolveRuntimeBaseUrl(nextSession.baseUrl);
     nextSession.paired = true;
 
     // Origin is request context, not persisted connection data.
