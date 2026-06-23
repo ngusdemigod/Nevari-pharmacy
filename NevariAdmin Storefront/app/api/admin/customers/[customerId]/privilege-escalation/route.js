@@ -9,7 +9,7 @@ import {
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
 const SESSION_MARKER = "server-session";
-const ALLOWED_TARGET_ROLES = new Set(["administrator", "doctor", "pharmacist"]);
+const ALLOWED_TARGET_ROLES = new Set(["doctor", "pharmacist", "customer"]);
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -144,11 +144,6 @@ async function upstreamJson(request, session, path, { method = "GET", body } = {
   return { ok: true, status: response.status, payload: payload || { success: true } };
 }
 
-function isMissingRouteResult(result) {
-  const code = String(result?.payload?.code || result?.payload?.error?.code || "").trim().toLowerCase();
-  return result?.status === 404 || code === "rest_no_route";
-}
-
 export async function POST(request, { params }) {
   try {
     assertFrontendRequest(request);
@@ -198,7 +193,7 @@ export async function POST(request, { params }) {
     }
     const viewer = meResult.payload?.data?.user || meResult.payload?.data || null;
     if (!isAdmin(viewer)) {
-      return Response.json({ success: false, error: { message: "Only admins can migrate customer privileges." } }, { status: 403 });
+      return Response.json({ success: false, error: { message: "Only admins can change user roles." } }, { status: 403 });
     }
 
     const verifyResult = await upstreamJson(request, session, "/auth/verify-code", {
@@ -215,50 +210,29 @@ export async function POST(request, { params }) {
       return Response.json(verifyResult.payload, { status: verifyResult.status || 400 });
     }
 
-    const escalationAttempts = [
-      { path: `/customers/${encodeURIComponent(customerId)}/privilege-escalation`, method: "POST", body: { target_role: targetRole } },
-      { path: `/customers/${encodeURIComponent(customerId)}/escalate-role`, method: "POST", body: { target_role: targetRole } },
-      { path: `/customers/${encodeURIComponent(customerId)}/role`, method: "PUT", body: { role: targetRole } },
-      { path: `/customers/${encodeURIComponent(customerId)}`, method: "PUT", body: { role: targetRole } }
-    ];
-
-    let lastFailure = null;
-    for (const attempt of escalationAttempts) {
-      const result = await upstreamJson(request, session, attempt.path, {
-        method: attempt.method,
-        body: {
-          ...attempt.body,
-          verified_by_user_id: viewer?.id || viewer?.user_id || ""
-        }
-      });
-      if (result.ok) {
-        return Response.json({
-          success: true,
-          data: {
-            customer: result.payload?.data?.customer || result.payload?.data || null,
-            target_role: targetRole,
-            message: result.payload?.data?.message || `Customer migrated to ${targetRole}.`
-          }
-        });
+    const roleResult = await upstreamJson(request, session, `/admin/users/${encodeURIComponent(customerId)}/role`, {
+      method: "POST",
+      body: {
+        target_role: targetRole,
+        verified_by_user_id: viewer?.id || viewer?.user_id || ""
       }
-      if (!isMissingRouteResult(result)) {
-        return Response.json(result.payload, { status: result.status || 400 });
-      }
-      lastFailure = result;
+    });
+    if (!roleResult.ok) {
+      return Response.json(roleResult.payload, { status: roleResult.status || 400 });
     }
 
-    return Response.json(
-      {
-        success: false,
-        error: {
-          message: lastFailure?.payload?.error?.message || "Customer privilege escalation is not available on the connected pharmacy server."
-        }
-      },
-      { status: 501 }
-    );
+    return Response.json({
+      success: true,
+      data: {
+        user: roleResult.payload?.data?.user || null,
+        from_role: roleResult.payload?.data?.from_role || "",
+        target_role: targetRole,
+        message: roleResult.payload?.data?.message || `User updated to ${targetRole}.`
+      }
+    });
   } catch (error) {
     return Response.json(
-      { success: false, error: { message: error?.message || "Customer privilege escalation failed." } },
+      { success: false, error: { message: error?.message || "User role change failed." } },
       { status: Number(error?.status || 400) }
     );
   }

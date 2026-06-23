@@ -135,9 +135,18 @@ export default function RoleLoginPage({ config }) {
   const [googleAuth, setGoogleAuth] = useState({ checked: false, enabled: false, clientId: "" });
   const googleButtonRef = useRef(null);
   const [authSecuritySettings, setAuthSecuritySettings] = useState(() => loadAuthSecuritySettings());
+  const querySsoTransactionId = String(searchParams.get("sso_transaction_id") || "").trim();
+  const queryNextPath = String(searchParams.get("next") || "").trim();
+  const querySource = String(searchParams.get("from") || "").trim().toLowerCase();
+  const ssoClientId = String(searchParams.get("client_id") || "").trim();
+  const ssoRedirectUri = String(searchParams.get("redirect_uri") || "").trim();
+  const ssoState = String(searchParams.get("state") || "").trim();
+  const ssoReturnTo = String(searchParams.get("return_to") || "").trim();
   const dashboardName = authDashboardName(config);
   const screenTitle = authScreenTitle(view);
   const globalTwoStepVerificationEnabled = Boolean(authSecuritySettings.globalTwoStepVerification);
+  const hasConsultationBookingIntent = querySource === "consultation";
+  const hasSubscriptionIntent = querySource === "subscription";
   const showNotice = (message, tone = noticeTone(message)) => {
     if (!message) {
       return;
@@ -145,6 +154,76 @@ export default function RoleLoginPage({ config }) {
     setNotice({ message, tone });
   };
   const clearNotice = () => setNotice(null);
+  const activeSsoTransactionId = verification.ssoTransactionId || querySsoTransactionId;
+  const hasCheckoutSsoContext = Boolean(ssoClientId && ssoRedirectUri && ssoState);
+
+  function buildAuthRequestBody(extra = {}, activeSession = session) {
+    const body = {
+      ...frontendContext(activeSession),
+      ...extra
+    };
+    if (activeSsoTransactionId) {
+      body.sso_transaction_id = activeSsoTransactionId;
+    }
+    if (hasCheckoutSsoContext) {
+      body.client_id = ssoClientId;
+      body.redirect_uri = ssoRedirectUri;
+      body.state = ssoState;
+      if (ssoReturnTo) {
+        body.return_to = ssoReturnTo;
+      }
+    }
+    return body;
+  }
+
+  function startVerification(data = {}) {
+    setVerification((current) => ({
+      challengeId: data.challenge_id || "",
+      maskedEmail: data.masked_email || "",
+      code: "",
+      ssoTransactionId: data.sso_transaction_id || activeSsoTransactionId,
+      returnPath: data.return_path || current.returnPath || queryNextPath || ssoReturnTo || config.dashboardPath
+    }));
+    setView("verify");
+    setResendCooldown(Number(data.resend_cooldown || RESEND_CODE_COOLDOWN_SECONDS));
+    showNotice(`Enter the code sent to ${data.masked_email || "your email"}.`, "warning");
+  }
+
+  function completeAuthenticatedResponse(payload, fallbackDestination) {
+    const next = {
+      ...session,
+      accessToken: payload.data.access_token,
+      refreshToken: payload.data.refresh_token,
+      expiresAt: Date.now() + (Number(payload.data.expires_in || 0) * 1000),
+      user: payload.data.user
+    };
+    saveSession(config, next);
+    setSession(next);
+    if (payload.data.redirect_url) {
+      window.location.assign(payload.data.redirect_url);
+      return;
+    }
+    const destination = fallbackDestination || queryNextPath || config.dashboardPath;
+    router.prefetch(destination);
+    router.replace(destination);
+  }
+
+  useEffect(() => {
+    if (!hasConsultationBookingIntent && !hasSubscriptionIntent) {
+      return;
+    }
+    setNotice((current) => {
+      if (current?.message && current.message !== config.loginPrompt) {
+        return current;
+      }
+      return {
+        message: hasConsultationBookingIntent
+          ? "Sign in to continue your consultation booking."
+          : "Sign in to continue your subscription checkout.",
+        tone: "warning"
+      };
+    });
+  }, [config.loginPrompt, hasConsultationBookingIntent, hasSubscriptionIntent]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -179,18 +258,38 @@ export default function RoleLoginPage({ config }) {
     let active = true;
     async function initializeSession() {
       const next = loadSession(config);
-      router.prefetch(config.dashboardPath);
+      router.prefetch(queryNextPath || config.dashboardPath);
       if (!active) return;
       setSession(next);
       if (isSessionUsable(next)) {
-        router.replace(config.dashboardPath);
+        if (hasCheckoutSsoContext) {
+          try {
+            const response = await fetch(buildUrl(next, "/sso/wordpress/start"), {
+              method: "POST",
+              headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                Authorization: next.accessToken ? `Bearer ${next.accessToken}` : "",
+                "X-Nevari-Frontend-Type": next.frontendType,
+                "X-Nevari-Frontend-Origin": window.location.origin
+              },
+              body: JSON.stringify(buildAuthRequestBody({}, next))
+            });
+            const payload = await response.json().catch(() => null);
+            if (active && response.ok && payload?.success && payload?.data?.redirect_url) {
+              window.location.assign(payload.data.redirect_url);
+              return;
+            }
+          } catch {}
+        }
+        router.replace(queryNextPath || config.dashboardPath);
       }
     }
     initializeSession();
     return () => {
       active = false;
     };
-  }, [config, router]);
+  }, [config, hasCheckoutSsoContext, queryNextPath, router, ssoClientId, ssoRedirectUri, ssoReturnTo, ssoState]);
 
   useEffect(() => {
     const challengeId = String(searchParams.get("challenge_id") || "").trim();
@@ -198,20 +297,14 @@ export default function RoleLoginPage({ config }) {
       return;
     }
 
-    const maskedEmail = String(searchParams.get("masked_email") || "").trim();
-    const ssoTransactionId = String(searchParams.get("sso_transaction_id") || "").trim();
-    const returnPath = String(searchParams.get("next") || "").trim();
-    setVerification({
-      challengeId,
-      maskedEmail,
-      code: "",
-      ssoTransactionId,
-      returnPath
+    startVerification({
+      challenge_id: challengeId,
+      masked_email: String(searchParams.get("masked_email") || "").trim(),
+      sso_transaction_id: querySsoTransactionId,
+      return_path: queryNextPath || ssoReturnTo || config.dashboardPath,
+      resend_cooldown: RESEND_CODE_COOLDOWN_SECONDS
     });
-    setView("verify");
-    setResendCooldown(RESEND_CODE_COOLDOWN_SECONDS);
-    showNotice(`Enter the code sent to ${maskedEmail || "your email"}.`, "warning");
-  }, [searchParams]);
+  }, [config.dashboardPath, queryNextPath, querySsoTransactionId, searchParams, ssoReturnTo]);
 
   useEffect(() => {
     const viewLabel = view === "verify" ? "Verify Login" : view === "reset" ? "Reset Password" : view === "register" ? "Create Account" : "Sign In";
@@ -311,12 +404,11 @@ export default function RoleLoginPage({ config }) {
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
         },
-        body: JSON.stringify({
+        body: JSON.stringify(buildAuthRequestBody({
           username,
           password,
-          ...frontendContext(session),
           ...buildTwoStepVerificationRequest(authSecuritySettings)
-        })
+        }))
       });
       const payload = await response.json();
       if (!response.ok || !payload?.success) {
@@ -328,27 +420,11 @@ export default function RoleLoginPage({ config }) {
         return;
       }
       if (payload.data.verification_required) {
-        setVerification({
-          challengeId: payload.data.challenge_id,
-          maskedEmail: payload.data.masked_email || "",
-          code: ""
-        });
+        startVerification(payload.data);
         setPassword("");
-        setView("verify");
-        setResendCooldown(Number(payload.data.resend_cooldown || RESEND_CODE_COOLDOWN_SECONDS));
-        showNotice(`Enter the code sent to ${payload.data.masked_email || "your email"}.`, "warning");
         return;
       }
-      const next = {
-        ...session,
-        accessToken: payload.data.access_token,
-        refreshToken: payload.data.refresh_token,
-        expiresAt: Date.now() + (Number(payload.data.expires_in || 0) * 1000),
-        user: payload.data.user
-      };
-      saveSession(config, next);
-      router.prefetch(config.dashboardPath);
-      router.replace(config.dashboardPath);
+      completeAuthenticatedResponse(payload, queryNextPath || config.dashboardPath);
     } finally {
       setLoadingAction("");
     }
@@ -369,11 +445,10 @@ export default function RoleLoginPage({ config }) {
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
         },
-        body: JSON.stringify({
+        body: JSON.stringify(buildAuthRequestBody({
           credential,
-          ...frontendContext(session),
           ...buildTwoStepVerificationRequest(authSecuritySettings)
-        })
+        }))
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
@@ -385,26 +460,10 @@ export default function RoleLoginPage({ config }) {
         return;
       }
       if (payload.data?.verification_required) {
-        setVerification({
-          challengeId: payload.data.challenge_id,
-          maskedEmail: payload.data.masked_email || "",
-          code: ""
-        });
-        setView("verify");
-        setResendCooldown(Number(payload.data.resend_cooldown || RESEND_CODE_COOLDOWN_SECONDS));
-        showNotice(`Enter the code sent to ${payload.data.masked_email || "your email"}.`, "warning");
+        startVerification(payload.data);
         return;
       }
-      const next = {
-        ...session,
-        accessToken: payload.data.access_token,
-        refreshToken: payload.data.refresh_token,
-        expiresAt: Date.now() + (Number(payload.data.expires_in || 0) * 1000),
-        user: payload.data.user
-      };
-      saveSession(config, next);
-      router.prefetch(config.dashboardPath);
-      router.replace(config.dashboardPath);
+      completeAuthenticatedResponse(payload, queryNextPath || config.dashboardPath);
     } finally {
       setLoadingAction("");
     }
@@ -422,12 +481,11 @@ export default function RoleLoginPage({ config }) {
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
         },
-        body: JSON.stringify({
+        body: JSON.stringify(buildAuthRequestBody({
           challenge_id: verification.challengeId,
           code: verification.code,
-          sso_transaction_id: verification.ssoTransactionId,
-          ...frontendContext(session)
-        })
+          sso_transaction_id: activeSsoTransactionId
+        }))
       });
       const payload = await response.json();
       if (!response.ok || !payload?.success) {
@@ -438,17 +496,7 @@ export default function RoleLoginPage({ config }) {
         showNotice(payload?.error?.message || "Verification failed.", "error");
         return;
       }
-      const next = {
-        ...session,
-        accessToken: payload.data.access_token,
-        refreshToken: payload.data.refresh_token,
-        expiresAt: Date.now() + (Number(payload.data.expires_in || 0) * 1000),
-        user: payload.data.user
-      };
-      saveSession(config, next);
-      const destination = verification.returnPath || config.dashboardPath;
-      router.prefetch(destination);
-      router.replace(destination);
+      completeAuthenticatedResponse(payload, verification.returnPath || config.dashboardPath);
     } finally {
       setLoadingAction("");
     }
@@ -550,13 +598,12 @@ export default function RoleLoginPage({ config }) {
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
         },
-        body: JSON.stringify({
+        body: JSON.stringify(buildAuthRequestBody({
           first_name: registration.firstName,
           last_name: registration.lastName,
           email: registration.email,
-          password: registration.password,
-          ...frontendContext(session)
-        })
+          password: registration.password
+        }))
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
@@ -567,7 +614,16 @@ export default function RoleLoginPage({ config }) {
         showNotice(payload?.error?.message || "Account creation failed.", "error");
         return;
       }
-      showNotice(config.loginPrompt || "Sign in to continue.", "success");
+      if (payload.data?.verification_required) {
+        startVerification(payload.data);
+        setUsername(registration.email);
+        return;
+      }
+      if (payload.data?.access_token) {
+        completeAuthenticatedResponse(payload, queryNextPath || config.dashboardPath);
+        return;
+      }
+      showNotice("Account already exists. Sign in to continue.", "warning");
       setUsername(registration.email);
       setPassword("");
       setView("login");
@@ -588,7 +644,9 @@ export default function RoleLoginPage({ config }) {
             {view !== "verify" ? <h1 className="auth-title">{screenTitle}</h1> : null}
             {view === "login" ? (
               <form className="auth-form auth-reference-form" onSubmit={signIn}>
-                {globalTwoStepVerificationEnabled ? <p className="auth-subtitle">Two-step verification is enabled for this dashboard. After password sign-in, a one-time code will be sent to the account email.</p> : null}
+                {hasConsultationBookingIntent ? <p className="auth-subtitle">Sign in to continue your consultation booking. Your selected date, time, and reason will be ready on the appointment page.</p> : null}
+                {hasSubscriptionIntent ? <p className="auth-subtitle">Sign in to continue your subscription checkout. Your selected plan will resume automatically after authentication.</p> : null}
+                
                 <label className="form-group"><span>Email</span><div className="input-wrap"><input value={username} onChange={(event) => setUsername(event.target.value)} required /></div></label>
                 <label className="form-group"><span>Password</span><div className="input-wrap"><input type={passwordVisible ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} required /><button className="input-suffix auth-toggle-button" type="button" onClick={() => setPasswordVisible((value) => !value)}>{passwordVisible ? "Hide" : "Show"}</button></div></label>
                 <div className="auth-actions"><button className="auth-primary-button" type="submit" disabled={loadingAction === "signin"}><AuthButtonContent loading={loadingAction === "signin"} loadingText="Signing in..." idleText="Sign In" /></button></div>

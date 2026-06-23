@@ -195,52 +195,12 @@ final class Nevari_Auth {
             return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
         }
 
-        if (self::login_requires_email_verification($frontend)) {
-            $challenge = self::create_login_challenge($user, $frontend);
-            if (is_wp_error($challenge)) {
-                return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
-            }
-
-            Nevari_Audit::log('security', 'nevari', 'auth.verification_code_sent', 'success', [
-                'actor_user_id' => (int) $user->ID,
-                'related_user_id' => (int) $user->ID,
-                'message' => 'Login verification code sent.',
-                'metadata' => [
-                    'frontend_type' => $frontend['frontend_type'],
-                    'frontend_origin' => $frontend['frontend_origin'],
-                ],
-            ]);
-
-            return Nevari_Helpers::success([
-                'verification_required' => true,
-                'challenge_id' => $challenge['challenge_id'],
-                'masked_email' => self::mask_email((string) $user->user_email),
-                'expires_in' => $challenge['expires_in'],
-                'resend_cooldown' => self::RESEND_CODE_COOLDOWN_SECONDS,
-            ]);
-        }
-
-        $tokens = self::issue_token_pair((int) $user->ID, $frontend);
-        Nevari_Audit::log('security', 'nevari', 'auth.login_success', 'success', [
-            'actor_user_id' => (int) $user->ID,
-            'related_user_id' => (int) $user->ID,
-            'message' => 'API login successful.',
-            'metadata' => [
-                'frontend_type' => $frontend['frontend_type'],
-                'frontend_origin' => $frontend['frontend_origin'],
-            ],
-        ]);
-
-        return Nevari_Helpers::success([
-            'access_token' => $tokens['access_token'],
-            'refresh_token' => $tokens['refresh_token'],
-            'expires_in' => $tokens['expires_in'],
-            'frontend' => [
-                'type' => $frontend['frontend_type'],
-                'origin' => $frontend['frontend_origin'],
-                'url' => $frontend['frontend_url'],
-            ],
-            'user' => self::format_user($user),
+        return self::complete_authenticated_session($user, $frontend, $params, [
+            'verification_action' => 'auth.verification_code_sent',
+            'verification_message' => 'Login verification code sent.',
+            'success_action' => 'auth.login_success',
+            'success_message' => 'API login successful.',
+            'issued_for' => 'direct_login',
         ]);
     }
 
@@ -326,27 +286,13 @@ final class Nevari_Auth {
         }
 
         self::store_google_profile($user, $google_payload);
-        $tokens = self::issue_token_pair((int) $user->ID, $frontend, ['issued_for' => 'google_login', 'source_app' => 'google_login']);
-        Nevari_Audit::log('security', 'nevari', 'auth.google_login_success', 'success', [
-            'actor_user_id' => (int) $user->ID,
-            'related_user_id' => (int) $user->ID,
-            'message' => 'Google login successful.',
-            'metadata' => [
-                'frontend_type' => $frontend['frontend_type'],
-                'frontend_origin' => $frontend['frontend_origin'],
-            ],
-        ]);
-
-        return Nevari_Helpers::success([
-            'access_token' => $tokens['access_token'],
-            'refresh_token' => $tokens['refresh_token'],
-            'expires_in' => $tokens['expires_in'],
-            'frontend' => [
-                'type' => $frontend['frontend_type'],
-                'origin' => $frontend['frontend_origin'],
-                'url' => $frontend['frontend_url'],
-            ],
-            'user' => self::format_user($user),
+        return self::complete_authenticated_session($user, $frontend, $params, [
+            'verification_action' => 'auth.verification_code_sent',
+            'verification_message' => 'Google login verification code sent.',
+            'success_action' => 'auth.google_login_success',
+            'success_message' => 'Google login successful.',
+            'issued_for' => 'google_login',
+            'source_app' => 'google_login',
         ]);
     }
 
@@ -409,27 +355,10 @@ final class Nevari_Auth {
         if (is_wp_error($issue_context)) {
             return Nevari_Helpers::error($issue_context->get_error_code(), $issue_context->get_error_message(), 403);
         }
-        $tokens = self::issue_token_pair((int) $user->ID, $frontend, is_array($issue_context) ? $issue_context : []);
-        Nevari_Audit::log('security', 'nevari', 'auth.login_success', 'success', [
-            'actor_user_id' => (int) $user->ID,
-            'related_user_id' => (int) $user->ID,
-            'message' => 'API login successful after email verification.',
-            'metadata' => [
-                'frontend_type' => $frontend['frontend_type'],
-                'frontend_origin' => $frontend['frontend_origin'],
-            ],
-        ]);
-
-        return Nevari_Helpers::success([
-            'access_token' => $tokens['access_token'],
-            'refresh_token' => $tokens['refresh_token'],
-            'expires_in' => $tokens['expires_in'],
-            'frontend' => [
-                'type' => $frontend['frontend_type'],
-                'origin' => $frontend['frontend_origin'],
-                'url' => $frontend['frontend_url'],
-            ],
-            'user' => self::format_user($user),
+        return self::build_authenticated_success_response($user, $frontend, $params, is_array($issue_context) ? $issue_context : [], [
+            'success_action' => 'auth.login_success',
+            'success_message' => 'API login successful after email verification.',
+            'issued_for' => 'verified_login',
         ]);
     }
 
@@ -542,12 +471,25 @@ final class Nevari_Auth {
         update_user_meta((int) $user_id, 'billing_last_name', $last_name);
         update_user_meta((int) $user_id, 'billing_email', $email);
 
+        $user = get_user_by('id', (int) $user_id);
+        if (!$user instanceof WP_User) {
+            return Nevari_Helpers::error('customer_create_failed', 'The customer account could not be loaded after registration.', 500);
+        }
+
         Nevari_Audit::log('security', 'nevari', 'auth.customer_registered', 'success', [
             'related_user_id' => (int) $user_id,
             'message' => 'Customer self-registration completed.',
         ]);
 
-        return Nevari_Helpers::success(['created' => true], [], 201);
+        return self::complete_authenticated_session($user, $frontend, $params, [
+            'verification_action' => 'auth.verification_code_sent',
+            'verification_message' => 'Registration verification code sent.',
+            'success_action' => 'auth.customer_registered',
+            'success_message' => 'Customer self-registration completed.',
+            'issued_for' => 'customer_registration',
+            'source_app' => 'customer_registration',
+            'status' => 201,
+        ]);
     }
 
     public static function refresh(WP_REST_Request $request): WP_REST_Response {
@@ -814,6 +756,80 @@ final class Nevari_Auth {
             'expires_in' => $challenge['expires_in'],
             'resend_cooldown' => self::RESEND_CODE_COOLDOWN_SECONDS,
         ]);
+    }
+
+    private static function complete_authenticated_session(WP_User $user, array $frontend, array $params, array $options = []): WP_REST_Response {
+        if (self::login_requires_email_verification($frontend)) {
+            $challenge = self::create_login_challenge($user, $frontend);
+            if (is_wp_error($challenge)) {
+                return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
+            }
+
+            Nevari_Audit::log('security', 'nevari', $options['verification_action'] ?? 'auth.verification_code_sent', 'success', [
+                'actor_user_id' => (int) $user->ID,
+                'related_user_id' => (int) $user->ID,
+                'message' => $options['verification_message'] ?? 'Verification code sent.',
+                'metadata' => [
+                    'frontend_type' => $frontend['frontend_type'],
+                    'frontend_origin' => $frontend['frontend_origin'],
+                ],
+            ]);
+
+            return Nevari_Helpers::success([
+                'verification_required' => true,
+                'challenge_id' => $challenge['challenge_id'],
+                'masked_email' => self::mask_email((string) $user->user_email),
+                'sso_transaction_id' => isset($params['sso_transaction_id']) ? sanitize_text_field((string) $params['sso_transaction_id']) : '',
+                'expires_in' => $challenge['expires_in'],
+                'resend_cooldown' => self::RESEND_CODE_COOLDOWN_SECONDS,
+            ], [], (int) ($options['status'] ?? 200));
+        }
+
+        return self::build_authenticated_success_response($user, $frontend, $params, [
+            'issued_for' => sanitize_key((string) ($options['issued_for'] ?? 'direct_login')),
+            'source_app' => sanitize_key((string) ($options['source_app'] ?? ($options['issued_for'] ?? 'direct_login'))),
+        ], $options);
+    }
+
+    private static function build_authenticated_success_response(WP_User $user, array $frontend, array $params, array $issue_context = [], array $options = []): WP_REST_Response {
+        $tokens = self::issue_token_pair((int) $user->ID, $frontend, $issue_context);
+
+        $payload = [
+            'access_token' => $tokens['access_token'],
+            'refresh_token' => $tokens['refresh_token'],
+            'expires_in' => $tokens['expires_in'],
+            'frontend' => [
+                'type' => $frontend['frontend_type'],
+                'origin' => $frontend['frontend_origin'],
+                'url' => $frontend['frontend_url'],
+            ],
+            'user' => self::format_user($user),
+        ];
+
+        if (class_exists('Nevari_SSO')) {
+            $wordpress_sso = Nevari_SSO::maybe_issue_wordpress_auth_code($user, $frontend, array_merge($params, [
+                'session_family_uuid' => $tokens['session_family'] ?? '',
+            ]));
+            if (is_wp_error($wordpress_sso)) {
+                return Nevari_Helpers::error($wordpress_sso->get_error_code(), $wordpress_sso->get_error_message(), 403);
+            }
+            if (is_array($wordpress_sso) && !empty($wordpress_sso['redirect_url'])) {
+                $payload['redirect_url'] = (string) $wordpress_sso['redirect_url'];
+                $payload['sso_exchange_required'] = true;
+            }
+        }
+
+        Nevari_Audit::log('security', 'nevari', $options['success_action'] ?? 'auth.login_success', 'success', [
+            'actor_user_id' => (int) $user->ID,
+            'related_user_id' => (int) $user->ID,
+            'message' => $options['success_message'] ?? 'Authentication successful.',
+            'metadata' => [
+                'frontend_type' => $frontend['frontend_type'],
+                'frontend_origin' => $frontend['frontend_origin'],
+            ],
+        ]);
+
+        return Nevari_Helpers::success($payload, [], (int) ($options['status'] ?? 200));
     }
 
     public static function frontend_requires_email_verification(string $frontend_type): bool {

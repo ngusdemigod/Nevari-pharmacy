@@ -5,9 +5,11 @@ if (!defined('ABSPATH')) {
 
 final class Nevari_SSO {
     private const TRANSACTION_TTL_SECONDS = 180;
+    private const AUTHORIZATION_CODE_TTL_SECONDS = 90;
     private const WORDPRESS_SSO_ACTION = 'nevari_sso_action';
     private const LAST_ROLE_META_KEY = 'nevari_last_frontend_role';
     private const ACTIVE_FAMILY_META_KEY = 'nevari_active_session_family';
+    private const DASHBOARD_USER_META_KEY = 'nevari_dashboard_user_id';
 
     public static function init(): void {
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
@@ -43,6 +45,18 @@ final class Nevari_SSO {
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/sso/status', [
             'methods' => WP_REST_Server::READABLE,
             'callback' => [__CLASS__, 'status'],
+            'permission_callback' => '__return_true',
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/sso/verify-code', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'verify_wordpress_auth_code'],
+            'permission_callback' => '__return_true',
+        ]);
+
+        register_rest_route('nevari-sso/v1', '/callback', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'wordpress_sso_callback'],
             'permission_callback' => '__return_true',
         ]);
     }
@@ -205,6 +219,247 @@ final class Nevari_SSO {
             'issued_for' => 'sso_dashboard',
             'source_app' => (string) $row->source_app,
         ];
+    }
+
+    public static function maybe_issue_wordpress_auth_code(WP_User $user, array $frontend, array $params = []) {
+        $client_id = isset($params['client_id']) ? sanitize_text_field((string) $params['client_id']) : '';
+        $redirect_uri = self::normalize_redirect_uri(isset($params['redirect_uri']) ? (string) $params['redirect_uri'] : '');
+        $state = isset($params['state']) ? sanitize_text_field((string) $params['state']) : '';
+
+        if ($client_id === '' && $redirect_uri === '' && $state === '') {
+            return null;
+        }
+        if ($client_id === '' || $redirect_uri === '' || $state === '') {
+            return new WP_Error('validation_error', 'client_id, redirect_uri, and state are required for checkout SSO.');
+        }
+        if ((string) ($frontend['frontend_type'] ?? '') !== 'patient_dashboard') {
+            return new WP_Error('forbidden', 'Checkout SSO is available only for the customer dashboard.');
+        }
+
+        $expected_client_id = self::sso_client_id();
+        if ($expected_client_id === '' || self::sso_client_secret() === '') {
+            return new WP_Error('sso_not_configured', 'Checkout SSO is not configured.');
+        }
+        if (!hash_equals($expected_client_id, $client_id)) {
+            return new WP_Error('invalid_client', 'The SSO client is not authorized.');
+        }
+
+        $expected_redirect_uri = self::normalize_redirect_uri(self::wordpress_callback_url());
+        if ($expected_redirect_uri === '' || $redirect_uri !== $expected_redirect_uri) {
+            return new WP_Error('invalid_redirect_uri', 'The SSO redirect URI is invalid.');
+        }
+
+        $return_to = self::sanitize_return_path(isset($params['return_to']) ? (string) $params['return_to'] : '');
+        $session_family_uuid = isset($params['session_family_uuid']) ? sanitize_text_field((string) $params['session_family_uuid']) : '';
+        if ($session_family_uuid === '') {
+            $session_family_uuid = sanitize_text_field((string) get_user_meta((int) $user->ID, self::ACTIVE_FAMILY_META_KEY, true));
+        }
+
+        $transaction = self::create_transaction([
+            'source_app' => 'dashboard',
+            'target_app' => 'wordpress',
+            'target_frontend_type' => sanitize_key((string) ($frontend['frontend_type'] ?? '')),
+            'user_id' => (int) $user->ID,
+            'verified_origin' => (string) ($frontend['frontend_origin'] ?? ''),
+            'post_login_path' => $return_to,
+            'session_family_uuid' => $session_family_uuid,
+        ]);
+
+        $code = Nevari_Helpers::base64url_encode(random_bytes(32));
+        global $wpdb;
+        $wpdb->insert(Nevari_Helpers::table('sso_authorization_codes'), [
+            'code_hash' => hash('sha256', $code),
+            'transaction_uuid' => $transaction['transaction_uuid'],
+            'user_id' => (int) $user->ID,
+            'client_id' => $client_id,
+            'redirect_uri' => $redirect_uri,
+            'state_hash' => hash('sha256', $state),
+            'frontend_type' => sanitize_key((string) ($frontend['frontend_type'] ?? '')),
+            'frontend_origin' => esc_url_raw((string) ($frontend['frontend_origin'] ?? '')),
+            'expires_at' => gmdate('Y-m-d H:i:s', time() + self::AUTHORIZATION_CODE_TTL_SECONDS),
+            'consumed_at' => null,
+            'created_at' => Nevari_Helpers::now(),
+        ], ['%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']);
+
+        if (!$wpdb->insert_id) {
+            return new WP_Error('sso_code_issue_failed', 'The checkout SSO code could not be issued.');
+        }
+
+        Nevari_Audit::log('security', 'nevari', 'sso.wordpress_code_issued', 'success', [
+            'actor_user_id' => (int) $user->ID,
+            'related_user_id' => (int) $user->ID,
+            'message' => 'Checkout SSO authorization code issued.',
+            'metadata' => [
+                'transaction_uuid' => $transaction['transaction_uuid'],
+                'frontend_origin' => (string) ($frontend['frontend_origin'] ?? ''),
+            ],
+        ]);
+
+        return [
+            'redirect_url' => add_query_arg([
+                'code' => $code,
+                'state' => $state,
+            ], $redirect_uri),
+            'transaction_id' => $transaction['transaction_uuid'],
+            'expires_in' => self::AUTHORIZATION_CODE_TTL_SECONDS,
+        ];
+    }
+
+    public static function verify_wordpress_auth_code(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('sso_verify_code', 20, 15 * MINUTE_IN_SECONDS, [Nevari_Helpers::client_ip()])) {
+            return $response;
+        }
+
+        $params = Nevari_Helpers::get_json_params($request);
+        $client_id = isset($params['client_id']) ? sanitize_text_field((string) $params['client_id']) : '';
+        $client_secret = isset($params['client_secret']) ? sanitize_text_field((string) $params['client_secret']) : '';
+        $redirect_uri = self::normalize_redirect_uri(isset($params['redirect_uri']) ? (string) $params['redirect_uri'] : '');
+        $code = isset($params['code']) ? sanitize_text_field((string) $params['code']) : '';
+
+        if ($client_id === '' || $client_secret === '' || $redirect_uri === '' || $code === '') {
+            return Nevari_Helpers::error('validation_error', 'client_id, client_secret, redirect_uri, and code are required.', 422);
+        }
+        if (!hash_equals(self::sso_client_id(), $client_id) || !hash_equals(self::sso_client_secret(), $client_secret)) {
+            return Nevari_Helpers::error('invalid_client', 'The SSO client credentials are invalid.', 401);
+        }
+        if ($redirect_uri !== self::normalize_redirect_uri(self::wordpress_callback_url())) {
+            return Nevari_Helpers::error('invalid_redirect_uri', 'The SSO redirect URI is invalid.', 401);
+        }
+
+        $authorization_code = self::load_authorization_code($code);
+        if (!$authorization_code) {
+            return Nevari_Helpers::error('invalid_code', 'The SSO authorization code is invalid or expired.', 401);
+        }
+        if (!empty($authorization_code->consumed_at) || strtotime((string) $authorization_code->expires_at . ' UTC') <= time()) {
+            return Nevari_Helpers::error('invalid_code', 'The SSO authorization code is invalid or expired.', 401);
+        }
+        if ((string) $authorization_code->client_id !== $client_id || self::normalize_redirect_uri((string) $authorization_code->redirect_uri) !== $redirect_uri) {
+            return Nevari_Helpers::error('invalid_code', 'The SSO authorization code is invalid or expired.', 401);
+        }
+
+        $transaction = self::load_transaction((string) $authorization_code->transaction_uuid);
+        if (!$transaction || (string) $transaction->target_app !== 'wordpress') {
+            return Nevari_Helpers::error('invalid_code', 'The SSO authorization code is invalid or expired.', 401);
+        }
+
+        $user = get_user_by('id', (int) $authorization_code->user_id);
+        if (!$user instanceof WP_User) {
+            return Nevari_Helpers::error('invalid_code', 'The SSO authorization code could not be resolved.', 401);
+        }
+
+        global $wpdb;
+        $wpdb->update(
+            Nevari_Helpers::table('sso_authorization_codes'),
+            ['consumed_at' => Nevari_Helpers::now()],
+            ['id' => (int) $authorization_code->id],
+            ['%s'],
+            ['%d']
+        );
+
+        Nevari_Audit::log('security', 'nevari', 'sso.wordpress_code_verified', 'success', [
+            'actor_user_id' => (int) $user->ID,
+            'related_user_id' => (int) $user->ID,
+            'message' => 'Checkout SSO authorization code verified.',
+            'metadata' => [
+                'transaction_uuid' => (string) $authorization_code->transaction_uuid,
+            ],
+        ]);
+
+        return Nevari_Helpers::success([
+            'sub' => (string) $user->ID,
+            'email' => (string) $user->user_email,
+            'first_name' => (string) get_user_meta((int) $user->ID, 'first_name', true),
+            'last_name' => (string) get_user_meta((int) $user->ID, 'last_name', true),
+            'return_to' => !empty($transaction->post_login_path) ? (string) $transaction->post_login_path : '',
+            'transaction_id' => (string) $authorization_code->transaction_uuid,
+        ]);
+    }
+
+    public static function wordpress_sso_callback(WP_REST_Request $request): WP_REST_Response {
+        $code = sanitize_text_field((string) $request->get_param('code'));
+        $state = sanitize_text_field((string) $request->get_param('state'));
+
+        if ($code === '' || $state === '') {
+            return Nevari_Helpers::error('validation_error', 'code and state are required.', 422);
+        }
+
+        $authorization_code = self::load_authorization_code($code);
+        if (!$authorization_code || !hash_equals((string) $authorization_code->state_hash, hash('sha256', $state))) {
+            return Nevari_Helpers::error('invalid_code', 'The SSO authorization code is invalid or expired.', 403);
+        }
+        if (!empty($authorization_code->consumed_at) || strtotime((string) $authorization_code->expires_at . ' UTC') <= time()) {
+            return Nevari_Helpers::error('invalid_code', 'The SSO authorization code is invalid or expired.', 403);
+        }
+
+        $verify_url = self::dashboard_verify_url((string) $authorization_code->frontend_origin);
+        $verify_response = wp_remote_post($verify_url, [
+            'timeout' => 15,
+            'headers' => [
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+            ],
+            'body' => wp_json_encode([
+                'client_id' => self::sso_client_id(),
+                'client_secret' => self::sso_client_secret(),
+                'code' => $code,
+                'redirect_uri' => self::wordpress_callback_url(),
+            ]),
+        ]);
+
+        if (is_wp_error($verify_response)) {
+            return Nevari_Helpers::error('sso_verify_failed', $verify_response->get_error_message(), 502);
+        }
+
+        $status = (int) wp_remote_retrieve_response_code($verify_response);
+        $payload = json_decode((string) wp_remote_retrieve_body($verify_response), true);
+        if ($status < 200 || $status >= 300 || !is_array($payload) || empty($payload['success']) || !is_array($payload['data'] ?? null)) {
+            $message = is_array($payload) && !empty($payload['error']['message']) ? (string) $payload['error']['message'] : 'The SSO response could not be verified.';
+            return Nevari_Helpers::error('sso_verify_failed', $message, 403);
+        }
+
+        $linked_user = self::resolve_wordpress_customer_from_identity((array) $payload['data']);
+        if (is_wp_error($linked_user)) {
+            return Nevari_Helpers::error($linked_user->get_error_code(), $linked_user->get_error_message(), 409);
+        }
+
+        $transaction = self::load_transaction((string) ($payload['data']['transaction_id'] ?? ''));
+        if ($transaction) {
+            global $wpdb;
+            $wpdb->update(
+                Nevari_Helpers::table('sso_transactions'),
+                [
+                    'status' => 'completed',
+                    'consumed_at' => !empty($transaction->consumed_at) ? (string) $transaction->consumed_at : Nevari_Helpers::now(),
+                    'completed_at' => Nevari_Helpers::now(),
+                ],
+                ['id' => (int) $transaction->id],
+                ['%s', '%s', '%s'],
+                ['%d']
+            );
+            if (!empty($transaction->session_family_uuid)) {
+                update_user_meta((int) $linked_user->ID, self::ACTIVE_FAMILY_META_KEY, sanitize_text_field((string) $transaction->session_family_uuid));
+            }
+        }
+
+        wp_set_current_user((int) $linked_user->ID);
+        wp_set_auth_cookie((int) $linked_user->ID, false, is_ssl());
+
+        Nevari_Audit::log('security', 'nevari', 'sso.wordpress_callback_complete', 'success', [
+            'actor_user_id' => (int) $linked_user->ID,
+            'related_user_id' => (int) $linked_user->ID,
+            'message' => 'Checkout SSO callback completed successfully.',
+            'metadata' => [
+                'dashboard_user_id' => (string) get_user_meta((int) $linked_user->ID, self::DASHBOARD_USER_META_KEY, true),
+            ],
+        ]);
+
+        $redirect_path = self::sanitize_return_path((string) ($payload['data']['return_to'] ?? ''));
+        $redirect_url = $redirect_path !== ''
+            ? home_url($redirect_path)
+            : (function_exists('wc_get_checkout_url') ? wc_get_checkout_url() : home_url('/checkout'));
+
+        wp_safe_redirect($redirect_url);
+        exit;
     }
 
     public static function start_dashboard_sso(WP_REST_Request $request): WP_REST_Response {
@@ -373,6 +628,22 @@ final class Nevari_SSO {
         $family_uuid = Nevari_Auth::current_session_family_uuid();
         if ($family_uuid === '') {
             $family_uuid = self::create_session_family($user_id, $source_frontend, ['source_app' => 'dashboard']);
+        }
+
+        $user = get_user_by('id', $user_id);
+        if ($user instanceof WP_User) {
+            $auth_code = self::maybe_issue_wordpress_auth_code($user, $source_frontend, array_merge($params, [
+                'session_family_uuid' => $family_uuid,
+            ]));
+            if (is_wp_error($auth_code)) {
+                return Nevari_Helpers::error($auth_code->get_error_code(), $auth_code->get_error_message(), 403);
+            }
+            if (is_array($auth_code) && !empty($auth_code['redirect_url'])) {
+                return Nevari_Helpers::success([
+                    'redirect_url' => (string) $auth_code['redirect_url'],
+                    'expires_in' => self::AUTHORIZATION_CODE_TTL_SECONDS,
+                ]);
+            }
         }
 
         $return_path = self::sanitize_return_path(isset($params['return_path']) ? (string) $params['return_path'] : '');
@@ -623,6 +894,18 @@ final class Nevari_SSO {
         ));
     }
 
+    private static function load_authorization_code(string $code) {
+        if ($code === '') {
+            return null;
+        }
+
+        global $wpdb;
+        return $wpdb->get_row($wpdb->prepare(
+            'SELECT * FROM ' . Nevari_Helpers::table('sso_authorization_codes') . ' WHERE code_hash = %s LIMIT 1',
+            hash('sha256', $code)
+        ));
+    }
+
     private static function validate_transaction_state($transaction, string $state): bool {
         if (!$transaction || $state === '') {
             return false;
@@ -663,6 +946,52 @@ final class Nevari_SSO {
         return 'dashboard';
     }
 
+    private static function resolve_wordpress_customer_from_identity(array $identity) {
+        $dashboard_user_id = sanitize_text_field((string) ($identity['sub'] ?? ''));
+        $email = sanitize_email((string) ($identity['email'] ?? ''));
+        $first_name = sanitize_text_field((string) ($identity['first_name'] ?? ''));
+        $last_name = sanitize_text_field((string) ($identity['last_name'] ?? ''));
+
+        if ($dashboard_user_id === '' || !is_email($email)) {
+            return new WP_Error('invalid_identity', 'The verified SSO identity is incomplete.');
+        }
+
+        $users = get_users([
+            'meta_key' => self::DASHBOARD_USER_META_KEY,
+            'meta_value' => $dashboard_user_id,
+            'number' => 1,
+            'count_total' => false,
+        ]);
+        if (!empty($users[0]) && $users[0] instanceof WP_User) {
+            self::sync_customer_identity($users[0], $dashboard_user_id, $email, $first_name, $last_name);
+            return $users[0];
+        }
+
+        $email_user = get_user_by('email', $email);
+        if ($email_user instanceof WP_User) {
+            $existing_dashboard_id = sanitize_text_field((string) get_user_meta((int) $email_user->ID, self::DASHBOARD_USER_META_KEY, true));
+            if ($existing_dashboard_id !== '' && $existing_dashboard_id !== $dashboard_user_id) {
+                Nevari_Audit::log('security', 'nevari', 'sso.identity_conflict', 'error', [
+                    'actor_user_id' => (int) $email_user->ID,
+                    'related_user_id' => (int) $email_user->ID,
+                    'severity' => 'warning',
+                    'message' => 'Checkout SSO identity conflict was detected.',
+                    'metadata' => [
+                        'dashboard_user_id' => $dashboard_user_id,
+                        'existing_dashboard_user_id' => $existing_dashboard_id,
+                        'email_hash' => hash('sha256', strtolower($email)),
+                    ],
+                ]);
+                return new WP_Error('identity_conflict', 'This email is already linked to a different dashboard account.');
+            }
+
+            self::sync_customer_identity($email_user, $dashboard_user_id, $email, $first_name, $last_name);
+            return $email_user;
+        }
+
+        return self::create_customer_from_identity($dashboard_user_id, $email, $first_name, $last_name);
+    }
+
     private static function is_supported_frontend_type(string $frontend_type): bool {
         return in_array($frontend_type, ['storefront', 'doctors_dashboard', 'pharmacist_dashboard', 'patient_dashboard'], true);
     }
@@ -701,6 +1030,88 @@ final class Nevari_SSO {
             'transaction' => isset($args['transaction']) ? sanitize_text_field((string) $args['transaction']) : '',
             'state' => isset($args['state']) ? sanitize_text_field((string) $args['state']) : '',
         ], home_url('/'));
+    }
+
+    private static function wordpress_callback_url(): string {
+        $configured = defined('WORDPRESS_SSO_CALLBACK')
+            ? self::normalize_redirect_uri((string) constant('WORDPRESS_SSO_CALLBACK'))
+            : self::normalize_redirect_uri((string) getenv('WORDPRESS_SSO_CALLBACK'));
+        if ($configured !== '') {
+            return $configured;
+        }
+
+        return self::normalize_redirect_uri(rest_url('nevari-sso/v1/callback'));
+    }
+
+    private static function dashboard_verify_url(string $frontend_origin = ''): string {
+        $base = Nevari_Helpers::normalize_frontend_base_url($frontend_origin);
+        if ($base === '') {
+            $base = Nevari_Helpers::shared_frontend_base_url();
+        }
+
+        return untrailingslashit($base) . '/api/sso/verify';
+    }
+
+    private static function normalize_redirect_uri(string $value): string {
+        return Nevari_Helpers::normalize_frontend_base_url($value);
+    }
+
+    private static function sso_client_id(): string {
+        if (defined('SSO_CLIENT_ID')) {
+            return trim((string) constant('SSO_CLIENT_ID'));
+        }
+
+        return trim((string) getenv('SSO_CLIENT_ID'));
+    }
+
+    private static function sso_client_secret(): string {
+        if (defined('SSO_CLIENT_SECRET')) {
+            return trim((string) constant('SSO_CLIENT_SECRET'));
+        }
+
+        return trim((string) getenv('SSO_CLIENT_SECRET'));
+    }
+
+    private static function sync_customer_identity(WP_User $user, string $dashboard_user_id, string $email, string $first_name, string $last_name): void {
+        update_user_meta((int) $user->ID, self::DASHBOARD_USER_META_KEY, $dashboard_user_id);
+        update_user_meta((int) $user->ID, 'billing_email', $email);
+        if ($first_name !== '') {
+            update_user_meta((int) $user->ID, 'first_name', $first_name);
+            update_user_meta((int) $user->ID, 'billing_first_name', $first_name);
+        }
+        if ($last_name !== '') {
+            update_user_meta((int) $user->ID, 'last_name', $last_name);
+            update_user_meta((int) $user->ID, 'billing_last_name', $last_name);
+        }
+    }
+
+    private static function create_customer_from_identity(string $dashboard_user_id, string $email, string $first_name, string $last_name) {
+        $display_name = trim($first_name . ' ' . $last_name);
+        if ($display_name === '') {
+            $display_name = preg_replace('/@.+$/', '', $email);
+        }
+
+        $email_parts = explode('@', $email);
+        $user_id = wp_insert_user([
+            'user_login' => sanitize_user($email_parts[0] . '_' . wp_generate_password(4, false)),
+            'user_email' => $email,
+            'user_pass' => wp_generate_password(32, true),
+            'display_name' => $display_name,
+            'first_name' => $first_name,
+            'last_name' => $last_name,
+            'role' => 'customer',
+        ]);
+        if (is_wp_error($user_id)) {
+            return $user_id;
+        }
+
+        $user = get_user_by('id', (int) $user_id);
+        if (!$user instanceof WP_User) {
+            return new WP_Error('customer_create_failed', 'The customer account could not be created.');
+        }
+
+        self::sync_customer_identity($user, $dashboard_user_id, $email, $first_name, $last_name);
+        return $user;
     }
 
     private static function log_sso_failure(string $action, string $transaction_uuid, array $frontend, string $message): void {

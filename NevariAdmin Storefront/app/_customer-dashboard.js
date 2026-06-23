@@ -11,6 +11,7 @@ import { isProxyAppointmentsKey, isProxyDoctorsKey, isProxyOrdersKey, swrKeys, w
 import ManageSubscription from "./components/profile/ManageSubscription";
 import { BrandedSpinner } from "./components/BrandedSpinner";
 import { FRONTENDS } from "./components/frontend-config";
+import { clearGuestConsultationDraft, readGuestConsultationDraft } from "./components/guest-consultation-draft";
 import { setDocumentMetadata } from "./components/page-metadata";
 import { apiRequest, buildDashboardCacheKey, buildUrl, clearDashboardCacheForFrontend, DASHBOARD_CACHE_TTL_MS, fitTextToContainer, getOrderTypeMeta, hydrateStoredSession, isSessionUsable, money, readDashboardCache, rememberStoreContext, shortDate, storedStoreCurrency, storedStoreTimeZone, titleCase, writeDashboardCache } from "./components/role-dashboard-utils";
 import { performGlobalLogout } from "./components/role-session";
@@ -740,11 +741,13 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const [appointmentsData, setAppointmentsData] = useState(null);
   const [appointmentsLoadingState, setAppointmentsLoadingState] = useState(false);
   const [journey, setJourney] = useState(createJourneyState());
+  const [guestConsultationDraft, setGuestConsultationDraft] = useState(null);
   const [reviewDeepLinkHandled, setReviewDeepLinkHandled] = useState(false);
   const [settings, setSettings] = useState(() => loadCustomerSettings());
   const customerSettingsHydratedRef = useRef(false);
   const customerSettingsFingerprintRef = useRef(JSON.stringify(defaultCustomerSettings()));
   const customerSettingsSessionRef = useRef("");
+  const guestConsultationDraftHandledRef = useRef(false);
   const [isCustomerMobile, setIsCustomerMobile] = useState(true);
   const storefrontSettings = useMemo(() => loadStorefrontSettings(), []);
   const minimumBookingMinutes = useMemo(() => normalizeBookingMinutes(storefrontSettings.minimumConsultationMinutes), [storefrontSettings.minimumConsultationMinutes]);
@@ -830,6 +833,28 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     setCacheKey(cacheUserKey ? buildDashboardCacheKey("patient", CUSTOMER_DASHBOARD_CACHE_SCOPE, String(cacheUserKey)) : null);
     setAuthResolved(true);
   }, [router]);
+
+  useEffect(() => {
+    if (!authResolved || guestConsultationDraftHandledRef.current || typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("prefill_booking") !== "1") {
+      return;
+    }
+    guestConsultationDraftHandledRef.current = true;
+    setPage("appointment");
+    const draft = readGuestConsultationDraft();
+    if (draft) {
+      setGuestConsultationDraft(draft);
+      clearGuestConsultationDraft();
+    }
+    params.delete("prefill_booking");
+    params.delete("from");
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, [authResolved]);
 
   useEffect(() => {
     const nextSessionKey = String(session?.user?.id || "");
@@ -1794,6 +1819,8 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         onSubmitReview={submitReview}
         appointmentRescheduleTarget={appointmentRescheduleTarget}
         onClearAppointmentRescheduleTarget={() => setAppointmentRescheduleTarget(null)}
+        guestConsultationDraft={guestConsultationDraft}
+        onGuestConsultationDraftConsumed={() => setGuestConsultationDraft(null)}
         nurseRequestAuth={{
           baseUrl: session?.baseUrl || "",
           accessToken: session?.accessToken || "",
@@ -1863,6 +1890,8 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         onSubmitReview={submitReview}
         appointmentRescheduleTarget={appointmentRescheduleTarget}
         onClearAppointmentRescheduleTarget={() => setAppointmentRescheduleTarget(null)}
+        guestConsultationDraft={guestConsultationDraft}
+        onGuestConsultationDraftConsumed={() => setGuestConsultationDraft(null)}
         nurseRequestAuth={{
           baseUrl: session?.baseUrl || "",
           accessToken: session?.accessToken || "",
@@ -1916,6 +1945,8 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         onClearRescheduleTarget={() => setAppointmentRescheduleTarget(null)}
         onShowConsultationQuotaNotice={() => setConsultationQuotaDismissed(false)}
         onDismissConsultationQuotaNotice={() => setConsultationQuotaDismissed(true)}
+        prefillBookingDraft={guestConsultationDraft}
+        onPrefillConsumed={() => setGuestConsultationDraft(null)}
         embeddedDesktop
       /> : null}
       {!showSkeleton && page === "search" ? <section className="customer-desktop-panel customer-desktop-search-results-panel">
@@ -2982,6 +3013,8 @@ function AppointmentPage({
   onClearRescheduleTarget = null,
   onShowConsultationQuotaNotice = null,
   onDismissConsultationQuotaNotice = null,
+  prefillBookingDraft = null,
+  onPrefillConsumed = null,
   embeddedDesktop = false,
 }) {
   const [filter, setFilter] = useState("upcoming");
@@ -3016,6 +3049,30 @@ function AppointmentPage({
       setBookingError("Select a future time for today.");
     }
   }, [availableBookingTimes, bookingDate, bookingTime, todayBookingDate]);
+
+  useEffect(() => {
+    if (!prefillBookingDraft) {
+      return;
+    }
+    const { date, time, reason } = prefillBookingDraft;
+    const [year, month] = String(date || "").split("-").map(Number);
+    if (year && month) {
+      setBookingMonth(new Date(year, month - 1, 1));
+    }
+    setBookingDate(date || localDateInputValue(new Date()));
+    setBookingTime(time || "");
+    setBookingReason(String(reason || "").trim());
+    setBookingMatchedDoctors([]);
+    setBookingValidatedSlotKey("");
+    setBookingError("");
+    setBookingOpen(true);
+    onClearRescheduleTarget?.();
+    onPrefillConsumed?.();
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      window.setTimeout(() => bookingSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 180);
+    }
+  }, [onClearRescheduleTarget, onPrefillConsumed, prefillBookingDraft]);
 
   useEffect(() => {
     if (!rescheduleTarget?.id) {
@@ -4885,6 +4942,8 @@ function CustomerMobileDashboard({
   onSubmitReview,
   appointmentRescheduleTarget = null,
   onClearAppointmentRescheduleTarget = null,
+  guestConsultationDraft = null,
+  onGuestConsultationDraftConsumed = null,
   nurseRequestAuth,
   onLogout,
   logoutBusy = false,
@@ -6362,6 +6421,8 @@ function CustomerMobileDashboard({
           onClearRescheduleTarget={onClearAppointmentRescheduleTarget}
           onShowConsultationQuotaNotice={() => setConsultationQuotaDismissed(false)}
           onDismissConsultationQuotaNotice={() => setConsultationQuotaDismissed(true)}
+          prefillBookingDraft={guestConsultationDraft}
+          onPrefillConsumed={onGuestConsultationDraftConsumed}
         />
       </main>
     </div>;
@@ -6495,7 +6556,10 @@ function CustomerMobileDashboard({
           busy={subscriptionState.isActionBusy}
           priceLabel={formatSubscriptionPriceLabel(subscriptionState.subscription)}
           onOpenMenu={() => setDrawerOpen(true)}
-          onSubscribe={() => subscriptionState.launchCheckout()}
+          onSubscribe={() => subscriptionState.launchCheckout({
+            plan: "nevari_access_pro",
+            frequency: "monthly",
+          })}
           onContinue={async () => {
             await subscriptionState.refresh();
             subscriptionState.dismissSuccess();
@@ -6953,7 +7017,10 @@ function CustomerMobileDashboard({
             loading={subscriptionState.isLoading}
             busy={subscriptionState.isActionBusy}
             error={subscriptionState.actionError}
-            onUpgrade={() => subscriptionState.launchCheckout()}
+            onUpgrade={() => subscriptionState.launchCheckout({
+              plan: "nevari_access_pro",
+              frequency: "monthly",
+            })}
             onCancel={async () => {
               await subscriptionState.cancelCurrentSubscription();
             }}

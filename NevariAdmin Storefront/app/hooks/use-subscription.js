@@ -29,11 +29,23 @@ function buildDefaultCallbackUrl() {
     return "";
   }
   const url = new URL("/subscription", window.location.origin);
-  const returnTo = `${window.location.pathname}${window.location.search}`.trim();
-  if (returnTo && returnTo !== "/subscription" && returnTo !== "/subscription/") {
-    url.searchParams.set("returnTo", returnTo);
+  const currentUrl = new URL(window.location.href);
+  const explicitReturnTo = `${currentUrl.searchParams.get("returnTo") || ""}`.trim();
+  const currentPath = `${window.location.pathname}${window.location.search}`.trim();
+  if (explicitReturnTo && explicitReturnTo.startsWith("/") && !explicitReturnTo.startsWith("//")) {
+    url.searchParams.set("returnTo", explicitReturnTo);
+  } else if (window.location.pathname !== "/subscription" && window.location.pathname !== "/subscription/") {
+    url.searchParams.set("returnTo", currentPath);
   }
   return url.toString();
+}
+
+function normalizeSubscriptionPlan(plan) {
+  return String(plan || "").trim().toLowerCase() || "nevari_access_pro";
+}
+
+function normalizeSubscriptionFrequency(frequency) {
+  return String(frequency || "").trim().toLowerCase() || "monthly";
 }
 
 export function useSubscription(session) {
@@ -113,7 +125,7 @@ export function useSubscription(session) {
     return mutateSubscription(undefined, { revalidate: true });
   }
 
-  async function launchCheckout({ callbackUrl = "" } = {}) {
+  async function launchCheckout({ plan = "", frequency = "", callbackUrl = "" } = {}) {
     if (checkoutRequestRef.current) {
       return checkoutRequestRef.current;
     }
@@ -138,15 +150,18 @@ export function useSubscription(session) {
       const checkoutIsUsable = !checkoutExpiryDate
         || Number.isNaN(checkoutExpiryDate.getTime())
         || checkoutExpiryDate.getTime() > Date.now();
+      const requestedPlan = normalizeSubscriptionPlan(plan || subscription?.plan_key || subscription?.plan || "nevari_access_pro");
+      const requestedFrequency = normalizeSubscriptionFrequency(frequency || subscription?.frequency || subscription?.interval || "monthly");
 
-      if (existingCheckoutUrl && checkoutIsUsable) {
+      const shouldReuseExistingCheckout = !plan && !frequency;
+      if (shouldReuseExistingCheckout && existingCheckoutUrl && checkoutIsUsable) {
         window.location.assign(existingCheckoutUrl);
         return subscription;
       }
 
       const checkout = await initializeSubscription(session, {
-        plan: "pro",
-        frequency: subscription?.frequency || "monthly",
+        plan: requestedPlan,
+        frequency: requestedFrequency,
         callbackUrl: callbackUrl || buildDefaultCallbackUrl(),
       });
       if (checkout?.free_checkout || checkout?.checkout_completed) {

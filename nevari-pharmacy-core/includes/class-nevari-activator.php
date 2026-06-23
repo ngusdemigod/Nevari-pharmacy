@@ -59,6 +59,7 @@ final class Nevari_Activator {
         $pairing_sessions = Nevari_Helpers::table('pairing_sessions');
         $frontend_connections = Nevari_Helpers::table('frontend_connections');
         $sso_transactions = Nevari_Helpers::table('sso_transactions');
+        $sso_authorization_codes = Nevari_Helpers::table('sso_authorization_codes');
         $session_families = Nevari_Helpers::table('session_families');
         $subscription_plans = Nevari_Helpers::table('subscription_plans');
         $subscriptions = Nevari_Helpers::table('subscriptions');
@@ -521,6 +522,26 @@ final class Nevari_Activator {
             KEY user_target (user_id, target_app, status),
             KEY session_family_uuid (session_family_uuid),
             KEY expires_at (expires_at)
+        ) {$charset};");
+
+        dbDelta("CREATE TABLE {$sso_authorization_codes} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            code_hash CHAR(64) NOT NULL,
+            transaction_uuid CHAR(36) NOT NULL,
+            user_id BIGINT UNSIGNED NOT NULL,
+            client_id VARCHAR(191) NOT NULL,
+            redirect_uri VARCHAR(255) NOT NULL,
+            state_hash CHAR(64) NOT NULL,
+            frontend_type VARCHAR(40) NOT NULL,
+            frontend_origin VARCHAR(255) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            consumed_at DATETIME NULL,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY code_hash (code_hash),
+            KEY transaction_uuid (transaction_uuid),
+            KEY user_active (user_id, consumed_at, expires_at),
+            KEY client_id (client_id)
         ) {$charset};");
 
         dbDelta("CREATE TABLE {$subscription_plans} (

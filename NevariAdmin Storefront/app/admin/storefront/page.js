@@ -13,6 +13,7 @@ import { useCreateProduct, useDeleteProduct, useUpdateProduct } from "../../../h
 import { useUpdateOrderStatus } from "../../../hooks/orders/useUpdateOrderStatus";
 import { setDocumentMetadata } from "../../components/page-metadata";
 import ModalScrim from "../../components/ModalScrim";
+import RevenueOverviewCard from "../../components/RevenueOverviewCard";
 import { buildTwoStepVerificationRequest, loadAuthSecuritySettings, persistAuthSecuritySettings } from "../../components/auth-security-settings";
 import { getOrderTypeMeta } from "../../components/role-dashboard-utils";
 import { clearStoredSessions, createPairingRequiredError, isPairingRequiredError, isPairingRequiredPayload } from "../../components/role-session";
@@ -31,10 +32,16 @@ const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
 const EMAIL_TEMPLATE_STORAGE_KEY = "nevari_admin_email_templates";
 const CUSTOMER_PRIVILEGE_ROLE_OPTIONS = [
   { value: "doctor", label: "Doctor" },
-  { value: "pharmacist", label: "Pharmacist" },
-  { value: "administrator", label: "Admin" }
+  { value: "pharmacist", label: "Pharmacist" }
+];
+const ADMIN_SETTINGS_TABS = [
+  { key: "automation", label: "Automation", count: 4 },
+  { key: "reminders", label: "Reminders", count: 3 },
+  { key: "pricing", label: "Pricing", count: 2 },
+  { key: "security", label: "Security", count: 4 }
 ];
 const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
+const ADMIN_OTP_TEMPORARILY_DISABLED = true;
 let adminStorefrontClientHydrated = false;
 
 const EMAIL_HOOKS = [
@@ -336,6 +343,7 @@ function emptyData() {
     dashboard: null,
     orders: [],
     orderDetails: [],
+    revenueChartOrders: [],
     appointments: [],
     mtmRequests: [],
     ivTherapyRequests: [],
@@ -772,6 +780,173 @@ function formatPercent(value) {
   return `${Number(value || 0).toFixed(1)}%`;
 }
 
+function startOfMonth(date) {
+  const nextDate = new Date(date);
+  nextDate.setDate(1);
+  nextDate.setHours(0, 0, 0, 0);
+  return nextDate;
+}
+
+function addMonths(date, count) {
+  const nextDate = new Date(date);
+  nextDate.setDate(1);
+  nextDate.setMonth(nextDate.getMonth() + count);
+  nextDate.setHours(0, 0, 0, 0);
+  return nextDate;
+}
+
+function startOfDay(date) {
+  const nextDate = new Date(date);
+  nextDate.setHours(0, 0, 0, 0);
+  return nextDate;
+}
+
+function addDays(date, count) {
+  const nextDate = startOfDay(date);
+  nextDate.setDate(nextDate.getDate() + count);
+  return nextDate;
+}
+
+function startOfWeek(date) {
+  const nextDate = startOfDay(date);
+  const day = nextDate.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  nextDate.setDate(nextDate.getDate() + diff);
+  return nextDate;
+}
+
+function addWeeks(date, count) {
+  return addDays(date, count * 7);
+}
+
+function monthKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function normalizeRevenueValue(value) {
+  const numericValue = Number.parseFloat(String(value ?? 0).replace(/,/g, ""));
+  return Number.isFinite(numericValue) ? numericValue : 0;
+}
+
+function dayKey(date) {
+  return startOfDay(date).toISOString().slice(0, 10);
+}
+
+function weekKey(date) {
+  return dayKey(startOfWeek(date));
+}
+
+function bucketRevenueOverviewMetrics(options) {
+  const {
+    orders = [],
+    bucketCount,
+    currentPeriodStart,
+    previousPeriodStart,
+    nextCurrentPeriodStart,
+    advanceDate,
+    bucketKey,
+    labelFormatter
+  } = options;
+  const currentBuckets = new Map();
+  const previousBuckets = new Map();
+
+  for (let index = 0; index < bucketCount; index += 1) {
+    currentBuckets.set(bucketKey(advanceDate(currentPeriodStart, index)), 0);
+    previousBuckets.set(bucketKey(advanceDate(previousPeriodStart, index)), 0);
+  }
+
+  orders.forEach((order) => {
+    const createdAt = new Date(order?.created_at || order?.date_created || "");
+    if (Number.isNaN(createdAt.getTime()) || createdAt < previousPeriodStart || createdAt >= nextCurrentPeriodStart) {
+      return;
+    }
+
+    const key = bucketKey(createdAt);
+    const total = normalizeRevenueValue(order?.total);
+    if (currentBuckets.has(key)) {
+      currentBuckets.set(key, Number(currentBuckets.get(key) || 0) + total);
+      return;
+    }
+    if (previousBuckets.has(key)) {
+      previousBuckets.set(key, Number(previousBuckets.get(key) || 0) + total);
+    }
+  });
+
+  const data = Array.from({ length: bucketCount }, (_, index) => {
+    const currentDate = advanceDate(currentPeriodStart, index);
+    const previousDate = advanceDate(previousPeriodStart, index);
+    return {
+      month: labelFormatter(currentDate),
+      revenue: Number(currentBuckets.get(bucketKey(currentDate)) || 0),
+      previous: Number(previousBuckets.get(bucketKey(previousDate)) || 0)
+    };
+  });
+
+  const total = data.reduce((sum, item) => sum + Number(item.revenue || 0), 0);
+  const previousTotal = data.reduce((sum, item) => sum + Number(item.previous || 0), 0);
+  const changePct = previousTotal > 0
+    ? (((total - previousTotal) / previousTotal) * 100)
+    : (total > 0 ? 100 : 0);
+
+  return {
+    data,
+    total,
+    previousTotal,
+    changePct
+  };
+}
+
+function buildRevenueOverviewMetrics(orders = [], granularity = "monthly") {
+  const now = new Date();
+  if (granularity === "daily") {
+    const currentPeriodStart = startOfDay(addDays(now, -13));
+    const previousPeriodStart = startOfDay(addDays(now, -27));
+    const nextCurrentPeriodStart = startOfDay(addDays(now, 1));
+    return bucketRevenueOverviewMetrics({
+      orders,
+      bucketCount: 14,
+      currentPeriodStart,
+      previousPeriodStart,
+      nextCurrentPeriodStart,
+      advanceDate: addDays,
+      bucketKey: dayKey,
+      labelFormatter: (date) => date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    });
+  }
+
+  if (granularity === "weekly") {
+    const currentPeriodStart = startOfWeek(addWeeks(now, -11));
+    const previousPeriodStart = startOfWeek(addWeeks(now, -23));
+    const nextCurrentPeriodStart = startOfWeek(addWeeks(now, 1));
+    return bucketRevenueOverviewMetrics({
+      orders,
+      bucketCount: 12,
+      currentPeriodStart,
+      previousPeriodStart,
+      nextCurrentPeriodStart,
+      advanceDate: addWeeks,
+      bucketKey: weekKey,
+      labelFormatter: (date) => `Wk ${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+    });
+  }
+
+  const currentPeriodStart = startOfMonth(addMonths(now, -11));
+  const previousPeriodStart = startOfMonth(addMonths(now, -23));
+  const nextCurrentPeriodStart = startOfMonth(addMonths(now, 1));
+  return bucketRevenueOverviewMetrics({
+    orders,
+    bucketCount: 12,
+    currentPeriodStart,
+    previousPeriodStart,
+    nextCurrentPeriodStart,
+    advanceDate: addMonths,
+    bucketKey: monthKey,
+    labelFormatter: (date) => date.toLocaleDateString("en-US", { month: "short" })
+  });
+}
+
 function formatDate(value, withTime = false, timeZone = storedStoreTimeZone()) {
   if (!value) {
     return "n/a";
@@ -886,7 +1061,7 @@ function normalizeDateKey(value) {
   return date.toISOString().slice(0, 10);
 }
 
-function startOfWeek(date = new Date()) {
+function startOfCalendarWeek(date = new Date()) {
   const result = new Date(date);
   const day = result.getDay();
   const shift = (day + 6) % 7;
@@ -895,7 +1070,7 @@ function startOfWeek(date = new Date()) {
   return result;
 }
 
-function addDays(date, count) {
+function addCalendarDays(date, count) {
   const result = new Date(date);
   result.setDate(result.getDate() + count);
   return result;
@@ -2231,7 +2406,6 @@ export function AdminStorefrontDashboard({
   const embeddedInitialSession = embeddedSession ? { ...defaultSession(), ...embeddedSession, paired: true } : null;
   const [session, setSession] = useState(() => embeddedInitialSession || defaultSession());
   const [currentPage, setCurrentPage] = useState(() => resolvedEmbeddedPage || "overview");
-  const [trendMode, setTrendMode] = useState("yearly");
   const [data, setData] = useState(emptyData);
   const [audit, setAudit] = useState({ category: "orders", status: "all", source: "all" });
   const [search, setSearch] = useState("");
@@ -2353,6 +2527,7 @@ export function AdminStorefrontDashboard({
   const [customerPrivilegeEscalationOpen, setCustomerPrivilegeEscalationOpen] = useState(false);
   const [customerPrivilegeEscalationLoading, setCustomerPrivilegeEscalationLoading] = useState(false);
   const [customerPrivilegeOtp, setCustomerPrivilegeOtp] = useState({ code: "", status: "", challengeId: "", maskedEmail: "" });
+  const [customerPrivilegeSubject, setCustomerPrivilegeSubject] = useState(null);
   const [customerOrderPage, setCustomerOrderPage] = useState(1);
   const [customerProductPage, setCustomerProductPage] = useState(1);
   const [customerHistoryOrders, setCustomerHistoryOrders] = useState([]);
@@ -2365,6 +2540,7 @@ export function AdminStorefrontDashboard({
   const [mtmPreviewRequestId, setMtmPreviewRequestId] = useState(null);
   const [ivTherapyPage, setIvTherapyPage] = useState(1);
   const [ivTherapyPreviewRequestId, setIvTherapyPreviewRequestId] = useState(null);
+  const [adminSettingsTab, setAdminSettingsTab] = useState("automation");
   const [consultationDetailForm, setConsultationDetailForm] = useState({ startAt: "", endAt: "", doctorNotes: "", cancellationReason: "" });
   const [consultationActionLoading, setConsultationActionLoading] = useState("");
   const [consultationActionFeedback, setConsultationActionFeedback] = useState("");
@@ -2385,6 +2561,10 @@ export function AdminStorefrontDashboard({
   const [appDataLoaded, setAppDataLoaded] = useState(false);
   const [appointmentSettings, setAppointmentSettings] = useState(() => loadAdminAppointmentSettings());
   const [authSecuritySettings, setAuthSecuritySettings] = useState(() => loadAuthSecuritySettings());
+  const [revenueGranularity, setRevenueGranularity] = useState("monthly");
+  const effectiveAuthSecuritySettings = ADMIN_OTP_TEMPORARILY_DISABLED
+    ? { ...authSecuritySettings, globalTwoStepVerification: false }
+    : authSecuritySettings;
   const [doctorDetailTierLoading, setDoctorDetailTierLoading] = useState(false);
   const [staffPage, setStaffPage] = useState(1);
   const [globalConsultationFee, setGlobalConsultationFee] = useState("5000");
@@ -2911,6 +3091,10 @@ export function AdminStorefrontDashboard({
     } catch (error) {
       console.error("Could not load stored session", error);
     } finally {
+      // Hydration should unblock the page shell immediately. Live session restore
+      // and dashboard fetches continue in the bootstrap effect and use their own
+      // loading states.
+      setAccessResolved(true);
       setHydrated(true);
     }
   }, [isEmbeddedDashboard, resolvedEmbeddedPage]);
@@ -3152,16 +3336,31 @@ export function AdminStorefrontDashboard({
   const canEscalateCustomerPrivileges = sessionRoleValues.some(isAdminRoleValue);
   const selectedCustomerPrimaryRole = selectedCustomerProfile ? primaryRoleValue(selectedCustomerProfile.roles || []) : "customer";
   const selectedCustomerEscalationOptions = CUSTOMER_PRIVILEGE_ROLE_OPTIONS.filter((option) => option.value !== selectedCustomerPrimaryRole);
+  const selectedDoctorProfile = selectedDoctorId
+    ? (data.doctors || []).find((doctor) => String(doctor.user_id || doctor.id) === String(selectedDoctorId))
+    : null;
+  const selectedDoctorPrimaryRole = selectedDoctorProfile ? primaryRoleValue(selectedDoctorProfile.roles || []) : "";
+  const selectedDoctorCanDowngrade = Boolean(
+    selectedDoctorProfile
+    && canEscalateCustomerPrivileges
+    && ["doctor", "pharmacist"].includes(selectedDoctorPrimaryRole)
+  );
 
   useEffect(() => {
     if (!selectedCustomerEscalationOptions.length) {
       setCustomerPrivilegeTargetRole("doctor");
       return;
     }
+    if (customerPrivilegeSubject?.mode === "downgrade") {
+      if (customerPrivilegeTargetRole !== "customer") {
+        setCustomerPrivilegeTargetRole("customer");
+      }
+      return;
+    }
     if (!selectedCustomerEscalationOptions.some((option) => option.value === customerPrivilegeTargetRole)) {
       setCustomerPrivilegeTargetRole(selectedCustomerEscalationOptions[0].value);
     }
-  }, [customerPrivilegeTargetRole, selectedCustomerEscalationOptions]);
+  }, [customerPrivilegeSubject?.mode, customerPrivilegeTargetRole, selectedCustomerEscalationOptions]);
 
   useEffect(() => {
     setConsultationPage(1);
@@ -3831,10 +4030,10 @@ export function AdminStorefrontDashboard({
   }
 
   function switchPage(pageId) {
-    startTransition(() => {
-      setCurrentPage(normalizePageId(pageId));
-      setSidebarOpen(false);
-    });
+    const nextPage = normalizePageId(pageId);
+    setCurrentPage(nextPage);
+    setSidebarOpen(false);
+    persistSessionSnapshot(latestSessionRef.current || session, nextPage);
   }
 
   function patchCacheList(predicate, updater, { revalidate = false } = {}) {
@@ -4635,13 +4834,16 @@ export function AdminStorefrontDashboard({
     setCustomerPrivilegeEscalationOpen(false);
     setCustomerPrivilegeEscalationLoading(false);
     setCustomerPrivilegeOtp({ code: "", status: "", challengeId: "", maskedEmail: "" });
+    setCustomerPrivilegeSubject(null);
   }
 
-  async function openCustomerPrivilegeEscalationModal() {
-    if (!selectedCustomerCanEscalate || !selectedCustomerProfile) {
+  async function openRoleChangeModal(subject) {
+    if (!subject?.userId || !subject?.name || !subject?.sourceRole || !subject?.targetRole) {
       return;
     }
 
+    setCustomerPrivilegeSubject(subject);
+    setCustomerPrivilegeTargetRole(subject.targetRole);
     setCustomerPrivilegeEscalationOpen(true);
     setCustomerPrivilegeEscalationLoading(false);
     setCustomerPrivilegeOtp({ code: "", status: "Sending OTP to your email...", challengeId: "", maskedEmail: "" });
@@ -4664,8 +4866,34 @@ export function AdminStorefrontDashboard({
     }
   }
 
+  async function openCustomerPrivilegeEscalationModal() {
+    if (!selectedCustomerCanEscalate || !selectedCustomerProfile) {
+      return;
+    }
+    await openRoleChangeModal({
+      mode: "upgrade",
+      userId: selectedCustomerProfile.id,
+      name: selectedCustomerProfile.name,
+      sourceRole: selectedCustomerPrimaryRole,
+      targetRole: customerPrivilegeTargetRole
+    });
+  }
+
+  async function openStaffDowngradeModal() {
+    if (!selectedDoctorCanDowngrade || !selectedDoctorProfile) {
+      return;
+    }
+    await openRoleChangeModal({
+      mode: "downgrade",
+      userId: selectedDoctorProfile.user_id || selectedDoctorProfile.id,
+      name: selectedDoctorProfile.display_name || selectedDoctorProfile.email || "Staff account",
+      sourceRole: selectedDoctorPrimaryRole,
+      targetRole: "customer"
+    });
+  }
+
   async function submitCustomerPrivilegeEscalation() {
-    if (!selectedCustomerProfile || !selectedCustomerCanEscalate) {
+    if (!customerPrivilegeSubject?.userId || !customerPrivilegeSubject?.sourceRole || !customerPrivilegeTargetRole) {
       return;
     }
     if (customerPrivilegeOtp.code.length !== 6) {
@@ -4674,10 +4902,15 @@ export function AdminStorefrontDashboard({
     }
 
     setCustomerPrivilegeEscalationLoading(true);
-    setCustomerPrivilegeOtp((current) => ({ ...current, status: `Verifying code and migrating customer to ${formatRoleLabel(customerPrivilegeTargetRole)}...` }));
+    setCustomerPrivilegeOtp((current) => ({
+      ...current,
+      status: customerPrivilegeSubject.mode === "downgrade"
+        ? `Verifying code and downgrading ${customerPrivilegeSubject.name} to ${formatRoleLabel(customerPrivilegeTargetRole)}...`
+        : `Verifying code and upgrading ${customerPrivilegeSubject.name} to ${formatRoleLabel(customerPrivilegeTargetRole)}...`
+    }));
 
     try {
-      const response = await fetch(`/api/admin/customers/${encodeURIComponent(String(selectedCustomerProfile.id))}/privilege-escalation?baseUrl=${encodeURIComponent(normalizeBaseUrl(session.baseUrl))}`, {
+      const response = await fetch(`/api/admin/customers/${encodeURIComponent(String(customerPrivilegeSubject.userId))}/privilege-escalation?baseUrl=${encodeURIComponent(normalizeBaseUrl(session.baseUrl))}`, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -4693,21 +4926,7 @@ export function AdminStorefrontDashboard({
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
-        throw new Error(payload?.error?.message || "Customer privilege escalation failed.");
-      }
-
-      if (payload.data?.customer) {
-        setData((prev) => ({
-          ...prev,
-          customers: (prev.customers || []).some((customer) => String(customer.id || customer.user_id || customer.customer_id) === String(payload.data.customer.id || payload.data.customer.user_id || payload.data.customer.customer_id))
-            ? (prev.customers || []).map((customer) => (
-              String(customer.id || customer.user_id || customer.customer_id) === String(payload.data.customer.id || payload.data.customer.user_id || payload.data.customer.customer_id)
-                ? { ...customer, ...payload.data.customer }
-                : customer
-            ))
-            : [payload.data.customer, ...(prev.customers || [])]
-        }));
-        patchCustomerCache(payload.data.customer);
+        throw new Error(payload?.error?.message || "User role change failed.");
       }
 
       revalidateCacheGroups(isCustomerListKey, isDoctorListKey);
@@ -4719,8 +4938,15 @@ export function AdminStorefrontDashboard({
       }
 
       closeCustomerPrivilegeEscalationModal();
-      closeCustomerDetails();
-      showSnackbar(payload?.data?.message || `Customer migrated to ${formatRoleLabel(customerPrivilegeTargetRole)}.`, "success");
+      if (customerPrivilegeSubject.mode === "downgrade") {
+        setSelectedDoctorId(null);
+      } else {
+        closeCustomerDetails();
+      }
+      showSnackbar(
+        payload?.data?.message || `${customerPrivilegeSubject.name} updated to ${formatRoleLabel(customerPrivilegeTargetRole)}.`,
+        "success"
+      );
     } catch (error) {
       const message = describeRequestError(error);
       setCustomerPrivilegeOtp((current) => ({ ...current, status: message }));
@@ -5740,6 +5966,48 @@ export function AdminStorefrontDashboard({
     return payload;
   }
 
+  async function fetchRevenueChartOrders(activeSession = session) {
+    const perPage = 100;
+    const maxPages = 24;
+    const cutoffDate = startOfMonth(addMonths(new Date(), -23));
+    const orders = [];
+
+    for (let page = 1; page <= maxPages; page += 1) {
+      const payload = await apiRequest("/orders", {
+        params: {
+          per_page: perPage,
+          page,
+          orderby: "date",
+          order: "desc"
+        }
+      }, activeSession);
+      const rows = Array.isArray(payload?.data) ? payload.data : [];
+      if (!rows.length) {
+        break;
+      }
+
+      orders.push(...rows);
+
+      const oldestRow = rows[rows.length - 1];
+      const oldestDate = new Date(oldestRow?.created_at || oldestRow?.date_created || "");
+      if (rows.length < perPage || (!Number.isNaN(oldestDate.getTime()) && oldestDate < cutoffDate)) {
+        break;
+      }
+    }
+
+    const filteredOrders = orders.filter((order) => {
+      const createdAt = new Date(order?.created_at || order?.date_created || "");
+      return !Number.isNaN(createdAt.getTime()) && createdAt >= cutoffDate;
+    });
+
+    setData((prev) => ({
+      ...prev,
+      revenueChartOrders: filteredOrders
+    }));
+
+    return filteredOrders;
+  }
+
   async function refreshSession(activeSession = session) {
     const workingSession = activeSession?.refreshToken ? activeSession : latestSessionRef.current;
     if (!workingSession?.refreshToken) {
@@ -5861,6 +6129,7 @@ export function AdminStorefrontDashboard({
       const endpointResults = await Promise.allSettled([
         apiRequest("/dashboard/store-admin", {}, activeSession),
         apiRequest("/orders", { params: { per_page: 24 } }, activeSession),
+        fetchRevenueChartOrders(activeSession),
         apiRequest("/appointments", { params: { per_page: 40 } }, activeSession),
         apiRequest("/prescriptions", { params: { per_page: 40 } }, activeSession),
         apiRequest("/emails/logs", { params: { per_page: 20 } }, activeSession),
@@ -5877,6 +6146,7 @@ export function AdminStorefrontDashboard({
       const [
         dashboardPayload,
         ordersPayload,
+        revenueChartOrdersPayload,
         appointmentsPayload,
         prescriptionsPayload,
         emailsPayload,
@@ -5887,13 +6157,14 @@ export function AdminStorefrontDashboard({
       ] = [
         getSettledValue(endpointResults[0], { data: {} }),
         getSettledValue(endpointResults[1], { data: [] }),
-        getSettledValue(endpointResults[2], { data: [] }),
+        getSettledValue(endpointResults[2], []),
         getSettledValue(endpointResults[3], { data: [] }),
         getSettledValue(endpointResults[4], { data: [] }),
         getSettledValue(endpointResults[5], { data: [] }),
-        getSettledValue(endpointResults[6], { data: {} }),
-        getSettledValue(endpointResults[7], { data: [] }),
-        getSettledValue(endpointResults[8], { data: [] })
+        getSettledValue(endpointResults[6], { data: [] }),
+        getSettledValue(endpointResults[7], { data: {} }),
+        getSettledValue(endpointResults[8], { data: [] }),
+        getSettledValue(endpointResults[9], { data: [] })
       ];
 
       const orders = ordersPayload.data || [];
@@ -5940,6 +6211,7 @@ export function AdminStorefrontDashboard({
         dashboard: nextDashboard,
         orders,
         orderDetails,
+        revenueChartOrders: Array.isArray(revenueChartOrdersPayload) ? revenueChartOrdersPayload : [],
         appointments: nextAppointments,
         prescriptions,
         prescriptionDetails,
@@ -6027,7 +6299,7 @@ export function AdminStorefrontDashboard({
           username,
           password,
           ...frontendContext(session),
-          ...buildTwoStepVerificationRequest(authSecuritySettings)
+          ...buildTwoStepVerificationRequest(effectiveAuthSecuritySettings)
         }
       }, session);
 
@@ -6284,6 +6556,9 @@ export function AdminStorefrontDashboard({
       setAccessResolved(true);
       try {
         await fetchDashboardSummary(restoredSession);
+        if (currentPage === "overview") {
+          await fetchRevenueChartOrders(restoredSession);
+        }
         if (cancelled) {
           return;
         }
@@ -6330,7 +6605,7 @@ export function AdminStorefrontDashboard({
   }, [audit.category, audit.status, audit.source, currentPage, deferredSearch, session.accessToken]);
 
   useEffect(() => {
-    if (trendMode !== "weekly" || !session.accessToken) {
+    if (currentPage !== "overview" || !session.accessToken) {
       return;
     }
 
@@ -6347,7 +6622,17 @@ export function AdminStorefrontDashboard({
     }, 15000);
 
     return () => window.clearInterval(intervalId);
-  }, [trendMode, session.accessToken, refreshing, currentPage]);
+  }, [session.accessToken, refreshing, currentPage]);
+
+  useEffect(() => {
+    if (currentPage !== "overview" || !session.accessToken || data.revenueChartOrders.length) {
+      return;
+    }
+
+    fetchRevenueChartOrders(session).catch((error) => {
+      console.error(error);
+    });
+  }, [currentPage, data.revenueChartOrders.length, session]);
 
   const canLoadSections = (isEmbeddedDashboard ? Boolean(session.accessToken) : hydrated && Boolean(session.accessToken) && !authGate.visible);
   const lazyQueryOptions = {
@@ -6539,6 +6824,10 @@ export function AdminStorefrontDashboard({
   async function refreshDashboardData(activeSession = session) {
     const tasks = [fetchDashboardSummary(activeSession)];
 
+    if (currentPage === "overview") {
+      tasks.push(fetchRevenueChartOrders(activeSession));
+    }
+
     if (["overview", "orders", "payments"].includes(currentPage) && ordersListKey) {
       tasks.push(ordersQuery.mutate());
     }
@@ -6725,97 +7014,11 @@ export function AdminStorefrontDashboard({
   const emailTotal = Number(emailsSummary.sent_today || 0) + Number(emailsSummary.failed_today || 0);
   const emailFailureRate = emailTotal ? (Number(emailsSummary.failed_today || 0) / emailTotal) * 100 : 0;
 
-  const weeklyTrend = (() => {
-    const orders = data.orderDetails || [];
-    const now = new Date();
-    const days = [];
-    for (let offset = 6; offset >= 0; offset -= 1) {
-      const day = new Date(now);
-      day.setHours(0, 0, 0, 0);
-      day.setDate(now.getDate() - offset);
-      const next = new Date(day);
-      next.setDate(day.getDate() + 1);
-      const dayOrders = orders
-        .filter((order) => {
-          const created = new Date(order.created_at);
-          return !Number.isNaN(created.getTime()) && created >= day && created < next;
-        });
-      days.push({
-        label: day.toLocaleDateString("en-US", { weekday: "short" }),
-        total: dayOrders.reduce((sum, order) => sum + Number(order.total || 0), 0),
-        volume: dayOrders.length
-      });
-    }
-    return days;
-  })();
-
-  const monthlyTrend = (() => {
-    const orders = data.orderDetails || [];
-    const now = new Date();
-    return Array.from({ length: 4 }, (_, index) => {
-      const start = new Date(now);
-      start.setHours(0, 0, 0, 0);
-      start.setDate(now.getDate() - ((3 - index) * 7) - 6);
-      const end = new Date(start);
-      end.setDate(start.getDate() + 7);
-      const weekOrders = orders.filter((order) => {
-        const created = new Date(order.created_at);
-        return !Number.isNaN(created.getTime()) && created >= start && created < end;
-      });
-      return {
-        label: `Week ${index + 1}`,
-        total: weekOrders.reduce((sum, order) => sum + Number(order.total || 0), 0),
-        volume: weekOrders.length
-      };
-    });
-  })();
-
-  const yearlyTrend = (() => {
-    const orders = data.orderDetails || [];
-    const now = new Date();
-    return Array.from({ length: 12 }, (_, index) => {
-      const monthDate = new Date(now.getFullYear(), index, 1);
-      const nextMonthDate = new Date(now.getFullYear(), index + 1, 1);
-      const monthOrders = orders.filter((order) => {
-        const created = new Date(order.created_at);
-        return !Number.isNaN(created.getTime()) && created >= monthDate && created < nextMonthDate;
-      });
-      return {
-        label: monthDate.toLocaleDateString("en-US", { month: "short" }),
-        total: monthOrders.reduce((sum, order) => sum + Number(order.total || 0), 0),
-        volume: monthOrders.length
-      };
-    });
-  })();
-
-  const trendSeries = trendMode === "yearly" ? yearlyTrend : trendMode === "monthly" ? monthlyTrend : weeklyTrend;
-  const chartMax = Math.max(...trendSeries.map((day) => day.total), 1);
-  const chartColors = ["#0e2955", "#15407f", "#1f5fb4", "#7d96c6", "#c5d4ec", "#8ab5f9", "#0e2955", "#15407f", "#1f5fb4", "#7d96c6", "#c5d4ec", "#8ab5f9"];
-  const trendChartWidth = Math.max(720, trendSeries.length * 120);
-  const trendChartHeight = 220;
-  const trendChartPaddingX = 28;
-  const trendChartPaddingY = 20;
-  const trendChartUsableWidth = Math.max(1, trendChartWidth - (trendChartPaddingX * 2));
-  const trendChartUsableHeight = Math.max(1, trendChartHeight - (trendChartPaddingY * 2));
-  const trendChartPoints = trendSeries.map((day, index) => {
-    const x = trendSeries.length === 1
-      ? trendChartWidth / 2
-      : trendChartPaddingX + ((trendChartUsableWidth / (trendSeries.length - 1)) * index);
-    const normalizedTotal = Math.max(0, Number(day.total || 0));
-    const y = trendChartHeight - trendChartPaddingY - ((normalizedTotal / chartMax) * trendChartUsableHeight);
-    return {
-      ...day,
-      x,
-      y
-    };
-  });
-  const trendLinePath = trendChartPoints.length
-    ? trendChartPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ")
-    : "";
-  const trendAreaPath = trendChartPoints.length
-    ? `${trendLinePath} L ${trendChartPoints[trendChartPoints.length - 1].x} ${trendChartHeight - trendChartPaddingY} L ${trendChartPoints[0].x} ${trendChartHeight - trendChartPaddingY} Z`
-    : "";
-  const trendGridLines = [0.25, 0.5, 0.75].map((ratio) => trendChartPaddingY + (trendChartUsableHeight * ratio));
+  const revenueChartSourceOrders = data.revenueChartOrders.length ? data.revenueChartOrders : data.orderDetails;
+  const revenueOverviewMetrics = useMemo(
+    () => buildRevenueOverviewMetrics(revenueChartSourceOrders, revenueGranularity),
+    [revenueChartSourceOrders, revenueGranularity]
+  );
 
   const legendItems = [
     { color: "teal", label: "Orders awaiting review", value: (data.orderDetails || []).filter((order) => ["pending", "on-hold"].includes(order.status)).length },
@@ -7585,7 +7788,7 @@ export function AdminStorefrontDashboard({
     .filter((appointment) => String(appointment.doctor_user_id) === String(consultationDoctorProfile?.user_id || consultationDoctorProfile?.id || ""))
     .sort((a, b) => new Date(a.start_at || 0) - new Date(b.start_at || 0));
   const consultationCalendarDate = consultationCreateForm.startAt ? new Date(consultationCreateForm.startAt) : new Date();
-  const consultationWeekStart = startOfWeek(consultationCalendarDate);
+  const consultationWeekStart = startOfCalendarWeek(consultationCalendarDate);
   const consultationPatientRows = popupConsultationPatients.length ? popupConsultationPatients : allCustomerRows;
   const consultationPatientOptions = consultationPatientRows.filter((row) => {
     if (!consultationPatientSearch.trim()) {
@@ -7600,7 +7803,7 @@ export function AdminStorefrontDashboard({
     }
     return normalizeText(`${doctor.display_name || ""} ${doctor.email || ""} ${doctor.specialty || ""} ${doctor.location || ""}`).includes(searchTerm);
   }).slice(0, 8);
-  const consultationCalendarDays = Array.from({ length: 7 }, (_, index) => addDays(consultationWeekStart, index));
+  const consultationCalendarDays = Array.from({ length: 7 }, (_, index) => addCalendarDays(consultationWeekStart, index));
   const consultationSelectedDayKey = normalizeDateKey(consultationCalendarDate);
   const consultationDayAppointments = consultationDoctorAppointments.filter((appointment) => normalizeDateKey(appointment.start_at) === consultationSelectedDayKey);
   const consultationVisiblePatientOptions = consultationPatientOptions.slice(0, 6);
@@ -7762,9 +7965,6 @@ export function AdminStorefrontDashboard({
     }
   }, [auditDetailModalOpen, selectedAuditEvent]);
 
-  const selectedDoctorProfile = selectedDoctorId
-    ? (data.doctors || []).find((doctor) => String(doctor.user_id || doctor.id) === String(selectedDoctorId))
-    : null;
   const selectedDoctorPatients = selectedDoctorProfile ? (() => {
     const doctorId = selectedDoctorProfile.user_id || selectedDoctorProfile.id;
     const map = new Map();
@@ -7834,14 +8034,8 @@ export function AdminStorefrontDashboard({
     const customer = resolveOrderCustomerSummary(order);
     return matchesSearch(`${order.number} ${order.status} ${order.rx_status || ""} ${itemNames} ${customer.name} ${customer.email}`, currentPage === "overview");
   });
-  const overviewPaidOrders = overviewOrderRows.filter((order) => normalizedPaymentStatus(order) === "completed");
-  const overviewRevenueTotal = trendSeries.reduce((sum, row) => sum + Number(row.total || 0), 0);
-  const overviewAverageOrderValue = overviewPaidOrders.length
-    ? overviewPaidOrders.reduce((sum, order) => sum + Number(order.total || 0), 0) / overviewPaidOrders.length
-    : 0;
-  const overviewConsultationFees = (data.appointments || []).reduce((sum, appointment) => (
-    sum + safeNumber(appointment.fee || appointment.amount || appointment.consultation_fee || 0)
-  ), 0);
+  const overviewRevenueTotal = revenueOverviewMetrics.total;
+  const overviewRevenueChangePct = revenueOverviewMetrics.changePct;
   const overviewInventoryRows = (data.products || [])
     .filter((product) => matchesSearch(`${product.name} ${product.sku || ""} ${product.stock_status || ""}`, currentPage === "overview"))
     .sort((left, right) => safeNumber(getProductStockQuantity(left) ?? 0) - safeNumber(getProductStockQuantity(right) ?? 0))
@@ -7904,7 +8098,7 @@ export function AdminStorefrontDashboard({
     },
     {
       label: "Two-step verification",
-      value: authSecuritySettings.globalTwoStepVerification ? "Enabled" : "Disabled",
+      value: ADMIN_OTP_TEMPORARILY_DISABLED ? "Temporarily bypassed on admin" : effectiveAuthSecuritySettings.globalTwoStepVerification ? "Enabled" : "Disabled",
       note: "applies to customer, doctor, pharmacist, and admin sign-in"
     }
   ];
@@ -8051,45 +8245,140 @@ export function AdminStorefrontDashboard({
   function renderPageSkeleton() {
     if (currentPage === "overview") {
       return (
-        <section className="page-view active">
-          <section className="metrics-grid">
-            {renderMetricSkeletons(4)}
+        <section className="page-view active overview-skeleton-page">
+          <section className="metrics-grid overview-skeleton-metrics">
+            {renderMetricSkeletons(5)}
           </section>
-          <section className="analytics-grid">
-            <article className="panel skeleton-panel">
-              <div className="panel-header">
-                <div>
-                  <SkeletonBox className="skeleton-line skeleton-line-xs" />
-                  <SkeletonBox className="skeleton-line skeleton-line-lg" />
+          <section className="overview-v2-content-grid overview-skeleton-content-grid">
+            <div className="overview-v2-stack">
+              <article className="panel skeleton-panel overview-skeleton-panel">
+                <div className="panel-header">
+                  <div>
+                    <SkeletonBox className="skeleton-pill skeleton-pill-sm overview-skeleton-kicker" />
+                  </div>
                 </div>
-                <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
-              </div>
-              <div className="skeleton-chart-bars">
-                {Array.from({ length: 7 }, (_, index) => (
-                  <SkeletonBox className={`skeleton-bar skeleton-bar-${(index % 4) + 1}`} key={`overview-bar-${index}`} />
-                ))}
-              </div>
-            </article>
-            <article className="panel skeleton-panel">
-              <div className="panel-header">
-                <div>
-                  <SkeletonBox className="skeleton-line skeleton-line-xs" />
-                  <SkeletonBox className="skeleton-line skeleton-line-lg" />
+                <div className="overview-skeleton-revenue-card">
+                  <div className="overview-skeleton-revenue-head">
+                    <div className="overview-skeleton-kpi-copy">
+                      <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                      <div className="overview-skeleton-kpi-row">
+                        <SkeletonBox className="skeleton-line skeleton-line-lg skeleton-line-tall overview-skeleton-value-line" />
+                        <SkeletonBox className="skeleton-pill overview-skeleton-change-pill" />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="overview-skeleton-chart">
+                    <div className="overview-skeleton-gridline" />
+                    <div className="overview-skeleton-gridline" />
+                    <div className="overview-skeleton-gridline" />
+                    <div className="overview-skeleton-gridline" />
+                    <div className="overview-skeleton-area" />
+                    <div className="overview-skeleton-axis">
+                      {["Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb"].map((label) => (
+                        <span className="overview-skeleton-axis-label" key={label}>{label}</span>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-                <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
-              </div>
-              <div className="skeleton-donut-layout">
-                <SkeletonBox className="skeleton-donut" />
-                <div className="detail-list">
+              </article>
+
+              <article className="panel skeleton-panel overview-skeleton-panel">
+                <div className="panel-header">
+                  <div>
+                    <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                    <SkeletonBox className="skeleton-line skeleton-line-lg" />
+                    <SkeletonBox className="skeleton-line skeleton-line-md" />
+                  </div>
+                  <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+                </div>
+                <div className="overview-skeleton-table-wrap">
+                  <div className="overview-skeleton-table-head">
+                    {Array.from({ length: 7 }, (_, index) => (
+                      <SkeletonBox className="skeleton-line skeleton-line-xs" key={`overview-table-head-${index}`} />
+                    ))}
+                  </div>
+                  <div className="overview-skeleton-table-body">
+                    {Array.from({ length: 4 }, (_, rowIndex) => (
+                      <div className="overview-skeleton-table-row" key={`overview-table-row-${rowIndex}`}>
+                        {Array.from({ length: 7 }, (_, cellIndex) => (
+                          <SkeletonBox
+                            className={`skeleton-line ${cellIndex === 0 ? "skeleton-line-md" : cellIndex > 4 ? "skeleton-line-sm" : "skeleton-line-xs"}`}
+                            key={`overview-table-cell-${rowIndex}-${cellIndex}`}
+                          />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <aside className="overview-v2-stack">
+              <article className="panel skeleton-panel overview-skeleton-panel">
+                <div className="panel-header">
+                  <div>
+                    <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                    <SkeletonBox className="skeleton-line skeleton-line-lg" />
+                  </div>
+                  <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+                </div>
+                <div className="overview-skeleton-side-list">
+                  {Array.from({ length: 3 }, (_, index) => (
+                    <div className="overview-skeleton-side-row" key={`overview-booking-${index}`}>
+                      <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
+                      <div className="overview-skeleton-side-copy">
+                        <SkeletonBox className="skeleton-line skeleton-line-md" />
+                        <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                      </div>
+                      <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel skeleton-panel overview-skeleton-panel">
+                <div className="panel-header">
+                  <div>
+                    <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                    <SkeletonBox className="skeleton-line skeleton-line-lg" />
+                    <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                  </div>
+                  <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+                </div>
+                <div className="overview-skeleton-side-list">
                   {Array.from({ length: 4 }, (_, index) => (
-                    <div className="detail-item-card skeleton-panel" key={`overview-legend-${index}`}>
-                      <SkeletonBox className="skeleton-line skeleton-line-md" />
+                    <div className="overview-skeleton-side-row inventory" key={`overview-stock-${index}`}>
+                      <SkeletonBox className="skeleton-circle skeleton-circle-sm" />
+                      <div className="overview-skeleton-side-copy">
+                        <SkeletonBox className="skeleton-line skeleton-line-md" />
+                        <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                        <SkeletonBox className="skeleton-block overview-skeleton-stock-bar" />
+                      </div>
+                      <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel skeleton-panel overview-skeleton-panel">
+                <div className="panel-header">
+                  <div>
+                    <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                    <SkeletonBox className="skeleton-line skeleton-line-lg" />
+                    <SkeletonBox className="skeleton-line skeleton-line-sm" />
+                  </div>
+                </div>
+                <div className="overview-skeleton-finance-grid">
+                  {Array.from({ length: 4 }, (_, index) => (
+                    <div className="overview-skeleton-finance-card" key={`overview-finance-${index}`}>
+                      <SkeletonBox className="skeleton-line skeleton-line-xs" />
+                      <SkeletonBox className="skeleton-line skeleton-line-md skeleton-line-tall" />
                       <SkeletonBox className="skeleton-line skeleton-line-sm" />
                     </div>
                   ))}
                 </div>
-              </div>
-            </article>
+              </article>
+            </aside>
           </section>
         </section>
       );
@@ -8463,6 +8752,29 @@ export function AdminStorefrontDashboard({
                       <div><span>Plan frequency</span><strong>{subscriptionSummaryFrequency}</strong></div>
                       <div><span>Description</span><strong>{subscriptionSummaryDescription.length > 32 ? `${subscriptionSummaryDescription.slice(0, 32)}...` : subscriptionSummaryDescription}</strong></div>
                     </div>
+                    <div className="detail-field detail-field-wide subscription-public-link-panel">
+                      <span>Public subscription link</span>
+                      <div className="subscription-public-link-row">
+                        <input className="form-control" value={subscriptionCheckoutLinkValue} readOnly aria-label="Public subscription link" />
+                        <button
+                          className="pill-button"
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(subscriptionCheckoutLinkValue);
+                              showSnackbar("Subscription link copied.", "success");
+                            } catch {
+                              showSnackbar("Copy failed. Copy the link manually.", "error");
+                            }
+                          }}
+                        >
+                          Copy
+                        </button>
+                        <button className="pill-button" type="button" onClick={() => window.open(subscriptionCheckoutLinkValue, "_blank", "noopener,noreferrer")}>
+                          Open
+                        </button>
+                      </div>
+                    </div>
                     <div>
                       <h4>Features table</h4>
                       <ul className="preview-features">
@@ -8833,91 +9145,16 @@ export function AdminStorefrontDashboard({
                       <div className="panel-header">
                         <div>
                           <p className="section-kicker">Revenue and orders</p>
-                          
                         </div>
-                        <label className="overview-v2-trend-select" aria-label="Revenue range">
-                          <span className="sr-only">Revenue range</span>
-                          <select value={trendMode} onChange={(event) => setTrendMode(event.target.value)}>
-                            <option value="yearly">Yearly</option>
-                            <option value="monthly">Monthly</option>
-                            <option value="weekly">Weekly</option>
-                          </select>
-                        </label>
                       </div>
-                      <div className="overview-v2-revenue-layout">
-                        <div className="chart-scroll">
-                          <div className="trend-chart">
-                            <div className="trend-chart-surface">
-                              <svg className="trend-chart-svg" viewBox={`0 0 ${trendChartWidth} ${trendChartHeight}`} role="img" aria-label={`Revenue and orders ${trendMode} trend`}>
-                                <defs>
-                                  <linearGradient id={`trend-area-${trendMode}`} x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="0%" stopColor="#0e2955" stopOpacity="0.26" />
-                                    <stop offset="55%" stopColor="#2f5da8" stopOpacity="0.14" />
-                                    <stop offset="100%" stopColor="#0e2955" stopOpacity="0.02" />
-                                  </linearGradient>
-                                </defs>
-                                {trendGridLines.map((y, index) => (
-                                  <line
-                                    key={`trend-grid-${index}`}
-                                    className="trend-chart-grid-line"
-                                    x1={trendChartPaddingX}
-                                    y1={y}
-                                    x2={trendChartWidth - trendChartPaddingX}
-                                    y2={y}
-                                  />
-                                ))}
-                                <line
-                                  className="trend-chart-grid-line trend-chart-grid-line-base"
-                                  x1={trendChartPaddingX}
-                                  y1={trendChartHeight - trendChartPaddingY}
-                                  x2={trendChartWidth - trendChartPaddingX}
-                                  y2={trendChartHeight - trendChartPaddingY}
-                                />
-                                {trendAreaPath ? <path className="trend-chart-area" d={trendAreaPath} fill={`url(#trend-area-${trendMode})`} /> : null}
-                                {trendLinePath ? <path className="trend-chart-line" d={trendLinePath} /> : null}
-                                {trendChartPoints.map((point, index) => (
-                                  <g key={`${trendMode}-${point.label || "slot"}-${index}`}>
-                                    <circle
-                                      className={`trend-chart-point-halo ${point.placeholder ? "placeholder" : ""}`.trim()}
-                                      cx={point.x}
-                                      cy={point.y}
-                                      r="8"
-                                    />
-                                    <circle
-                                      className={`trend-chart-point ${point.placeholder ? "placeholder" : ""}`.trim()}
-                                      cx={point.x}
-                                      cy={point.y}
-                                      r="4.5"
-                                      fill={chartColors[index % chartColors.length]}
-                                    />
-                                  </g>
-                                ))}
-                              </svg>
-                            </div>
-                            <div className="trend-chart-notes" style={{ gridTemplateColumns: `repeat(${trendSeries.length}, minmax(0, 1fr))` }}>
-                              {trendSeries.map((day, index) => (
-                                <div className="trend-chart-note" key={`${trendMode}-note-${day.label || "slot"}-${index}`}>
-                                  <strong>{formatCompactMoney(day.total, storeCurrency)}</strong>
-                                  <span>{day.label}</span>
-                                  <small>{day.volume ? `${formatNumber(day.volume)} orders` : "N/A"}</small>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                        <aside className="overview-v2-summary-card">
-                          <div>
-                            <span>{trendMode === "yearly" ? "Year revenue" : trendMode === "monthly" ? "Month revenue" : "Week revenue"}</span>
-                            <strong>{formatCompactMoney(overviewRevenueTotal, storeCurrency)}</strong>
-                          </div>
-                          <div className="overview-v2-summary-list">
-                            <div><em>Paid orders</em><b>{formatNumber(overviewPaidOrders.length)}</b></div>
-                            <div><em>Pending payments</em><b>{formatCompactMoney(sales.pending || 0, storeCurrency)}</b></div>
-                            <div><em>Consultation fees</em><b>{formatCompactMoney(overviewConsultationFees, storeCurrency)}</b></div>
-                            <div><em>Average order value</em><b>{formatCompactMoney(overviewAverageOrderValue, storeCurrency)}</b></div>
-                          </div>
-                        </aside>
-                      </div>
+                      <RevenueOverviewCard
+                        currency={storeCurrency}
+                        value={overviewRevenueTotal}
+                        changePct={overviewRevenueChangePct}
+                        data={revenueOverviewMetrics.data}
+                        granularity={revenueGranularity}
+                        onGranularityChange={setRevenueGranularity}
+                      />
                     </article>
 
                     <article className="panel overview-v2-panel">
@@ -9496,7 +9733,7 @@ export function AdminStorefrontDashboard({
                   <article className="panel compact mtm-summary-panel">
                     <div className="panel-header">
                       <div>
-                        <p className="section-kicker">IV therapy</p>
+                        
                         <h2>Status summary</h2>
                       </div>
                     </div>
@@ -9512,7 +9749,7 @@ export function AdminStorefrontDashboard({
                   <section className="table-panel dashboard-table-shell mtm-table-shell mtm-table-panel">
                     <div className="panel-header">
                       <div>
-                        <p className="section-kicker">IV therapy registry</p>
+                        
                         <h2>All customer IV therapy requests</h2>
                       </div>
                     </div>
@@ -10230,7 +10467,7 @@ export function AdminStorefrontDashboard({
                 <section className="panel audit-panel">
                   <div className="panel-header audit-header">
                     <div>
-                      <p className="section-kicker">Compliance</p>
+                     
                       <h2>Audit center</h2>
                     </div>
                     <div className="toolbar">
@@ -10313,80 +10550,154 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "settings" && (
               <section className="page-view active">
-                <section className="page-banner panel">
-                  <div>
-                    <p className="section-kicker">Storefront settings</p>
-                    <h2>Appointment system controls</h2>
-                    <p className="hero-text">Manage frontend test controls for booking automation, reminders, security, category pricing, and the external meeting service without leaving the admin dashboard.</p>
+                <section className="page-surface admin-settings-surface">
+                  <div className="segmented-mini admin-settings-tabs" role="tablist" aria-label="Settings groups">
+                    {ADMIN_SETTINGS_TABS.map((tab) => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        className={adminSettingsTab === tab.key ? "active" : ""}
+                        role="tab"
+                        aria-selected={adminSettingsTab === tab.key}
+                        onClick={() => setAdminSettingsTab(tab.key)}
+                      >
+                        {tab.label} <span className="badge-count">{tab.count}</span>
+                      </button>
+                    ))}
                   </div>
-                  <div className="banner-actions">
-                    <button className="button-primary" type="button" onClick={() => showAuthGate("auth")}>Manage session</button>
-                    <button className="pill-button" type="button" onClick={handleLogout}>Clear tokens</button>
+
+
+                  <div className="settings-panels">
+                    <section className={`settings-panel ${adminSettingsTab === "automation" ? "active" : ""}`} data-settings-panel="automation">
+                      <div className="panel-heading">
+                        <div>
+                          <h4>Meeting service</h4>
+                          <p>Configure the external endpoint and runtime options for virtual consultations.</p>
+                        </div>
+                        <div className="toggle-pills-row">
+                          <span className="toggle-mini">Google Meet integration {appointmentSettings.googleMeetEnabled ? "✓" : "×"}</span>
+                          <span className="toggle-mini">{appointmentSettings.livePaymentsEnabled ? "Live mode ✓" : "Test mode ✓"}</span>
+                          <span className="toggle-mini">API key rotation {appointmentSettings.apiKeyRotationEnabled ? "✓" : "×"}</span>
+                        </div>
+                      </div>
+                      <div className="settings-form-grid">
+                        <label className="field-card span-12">
+                          <span>External meeting service endpoint</span>
+                          <input value={appointmentSettings.externalMeetingServiceUrl} onChange={(event) => setAppointmentSettings((current) => ({ ...current, externalMeetingServiceUrl: event.target.value }))} />
+                        </label>
+                        <label className="field-card span-6 customer-toggle-row">
+                          <span>Google Meet integration</span>
+                          <input type="checkbox" checked={appointmentSettings.googleMeetEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, googleMeetEnabled: event.target.checked }))} />
+                        </label>
+                        <label className="field-card span-6 customer-toggle-row">
+                          <span>{appointmentSettings.livePaymentsEnabled ? "Live payments enabled" : "Test mode enabled"}</span>
+                          <input type="checkbox" checked={appointmentSettings.livePaymentsEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, livePaymentsEnabled: event.target.checked }))} />
+                        </label>
+                        <label className="field-card span-6 customer-toggle-row">
+                          <span>Idempotency protection</span>
+                          <input type="checkbox" checked={appointmentSettings.idempotencyProtection} onChange={(event) => setAppointmentSettings((current) => ({ ...current, idempotencyProtection: event.target.checked }))} />
+                        </label>
+                        <label className="field-card span-6 customer-toggle-row">
+                          <span>API key rotation</span>
+                          <input type="checkbox" checked={appointmentSettings.apiKeyRotationEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, apiKeyRotationEnabled: event.target.checked }))} />
+                        </label>
+                      </div>
+                    </section>
+
+                    <section className={`settings-panel ${adminSettingsTab === "reminders" ? "active" : ""}`} data-settings-panel="reminders">
+                      <div className="panel-heading">
+                        <div>
+                          <h4>Reminder and email rules</h4>
+                          <p>Manage how customers and doctors receive consultation reminders.</p>
+                        </div>
+                      </div>
+                      <div className="settings-form-grid">
+                        <label className="efield-card span-4 customer-toggle-row">
+                          <span>Email notifications enabled</span>
+                          <input type="checkbox" checked={appointmentSettings.emailNotificationsEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, emailNotificationsEnabled: event.target.checked }))} />
+                        </label>
+                        <label className="efield-card span-4">
+                          <span>Primary reminder (minutes before)</span>
+                          <input type="number" min="1" value={appointmentSettings.reminderMinutesPrimary} onChange={(event) => setAppointmentSettings((current) => ({ ...current, reminderMinutesPrimary: event.target.value }))} />
+                        </label>
+                        <label className="efield-card span-4">
+                          <span>Secondary reminder (minutes before)</span>
+                          <input type="number" min="1" value={appointmentSettings.reminderMinutesSecondary} onChange={(event) => setAppointmentSettings((current) => ({ ...current, reminderMinutesSecondary: event.target.value }))} />
+                        </label>
+                        <label className="efield-card span-4">
+                          <span>SMTP host</span>
+                          <input value={appointmentSettings.smtpHost} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpHost: event.target.value }))} />
+                        </label>
+                        <label className="efield-card span-4">
+                          <span>SMTP port</span>
+                          <input value={appointmentSettings.smtpPort} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpPort: event.target.value }))} />
+                        </label>
+                        <label className="efield-card span-4">
+                          <span>Sender address</span>
+                          <input value={appointmentSettings.smtpSender} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpSender: event.target.value }))} />
+                        </label>
+                      </div>
+                    </section>
+
+                    <section className={`settings-panel ${adminSettingsTab === "pricing" ? "active" : ""}`} data-settings-panel="pricing">
+                      <div className="panel-heading">
+                        <div>
+                          <h4>Consultation pricing</h4>
+                          <p>Maintain transparent consultation fees for each care level.</p>
+                        </div>
+                      </div>
+                      <div className="settings-form-grid">
+                        <label className="field-card span-4">
+                          <span>Minimum consultation minutes</span>
+                          <input type="number" min="5" value={appointmentSettings.minimumConsultationMinutes} onChange={(event) => setAppointmentSettings((current) => ({ ...current, minimumConsultationMinutes: event.target.value }))} />
+                        </label>
+                        <label className="field-card span-4">
+                          <span>General category price</span>
+                          <input value={appointmentSettings.categoryPricing.general} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, general: event.target.value } }))} />
+                        </label>
+                        <label className="field-card span-4">
+                          <span>Cardiology category price</span>
+                          <input value={appointmentSettings.categoryPricing.cardiology} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, cardiology: event.target.value } }))} />
+                        </label>
+                      </div>
+                    </section>
+
+                    <section className={`settings-panel ${adminSettingsTab === "security" ? "active" : ""}`} data-settings-panel="security">
+                      <div className="panel-heading">
+                        <div>
+                          <h4>Security and logging</h4>
+                          <p>Protect consultation data and audit important actions performed in the storefront.</p>
+                        </div>
+                      </div>
+                      <div className="settings-form-grid">
+                        <label className="field-card span-4 customer-toggle-row">
+                          <span>Global two-step verification</span>
+                          <input type="checkbox" checked={authSecuritySettings.globalTwoStepVerification} onChange={(event) => setAuthSecuritySettings((current) => ({ ...current, globalTwoStepVerification: event.target.checked }))} />
+                        </label>
+                        <label className="field-card span-4 customer-toggle-row">
+                          <span>Role permissions locked</span>
+                          <input type="checkbox" checked={appointmentSettings.rolePermissionsLocked} onChange={(event) => setAppointmentSettings((current) => ({ ...current, rolePermissionsLocked: event.target.checked }))} />
+                        </label>
+                        <label className="field-card span-4">
+                          <span>Audit log retention (days)</span>
+                          <input type="number" min="7" value={appointmentSettings.auditLogRetention} onChange={(event) => setAppointmentSettings((current) => ({ ...current, auditLogRetention: event.target.value }))} />
+                        </label>
+                        <label className="field-card span-4">
+                          <span>Visible consultations</span>
+                          <input value={formatNumber((data.appointments || []).length)} readOnly />
+                        </label>
+                        <label className="field-card span-4">
+                          <span>Doctors in scope</span>
+                          <input value={formatNumber((data.doctors || []).length)} readOnly />
+                        </label>
+                        <label className="field-card span-4">
+                          <span>Queued emails</span>
+                          <input value={formatNumber(emailItems[0]?.value || 0)} readOnly />
+                        </label>
+                      </div>
+                      <p className="settings-panel-note">When enabled, all customer, doctor, pharmacist, and admin sign-in forms request an email OTP challenge after credentials are accepted.</p>
+                    </section>
                   </div>
-                </section>
-                <section className="settings-grid">
-                  {settingsCards.map((card) => (
-                    <article className="mini-stat" key={card.label}>
-                      <span>{card.label}</span>
-                      <strong>{card.value}</strong>
-                      <small>{card.note}</small>
-                    </article>
-                  ))}
-                </section>
-                <div className="filter-bar admin-settings-filter-bar" role="tablist" aria-label="Settings groups">
-                  <button className="filter-btn active" type="button">Automation <span className="filter-count">4</span></button>
-                  <button className="filter-btn" type="button">Reminders <span className="filter-count">3</span></button>
-                  <button className="filter-btn" type="button">Pricing <span className="filter-count">2</span></button>
-                  <div className="filter-divider" />
-                  <button className="filter-btn" type="button">Security <span className="filter-count">4</span></button>
-                </div>
-                <div className="status-pill-grid admin-settings-status-grid">
-                  <div className={`status-pill ${appointmentSettings.googleMeetEnabled ? "success" : "error"}`}><span className="dot" />Meeting service</div>
-                  <div className={`status-pill ${appointmentSettings.emailNotificationsEnabled ? "info" : "warning"}`}><span className="dot" />Notifications</div>
-                  <div className={`status-pill ${appointmentSettings.livePaymentsEnabled ? "success" : "warning"}`}><span className="dot" />{appointmentSettings.livePaymentsEnabled ? "Live payments" : "Test mode"}</div>
-                  <div className={`status-pill ${appointmentSettings.idempotencyProtection ? "success" : "warning"}`}><span className="dot" />Idempotency</div>
-                  <div className={`status-pill ${authSecuritySettings.globalTwoStepVerification ? "success" : "warning"}`}><span className="dot" />{authSecuritySettings.globalTwoStepVerification ? "Global OTP on" : "Global OTP off"}</div>
-                </div>
-                <section className="doctor-settings-grid admin-settings-grid">
-                  <article className="doctor-settings-card">
-                    <h3>Meeting service</h3>
-                    <label className="customer-toggle-row"><span>Google Meet integration</span><input type="checkbox" checked={appointmentSettings.googleMeetEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, googleMeetEnabled: event.target.checked }))} /></label>
-                    <label className="customer-toggle-row"><span>{appointmentSettings.livePaymentsEnabled ? "Live mode" : "Test mode"}</span><input type="checkbox" checked={appointmentSettings.livePaymentsEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, livePaymentsEnabled: event.target.checked }))} /></label>
-                    <label className="customer-toggle-row"><span>Idempotency protection</span><input type="checkbox" checked={appointmentSettings.idempotencyProtection} onChange={(event) => setAppointmentSettings((current) => ({ ...current, idempotencyProtection: event.target.checked }))} /></label>
-                    <label className="customer-toggle-row"><span>API key rotation</span><input type="checkbox" checked={appointmentSettings.apiKeyRotationEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, apiKeyRotationEnabled: event.target.checked }))} /></label>
-                    <label className="detail-field detail-field-wide">
-                      <span>External meeting service endpoint</span>
-                      <input value={appointmentSettings.externalMeetingServiceUrl} onChange={(event) => setAppointmentSettings((current) => ({ ...current, externalMeetingServiceUrl: event.target.value }))} />
-                    </label>
-                  </article>
-
-                  <article className="doctor-settings-card">
-                    <h3>Reminder and email rules</h3>
-                    <label className="customer-toggle-row"><span>Email notifications enabled</span><input type="checkbox" checked={appointmentSettings.emailNotificationsEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, emailNotificationsEnabled: event.target.checked }))} /></label>
-                    <label><span>Primary reminder (minutes before)</span><input type="number" min="1" value={appointmentSettings.reminderMinutesPrimary} onChange={(event) => setAppointmentSettings((current) => ({ ...current, reminderMinutesPrimary: event.target.value }))} /></label>
-                    <label><span>Secondary reminder (minutes before)</span><input type="number" min="1" value={appointmentSettings.reminderMinutesSecondary} onChange={(event) => setAppointmentSettings((current) => ({ ...current, reminderMinutesSecondary: event.target.value }))} /></label>
-                    <label><span>SMTP host</span><input value={appointmentSettings.smtpHost} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpHost: event.target.value }))} /></label>
-                    <label><span>SMTP port</span><input value={appointmentSettings.smtpPort} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpPort: event.target.value }))} /></label>
-                    <label><span>Sender address</span><input value={appointmentSettings.smtpSender} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpSender: event.target.value }))} /></label>
-                  </article>
-
-                  <article className="doctor-settings-card">
-                    <h3>Consultation rules</h3>
-                    <label><span>Minimum consultation minutes</span><input type="number" min="5" value={appointmentSettings.minimumConsultationMinutes} onChange={(event) => setAppointmentSettings((current) => ({ ...current, minimumConsultationMinutes: event.target.value }))} /></label>
-                    <label><span>General category price</span><input value={appointmentSettings.categoryPricing.general} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, general: event.target.value } }))} /></label>
-                    <label><span>Cardiology category price</span><input value={appointmentSettings.categoryPricing.cardiology} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, cardiology: event.target.value } }))} /></label>
-                  </article>
-
-                  <article className="doctor-settings-card">
-                    <h3>Security and logging</h3>
-                    <label className="customer-toggle-row"><span>Global two-step verification</span><input type="checkbox" checked={authSecuritySettings.globalTwoStepVerification} onChange={(event) => setAuthSecuritySettings((current) => ({ ...current, globalTwoStepVerification: event.target.checked }))} /></label>
-                    <label className="customer-toggle-row"><span>Role permissions locked</span><input type="checkbox" checked={appointmentSettings.rolePermissionsLocked} onChange={(event) => setAppointmentSettings((current) => ({ ...current, rolePermissionsLocked: event.target.checked }))} /></label>
-                    <label><span>Audit log retention (days)</span><input type="number" min="7" value={appointmentSettings.auditLogRetention} onChange={(event) => setAppointmentSettings((current) => ({ ...current, auditLogRetention: event.target.value }))} /></label>
-                    <div className="muted">When enabled, all customer, doctor, pharmacist, and admin sign-in forms request an email OTP challenge after credentials are accepted.</div>
-                    <div className="doctor-settings-summary"><span>Visible consultations</span><strong>{formatNumber((data.appointments || []).length)}</strong></div>
-                    <div className="doctor-settings-summary"><span>Doctors in scope</span><strong>{formatNumber((data.doctors || []).length)}</strong></div>
-                    <div className="doctor-settings-summary"><span>Queued emails</span><strong>{formatNumber(emailItems[0]?.value || 0)}</strong></div>
-                  </article>
                 </section>
               </section>
             )}
@@ -12338,6 +12649,7 @@ export function AdminStorefrontDashboard({
                 <div className="detail-list">
                   <div className="detail-grid">
                     <div className="detail-block"><span>Email</span><strong>{selectedDoctorProfile.email || "n/a"}</strong></div>
+                    <div className="detail-block"><span>Current role</span><strong>{formatRoleLabel(selectedDoctorPrimaryRole || "staff")}</strong></div>
                     <div className="detail-block"><span>Specialty</span><strong>{selectedDoctorProfile.specialty || "General practice"}</strong></div>
                     <div className="detail-block"><span>Location</span><strong>{selectedDoctorProfile.location || "Nevari network"}</strong></div>
                     <div className="detail-block"><span>Status</span><strong>{formatStatusLabel(getDoctorStatus(selectedDoctorProfile))}</strong></div>
@@ -12415,6 +12727,7 @@ export function AdminStorefrontDashboard({
               </div>
               {doctorDetailTab === "account" ? (
                 <div className="stacked-order-popup-actions doctor-detail-actions">
+                  {selectedDoctorCanDowngrade ? <button className="button-primary" type="button" onClick={openStaffDowngradeModal} disabled={doctorDetailTierLoading}>Downgrade user</button> : null}
                   <button className="pill-button" type="button" onClick={resetSelectedDoctorPassword} disabled={doctorDetailTierLoading}>Reset password</button>
                   <button className="pill-button danger" type="button" onClick={suspendSelectedDoctor} disabled={doctorDetailTierLoading}>Suspend staff</button>
                   <button className="pill-button danger" type="button" onClick={deleteSelectedDoctor} disabled={doctorDetailTierLoading}>Delete staff</button>
@@ -12458,8 +12771,8 @@ export function AdminStorefrontDashboard({
                     <div className="detail-item-card customer-detail-wide"><strong>Last activity</strong><span className="muted">{formatDate(selectedCustomerProfile.lastActivity, true)}</span></div>
                     {canEscalateCustomerPrivileges ? (
                       <div className="detail-item-card customer-detail-wide customer-privilege-card">
-                        <strong>Privilege escalation</strong>
-                        <span className="muted">Migrate this customer account into an admin, doctor, or pharmacist account after OTP verification.</span>
+                        <strong>Role management</strong>
+                        <span className="muted">Upgrade this customer account into a doctor or pharmacist after OTP verification.</span>
                         {selectedCustomerCanEscalate ? (
                           <div className="customer-privilege-actions">
                             <label className="customer-privilege-field">
@@ -12471,11 +12784,11 @@ export function AdminStorefrontDashboard({
                               </select>
                             </label>
                             <button className="button-primary" type="button" onClick={openCustomerPrivilegeEscalationModal}>
-                              Escalate with OTP
+                              Upgrade user
                             </button>
                           </div>
                         ) : (
-                          <span className="muted">This record is not linked to a customer account that can be migrated.</span>
+                          <span className="muted">This record is not linked to a customer account that can be upgraded.</span>
                         )}
                       </div>
                     ) : null}
@@ -12577,17 +12890,17 @@ export function AdminStorefrontDashboard({
           </div>
           {customerPrivilegeEscalationOpen ? (
             <div className="app-modal-layer app-modal-layer-top is-open">
-              <ModalScrim className="app-modal-backdrop" label="Close privilege escalation verification" onDismiss={closeCustomerPrivilegeEscalationModal} />
+              <ModalScrim className="app-modal-backdrop" label="Close role change verification" onDismiss={closeCustomerPrivilegeEscalationModal} />
               <article className="subscription-modal-frame subscription-protection-frame subscription-otp-card-frame" role="dialog" aria-modal="true" aria-labelledby="customerPrivilegeOtpTitle">
                 <div className="subscription-otp-topbar">
-                  <button className="btn btn-outline btn-icon subscription-otp-close" type="button" onClick={closeCustomerPrivilegeEscalationModal} aria-label="Close privilege escalation verification">
+                  <button className="btn btn-outline btn-icon subscription-otp-close" type="button" onClick={closeCustomerPrivilegeEscalationModal} aria-label="Close role change verification">
                     <span aria-hidden="true">×</span>
                   </button>
                 </div>
                 <div className="subscription-otp-card">
-                  <h2 id="customerPrivilegeOtpTitle">Approve role migration</h2>
+                  <h2 id="customerPrivilegeOtpTitle">{customerPrivilegeSubject?.mode === "downgrade" ? "Approve downgrade" : "Approve upgrade"}</h2>
                   <p className="subscription-copy">
-                    Verify this action to migrate <strong>{selectedCustomerProfile.name}</strong> from <strong>{selectedCustomerRoleLabel}</strong> to <strong>{formatRoleLabel(customerPrivilegeTargetRole)}</strong>.
+                    Verify this action to move <strong>{customerPrivilegeSubject?.name || "this account"}</strong> from <strong>{formatRoleLabel(customerPrivilegeSubject?.sourceRole || "")}</strong> to <strong>{formatRoleLabel(customerPrivilegeTargetRole)}</strong>.
                   </p>
                   <p className="subscription-helper-text">Recipient: {customerPrivilegeOtp.maskedEmail || "Waiting for OTP"}</p>
                   <input
@@ -12616,7 +12929,7 @@ export function AdminStorefrontDashboard({
                 <div className="modal-actions sticky-modal-actions subscription-otp-actions">
                   <button className="pill-button" type="button" onClick={closeCustomerPrivilegeEscalationModal}>Cancel</button>
                   <button className="btn btn-primary subscription-otp-submit" type="button" disabled={customerPrivilegeEscalationLoading || customerPrivilegeOtp.code.length !== 6} onClick={submitCustomerPrivilegeEscalation}>
-                    {customerPrivilegeEscalationLoading ? "Approving..." : `Approve ${formatRoleLabel(customerPrivilegeTargetRole)}`}
+                    {customerPrivilegeEscalationLoading ? "Approving..." : `${customerPrivilegeSubject?.mode === "downgrade" ? "Downgrade" : "Upgrade"} to ${formatRoleLabel(customerPrivilegeTargetRole)}`}
                   </button>
                 </div>
               </article>
@@ -12695,7 +13008,7 @@ export function AdminStorefrontDashboard({
               <section hidden={authGate.stage !== "auth"}>
                 {authView === "login" ? (
                   <form className="auth-form auth-reference-form" onSubmit={handleLoginSubmit}>
-                    {authSecuritySettings.globalTwoStepVerification ? <p className="auth-subtitle">Two-step verification is enabled for all dashboards. After password sign-in, a one-time code will be sent to the account email.</p> : null}
+                    {ADMIN_OTP_TEMPORARILY_DISABLED ? <p className="auth-subtitle">Two-step verification is temporarily disabled on this admin sign-in.</p> : effectiveAuthSecuritySettings.globalTwoStepVerification ? <p className="auth-subtitle">Two-step verification is enabled for all dashboards. After password sign-in, a one-time code will be sent to the account email.</p> : null}
                     <label className="form-group">
                       <span>Username or email</span>
                       <div className="input-wrap">

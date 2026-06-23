@@ -25,6 +25,86 @@ function normalizeDoctors(payload) {
   return Array.isArray(firstArray) ? firstArray : [];
 }
 
+function doctorIdValue(doctor) {
+  return String(doctor?.user_id || doctor?.id || "").trim();
+}
+
+function slotMatchesRequestedTime(slot, date, time) {
+  const startAt = String(slot?.start_at || slot?.start || slot?.time || "").trim();
+  if (!startAt) {
+    return false;
+  }
+  if (startAt.startsWith(`${date}T${time}`) || startAt.startsWith(`${date} ${time}`)) {
+    return true;
+  }
+  const parsed = new Date(startAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return false;
+  }
+  const normalizedTime = `${String(parsed.getHours()).padStart(2, "0")}:${String(parsed.getMinutes()).padStart(2, "0")}`;
+  return normalizedTime === time;
+}
+
+async function fallbackDoctorAvailability(baseUrl, accessToken, date, time) {
+  const doctorsResponse = await requestUpstreamJson(baseUrl, accessToken, "/doctors", {
+    params: { per_page: 100, page: 1 }
+  });
+
+  if (!doctorsResponse.ok) {
+    return doctorsResponse;
+  }
+
+  const doctors = normalizeDoctors(doctorsResponse.data);
+  if (!doctors.length) {
+    return {
+      ok: true,
+      status: 200,
+      data: {
+        available: false,
+        doctor_count: 0,
+        doctors: []
+      },
+      raw: ""
+    };
+  }
+
+  const availabilityChecks = await Promise.allSettled(
+    doctors.map(async (doctor) => {
+      const doctorId = doctorIdValue(doctor);
+      if (!doctorId) {
+        return null;
+      }
+      const response = await requestUpstreamJson(baseUrl, accessToken, `/doctors/${doctorId}/availability`, {
+        params: { date }
+      });
+      if (!response.ok) {
+        return null;
+      }
+      const slots = Array.isArray(response.data?.data?.slots)
+        ? response.data.data.slots
+        : Array.isArray(response.data?.slots)
+          ? response.data.slots
+          : [];
+      return slots.some((slot) => slotMatchesRequestedTime(slot, date, time)) ? doctor : null;
+    })
+  );
+
+  const availableDoctors = availabilityChecks
+    .map((result) => (result.status === "fulfilled" ? result.value : null))
+    .filter(Boolean);
+
+  return {
+    ok: true,
+    status: 200,
+    data: {
+      available: availableDoctors.length > 0,
+      doctor_count: availableDoctors.length,
+      doctors: availableDoctors
+    },
+    raw: ""
+  };
+}
+
 export async function POST(request) {
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -63,13 +143,17 @@ export async function POST(request) {
   }
 
   try {
-    const response = await requestUpstreamJson(resolvedBaseUrl, accessToken, "/appointments/availability", {
+    let response = await requestUpstreamJson(resolvedBaseUrl, accessToken, "/appointments/availability", {
       params: {
         date,
         time,
         duration_minutes: durationMinutes,
       }
     });
+
+    if (!response.ok && response.status === 404) {
+      response = await fallbackDoctorAvailability(resolvedBaseUrl, accessToken, date, time);
+    }
 
     if (!response.ok) {
       if (isUpstreamAuthFailure(response)) {

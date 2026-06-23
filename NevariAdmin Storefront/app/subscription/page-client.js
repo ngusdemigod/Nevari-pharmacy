@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { BrandedLoadingScreen } from "../components/BrandedSpinner";
 import Paywall from "../components/subscription/Paywall";
@@ -25,6 +25,15 @@ function resolveCustomerSession() {
     return null;
   }
   return session;
+}
+
+function sanitizePlanKey(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+}
+
+function sanitizeFrequency(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["monthly", "quarterly", "yearly", "manual"].includes(normalized) ? normalized : "";
 }
 
 function formatSubscriptionPrice(subscription) {
@@ -53,6 +62,7 @@ export default function SubscriptionPageClient() {
   const [resolved, setResolved] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifiedReference, setVerifiedReference] = useState("");
+  const checkoutStartedRef = useRef(false);
   const subscriptionState = useSubscription(session);
 
   const paymentReference = useMemo(() => searchParams.get("reference")
@@ -61,16 +71,31 @@ export default function SubscriptionPageClient() {
     || searchParams.get("transaction")
     || "", [searchParams]);
   const continuePath = useMemo(() => sanitizeReturnPath(searchParams.get("returnTo")), [searchParams]);
+  const requestedPlan = useMemo(() => sanitizePlanKey(searchParams.get("plan")), [searchParams]);
+  const requestedFrequency = useMemo(() => sanitizeFrequency(searchParams.get("interval")), [searchParams]);
   const priceLabel = useMemo(() => formatSubscriptionPrice(subscriptionState.subscription), [subscriptionState.subscription]);
+  const authRedirectPath = useMemo(() => {
+    const url = new URL("http://localhost/subscription");
+    if (requestedPlan) {
+      url.searchParams.set("plan", requestedPlan);
+    }
+    if (requestedFrequency) {
+      url.searchParams.set("interval", requestedFrequency);
+    }
+    if (continuePath) {
+      url.searchParams.set("returnTo", continuePath);
+    }
+    return `${url.pathname}${url.search}`;
+  }, [continuePath, requestedFrequency, requestedPlan]);
 
   useEffect(() => {
     const hydratedSession = resolveCustomerSession();
     setSession(hydratedSession);
     setResolved(true);
     if (!hydratedSession) {
-      router.replace("/login");
+      router.replace(`/login?next=${encodeURIComponent(authRedirectPath)}&from=subscription`);
     }
-  }, [router]);
+  }, [authRedirectPath, router]);
 
   useEffect(() => {
     if (!paymentReference || !session || verifying || verifiedReference === paymentReference || subscriptionState.active) {
@@ -96,6 +121,23 @@ export default function SubscriptionPageClient() {
       mounted = false;
     };
   }, [paymentReference, session, subscriptionState, verifiedReference, verifying]);
+
+  useEffect(() => {
+    if (!session || paymentReference || subscriptionState.active || subscriptionState.isActionBusy || checkoutStartedRef.current) {
+      return;
+    }
+    if (!requestedPlan) {
+      return;
+    }
+
+    checkoutStartedRef.current = true;
+    subscriptionState.launchCheckout({
+      plan: requestedPlan,
+      frequency: requestedFrequency || "monthly",
+    }).catch(() => {
+      checkoutStartedRef.current = false;
+    });
+  }, [paymentReference, requestedFrequency, requestedPlan, session, subscriptionState]);
 
   if (!resolved || (!session && !subscriptionState.actionError)) {
     return <BrandedLoadingScreen className="subscription-shell subscription-shell-loading" label="Loading your Nevari Access Pro subscription" />;
@@ -123,7 +165,10 @@ export default function SubscriptionPageClient() {
       busy={subscriptionState.isActionBusy}
       error={subscriptionState.actionError}
       onOpenMenu={() => router.push(continuePath)}
-      onSubscribe={() => subscriptionState.launchCheckout()}
+      onSubscribe={() => subscriptionState.launchCheckout({
+        plan: requestedPlan || "nevari_access_pro",
+        frequency: requestedFrequency || "monthly",
+      })}
       priceLabel={priceLabel}
     />
   );

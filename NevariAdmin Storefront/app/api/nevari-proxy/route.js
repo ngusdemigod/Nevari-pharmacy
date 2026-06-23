@@ -300,7 +300,7 @@ async function proxyRequest(request, { params } = {}) {
   }
 
   if (contentType.toLowerCase().includes("application/json")
-      && ["/auth/login", "/auth/google-login", "/auth/verify-code", "/auth/refresh", "/auth/logout", "/sso/logout"].some((path) => targetUrl.pathname.endsWith(path))) {
+      && ["/auth/login", "/auth/google-login", "/auth/register-customer", "/auth/verify-code", "/auth/refresh", "/auth/logout", "/sso/logout"].some((path) => targetUrl.pathname.endsWith(path))) {
     const payload = await response.json().catch(() => null);
     const outgoing = Response.json(payload || {}, {
       status: withSoftFailStatus(response.status, softFail),

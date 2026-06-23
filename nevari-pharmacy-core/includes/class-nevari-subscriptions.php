@@ -411,6 +411,68 @@ final class Nevari_Subscriptions {
         return self::default_plan_definition();
     }
 
+    private static function requested_interval(string $value, string $fallback = self::PLAN_INTERVAL): string {
+        $normalized = sanitize_key($value);
+        return in_array($normalized, self::allowed_intervals(), true) ? $normalized : $fallback;
+    }
+
+    private static function plan_definition_for_exact_key(string $plan_key): ?array {
+        $normalized_plan_key = sanitize_key($plan_key);
+        if ($normalized_plan_key === '') {
+            return null;
+        }
+        if ($normalized_plan_key === self::FREE_PLAN_KEY) {
+            return self::default_free_plan_definition();
+        }
+        if ($normalized_plan_key === self::PLAN_KEY) {
+            return self::current_plan_definition();
+        }
+
+        global $wpdb;
+        $plans_table = Nevari_Helpers::table('subscription_plans');
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$plans_table} WHERE plan_key = %s LIMIT 1",
+            $normalized_plan_key
+        ));
+
+        return $row ? self::normalize_plan_definition($row) : null;
+    }
+
+    private static function requested_plan_definition(WP_REST_Request $request) {
+        $requested_plan_key = sanitize_key((string) ($request->get_param('plan') ?: $request->get_param('plan_key') ?: self::PLAN_KEY));
+        $plan_definition = self::plan_definition_for_exact_key($requested_plan_key);
+        if (!$plan_definition) {
+            return new WP_Error('subscription_plan_not_found', 'The selected subscription plan is unavailable.');
+        }
+
+        $status = sanitize_key((string) ($plan_definition['status'] ?? 'active'));
+        if ($status !== 'active') {
+            return new WP_Error('subscription_plan_inactive', 'The selected subscription plan is not active.');
+        }
+
+        $requested_interval = self::requested_interval((string) $request->get_param('frequency'), (string) ($plan_definition['interval_unit'] ?? self::PLAN_INTERVAL));
+        $plan_interval = self::requested_interval((string) ($plan_definition['interval_unit'] ?? self::PLAN_INTERVAL));
+        if ($requested_interval !== $plan_interval) {
+            return new WP_Error('subscription_interval_mismatch', 'The selected billing interval does not match this plan.');
+        }
+
+        return $plan_definition;
+    }
+
+    private static function renewal_date_for_interval(string $paid_at, string $interval): ?string {
+        $paid_timestamp = strtotime($paid_at);
+        if (!$paid_timestamp) {
+            return null;
+        }
+
+        return match (sanitize_key($interval)) {
+            'yearly' => gmdate('Y-m-d H:i:s', strtotime('+1 year', $paid_timestamp)),
+            'quarterly' => gmdate('Y-m-d H:i:s', strtotime('+3 months', $paid_timestamp)),
+            'manual' => null,
+            default => gmdate('Y-m-d H:i:s', strtotime('+1 month', $paid_timestamp)),
+        };
+    }
+
     private static function unique_plan_rows(array $rows): array {
         $deduped = [];
         foreach ($rows as $row) {
@@ -787,6 +849,46 @@ final class Nevari_Subscriptions {
         return '/subscription';
     }
 
+    private static function inferred_plan_key_from_post(WP_Post $post): string {
+        $title = trim((string) $post->post_title);
+        $reserved = self::reserved_plan_for_value($title);
+        if (is_array($reserved) && !empty($reserved['plan_key'])) {
+            return sanitize_key((string) $reserved['plan_key']);
+        }
+
+        $slug = sanitize_key((string) $post->post_name);
+        if ($slug !== '') {
+            return $slug;
+        }
+
+        return self::generate_subscription_slug($title ?: self::PLAN_NAME);
+    }
+
+    private static function sync_all_subscription_plan_posts_to_table(): void {
+        if (!post_type_exists(self::PLAN_POST_TYPE)) {
+            return;
+        }
+
+        $post_ids = get_posts([
+            'post_type' => self::PLAN_POST_TYPE,
+            'post_status' => 'any',
+            'numberposts' => -1,
+            'orderby' => 'date',
+            'order' => 'ASC',
+            'fields' => 'ids',
+        ]);
+        if (empty($post_ids) || !is_array($post_ids)) {
+            return;
+        }
+
+        foreach ($post_ids as $post_id) {
+            $post = get_post((int) $post_id);
+            if ($post instanceof WP_Post) {
+                self::sync_subscription_plan_table(self::plan_row_from_post($post));
+            }
+        }
+    }
+
     public static function normalize_multiline_text($value): string {
         $raw = is_array($value) ? implode("\n", array_map('strval', $value)) : (string) $value;
         $lines = preg_split('/\R/u', $raw) ?: [];
@@ -818,7 +920,7 @@ final class Nevari_Subscriptions {
         $checkout_link = esc_url_raw((string) get_post_meta($post->ID, '_nevari_subscription_checkout_link', true));
 
         if ($plan_key === '') {
-            $plan_key = self::PLAN_KEY;
+            $plan_key = self::inferred_plan_key_from_post($post);
         }
         if ($currency === '') {
             $currency = self::PLAN_CURRENCY;
@@ -1181,6 +1283,8 @@ final class Nevari_Subscriptions {
             return Nevari_Helpers::error('forbidden', 'Store admin access is required.', 403);
         }
 
+        self::sync_all_subscription_plan_posts_to_table();
+
         global $wpdb;
         $plans_table = Nevari_Helpers::table('subscription_plans');
         $subscriptions_table = Nevari_Helpers::table('subscriptions');
@@ -1374,12 +1478,19 @@ final class Nevari_Subscriptions {
     public static function initialize(WP_REST_Request $request): WP_REST_Response {
         $user_id = Nevari_Auth::api_session_user_id();
         $user = get_userdata($user_id);
-        $plan_definition = self::current_plan_definition();
+        $plan_definition = self::requested_plan_definition($request);
+        if (is_wp_error($plan_definition)) {
+            return Nevari_Helpers::error($plan_definition->get_error_code(), $plan_definition->get_error_message(), 422);
+        }
         $plan_amount_raw = self::normalize_subscription_amount($plan_definition['amount_kobo'] ?? self::PLAN_AMOUNT_KOBO);
         $paystack_amount_kobo = self::raw_amount_to_paystack_kobo($plan_amount_raw);
         $plan_currency = $plan_definition['currency'] ?: self::PLAN_CURRENCY;
+        $plan_key = sanitize_key((string) ($plan_definition['plan_key'] ?? self::PLAN_KEY)) ?: self::PLAN_KEY;
+        $plan_interval = self::requested_interval((string) ($plan_definition['interval_unit'] ?? self::PLAN_INTERVAL));
         self::storefront_log('subscription.initialize.start', 'success', [
             'user_id' => $user_id,
+            'plan_key' => $plan_key,
+            'interval' => $plan_interval,
         ]);
         if (!$user || !is_email($user->user_email)) {
             self::storefront_log('subscription.initialize.invalid_user', 'error', [
@@ -1472,9 +1583,10 @@ final class Nevari_Subscriptions {
                     'reference' => $reference,
                     'plan' => $plan['plan_code'],
                     'metadata' => [
-                        'source' => 'nevari_access_pro',
+                        'source' => 'nevari_subscription',
                         'user_id' => $user_id,
-                        'plan_key' => self::PLAN_KEY,
+                        'plan_key' => $plan_key,
+                        'interval' => $plan_interval,
                     ],
                     'callback_url' => $callback_url,
                 ]);
@@ -1566,10 +1678,6 @@ final class Nevari_Subscriptions {
     public static function verify(WP_REST_Request $request): WP_REST_Response {
         $user_id = Nevari_Auth::api_session_user_id();
         $reference = sanitize_text_field((string) $request->get_param('reference'));
-        $plan_definition = self::current_plan_definition();
-        $plan_amount_raw = self::normalize_subscription_amount($plan_definition['amount_kobo'] ?? self::PLAN_AMOUNT_KOBO);
-        $paystack_amount_kobo = self::raw_amount_to_paystack_kobo($plan_amount_raw);
-        $plan_currency = $plan_definition['currency'] ?: self::PLAN_CURRENCY;
         self::storefront_log('subscription.verify.start', 'success', [
             'user_id' => $user_id,
             'reference' => $reference,
@@ -1611,6 +1719,14 @@ final class Nevari_Subscriptions {
             self::refresh_subscription_cache($user_id);
             return Nevari_Helpers::success(self::subscription_payload_for_user($user_id));
         }
+
+        $payment_payload = self::payment_payload($payment->payload ?? '');
+        $payment_plan_key = sanitize_key((string) ($payment_payload['plan_key'] ?? '')) ?: self::PLAN_KEY;
+        $plan_definition = self::plan_definition_for_exact_key($payment_plan_key) ?: self::current_plan_definition();
+        $plan_amount_raw = (int) ($payment->amount_kobo ?? self::normalize_subscription_amount($plan_definition['amount_kobo'] ?? self::PLAN_AMOUNT_KOBO));
+        $paystack_amount_kobo = self::raw_amount_to_paystack_kobo($plan_amount_raw);
+        $plan_currency = sanitize_text_field((string) ($payment->currency ?? $plan_definition['currency'] ?? self::PLAN_CURRENCY)) ?: self::PLAN_CURRENCY;
+        $plan_interval = self::requested_interval((string) ($payment_payload['interval'] ?? $plan_definition['interval_unit'] ?? self::PLAN_INTERVAL));
 
         $response = wp_remote_get('https://api.paystack.co/transaction/verify/' . rawurlencode($reference), [
             'timeout' => 30,
@@ -1669,7 +1785,7 @@ final class Nevari_Subscriptions {
 
         $now = Nevari_Helpers::now();
         $paid_at = !empty($data['paid_at']) ? gmdate('Y-m-d H:i:s', strtotime((string) $data['paid_at'])) : $now;
-        $renewal_date = gmdate('Y-m-d H:i:s', strtotime('+1 month', strtotime($paid_at)));
+        $renewal_date = self::renewal_date_for_interval($paid_at, $plan_interval);
         $subscription_code = sanitize_text_field((string) ($data['subscription']['subscription_code'] ?? ''));
         $email_token = sanitize_text_field((string) ($data['subscription']['email_token'] ?? $data['email_token'] ?? ''));
         $customer_code = sanitize_text_field((string) ($data['customer']['customer_code'] ?? ''));
@@ -1682,7 +1798,7 @@ final class Nevari_Subscriptions {
 
         $subscription_data = [
             'user_id' => $user_id,
-            'plan_key' => self::PLAN_KEY,
+            'plan_key' => sanitize_key((string) ($plan_definition['plan_key'] ?? $payment_plan_key ?: self::PLAN_KEY)),
             'plan_code' => $plan_code,
             'reference' => $reference,
             'subscription_code' => $subscription_code,
@@ -1695,6 +1811,8 @@ final class Nevari_Subscriptions {
             'ends_at' => null,
             'cancelled_at' => null,
             'metadata' => wp_json_encode(array_merge($data, [
+                'plan_key' => sanitize_key((string) ($plan_definition['plan_key'] ?? $payment_plan_key ?: self::PLAN_KEY)),
+                'interval' => $plan_interval,
                 'paystack_email_token' => $email_token,
             ])),
             'updated_at' => $now,
