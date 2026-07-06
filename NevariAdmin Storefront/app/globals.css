@@ -17575,13 +17575,10 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
 .subscription-pro-badge {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: start;
   min-width: 2.6rem;
   height: 1.65rem;
-  margin-left: 0.2rem;
-  padding: 0 0.55rem;
   border-radius: 0.35rem;
-  background: #f3c64e;
   color: #0b3375;
   font-size: 1.05rem;
   font-style: italic;

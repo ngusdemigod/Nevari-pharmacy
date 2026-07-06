@@ -1,6 +1,7 @@
 "use server";
 
 import { NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import {
   escapeHtml,
   invalidNextJson,
@@ -247,8 +248,12 @@ async function sendBookingEmails({
 }
 
 export async function POST(request) {
+  const startedAt = Date.now();
   const body = await request.json().catch(() => null);
-  if (!body || typeof body !== "object") return invalid("Invalid request payload.", "payload");
+  if (!body || typeof body !== "object") {
+    Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "invalid_payload" } });
+    return invalid("Invalid request payload.", "payload");
+  }
 
   const unknownFieldError = rejectUnknownFields(body, [
     "doctorId",
@@ -269,7 +274,10 @@ export async function POST(request) {
     "quotaCovered",
     "consultationQuotaRemaining"
   ]);
-  if (unknownFieldError) return invalid(unknownFieldError, "payload");
+  if (unknownFieldError) {
+    Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "unknown_fields" } });
+    return invalid(unknownFieldError, "payload");
+  }
 
   const date = asText(body.date);
   const time = asText(body.time);
@@ -292,22 +300,28 @@ export async function POST(request) {
   if (!isValidTimeKey(time)) return invalid("Time is invalid.", "time");
   if (reason.length < 3 || reason.length > 500) return invalid("Reason must be 3 to 500 characters.", "reason");
   if (customerEmail && !isValidEmail(customerEmail)) return invalid("Customer email is invalid.", "customerEmail");
-  if (!accessToken) return NextResponse.json(customerSessionError().data, { status: 401 });
+  if (!accessToken) {
+    Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "missing_session" } });
+    return NextResponse.json(customerSessionError().data, { status: 401 });
+  }
   if (!isAllowedUrl(resolvedBaseUrl)) return invalid("Backend URL is invalid.", "baseUrl");
   if (adminEmail && !isValidEmail(adminEmail)) return invalid("Admin email is invalid.", "adminEmail");
 
   const startAt = buildIso(date, time);
   const startDate = new Date(startAt);
   if (Number.isNaN(startDate.getTime())) {
+    Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "invalid_datetime" } });
     return invalid("Date/time is invalid.", "time");
   }
 
   const hasClientTimestamps = Number.isFinite(selectedEpochMs) && Number.isFinite(clientNowMs);
   if (hasClientTimestamps) {
     if (selectedEpochMs < (clientNowMs - 60_000)) {
+      Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "past_time" } });
       return invalid("Past date/time is not allowed.", "time");
     }
   } else if (!isFutureDateTime(date, time)) {
+    Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "past_time" } });
     return invalid("Past date/time is not allowed.", "time");
   }
 
@@ -327,128 +341,170 @@ export async function POST(request) {
     bookingBody.doctor_id = Number(doctorId) || doctorId;
   }
 
-  let createResponse = await requestUpstreamJson(resolvedBaseUrl, accessToken, "/appointments", {
-    method: "POST",
-    body: bookingBody
-  });
+  return Sentry.startSpan(
+    {
+      name: "appointment.booking.create",
+      op: "http.server",
+      attributes: {
+        "app.flow": "consultation_booking",
+        "appointment.has_doctor": Boolean(doctorId),
+        "appointment.quota_candidate": Boolean(body.quotaCovered),
+      },
+    },
+    async () => {
+      let createResponse = await requestUpstreamJson(resolvedBaseUrl, accessToken, "/appointments", {
+        method: "POST",
+        body: bookingBody
+      });
 
-  if (!createResponse.ok) {
-    const fallbackBody = {
-      start_at: startAt,
-      end_at: endAt,
-      duration_minutes: durationMinutes,
-      reason,
-      type: "video"
-    };
-    if (doctorId) {
-      fallbackBody.doctor_user_id = Number(doctorId) || doctorId;
-      fallbackBody.doctor_id = Number(doctorId) || doctorId;
-    }
-    createResponse = await requestUpstreamJson(resolvedBaseUrl, accessToken, "/appointments", {
-      method: "POST",
-      body: fallbackBody
-    });
-  }
+      if (!createResponse.ok) {
+        const fallbackBody = {
+          start_at: startAt,
+          end_at: endAt,
+          duration_minutes: durationMinutes,
+          reason,
+          type: "video"
+        };
+        if (doctorId) {
+          fallbackBody.doctor_user_id = Number(doctorId) || doctorId;
+          fallbackBody.doctor_id = Number(doctorId) || doctorId;
+        }
+        createResponse = await requestUpstreamJson(resolvedBaseUrl, accessToken, "/appointments", {
+          method: "POST",
+          body: fallbackBody
+        });
+      }
 
-  if (!createResponse.ok) {
-    if (isUpstreamAuthFailure(createResponse)) {
-      return NextResponse.json(customerSessionError().data, { status: 401 });
-    }
-    if (createResponse.status >= 500) {
+      if (!createResponse.ok) {
+        if (isUpstreamAuthFailure(createResponse)) {
+          Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "upstream_auth_failure" } });
+          await Sentry.flush(2000);
+          return NextResponse.json(customerSessionError().data, { status: 401 });
+        }
+        if (createResponse.status >= 500) {
+          Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "degraded_local_fallback" } });
+          Sentry.metrics.distribution("appointment_booking_latency", Date.now() - startedAt, { unit: "millisecond" });
+          Sentry.logger.warn("Appointment booking fell back to local pending sync state.", {
+            status_code: createResponse.status,
+            has_doctor: Boolean(doctorId),
+          });
+          await Sentry.flush(2000);
+          return NextResponse.json({
+            ok: true,
+            degraded: true,
+            appointment: fallbackAppointment({ startAt, endAt, reason }),
+            meeting: { url: "" },
+            warning: "The appointment server is temporarily unavailable. The appointment was added locally as pending sync.",
+            upstream_status: createResponse.status,
+            emailDispatch: {
+              customer: { sent: false, status: createResponse.status, skipped: true },
+              admin: { sent: false, status: createResponse.status, skipped: true },
+              reminders: []
+            }
+          });
+        }
+
+        Sentry.metrics.count("appointment_booking_requests", 1, {
+          attributes: { outcome: "upstream_error", status_code: Number(createResponse.status || 0) || 0 }
+        });
+        await Sentry.flush(2000);
+        return NextResponse.json({
+          ok: false,
+          error: { message: upstreamErrorMessage(createResponse) || "Unable to create appointment." },
+          upstream: createResponse.data,
+          upstream_status: createResponse.status,
+          upstream_raw: createResponse.raw?.slice(0, 1200) || null
+        }, { status: createResponse.status >= 400 && createResponse.status < 500 ? createResponse.status : 502 });
+      }
+
+      const created = createResponse.data?.appointment || createResponse.data?.data || createResponse.data;
+      const appointmentId = created?.id;
+
+      let checkoutData = null;
+      if (appointmentId) {
+        const checkout = await requestUpstreamJson(resolvedBaseUrl, accessToken, `/appointments/${appointmentId}/checkout`);
+        if (checkout.ok) {
+          checkoutData = checkout.data?.data || checkout.data;
+        }
+      }
+      let confirmationData = null;
+      if (appointmentId) {
+        const confirmation = await requestUpstreamJson(resolvedBaseUrl, accessToken, `/appointments/${appointmentId}/confirmation`);
+        if (confirmation.ok) {
+          confirmationData = confirmation.data?.data || confirmation.data;
+        }
+      }
+      const normalizedCheckoutData = checkoutData
+        ? {
+          ...checkoutData,
+          baseUrl: checkoutData.baseUrl || checkoutData.base_url || resolvedBaseUrl,
+          base_url: checkoutData.base_url || checkoutData.baseUrl || resolvedBaseUrl
+        }
+        : null;
+      const resolvedAppointment = {
+        ...created,
+        checkout_url: buildBrandedAppointmentPaymentUrl(body.appOrigin || new URL(request.url).origin, normalizedCheckoutData, created, "patient") || normalizedCheckoutData?.payment_url || normalizedCheckoutData?.checkout_url || created?.checkout_url || "",
+        payment_status: confirmationData?.appointment?.payment_status || normalizedCheckoutData?.payment_status || created?.payment_status || "pending",
+        status: confirmationData?.appointment?.status || (String(confirmationData?.appointment?.payment_status || normalizedCheckoutData?.payment_status || created?.payment_status || "").toLowerCase() === "paid" ? "confirmed" : (created?.status || "awaiting_payment"))
+      };
+      const quotaCovered = String(resolvedAppointment.payment_status || "").toLowerCase() === "paid";
+      const isConfirmed = Boolean(
+        confirmationData?.is_confirmed
+        || String(confirmationData?.appointment?.status || resolvedAppointment?.status || "").toLowerCase() === "confirmed"
+        || String(resolvedAppointment.payment_status || "").toLowerCase() === "paid"
+      );
+      const meetingUrl = findMeetLink(confirmationData?.appointment, confirmationData, checkoutData?.appointment, checkoutData, resolvedAppointment);
+      const confirmationEmailResult = isConfirmed
+        ? await sendConfirmationEmails({
+          baseUrl: resolvedBaseUrl,
+          appOrigin: body.appOrigin || new URL(request.url).origin,
+          accessToken,
+          appointmentId: appointmentId || resolvedAppointment?.id,
+          customerEmail,
+          customerName,
+          adminEmail
+        })
+        : null;
+      const emailDispatch = confirmationEmailResult?.ok
+        ? confirmationEmailResult.emailDispatch
+        : await sendBookingEmails({
+          baseUrl: resolvedBaseUrl,
+          appOrigin: body.appOrigin || new URL(request.url).origin,
+          accessToken,
+          adminEmail,
+          customerEmail,
+          customerName,
+          appointment: resolvedAppointment,
+          checkout: normalizedCheckoutData,
+          confirmation: confirmationData,
+          quotaCovered
+        });
+
+      Sentry.metrics.count("appointment_booking_requests", 1, {
+        attributes: {
+          outcome: "success",
+          payment_status: String(resolvedAppointment.payment_status || "pending").toLowerCase(),
+          status: String(resolvedAppointment.status || "unknown").toLowerCase(),
+        },
+      });
+      Sentry.metrics.distribution("appointment_booking_latency", Date.now() - startedAt, { unit: "millisecond" });
+      Sentry.logger.info("Appointment booking completed.", {
+        appointment_status: resolvedAppointment.status,
+        payment_status: resolvedAppointment.payment_status,
+        quota_covered: quotaCovered,
+        confirmed: isConfirmed,
+      });
+      await Sentry.flush(2000);
+
       return NextResponse.json({
         ok: true,
-        degraded: true,
-        appointment: fallbackAppointment({ startAt, endAt, reason }),
-        meeting: { url: "" },
-        warning: "The appointment server is temporarily unavailable. The appointment was added locally as pending sync.",
-        upstream_status: createResponse.status,
-        emailDispatch: {
-          customer: { sent: false, status: createResponse.status, skipped: true },
-          admin: { sent: false, status: createResponse.status, skipped: true },
-          reminders: []
-        }
+        appointment: resolvedAppointment,
+        checkout: normalizedCheckoutData,
+        confirmation: confirmationData,
+        quotaCovered,
+        meeting: { url: meetingUrl || "" },
+        emailDispatch
       });
     }
-
-    return NextResponse.json({
-      ok: false,
-      error: { message: upstreamErrorMessage(createResponse) || "Unable to create appointment." },
-      upstream: createResponse.data,
-      upstream_status: createResponse.status,
-      upstream_raw: createResponse.raw?.slice(0, 1200) || null
-    }, { status: createResponse.status >= 400 && createResponse.status < 500 ? createResponse.status : 502 });
-  }
-
-  const created = createResponse.data?.appointment || createResponse.data?.data || createResponse.data;
-  const appointmentId = created?.id;
-
-  let checkoutData = null;
-  if (appointmentId) {
-    const checkout = await requestUpstreamJson(resolvedBaseUrl, accessToken, `/appointments/${appointmentId}/checkout`);
-    if (checkout.ok) {
-      checkoutData = checkout.data?.data || checkout.data;
-    }
-  }
-  let confirmationData = null;
-  if (appointmentId) {
-    const confirmation = await requestUpstreamJson(resolvedBaseUrl, accessToken, `/appointments/${appointmentId}/confirmation`);
-    if (confirmation.ok) {
-      confirmationData = confirmation.data?.data || confirmation.data;
-    }
-  }
-  const normalizedCheckoutData = checkoutData
-    ? {
-      ...checkoutData,
-      baseUrl: checkoutData.baseUrl || checkoutData.base_url || resolvedBaseUrl,
-      base_url: checkoutData.base_url || checkoutData.baseUrl || resolvedBaseUrl
-    }
-    : null;
-  const resolvedAppointment = {
-    ...created,
-    checkout_url: buildBrandedAppointmentPaymentUrl(body.appOrigin || new URL(request.url).origin, normalizedCheckoutData, created, "patient") || normalizedCheckoutData?.payment_url || normalizedCheckoutData?.checkout_url || created?.checkout_url || "",
-    payment_status: confirmationData?.appointment?.payment_status || normalizedCheckoutData?.payment_status || created?.payment_status || "pending",
-    status: confirmationData?.appointment?.status || (String(confirmationData?.appointment?.payment_status || normalizedCheckoutData?.payment_status || created?.payment_status || "").toLowerCase() === "paid" ? "confirmed" : (created?.status || "awaiting_payment"))
-  };
-  const quotaCovered = String(resolvedAppointment.payment_status || "").toLowerCase() === "paid";
-  const isConfirmed = Boolean(
-    confirmationData?.is_confirmed
-    || String(confirmationData?.appointment?.status || resolvedAppointment?.status || "").toLowerCase() === "confirmed"
-    || String(resolvedAppointment.payment_status || "").toLowerCase() === "paid"
   );
-  const meetingUrl = findMeetLink(confirmationData?.appointment, confirmationData, checkoutData?.appointment, checkoutData, resolvedAppointment);
-  const confirmationEmailResult = isConfirmed
-    ? await sendConfirmationEmails({
-      baseUrl: resolvedBaseUrl,
-      appOrigin: body.appOrigin || new URL(request.url).origin,
-      accessToken,
-      appointmentId: appointmentId || resolvedAppointment?.id,
-      customerEmail,
-      customerName,
-      adminEmail
-    })
-    : null;
-  const emailDispatch = confirmationEmailResult?.ok
-    ? confirmationEmailResult.emailDispatch
-    : await sendBookingEmails({
-      baseUrl: resolvedBaseUrl,
-      appOrigin: body.appOrigin || new URL(request.url).origin,
-      accessToken,
-      adminEmail,
-      customerEmail,
-      customerName,
-      appointment: resolvedAppointment,
-      checkout: normalizedCheckoutData,
-      confirmation: confirmationData,
-      quotaCovered
-    });
-
-  return NextResponse.json({
-    ok: true,
-    appointment: resolvedAppointment,
-    checkout: normalizedCheckoutData,
-    confirmation: confirmationData,
-    quotaCovered,
-    meeting: { url: meetingUrl || "" },
-    emailDispatch
-  });
 }

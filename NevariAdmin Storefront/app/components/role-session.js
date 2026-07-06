@@ -167,7 +167,10 @@ export function saveSession(config, session) {
     refreshToken: session?.refreshToken ? SESSION_MARKER : "",
     user: session?.user ? {
       id: session.user.id || "",
+      name: session.user.name || session.user.display_name || "",
       display_name: session.user.display_name || session.user.name || "",
+      first_name: session.user.first_name || session.user.firstName || "",
+      last_name: session.user.last_name || session.user.lastName || "",
       email: session.user.email || "",
       avatar_url: session.user.avatar_url || session.user.avatarUrl || session.user.picture || "",
       role: session.user.role || "",

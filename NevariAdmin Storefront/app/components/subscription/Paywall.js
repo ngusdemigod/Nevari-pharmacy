@@ -12,7 +12,7 @@ const BENEFITS = [
   {
     iconSrc: "/subscription-icon-therapy.png",
     tone: "amber",
-    title: "Medical Therapy Management",
+    title: "Medication Therapy Management",
     description: "Get professional medication reviews and guidance to help you understand your prescriptions, manage side effects, and stay on track with your treatment plan.",
   },
   {
@@ -45,7 +45,7 @@ export default function Paywall({
         </h1>
         <SubscriptionSealArt variant="paywall" />
         <p className="subscription-subtitle">
-          Upgrade to Nevari Access Pro to enjoy smarter schedules and smarter schedules
+          Upgrade to Nevari Access Pro to enjoy smarter schedules and better continuity of care.
         </p>
       </div>
 

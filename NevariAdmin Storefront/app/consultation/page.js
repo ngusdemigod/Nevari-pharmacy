@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import * as Sentry from "@sentry/nextjs";
 import { FRONTENDS } from "../components/frontend-config";
 import { clearGuestConsultationDraft, writeGuestConsultationDraft } from "../components/guest-consultation-draft";
 import { setDocumentMetadata } from "../components/page-metadata";
@@ -84,37 +85,54 @@ export default function GuestConsultationPage() {
 
   function handleSubmit(event) {
     event.preventDefault();
-    const nextReason = sanitizeReason(bookingReason).trim();
-    const selectedSlot = availableBookingTimes.find((slot) => slot.value === bookingTime);
-    if (!bookingDate || bookingDate < todayBookingDate) {
-      setBookingError("Select a valid future consultation date.");
-      return;
-    }
-    if (!selectedSlot || selectedSlot.disabled) {
-      setBookingError("Select an available consultation time.");
-      return;
-    }
-    if (nextReason.length < 3) {
-      setBookingError("Reason must be at least 3 characters.");
-      return;
-    }
-
-    const draft = writeGuestConsultationDraft({
-      date: bookingDate,
-      time: bookingTime,
-      reason: nextReason,
-      source: "consultation",
-      createdAt: Date.now()
+    const submitStartedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+    Sentry.metrics.count("consultation_guest_submit", 1, {
+      attributes: {
+        outcome: "attempt",
+        has_selected_time: Boolean(bookingTime),
+      },
     });
 
-    if (!draft) {
-      clearGuestConsultationDraft();
-      setBookingError("The consultation preference could not be saved. Try again.");
-      return;
-    }
+    Sentry.startSpan({ name: "consultation.guest.submit", op: "ui.action.click" }, () => {
+      const nextReason = sanitizeReason(bookingReason).trim();
+      const selectedSlot = availableBookingTimes.find((slot) => slot.value === bookingTime);
+      if (!bookingDate || bookingDate < todayBookingDate) {
+        Sentry.metrics.count("consultation_guest_submit", 1, { attributes: { outcome: "invalid_date" } });
+        setBookingError("Select a valid future consultation date.");
+        return;
+      }
+      if (!selectedSlot || selectedSlot.disabled) {
+        Sentry.metrics.count("consultation_guest_submit", 1, { attributes: { outcome: "invalid_time" } });
+        setBookingError("Select an available consultation time.");
+        return;
+      }
+      if (nextReason.length < 3) {
+        Sentry.metrics.count("consultation_guest_submit", 1, { attributes: { outcome: "invalid_reason" } });
+        setBookingError("Reason must be at least 3 characters.");
+        return;
+      }
 
-    setRedirecting(true);
-    router.push(buildConsultationLoginRedirect());
+      const draft = writeGuestConsultationDraft({
+        date: bookingDate,
+        time: bookingTime,
+        reason: nextReason,
+        source: "consultation",
+        createdAt: Date.now()
+      });
+
+      if (!draft) {
+        clearGuestConsultationDraft();
+        Sentry.metrics.count("consultation_guest_submit", 1, { attributes: { outcome: "draft_write_failed" } });
+        setBookingError("The consultation preference could not be saved. Try again.");
+        return;
+      }
+
+      const durationMs = (typeof performance !== "undefined" ? performance.now() : Date.now()) - submitStartedAt;
+      Sentry.metrics.count("consultation_guest_submit", 1, { attributes: { outcome: "redirect_login" } });
+      Sentry.metrics.distribution("consultation_guest_submit_duration", durationMs, { unit: "millisecond" });
+      setRedirecting(true);
+      router.push(buildConsultationLoginRedirect());
+    });
   }
 
   return (
@@ -130,7 +148,7 @@ export default function GuestConsultationPage() {
               <div>
                 <p className="customer-section-kicker">Guest booking</p>
                 <h2>Choose a preferred consultation slot</h2>
-                <p className="consultation-entry-copy">Pick a date, time, and reason now. Exact doctor availability is confirmed after you sign in.</p>
+                <p className="consultation-entry-copy">Doctor availability is confirmed after you sign in.</p>
               </div>
             </div>
 

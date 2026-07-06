@@ -6,9 +6,17 @@ const sentryEnabled = Boolean(
 );
 
 export async function register() {
-  if (sentryEnabled && process.env.NEXT_RUNTIME === "nodejs") {
+  if (!sentryEnabled) {
+    return;
+  }
+
+  if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("./sentry.server.config");
+  }
+
+  if (process.env.NEXT_RUNTIME === "edge") {
+    await import("./sentry.edge.config");
   }
 }
 
-export const onRequestError = sentryEnabled ? Sentry.captureRequestError : undefined;
+export const onRequestError = Sentry.captureRequestError;

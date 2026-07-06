@@ -34,6 +34,7 @@ const NURSE_REQUEST_YES_NO_FIELDS = ["liveInCareRequired", "wheelchairAssistance
 const NURSE_REQUEST_YES_NO_OPTIONS = ["Yes", "No"];
 const NURSE_REQUEST_CLINICAL_REQUIREMENTS = ["Medication Administration", "Catheter Care", "Blood Pressure Monitoring", "Diabetes Monitoring", "IV Therapy", "Feeding Tube Support"];
 const NURSE_REQUEST_UPLOAD_LABELS = ["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"];
+const PAYWALL_PRO_MONTHLY_AMOUNT = 10_000;
 const IV_THERAPY_OPTIONS = [
   "Beauty & Radiance Drips",
   "Anti-Aging & Regenerative Drips",
@@ -53,7 +54,7 @@ const pageLabels = {
   request: "Request a Nurse",
   settings: "Settings",
   profile: "My Profile",
-  therapy: "Medical Therapy Management",
+  therapy: "Medication Therapy Management",
   "iv-therapy": "IV Therapy"
 };
 
@@ -84,6 +85,21 @@ function createIvTherapyFormState() {
     },
     consent: ""
   };
+}
+
+function normalizeCustomerName(value) {
+  const normalized = String(value || "").trim();
+  return normalized.toLowerCase() === "customer" ? "" : normalized;
+}
+
+function resolveCustomerPreferredName({ settingsDisplayName = "", profile = {}, sessionUser = {} } = {}) {
+  return normalizeCustomerName(settingsDisplayName)
+    || normalizeCustomerName(profile?.display_name)
+    || normalizeCustomerName(sessionUser?.display_name)
+    || normalizeCustomerName(sessionUser?.name)
+    || normalizeCustomerName(profile?.last_name || profile?.lastName)
+    || normalizeCustomerName(sessionUser?.last_name || sessionUser?.lastName)
+    || "Customer";
 }
 
 function buildIvTherapyStepErrors(step, form) {
@@ -145,20 +161,18 @@ function formatSubscriptionPriceLabel(subscription) {
   const amount = resolveSubscriptionMonthlyAmount(subscription);
   const currency = String(subscription?.currency || "NGN").trim().toUpperCase();
   const recurringLabel = "/month";
-  if (!Number.isFinite(amount) || amount <= 0) {
-    if (String(subscription?.plan_key || subscription?.plan || "").trim().toLowerCase() === "free") {
-      return `${currency}0${recurringLabel}`;
-    }
-    return `${currency}10,000${recurringLabel}`;
+  const resolvedAmount = Number.isFinite(amount) && amount > 0 ? amount : PAYWALL_PRO_MONTHLY_AMOUNT;
+  if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) {
+    return `${currency}${PAYWALL_PRO_MONTHLY_AMOUNT.toLocaleString("en-NG")}${recurringLabel}`;
   }
   try {
     return `${new Intl.NumberFormat("en-NG", {
       style: "currency",
       currency,
       maximumFractionDigits: 0,
-    }).format(amount)}${recurringLabel}`;
+    }).format(resolvedAmount)}${recurringLabel}`;
   } catch {
-    return `${currency}${amount}${recurringLabel}`;
+    return `${currency}${resolvedAmount}${recurringLabel}`;
   }
 }
 
@@ -304,7 +318,9 @@ async function fetchCustomerDashboardPayload(session, settings, fallbackState = 
   const fallbackProfile = {
     id: session.user?.id || null,
     email: session.user?.email || "",
-    display_name: settings.displayName || session.user?.display_name || session.user?.name || "Customer",
+    display_name: resolveCustomerPreferredName({ settingsDisplayName: settings.displayName, sessionUser: session.user }),
+    first_name: String(session.user?.first_name || session.user?.firstName || "").trim(),
+    last_name: String(session.user?.last_name || session.user?.lastName || "").trim(),
     avatar_url: session.user?.avatar_url || session.user?.avatarUrl || session.user?.picture || "",
     roles: resolveUserRoles(session.user)
   };
@@ -857,6 +873,30 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   }, [authResolved]);
 
   useEffect(() => {
+    if (!authResolved || typeof window === "undefined") {
+      return;
+    }
+    const activePath = String(pathname || window.location.pathname || "").trim();
+    if (!/^\/dashboard\/?$/.test(activePath)) {
+      return;
+    }
+    const currentUrl = new URL(window.location.href);
+    const nextPageParam = page === "overview" ? "" : page;
+    const currentPageParam = String(currentUrl.searchParams.get("page") || "").trim();
+    if (nextPageParam) {
+      currentUrl.searchParams.set("page", nextPageParam);
+    } else {
+      currentUrl.searchParams.delete("page");
+    }
+    const nextUrl = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`;
+    const currentLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (currentLocation === nextUrl && currentPageParam === nextPageParam) {
+      return;
+    }
+    router.replace(nextUrl);
+  }, [authResolved, page, pathname, router]);
+
+  useEffect(() => {
     const nextSessionKey = String(session?.user?.id || "");
     if (customerSettingsSessionRef.current === nextSessionKey) {
       return;
@@ -989,6 +1029,11 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   }
 
   const profile = state.dashboard?.profile || {};
+  const customerDisplayName = resolveCustomerPreferredName({
+    settingsDisplayName: settings.displayName,
+    profile,
+    sessionUser: session?.user,
+  });
   useEffect(() => {
     if (!session?.user?.id || customerSettingsHydratedRef.current) {
       return;
@@ -1000,7 +1045,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     const mergedSettings = normalizeCustomerSettingsPayload({
       ...defaultCustomerSettings(),
       ...summarySettings,
-      displayName: summarySettings.displayName || profile.display_name || session.user?.display_name || session.user?.name || settings.displayName || "",
+      displayName: summarySettings.displayName || customerDisplayName,
       email: summarySettings.email || profile.email || session.user?.email || settings.email || "",
       phone: summarySettings.phone || profile.phone || settings.phone || "",
       address: summarySettings.address || profile.address || settings.address || "",
@@ -1015,7 +1060,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     customerSettingsFingerprintRef.current = JSON.stringify(mergedSettings);
     persistCustomerSettings(mergedSettings);
     setSettings(mergedSettings);
-  }, [profile.address, profile.display_name, profile.email, profile.phone, session?.user?.display_name, session?.user?.email, session?.user?.id, session?.user?.name, settings, state.dashboard?.settings, summaryState.settings]);
+  }, [customerDisplayName, profile.address, profile.email, profile.phone, session?.user?.email, session?.user?.id, settings, state.dashboard?.settings, summaryState.settings]);
   const visibleDoctors = useMemo(() => sortPreferredDoctors(state.doctors, settings.preferredDoctorIds), [settings.preferredDoctorIds, state.doctors]);
   const subscriptionState = useSubscription(session);
   const mtmRequestsKey = session && page === "therapy"
@@ -2342,7 +2387,13 @@ function buildCustomerBootstrapState(session, settings, fallbackState = emptyCus
       profile: {
         id: fallbackProfile.id || sessionUser.id || null,
         email: fallbackProfile.email || settings.email || sessionUser.email || "",
-        display_name: fallbackProfile.display_name || settings.displayName || sessionUser.display_name || sessionUser.name || "Customer",
+        display_name: resolveCustomerPreferredName({
+          settingsDisplayName: settings.displayName,
+          profile: fallbackProfile,
+          sessionUser,
+        }),
+        first_name: String(fallbackProfile.first_name || sessionUser.first_name || sessionUser.firstName || "").trim(),
+        last_name: String(fallbackProfile.last_name || sessionUser.last_name || sessionUser.lastName || "").trim(),
         roles: (Array.isArray(fallbackProfile.roles) && fallbackProfile.roles.length)
           ? fallbackProfile.roles
           : resolveUserRoles(sessionUser)
@@ -3029,7 +3080,7 @@ function AppointmentPage({
   const [bookingMatchedDoctors, setBookingMatchedDoctors] = useState([]);
   const [bookingValidatedSlotKey, setBookingValidatedSlotKey] = useState("");
   const bookingSectionRef = useRef(null);
-  const greetingName = firstName(settings?.displayName || profile?.display_name || "Tee");
+  const greetingName = resolveCustomerPreferredName({ settingsDisplayName: settings?.displayName, profile });
   const filters = useMemo(() => buildAppointmentFilters(upcoming, past), [past, upcoming]);
   const allAppointments = useMemo(() => [...upcoming, ...past], [past, upcoming]);
   const visibleAppointments = useMemo(() => filterAppointmentsList(allAppointments, filter), [allAppointments, filter]);
@@ -4967,6 +5018,11 @@ function CustomerMobileDashboard({
   const [appointmentComposerSuccess, setAppointmentComposerSuccess] = useState(null);
   const [localAppointments, setLocalAppointments] = useState([]);
   const [consultationQuotaDismissed, setConsultationQuotaDismissed] = useState(false);
+  const customerDisplayName = resolveCustomerPreferredName({
+    settingsDisplayName: settings?.displayName,
+    profile,
+    sessionUser: session?.user,
+  });
   const [requestStep, setRequestStep] = useState(1);
   const [requestStepAnimatingOut, setRequestStepAnimatingOut] = useState(false);
   const [profileTab, setProfileTab] = useState("user");
@@ -6198,7 +6254,7 @@ function CustomerMobileDashboard({
   }
 
   function renderHeader(title, showBack = false, onBack = onResetJourney, headerAction = null) {
-    const greetingName = firstName(settings.displayName || profile.display_name || "Tee");
+    const greetingName = customerDisplayName;
     const isOverviewHeader = ["overview", "iv-therapy", "therapy"].includes(page);
     const spacerClass = page === "appointment" ? "is-appointment" : isOverviewHeader ? "is-overview" : "is-compact";
     const searchbar = page === "search" ? <div className="customer-mobile-searchbar is-search-page">
@@ -6258,7 +6314,7 @@ function CustomerMobileDashboard({
             { id: "pharmacy", label: "Pharmacy", icon: "pharmacy" },
             { id: "appointment", label: "Appointments", icon: "calendar" },
             { id: "request", label: "Request a Nurse", icon: "nurse" },
-            { id: "therapy", label: "Medical Therapy Management", icon: "cross" },
+            { id: "therapy", label: "Medication Therapy Management", icon: "cross" },
             { id: "iv-therapy", label: "IV Therapy", icon: "cross" },
             { id: "profile", label: "Profile", icon: "profile" }
           ].map((item) => (
@@ -6470,7 +6526,7 @@ function CustomerMobileDashboard({
       {!embeddedDesktop ? renderDrawer() : null}
       <main className={`customer-mobile-frame ${pageTransitionClass}`}>
         {embeddedDesktop ? <header className="customer-request-desktop-header customer-orders-desktop-header">
-          <span>Welcome back, {firstName(settings.displayName || profile.display_name || "Tee")}</span>
+          <span>Welcome back, {customerDisplayName}</span>
           <h1>Orders</h1>
         </header> : renderHeader("Orders")}
         {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
@@ -6567,9 +6623,9 @@ function CustomerMobileDashboard({
         >
           <section className="therapy-content-shell">
             {embeddedDesktop ? <header className="customer-request-desktop-header customer-therapy-desktop-header">
-              <span>Welcome back, {firstName(settings.displayName || profile.display_name || "Tee")}</span>
-              <h1>Medical Therapy Management</h1>
-            </header> : renderHeader("Medical Therapy Management")}
+              <span>Welcome back, {customerDisplayName}</span>
+              <h1>Medication Therapy Management</h1>
+            </header> : renderHeader("Medication Therapy Management")}
             <div className="customer-mobile-pill-tabs" role="tablist" aria-label="MTM tabs">
               {[
                 ["request", "Request"],
@@ -7104,7 +7160,7 @@ function CustomerMobileDashboard({
       {!embeddedDesktop ? renderDrawer() : null}
       <main className={`customer-mobile-frame ${pageTransitionClass}`}>
         {embeddedDesktop ? <header className="customer-request-desktop-header customer-overview-desktop-header">
-          <span>Welcome back, {firstName(settings.displayName || profile.display_name || "Tee")}</span>
+          <span>Welcome back, {customerDisplayName}</span>
           <h1>IV Therapy</h1>
         </header> : renderHeader("IV Therapy")}
         <section className="customer-mobile-flow customer-iv-therapy-shell">
@@ -7269,7 +7325,7 @@ function CustomerMobileDashboard({
       {!embeddedDesktop ? renderDrawer() : null}
       <main className={`customer-mobile-frame ${pageTransitionClass}`}>
         {embeddedDesktop ? <header className="customer-request-desktop-header customer-overview-desktop-header">
-          <span>Welcome back, {firstName(settings.displayName || profile.display_name || "Tee")}</span>
+          <span>Welcome back, {customerDisplayName}</span>
           <h1>Request a Nurse</h1>
         </header> : renderHeader(
           showNurseRequestFlow ? "Request a Nurse" : "Appointments",
@@ -7771,7 +7827,7 @@ function CustomerMobileDashboard({
     {!embeddedDesktop ? renderDrawer() : null}
     <main className={`customer-mobile-frame ${pageTransitionClass}`}>
       {embeddedDesktop ? <header className="customer-request-desktop-header customer-overview-desktop-header">
-        <span>Welcome back, {firstName(settings.displayName || profile.display_name || "Tee")}</span>
+        <span>Welcome back, {customerDisplayName}</span>
         <h1>Overview</h1>
       </header> : renderHeader("Overview")}
       {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
