@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { createPortal } from "react-dom";
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -46,8 +46,8 @@ let adminStorefrontClientHydrated = false;
 
 const EMAIL_HOOKS = [
   { key: "{content}", label: "Body content injected by the sending workflow." },
-  { key: "{customer_firstname}", label: "Customer first name." },
-  { key: "{customer_lastname}", label: "Customer last name." },
+  { key: "{customer_firstname}", label: "Patient first name." },
+  { key: "{customer_lastname}", label: "Patient last name." },
   { key: "{order_id}", label: "WooCommerce order number or ID." },
   { key: "{order_number}", label: "Formatted order number." },
   { key: "{appointment_date}", label: "Formatted consultation date and time." },
@@ -62,7 +62,7 @@ const EMAIL_HOOKS = [
   { key: "{join_link_html}", label: "Clickable consultation join link." },
   { key: "{cancel_link}", label: "Appointment cancellation URL." },
   { key: "{reschedule_link}", label: "Appointment reschedule URL." },
-  { key: "{review_link}", label: "Doctor review page link on the customer dashboard." },
+  { key: "{review_link}", label: "Doctor review page link on the patient dashboard." },
   { key: "{feedback_link}", label: "Alias for the doctor review page link." },
   { key: "{dashboard_link}", label: "Relevant dashboard URL for the recipient." },
   { key: "{doctor_dashboard_link}", label: "Doctor dashboard URL." },
@@ -71,8 +71,8 @@ const EMAIL_HOOKS = [
   { key: "{doctor_name}", label: "Assigned doctor display name." },
   { key: "{patient_name}", label: "Patient or customer display name." },
   { key: "{recipient_name}", label: "Recipient display name." },
-  { key: "{customer_email}", label: "Customer email address." },
-  { key: "{customer_phone}", label: "Customer phone number." },
+  { key: "{customer_email}", label: "Patient email address." },
+  { key: "{customer_phone}", label: "Patient phone number." },
   { key: "{patient_note}", label: "Reason or note supplied by the patient." },
   { key: "{reason}", label: "Alias for the patient note." },
   { key: "{primary_product_name}", label: "Primary product selected for doctor assignment." },
@@ -80,7 +80,7 @@ const EMAIL_HOOKS = [
   { key: "{invoice_total}", label: "Formatted invoice or order total." },
   { key: "{document_type}", label: "Invoice or receipt label." },
   { key: "{document_title}", label: "Human-readable document title." },
-  { key: "{payment_link}", label: "Customer payment URL." },
+  { key: "{payment_link}", label: "Patient payment URL." },
   { key: "{payment_link_html}", label: "Clickable payment link markup." }
 ];
 
@@ -91,13 +91,13 @@ const DEFAULT_EMAIL_TEMPLATES = [
   { id: "order-invoice-email", name: "Order Invoice Email", category: "Orders", status: "active", subject: "Invoice for order #{order_number}", html: "<h1>{document_title}</h1><p>Hello {customer_firstname},</p><p>Your invoice for order #{order_number} is attached.</p><p>{payment_link_html}</p><p>Total due: {invoice_total}</p>" },
   { id: "order-receipt-email", name: "Order Receipt Email", category: "Orders", status: "active", subject: "Receipt for order #{order_number}", html: "<h1>{document_title}</h1><p>Hello {customer_firstname},</p><p>Your receipt for order #{order_number} is attached.</p><p>Thank you for shopping with {site_name}.</p>" },
   { id: "doctor_order_assigned", name: "Doctor Order Assigned", category: "Orders", status: "active", subject: "A pharmacy order needs your review", html: "<p>Hello {doctor_name},</p><p>Order {order_number} has been assigned to you for {patient_name}.</p><p>Product/service: {product_service_assigned}</p><p>You can open your dashboard to create a prescription or schedule an appointment.</p>" },
-  { id: "appointment_customer_confirmation", name: "Appointment Customer Confirmation", category: "Consultations", status: "active", subject: "Appointment confirmed with {doctor_name}", html: "<h1>Appointment confirmed</h1><p>Hello {patient_name},</p><p>Your {consultation_type} appointment is confirmed for {appointment_date} at {appointment_time}.</p><p><strong>Doctor:</strong> {doctor_name}<br /><strong>Duration:</strong> {appointment_duration}<br /><strong>Booking ID:</strong> {booking_id}<br /><strong>Reference:</strong> {appointment_reference}<br /><strong>Order ID:</strong> {order_id}<br /><strong>Amount paid:</strong> {amount_paid}</p><p>{google_meet_link_html}</p><p><a href=\"{manage_link}\">Manage appointment</a></p><p>Please join 5 minutes before the appointment starts.</p>" },
+  { id: "appointment_customer_confirmation", name: "Appointment Patient Confirmation", category: "Consultations", status: "active", subject: "Appointment confirmed with {doctor_name}", html: "<h1>Appointment confirmed</h1><p>Hello {patient_name},</p><p>Your {consultation_type} appointment is confirmed for {appointment_date} at {appointment_time}.</p><p><strong>Doctor:</strong> {doctor_name}<br /><strong>Duration:</strong> {appointment_duration}<br /><strong>Booking ID:</strong> {booking_id}<br /><strong>Reference:</strong> {appointment_reference}<br /><strong>Order ID:</strong> {order_id}<br /><strong>Amount paid:</strong> {amount_paid}</p><p>{google_meet_link_html}</p><p><a href=\"{manage_link}\">Manage appointment</a></p><p>Please join 5 minutes before the appointment starts.</p>" },
   { id: "appointment_doctor_notification", name: "Appointment Doctor Notification", category: "Consultations", status: "active", subject: "New appointment with {patient_name}", html: "<h1>New appointment</h1><p>Hello {doctor_name},</p><p>A new {consultation_type} appointment has been confirmed.</p><p><strong>Patient:</strong> {patient_name}<br /><strong>Email:</strong> {customer_email}<br /><strong>Phone:</strong> {customer_phone}<br /><strong>Date:</strong> {appointment_date}<br /><strong>Time:</strong> {appointment_time}<br /><strong>Duration:</strong> {appointment_duration}<br /><strong>Booking ID:</strong> {booking_id}<br /><strong>Reference:</strong> {appointment_reference}</p><p><strong>Patient note:</strong> {patient_note}</p><p>{google_meet_link_html}</p><p><a href=\"{dashboard_link}\">Open dashboard</a></p>" },
-  { id: "appointment_customer_reminder_24h", name: "Customer Reminder 24h", category: "Consultations", status: "active", subject: "Reminder: appointment with {doctor_name} tomorrow", html: "<h1>Appointment reminder</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} is scheduled for {appointment_date} at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}</p><p>{google_meet_link_html}</p><p><a href=\"{cancel_link}\">Cancel</a> | <a href=\"{reschedule_link}\">Reschedule</a></p>" },
-  { id: "appointment_customer_reminder_1h", name: "Customer Reminder 1h", category: "Consultations", status: "active", subject: "Your appointment starts in 1 hour", html: "<h1>Your appointment starts in 1 hour</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} starts at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}</p><p>{google_meet_link_html}</p>" },
+  { id: "appointment_customer_reminder_24h", name: "Patient Reminder 24h", category: "Consultations", status: "active", subject: "Reminder: appointment with {doctor_name} tomorrow", html: "<h1>Appointment reminder</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} is scheduled for {appointment_date} at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}</p><p>{google_meet_link_html}</p><p><a href=\"{cancel_link}\">Cancel</a> | <a href=\"{reschedule_link}\">Reschedule</a></p>" },
+  { id: "appointment_customer_reminder_1h", name: "Patient Reminder 1h", category: "Consultations", status: "active", subject: "Your appointment starts in 1 hour", html: "<h1>Your appointment starts in 1 hour</h1><p>Hello {patient_name},</p><p>Your appointment with {doctor_name} starts at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}</p><p>{google_meet_link_html}</p>" },
   { id: "appointment_doctor_reminder_24h", name: "Doctor Reminder 24h", category: "Consultations", status: "active", subject: "Reminder: appointment with {patient_name} tomorrow", html: "<h1>Appointment reminder</h1><p>Hello {doctor_name},</p><p>Your appointment with {patient_name} is scheduled for {appointment_date} at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}<br /><strong>Patient note:</strong> {patient_note}</p><p>{google_meet_link_html}</p>" },
   { id: "appointment_doctor_reminder_1h", name: "Doctor Reminder 1h", category: "Consultations", status: "active", subject: "Your appointment starts in 1 hour", html: "<h1>Your appointment starts in 1 hour</h1><p>Hello {doctor_name},</p><p>Your appointment with {patient_name} starts at {appointment_time}.</p><p><strong>Duration:</strong> {appointment_duration}<br /><strong>Reference:</strong> {appointment_reference}</p><p>{google_meet_link_html}</p>" },
-  { id: "appointment_customer_followup", name: "Customer Follow Up", category: "Consultations", status: "active", subject: "How was your appointment with {doctor_name}?", html: "<h1>How was your appointment?</h1><p>Hello {patient_name},</p><p>Thank you for choosing Nevari. Please review your appointment with {doctor_name}.</p><p><a href=\"{review_link}\">Leave a doctor review</a></p><p><a href=\"{dashboard_link}\">Book another appointment</a></p>" },
+  { id: "appointment_customer_followup", name: "Patient Follow Up", category: "Consultations", status: "active", subject: "How was your appointment with {doctor_name}?", html: "<h1>How was your appointment?</h1><p>Hello {patient_name},</p><p>Thank you for choosing Nevari. Please review your appointment with {doctor_name}.</p><p><a href=\"{review_link}\">Leave a doctor review</a></p><p><a href=\"{dashboard_link}\">Book another appointment</a></p>" },
   { id: "appointment_cancelled", name: "Appointment Cancelled", category: "Consultations", status: "active", subject: "Appointment cancelled", html: "<h1>Appointment cancelled</h1><p>Hello {recipient_name},</p><p>The appointment between {patient_name} and {doctor_name} for {appointment_start} has been cancelled.</p>" },
   { id: "appointment_rescheduled", name: "Appointment Rescheduled", category: "Consultations", status: "active", subject: "Appointment rescheduled", html: "<h1>Appointment rescheduled</h1><p>Hello {recipient_name},</p><p>The appointment has been rescheduled to {appointment_start}.</p><p>{google_meet_link_html}</p>" },
   { id: "appointment-approved", name: "Appointment Approved", category: "Consultations", status: "active", subject: "Appointment approved for {appointment_date}", html: "<h1>Appointment approved</h1><p>Your consultation with {doctor_name} is set for {appointment_date}.</p><p>{google_meet_link_html}</p><p>{content}</p>" },
@@ -123,7 +123,7 @@ const FRONTEND_PAGES = [
       ["products", "Products", "i-pill"],
       ["orders", "Orders", "i-cart"],
       ["payments", "Payments", "i-credit-card"],
-      ["customers", "Customers", "i-users"]
+      ["customers", "Patients", "i-users"]
     ]
   },
   {
@@ -163,7 +163,7 @@ const SEARCH_PLACEHOLDERS = {
 };
 
 const EMPTY_ORDER_FORM = {
-  firstName: "Customer",
+  firstName: "Patient",
   lastName: "Guest",
   email: "africanbursary@gmail.com",
   phone: "0812 334 8821",
@@ -225,7 +225,7 @@ const PRODUCT_CREATE_STEPS = [
     key: "description",
     eyebrow: "Step 2",
     label: "Prescription and description",
-    description: "Set the customer-facing copy and the prescription note for the product."
+    description: "Set the patient-facing copy and the prescription note for the product."
   },
   {
     key: "media",
@@ -1284,7 +1284,7 @@ function customerFullName(order) {
     metaValue(order, ["billing_first_name", "_billing_first_name", "first_name"]),
     metaValue(order, ["billing_last_name", "_billing_last_name", "last_name"])
   ]);
-  const fallback = email ? email.split("@")[0] : (order?.customer_id || order?.id ? `Customer #${order?.customer_id || order?.id}` : "");
+  const fallback = email ? email.split("@")[0] : (order?.customer_id || order?.id ? `Patient #${order?.customer_id || order?.id}` : "");
   return explicitName || billingName || customerName || billingAddressName || metaName || shippingName || fallback;
 }
 
@@ -1296,7 +1296,7 @@ function customerSummary(order) {
   const email = customerEmail(order);
   const name = customerFullName(order);
   return {
-    name: name || (order?.customer_id || order?.id ? `Customer #${order?.customer_id || order?.id}` : "Customer"),
+    name: name || (order?.customer_id || order?.id ? `Patient #${order?.customer_id || order?.id}` : "Patient"),
     email: email || "",
   };
 }
@@ -1315,7 +1315,7 @@ function orderCustomerSummary(order, customerRowsById = new Map(), customerRowsB
   );
   const email = firstNonEmpty(customerRecord?.email, customerEmail(order));
   return {
-    name: isPlaceholderCustomerName(name) ? (email ? email.split("@")[0] : `Customer #${order?.customer_id || order?.id || ""}`.trim()) : name || "",
+    name: isPlaceholderCustomerName(name) ? (email ? email.split("@")[0] : `Patient #${order?.customer_id || order?.id || ""}`.trim()) : name || "",
     email: !email || email === "No email on file" ? "" : email,
   };
 }
@@ -1455,7 +1455,7 @@ function toneClass(value) {
 }
 
 function patientLabel(userId) {
-  return userId ? `Customer #${userId}` : "Guest checkout";
+  return userId ? `Patient #${userId}` : "Guest checkout";
 }
 
 function normalizePageId(pageId) {
@@ -2470,7 +2470,7 @@ export function AdminStorefrontDashboard({
   const [createFeedback, setCreateFeedback] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
   const [orderCreateSearch, setOrderCreateSearch] = useState("");
-  const [orderCreateCustomerSearch, setOrderCreateCustomerSearch] = useState("Customer Guest");
+  const [orderCreateCustomerSearch, setOrderCreateCustomerSearch] = useState("Patient Guest");
   const [orderCreateCustomerMenuOpen, setOrderCreateCustomerMenuOpen] = useState(false);
   const [productEditorMode, setProductEditorMode] = useState("edit");
   const [productCreateForm, setProductCreateForm] = useState(buildEmptyProductDraft());
@@ -3007,7 +3007,7 @@ export function AdminStorefrontDashboard({
     setSubscriptionState((current) => ({ ...current, loading: true, error: "" }));
     try {
       const payload = await apiRequest("/subscriptions/admin");
-      setSubscriptionState({ loading: false, error: "", data: payload.data || null });
+      setSubscriptionState({ loading: false, error: "", data: payload?.data || payload || null });
     } catch (error) {
       setSubscriptionState({ loading: false, error: String(error?.message || "Could not load subscription data."), data: null });
     }
@@ -3225,7 +3225,7 @@ export function AdminStorefrontDashboard({
       if (!id) {
         return;
       }
-      const name = customerNameFromRecord(customer) || customerEmail(customer) || `Customer #${id}`;
+      const name = customerNameFromRecord(customer) || customerEmail(customer) || `Patient #${id}`;
       const roles = resolveRecordRoles(customer);
       customerMap.set(id, {
         id,
@@ -3630,7 +3630,7 @@ export function AdminStorefrontDashboard({
   }
 
   function buildOrderEmailVariables(order, documentType, paymentLink) {
-    const customerName = customerNameForOrder(order) || "Customer";
+    const customerName = customerNameForOrder(order) || "Patient";
     const [customerFirstName = "", ...customerLastParts] = String(customerName).trim().split(/\s+/);
     const customerLastName = customerLastParts.join(" ");
     const documentTitle = documentType === "receipt" ? "Receipt" : "Invoice";
@@ -3658,7 +3658,7 @@ export function AdminStorefrontDashboard({
     const documentLabel = documentType === "receipt" ? "receipt" : "invoice";
     const paymentLinkBlock = paymentLink ? `<p><a href="${escapeHtml(paymentLink)}" target="_blank" rel="noopener noreferrer">Pay now</a></p>` : "";
     return `
-      <p>Hello ${escapeHtml(customerNameForOrder(order) || "Customer")},</p>
+      <p>Hello ${escapeHtml(customerNameForOrder(order) || "Patient")},</p>
       <p>Your ${escapeHtml(documentLabel)} for order <strong>#${escapeHtml(order?.number || order?.id || "")}</strong> is attached.</p>
       ${paymentLinkBlock}
       <p>Thank you for choosing ${escapeHtml(siteName)}.</p>
@@ -3668,7 +3668,7 @@ export function AdminStorefrontDashboard({
   function buildOrderEmailFallbackText(order, documentType, paymentLink) {
     const documentLabel = documentType === "receipt" ? "receipt" : "invoice";
     const paymentText = paymentLink ? ` Pay now: ${paymentLink}` : "";
-    return `Hello ${customerNameForOrder(order) || "Customer"}, your ${documentLabel} for order #${order?.number || order?.id || ""} is attached.${paymentText} Thank you for choosing ${siteName}.`;
+    return `Hello ${customerNameForOrder(order) || "Patient"}, your ${documentLabel} for order #${order?.number || order?.id || ""} is attached.${paymentText} Thank you for choosing ${siteName}.`;
   }
 
   async function sendOrderDocumentEmail(order, { documentType: requestedDocumentType, feedback } = {}) {
@@ -3677,7 +3677,7 @@ export function AdminStorefrontDashboard({
     }
     const email = customerEmail(order);
     if (!email) {
-      throw new Error("No customer email is available for contact.");
+      throw new Error("No patient email is available for contact.");
     }
     const documentType = requestedDocumentType || getOrderDocumentType(order);
     const paymentLink = "";
@@ -3762,7 +3762,7 @@ export function AdminStorefrontDashboard({
     const payload = await sendOrderDocumentEmail(order, { documentType, feedback });
     if (feedback) {
       const documentLabel = (documentType || getOrderDocumentType(order)) === "receipt" ? "Receipt" : "Invoice";
-      feedback(`${documentLabel} sent to ${payload?.data?.recipient_email || order.billing?.email || "the customer"}.`);
+      feedback(`${documentLabel} sent to ${payload?.data?.recipient_email || order.billing?.email || "the patient"}.`);
     }
   }
 
@@ -3790,7 +3790,7 @@ export function AdminStorefrontDashboard({
       quantity: 1
     }]);
     setOrderCreateSearch((data.products || [])[0]?.name || "");
-    setOrderCreateCustomerSearch("Customer Guest");
+    setOrderCreateCustomerSearch("Patient Guest");
     setOrderCreateCustomerMenuOpen(false);
     setOrderCreateFeedback("");
     setOrderCreateModalOpen(true);
@@ -3859,7 +3859,7 @@ export function AdminStorefrontDashboard({
   }
 
   function getOrderCreateCustomerName(form = orderCreateForm) {
-    return [form.firstName, form.lastName].filter(Boolean).join(" ").trim() || "Customer Guest";
+    return [form.firstName, form.lastName].filter(Boolean).join(" ").trim() || "Patient Guest";
   }
 
   function setOrderCreateCustomerName(value) {
@@ -3889,9 +3889,9 @@ export function AdminStorefrontDashboard({
       return;
     }
     const customerId = String(customer.id || customer.user_id || customer.customer_id || "");
-    const customerName = customerNameFromRecord(customer) || customer.display_name || customer.email || `Customer #${customerId}`;
+    const customerName = customerNameFromRecord(customer) || customer.display_name || customer.email || `Patient #${customerId}`;
     const nameParts = customerName.trim().split(/\s+/).filter(Boolean);
-    const firstName = nameParts.shift() || "Customer";
+    const firstName = nameParts.shift() || "Patient";
     const lastName = nameParts.join(" ") || "Guest";
     const nextEmail = customerEmail(customer) || customer.email || "";
     const nextPhone = customerPhoneFromRecord(customer) || "";
@@ -4228,7 +4228,7 @@ export function AdminStorefrontDashboard({
           delivery_method: orderCreateForm.deliveryMethod,
           prescription: orderCreateForm.prescription,
           billing: {
-            first_name: billingParts[0] || "Customer",
+            first_name: billingParts[0] || "Patient",
             last_name: billingParts.slice(1).join(" ") || "Guest",
             email: orderCreateForm.email,
             phone: orderCreateForm.phone,
@@ -4386,8 +4386,8 @@ export function AdminStorefrontDashboard({
           patchCustomerCache(payload.data);
           revalidateCacheGroups(isCustomerListKey);
         }
-        setCreateFeedback("Customer created.");
-        showSnackbar("Customer created.", "success");
+        setCreateFeedback("Patient created.");
+        showSnackbar("Patient created.", "success");
         closeCreateModal();
       }
     } catch (error) {
@@ -4669,7 +4669,7 @@ export function AdminStorefrontDashboard({
     setOrderActionFeedback("");
     try {
       const payload = await sendOrderDocumentEmail(selectedOrderDetail);
-      const email = payload?.data?.recipient_email || customerEmail(selectedOrderDetail) || "the customer";
+      const email = payload?.data?.recipient_email || customerEmail(selectedOrderDetail) || "the patient";
       setOrderActionFeedback(`Order email sent to ${email}.`);
       showSnackbar(`Order email sent to ${email}.`, "success");
     } catch (error) {
@@ -4992,7 +4992,7 @@ export function AdminStorefrontDashboard({
     try {
       let message = "";
       await sendReceiptForOrder(selectedPaymentReceipt, { documentType: "receipt", feedback: (nextMessage) => { message = nextMessage; } });
-      const finalMessage = message || `Receipt sent to ${customerEmail(selectedPaymentReceipt) || "the customer"}.`;
+      const finalMessage = message || `Receipt sent to ${customerEmail(selectedPaymentReceipt) || "the patient"}.`;
       setPaymentReceiptFeedback(finalMessage);
       showSnackbar(finalMessage, "success");
     } catch (error) {
@@ -7164,7 +7164,7 @@ export function AdminStorefrontDashboard({
       if (!id) {
         return;
       }
-      const name = customerNameFromRecord(customer) || customerEmail(customer) || `Customer #${id}`;
+      const name = customerNameFromRecord(customer) || customerEmail(customer) || `Patient #${id}`;
       customerMap.set(id, {
         id,
         label: name,
@@ -7188,8 +7188,8 @@ export function AdminStorefrontDashboard({
 
       const current = customerMap.get(id) || {
         id,
-        label: customerFullName(order) || email || `Customer #${id}`,
-        name: customerFullName(order) || email || `Customer #${id}`,
+        label: customerFullName(order) || email || `Patient #${id}`,
+        name: customerFullName(order) || email || `Patient #${id}`,
         email: email || "No email on file",
         orders: 0,
         spend: 0,
@@ -7212,8 +7212,8 @@ export function AdminStorefrontDashboard({
       }
       const current = customerMap.get(id) || {
         id,
-        label: `Customer #${id}`,
-        name: `Customer #${id}`,
+        label: `Patient #${id}`,
+        name: `Patient #${id}`,
         email: "No email on file",
         orders: 0,
         spend: 0,
@@ -7666,8 +7666,8 @@ export function AdminStorefrontDashboard({
   const popupConsultationAppointments = consultationCreateAppointmentsQuery.data?.data || data.appointments || [];
   const popupConsultationPatients = (consultationCreatePatientsQuery.data?.data || []).map((customer) => ({
     id: customer.id || customer.user_id || customer.customer_id,
-    label: customer.label || customerNameFromRecord(customer) || customerEmail(customer) || `Customer #${customer.id || customer.user_id}`,
-    name: customerNameFromRecord(customer) || customerEmail(customer) || `Customer #${customer.id || customer.user_id}`,
+    label: customer.label || customerNameFromRecord(customer) || customerEmail(customer) || `Patient #${customer.id || customer.user_id}`,
+    name: customerNameFromRecord(customer) || customerEmail(customer) || `Patient #${customer.id || customer.user_id}`,
     email: customerEmail(customer) || "No email on file",
     orders: Number(customer.orders || customer.order_count || 0),
     spend: safeNumber(customer.spend || customer.total_spend || 0),
@@ -9052,7 +9052,7 @@ export function AdminStorefrontDashboard({
                               ? "New Consultation"
                               : type === "doctor"
                                 ? "New Doctor"
-                                : "New Customer"}
+                                : "New Patient"}
                       </button>
                     ))}
                   </div>
@@ -9169,7 +9169,7 @@ export function AdminStorefrontDashboard({
                       <div className="overview-v2-table-wrap">
                         <table className="overview-v2-table">
                           <thead>
-                            <tr><th>Order</th><th>Customer</th><th>Items</th><th>Prescription</th><th>Payment</th><th>Status</th><th>Next action</th></tr>
+                            <tr><th>Order</th><th>Patient</th><th>Items</th><th>Prescription</th><th>Payment</th><th>Status</th><th>Next action</th></tr>
                           </thead>
                           <tbody>
                             {overviewOrderRows.slice(0, 4).map((order) => {
@@ -9272,7 +9272,7 @@ export function AdminStorefrontDashboard({
                         <div><span>Verified today</span><strong>{formatCompactMoney(sales.today || 0, storeCurrency)}</strong><small>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "completed").length)} successful payments</small></div>
                         <div><span>Pending review</span><strong>{formatCompactMoney(sales.pending || 0, storeCurrency)}</strong><small>{formatNumber(overviewPendingPaymentCount)} pending payments</small></div>
                         <div><span>Refund requests</span><strong>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "refunded").length)}</strong><small>Requires finance follow-up</small></div>
-                        <div><span>Failed payments</span><strong>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "failed").length)}</strong><small>Customer retry needed</small></div>
+                        <div><span>Failed payments</span><strong>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "failed").length)}</strong><small>Patient retry needed</small></div>
                       </div>
                     </article>
                   </aside>
@@ -9318,7 +9318,7 @@ export function AdminStorefrontDashboard({
                         <tr>
                           <th>Order</th>
                           <th>Type</th>
-                          <th>Customer</th>
+                          <th>Patient</th>
                           <th>Product mix</th>
                           <th>Prescription</th>
                           <th>Price</th>
@@ -9429,7 +9429,7 @@ export function AdminStorefrontDashboard({
                       <thead>
                         <tr>
                           <th className="order-col">Order</th>
-                          <th className="customer-col">Customer</th>
+                          <th className="customer-col">Patient</th>
                           <th className="created-col">Created</th>
                           <th className="amount-col">Amount</th>
                           <th className="payment-col">Payment</th>
@@ -9494,7 +9494,7 @@ export function AdminStorefrontDashboard({
                 <section className="panel table-panel">
                   <div className="panel-header">
                     <div>
-                      <p className="section-kicker">Customer list</p>
+                      <p className="section-kicker">Patient list</p>
                       
                     </div>
                   </div>
@@ -9502,7 +9502,7 @@ export function AdminStorefrontDashboard({
                     <table>
                       <thead>
                         <tr>
-                          <th>Customer</th>
+                          <th>Patient</th>
                           <th>Name</th>
                           <th>Email</th>
                           <th className="narrow-col">Orders</th>
@@ -9529,7 +9529,7 @@ export function AdminStorefrontDashboard({
                           >
                             <td>
                               <div className="customer-list-profile">
-                                <span className="customer-list-avatar">{getNameInitials(row.name || row.label || row.email || "Customer", "CU")}</span>
+                                <span className="customer-list-avatar">{getNameInitials(row.name || row.label || row.email || "Patient", "CU")}</span>
                                 <span>{row.label}</span>
                               </div>
                             </td>
@@ -10336,7 +10336,7 @@ export function AdminStorefrontDashboard({
                         </div>
                       </div>
                       <div className="email-hook-list">
-                        {["Customer confirmation", "Doctor notification", "Customer 24h reminder", "Customer 1h reminder", "Doctor 24h reminder", "Doctor 1h reminder", "Customer follow up"].map((label, index) => (
+                        {["Patient confirmation", "Doctor notification", "Patient 24h reminder", "Patient 1h reminder", "Doctor 24h reminder", "Doctor 1h reminder", "Patient follow up"].map((label, index) => (
                           <div className="email-hook-row" key={label}>
                             <strong>{label}</strong>
                             <span>{bookingEmailTest.emailLogIds[index] ? `Email log #${bookingEmailTest.emailLogIds[index]}` : "Preview email"}</span>
@@ -10754,11 +10754,11 @@ export function AdminStorefrontDashboard({
                 <section className="creation-main">
                   <div className="creation-section-title">
                     <InlineIcon id="i-cart" />
-                    <span>Customer and order details</span>
+                    <span>Patient and order details</span>
                   </div>
                   <div className="creation-field-grid">
                     <div className="creation-field">
-                      <label>Customer name</label>
+                      <label>Patient name</label>
                       <div className="consultation-search-combo order-create-combo">
                         <input
                           className="form-control"
@@ -10785,7 +10785,7 @@ export function AdminStorefrontDashboard({
                             {orderCreateCustomersQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading customers"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
                             {orderCustomerCandidates.length ? orderCustomerCandidates.map((customer) => {
                               const customerId = customer.id || customer.user_id || customer.customer_id;
-                              const customerName = customerNameFromRecord(customer) || customer.display_name || customer.email || `Customer #${customerId}`;
+                              const customerName = customerNameFromRecord(customer) || customer.display_name || customer.email || `Patient #${customerId}`;
                               const customerEmailValue = customerEmail(customer) || "No email on file";
                               const customerPhoneValue = customerPhoneFromRecord(customer) || "No phone on file";
                               const customerAvatar = firstNonEmpty(customer.avatar_url, customer.avatar, customer.image_url, customer.photo_url);
@@ -10805,7 +10805,7 @@ export function AdminStorefrontDashboard({
                                   </span>
                                 </button>
                               );
-                            }) : <div className="order-create-empty-results">No matching customers found.</div>}
+                            }) : <div className="order-create-empty-results">No matching patients found.</div>}
                           </div>
                         ) : null}
                       </div>
@@ -11009,8 +11009,8 @@ export function AdminStorefrontDashboard({
                     <button
                       className="icon-button order-header-action-button"
                       type="button"
-                      title={orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") ? "Sending..." : "Email Customer"}
-                      aria-label={orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") ? "Sending customer email" : "Email Customer"}
+                      title={orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") ? "Sending..." : "Email Patient"}
+                      aria-label={orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") ? "Sending patient email" : "Email Patient"}
                       onClick={contactSelectedCustomer}
                       disabled={orderMutationLoading || orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") || !customerEmail(selectedOrderDetail)}
                     >
@@ -11067,7 +11067,7 @@ export function AdminStorefrontDashboard({
                   <div className="detail-section order-customer-card">
                     <div className="panel-header">
                       <div>
-                        <p className="section-kicker">Customer information</p>
+                        <p className="section-kicker">Patient information</p>
                         <h3>{customerFullName(selectedOrderDetail)}</h3>
                       </div>
                     </div>
@@ -11076,7 +11076,7 @@ export function AdminStorefrontDashboard({
                       <div className="detail-item-card"><strong>Email Address</strong><span className="muted">{customerSummary(selectedOrderDetail).email}</span></div>
                       <div className="detail-item-card"><strong>Phone Number</strong><span className="muted">{selectedOrderDetail.billing?.phone || "No phone number on file"}</span></div>
                       <div className="detail-item-card"><strong>Delivery Address</strong><span className="muted">{formatAddress(selectedOrderDetail.shipping)}</span></div>
-                      <div className="detail-item-card customer-note-card"><strong>Customer Notes</strong><span className="muted">{selectedOrderNote || "No customer note recorded."}</span></div>
+                      <div className="detail-item-card customer-note-card"><strong>Patient Notes</strong><span className="muted">{selectedOrderNote || "No patient note recorded."}</span></div>
                     </div>
                   </div>
 
@@ -11210,7 +11210,7 @@ export function AdminStorefrontDashboard({
                 onClick={contactSelectedCustomer}
                 disabled={!selectedOrderDetail || orderMutationLoading || orderEmailActionLoading === String(selectedOrderDetail?.id || selectedOrderDetail?.number || "order") || !customerEmail(selectedOrderDetail)}
               >
-                {orderEmailActionLoading === String(selectedOrderDetail?.id || selectedOrderDetail?.number || "order") ? "Sending..." : "Email Customer"}
+                {orderEmailActionLoading === String(selectedOrderDetail?.id || selectedOrderDetail?.number || "order") ? "Sending..." : "Email Patient"}
               </button>
               <div className="order-detail-footer-end">
                 <button className="pill-button" type="button" onClick={closeOrderModal}>Close</button>
@@ -11248,7 +11248,7 @@ export function AdminStorefrontDashboard({
               </label>
               
               <label className="detail-field detail-field-wide">
-                <span>Customer Note</span>
+                <span>Patient Note</span>
                 <textarea value={selectedOrderNote} onChange={(event) => setSelectedOrderNote(event.target.value)} rows={4} />
               </label>
             </div>
@@ -11343,7 +11343,7 @@ export function AdminStorefrontDashboard({
               </div>
               <div className="app-modal-scroll modal-body">
                 <div className="detail-grid two-col detail-grid-compact">
-                  <div className="detail-item-card"><strong>Patient</strong><span>{previewIvTherapyRequest.customer_name || previewIvTherapyRequest.patient?.name || "Customer"}</span></div>
+                  <div className="detail-item-card"><strong>Patient</strong><span>{previewIvTherapyRequest.customer_name || previewIvTherapyRequest.patient?.name || "Patient"}</span></div>
                   <div className="detail-item-card"><strong>Status</strong><span>{previewIvTherapyRequest.status_label || titleCase(previewIvTherapyRequest.status || "submitted")}</span></div>
                   <div className="detail-item-card"><strong>Phone</strong><span>{previewIvTherapyRequest.customer_phone || previewIvTherapyRequest.patient?.phoneNumber || "n/a"}</span></div>
                   <div className="detail-item-card"><strong>Gender</strong><span>{previewIvTherapyRequest.patient?.gender || "Not recorded"}</span></div>
@@ -11442,7 +11442,7 @@ export function AdminStorefrontDashboard({
 
             <div className="receipt-summary-grid receipt-summary-grid-redesign">
               <div className="mini-stat receipt-stat">
-                <span>Customer</span>
+                <span>Patient</span>
                 <strong>{customerFullName(selectedPaymentReceipt)}</strong>
                 <small>{customerSummary(selectedPaymentReceipt).email}</small>
               </div>
@@ -11462,7 +11462,7 @@ export function AdminStorefrontDashboard({
               <div className="detail-section receipt-panel">
                 <div className="panel-header">
                   <div>
-                    <p className="section-kicker">Customer information</p>
+                    <p className="section-kicker">Patient information</p>
                     <h3>{customerFullName(selectedPaymentReceipt)}</h3>
                   </div>
                 </div>
@@ -11790,7 +11790,7 @@ export function AdminStorefrontDashboard({
                                     <section className="product-create-media-card">
                                       <div className="product-create-media-head">
                                         <strong>Product gallery</strong>
-                                        <span>Upload the additional images customers will see inside the catalogue.</span>
+                                        <span>Upload the additional images patients will see inside the catalogue.</span>
                                       </div>
                                       <button className={`product-upload-dropzone upload-box product-create-upload-box ${galleryProductMedia.length ? "active" : ""}`} type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload("append")}>
                                         <span className="product-upload-dropzone-icon"><InlineIcon id="i-upload" /></span>
@@ -11878,7 +11878,7 @@ export function AdminStorefrontDashboard({
 
                             <div className="product-create-preview-copy">
                               <strong>Description preview</strong>
-                              <p>{productEditForm.shortDescription || "Add a short description to preview customer-facing summary copy."}</p>
+                              <p>{productEditForm.shortDescription || "Add a short description to preview patient-facing summary copy."}</p>
                             </div>
 
                             {galleryProductMedia.length ? (
@@ -12256,7 +12256,7 @@ export function AdminStorefrontDashboard({
                                     <span>{option.email}</span>
                                   </span>
                                 </button>
-                              )) : <div className="consultation-search-empty">No matching customers.</div>}
+                              )) : <div className="consultation-search-empty">No matching patients.</div>}
                             </div>
                           </div>
                         </label>
@@ -12374,7 +12374,7 @@ export function AdminStorefrontDashboard({
                       <div className="profile-avatar">
                         <span>{getNameInitials((createModalType === "doctor" ? doctorCreateForm.fullName : customerCreateForm.fullName) || "")}</span>
                       </div>
-                      <strong>{createModalType === "doctor" ? (doctorCreateForm.fullName || "Doctor name") : (customerCreateForm.fullName || "Customer name")}</strong>
+                      <strong>{createModalType === "doctor" ? (doctorCreateForm.fullName || "Doctor name") : (customerCreateForm.fullName || "Patient name")}</strong>
                       <span>{createModalType === "doctor" ? (doctorCreateForm.email || "doctor@email.com") : (customerCreateForm.email || "customer@email.com")}</span>
                       <div className="creation-summary-list">
                         {createModalType === "doctor" ? (
@@ -12386,7 +12386,7 @@ export function AdminStorefrontDashboard({
                         ) : (
                           <>
                             <div><span>Phone</span><strong>{customerCreateForm.phone || "Not provided"}</strong></div>
-                            <div><span>Profile type</span><strong>Customer</strong></div>
+                            <div><span>Profile type</span><strong>Patient</strong></div>
                             <div><span>Address</span><strong>{customerCreateForm.address ? "Added" : "Pending"}</strong></div>
                           </>
                         )}
@@ -12400,7 +12400,7 @@ export function AdminStorefrontDashboard({
                     <div className="profile-create-form-column creation-main">
                       <div className="creation-section-title">
                         <InlineIcon id={createModalType === "doctor" ? "i-user" : "i-mail"} />
-                        <span>{createModalType === "doctor" ? "Doctor identity" : "Customer details"}</span>
+                        <span>{createModalType === "doctor" ? "Doctor identity" : "Patient details"}</span>
                       </div>
                       {createModalType === "doctor" ? (
                         <div className="detail-form-grid profile-create-grid">
@@ -12741,14 +12741,14 @@ export function AdminStorefrontDashboard({
       {selectedCustomerProfile ? (
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
-            <ModalScrim className="app-modal-backdrop" label="Close customer details" onDismiss={closeCustomerDetails} />
-            <section className="detail-section stacked-order-popup receipt-popup customer-detail-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`Customer details for ${selectedCustomerProfile.name}`}>
+            <ModalScrim className="app-modal-backdrop" label="Close patient details" onDismiss={closeCustomerDetails} />
+            <section className="detail-section stacked-order-popup receipt-popup customer-detail-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`Patient details for ${selectedCustomerProfile.name}`}>
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
-                  <p className="section-kicker">Customer profile</p>
+                  <p className="section-kicker">Patient profile</p>
                   <h3>{selectedCustomerProfile.name}</h3>
                 </div>
-                <button className="icon-button" type="button" aria-label="Close customer details" onClick={closeCustomerDetails}>
+                <button className="icon-button" type="button" aria-label="Close patient details" onClick={closeCustomerDetails}>
                   <InlineIcon id="i-x" />
                 </button>
               </div>
@@ -12761,7 +12761,7 @@ export function AdminStorefrontDashboard({
               <div className="customer-detail-scroll modal-body">
                 {customerDetailTab === "details" ? (
                   <div className="customer-detail-grid">
-                    <div className="detail-item-card"><strong>Customer</strong><span className="muted">{selectedCustomerProfile.label}</span></div>
+                    <div className="detail-item-card"><strong>Patient</strong><span className="muted">{selectedCustomerProfile.label}</span></div>
                     <div className="detail-item-card"><strong>Email</strong><span className="muted">{selectedCustomerProfile.email}</span></div>
                     <div className="detail-item-card"><strong>Current role</strong><span className="muted">{selectedCustomerRoleLabel}</span></div>
                     <div className="detail-item-card"><strong>Total orders</strong><span className="muted">{formatNumber(selectedCustomerProfile.orders)}</span></div>
@@ -12772,7 +12772,7 @@ export function AdminStorefrontDashboard({
                     {canEscalateCustomerPrivileges ? (
                       <div className="detail-item-card customer-detail-wide customer-privilege-card">
                         <strong>Role management</strong>
-                        <span className="muted">Upgrade this customer account into a doctor or pharmacist after OTP verification.</span>
+                        <span className="muted">Upgrade this patient account into a doctor or pharmacist after OTP verification.</span>
                         {selectedCustomerCanEscalate ? (
                           <div className="customer-privilege-actions">
                             <label className="customer-privilege-field">
@@ -12788,7 +12788,7 @@ export function AdminStorefrontDashboard({
                             </button>
                           </div>
                         ) : (
-                          <span className="muted">This record is not linked to a customer account that can be upgraded.</span>
+                          <span className="muted">This record is not linked to a patient account that can be upgraded.</span>
                         )}
                       </div>
                     ) : null}
@@ -12817,7 +12817,7 @@ export function AdminStorefrontDashboard({
                                 <td>{formatDate(order.created_at, true)}</td>
                                 <td>{order.assigned_doctor?.display_name || "Not assigned"}</td>
                               </tr>
-                            )) : <tr><td colSpan="4" className="muted">No orders found for this customer.</td></tr>}
+                            )) : <tr><td colSpan="4" className="muted">No orders found for this patient.</td></tr>}
                           </tbody>
                         </table>
                       </div>
@@ -12867,7 +12867,7 @@ export function AdminStorefrontDashboard({
                                 <td>{formatMoney(product.total || 0, storeCurrency)}</td>
                                 <td>{formatNumber(product.quantity)}</td>
                               </tr>
-                            )) : <tr><td colSpan="5" className="muted">No purchased products found for this customer.</td></tr>}
+                            )) : <tr><td colSpan="5" className="muted">No purchased products found for this patient.</td></tr>}
                           </tbody>
                         </table>
                       </div>

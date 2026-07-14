@@ -24,6 +24,32 @@ These decisions must be enforced by the plugin/API server for every request.
 
 ## High Risk - Resolved Locally
 
+### [x] SEC-011: Subscription history is restricted to the authenticated patient
+
+**Status:** Verified safe locally; deployment and endpoint regression testing required.
+**Layer:** Plugin/server
+**Severity:** High
+**Location:** `nevari-pharmacy-core/includes/class-nevari-subscriptions.php`
+
+**Implemented controls**
+
+- `GET /subscriptions/me/history` and its singular alias require an authenticated patient role.
+- The server derives `user_id` exclusively from the API session and queries only that patient’s subscription and payment rows.
+- Responses exclude provider payloads, Paystack subscription/customer codes, email tokens, secrets, and internal metadata.
+
+### [x] SEC-010: Refill route permission callback did not enforce patient order ownership
+
+**Status:** Resolved locally; deployment and endpoint regression testing required.
+**Layer:** Plugin/server
+**Severity:** High
+**Location:** `nevari-pharmacy-core/includes/class-nevari-rest.php`
+
+**Implemented remediation**
+
+- `POST /orders/{id}/refill` now uses a dedicated permission callback that requires an authenticated patient and verifies the source order belongs to that patient.
+- The handler independently retains scoped-order validation and now rejects refills unless the source order is completed.
+- Order responses advertise refill availability only for completed orders with purchasable items.
+
 ### [x] SEC-001: Public invoice payment-data endpoint exposes customer and order information
 
 **Status:** Resolved locally; deployment and endpoint regression testing required.  

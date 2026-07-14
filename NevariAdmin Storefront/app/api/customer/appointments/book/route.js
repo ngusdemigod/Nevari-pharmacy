@@ -132,8 +132,8 @@ async function sendBookingEmails({
     ? buildEmailLinkVariable(meetLink, "Join Appointment", { button: true })
     : "";
   const appointmentVariables = {
-    patient_name: customerName || "Customer",
-    customer_name: customerName || "Customer",
+    patient_name: customerName || "Patient",
+    customer_name: customerName || "Patient",
     doctor_name: doctorName,
     customer_email: customerEmail || "",
     customer_phone: "",
@@ -167,7 +167,7 @@ async function sendBookingEmails({
     amount_paid: amountPaid,
   };
   const customerBody = [
-    `<p>Hello ${escapeHtml(customerName || "Customer")},</p>`,
+    `<p>Hello ${escapeHtml(customerName || "Patient")},</p>`,
     `<p>Your consultation booking has been created with ${escapeHtml(doctorName)}.</p>`,
     `<p><strong>Date:</strong> ${escapeHtml(dateLabel)}<br/>`,
     `<strong>Time:</strong> ${escapeHtml(timeLabel)}<br/>`,
@@ -181,7 +181,7 @@ async function sendBookingEmails({
   const doctorBody = [
     `<p>Hello ${escapeHtml(doctorName)},</p>`,
     `<p>A new consultation booking has been created.</p>`,
-    `<p><strong>Patient:</strong> ${escapeHtml(customerName || "Customer")}<br/>`,
+    `<p><strong>Patient:</strong> ${escapeHtml(customerName || "Patient")}<br/>`,
     `<strong>Email:</strong> ${escapeHtml(customerEmail || "Not provided")}<br/>`,
     `<strong>Date:</strong> ${escapeHtml(dateLabel)}<br/>`,
     `<strong>Time:</strong> ${escapeHtml(timeLabel)}<br/>`,
@@ -191,8 +191,8 @@ async function sendBookingEmails({
     meetMarkup
   ].join("");
   const adminBody = [
-    "<p>A new customer appointment has been booked.</p>",
-    `<p><strong>Customer:</strong> ${escapeHtml(customerName || "Customer")}<br/>`,
+    "<p>A new patient appointment has been booked.</p>",
+    `<p><strong>Patient:</strong> ${escapeHtml(customerName || "Patient")}<br/>`,
     `<strong>Doctor:</strong> ${escapeHtml(doctorName)}<br/>`,
     `<strong>Date:</strong> ${escapeHtml(dateLabel)}<br/>`,
     `<strong>Time:</strong> ${escapeHtml(timeLabel)}<br/>`,
@@ -211,7 +211,7 @@ async function sendBookingEmails({
       subject: `Your appointment with ${doctorName} is pending payment`,
       variables: appointmentVariables,
       body_html: customerBody,
-      body_text: `Hello ${customerName || "Customer"}, your appointment with ${doctorName} has been created for ${dateLabel} at ${timeLabel}. Pay now: ${paymentUrl}`.trim()
+      body_text: `Hello ${customerName || "Patient"}, your appointment with ${doctorName} has been created for ${dateLabel} at ${timeLabel}. Pay now: ${paymentUrl}`.trim()
     })
     : { sent: false, reason: "missing_customer_email" };
   const doctorDispatchReason = !doctorId ? "missing_doctor_id" : !doctorEmail ? "missing_doctor_email" : "";
@@ -226,7 +226,7 @@ async function sendBookingEmails({
         dashboard_link: doctorDashboardLink,
       },
       body_html: doctorBody,
-      body_text: `Hello ${doctorName}, a new consultation booking has been created for ${customerName || "Customer"} on ${dateLabel} at ${timeLabel}. Reference: ${appointmentReference || "Pending"}.`
+      body_text: `Hello ${doctorName}, a new consultation booking has been created for ${customerName || "Patient"} on ${dateLabel} at ${timeLabel}. Reference: ${appointmentReference || "Pending"}.`
     })
     : { sent: false, reason: doctorDispatchReason || "missing_doctor_email" };
   const adminDispatch = adminEmail
@@ -234,7 +234,7 @@ async function sendBookingEmails({
       template_key: "admin_notification",
       recipient_email: adminEmail,
       send_now: true,
-      subject: `New appointment booked: ${customerName || "Customer"}`,
+      subject: `New appointment booked: ${customerName || "Patient"}`,
       body_html: adminBody
     })
     : { sent: false, reason: "missing_admin_email" };
@@ -299,7 +299,7 @@ export async function POST(request) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return invalid("Date is invalid.", "date");
   if (!isValidTimeKey(time)) return invalid("Time is invalid.", "time");
   if (reason.length < 3 || reason.length > 500) return invalid("Reason must be 3 to 500 characters.", "reason");
-  if (customerEmail && !isValidEmail(customerEmail)) return invalid("Customer email is invalid.", "customerEmail");
+  if (customerEmail && !isValidEmail(customerEmail)) return invalid("Patient email is invalid.", "customerEmail");
   if (!accessToken) {
     Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "missing_session" } });
     return NextResponse.json(customerSessionError().data, { status: 401 });

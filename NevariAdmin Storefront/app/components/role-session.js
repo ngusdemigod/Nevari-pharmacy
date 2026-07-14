@@ -4,6 +4,7 @@ import { DEFAULT_NEVARI_BASE_URL, FRONTENDS } from "./frontend-config";
 
 export const SESSION_MARKER = "server-session";
 const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
+const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -55,6 +56,20 @@ function clearAllDashboardCaches() {
     }
     keysToRemove.forEach((key) => storage.removeItem(key));
   });
+}
+
+function clearCustomerFrontendSettings() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const keysToRemove = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key && (key === CUSTOMER_SETTINGS_KEY || key.startsWith(`${CUSTOMER_SETTINGS_KEY}:`))) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => window.localStorage.removeItem(key));
 }
 
 export function defaultSession(config) {
@@ -146,6 +161,7 @@ export function clearStoredSessions() {
   Object.values(FRONTENDS).forEach((frontend) => {
     localStorage.removeItem(frontend.storageKey);
   });
+  clearCustomerFrontendSettings();
   clearAllDashboardCaches();
 }
 
@@ -190,6 +206,7 @@ export function clearSessionAuth(config, session) {
     user: null
   };
   saveSession(config, nextSession);
+  clearCustomerFrontendSettings();
   clearAllDashboardCaches();
   return nextSession;
 }
@@ -246,3 +263,5 @@ export function frontendContext(session) {
     frontend_url: frontendOrigin === "null" ? "null" : (typeof window !== "undefined" ? window.location.href : session.frontendUrl)
   };
 }
+
+

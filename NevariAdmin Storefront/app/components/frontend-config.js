@@ -3,9 +3,9 @@ export const DEFAULT_NEVARI_BASE_URL = "https://nevarihealth.com";
 export const FRONTENDS = {
   patient: {
     type: "patient_dashboard",
-    label: "Nevari Customer",
-    authDashboardName: "Customer",
-    loginPrompt: "Signin to your customer dashboard",
+    label: "Nevari Patient",
+    authDashboardName: "Patient",
+    loginPrompt: "Signin to your patient dashboard",
     storageKey: "nevari_patient_dashboard_session",
     loginPath: "/login",
     dashboardPath: "/dashboard",

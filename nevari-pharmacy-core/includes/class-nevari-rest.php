@@ -5,6 +5,8 @@ if (!defined('ABSPATH')) {
 
 final class Nevari_Rest {
     private const CUSTOMER_SETTINGS_META_KEY = '_nevari_customer_dashboard_settings';
+    private const CUSTOMER_PROFILE_IMAGE_ID_META_KEY = '_nevari_customer_profile_image_id';
+    private const CUSTOMER_PROFILE_IMAGE_URL_META_KEY = '_nevari_customer_profile_image_url';
 
     public static function init(): void {
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
@@ -126,7 +128,7 @@ final class Nevari_Rest {
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/refill', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'orders_refill'],
-            'permission_callback' => [__CLASS__, 'auth_required'],
+            'permission_callback' => [__CLASS__, 'patient_owned_order_required'],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/send-receipt', [
@@ -274,6 +276,14 @@ final class Nevari_Rest {
             [
                 'methods' => WP_REST_Server::EDITABLE,
                 'callback' => [__CLASS__, 'customers_settings_update'],
+                'permission_callback' => [__CLASS__, 'auth_required'],
+            ],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/customers/me/profile-image', [
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'customers_profile_image_update'],
                 'permission_callback' => [__CLASS__, 'auth_required'],
             ],
         ]);
@@ -1724,6 +1734,9 @@ final class Nevari_Rest {
         if (is_wp_error($order)) {
             return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) ($order->get_error_data()['status'] ?? 404));
         }
+        if ($order->get_status() !== 'completed') {
+            return Nevari_Helpers::error('refill_not_available', 'Only completed orders can be refilled.', 409);
+        }
         if (!class_exists('Nevari_Subscriptions') || !Nevari_Subscriptions::user_has_paid_access($user_id)) {
             return Nevari_Helpers::error('upgrade_required', 'Upgrade to Nevari Access Pro to request refills.', 403);
         }
@@ -1919,6 +1932,30 @@ final class Nevari_Rest {
         return new WP_Error('forbidden', 'You cannot view this order.', ['status' => 403]);
     }
 
+    public static function patient_owned_order_required(WP_REST_Request $request) {
+        if (!Nevari_Auth::api_session_required()) {
+            return new WP_Error('rest_forbidden', 'A valid patient session is required.', ['status' => 401]);
+        }
+
+        $user_id = Nevari_Auth::api_session_user_id();
+        if ($user_id <= 0 || !Nevari_Helpers::is_patient($user_id)) {
+            return new WP_Error('rest_forbidden', 'Only patients can refill orders.', ['status' => 403]);
+        }
+        if (!self::woo_available()) {
+            return new WP_Error('woocommerce_missing', 'WooCommerce is required.', ['status' => 503]);
+        }
+
+        $order = wc_get_order(absint($request['id']));
+        if (!$order) {
+            return new WP_Error('order_not_found', 'Order not found.', ['status' => 404]);
+        }
+        if ((int) $order->get_user_id() !== $user_id) {
+            return new WP_Error('forbidden', 'You cannot refill this order.', ['status' => 403]);
+        }
+
+        return true;
+    }
+
     private static function refillable_order_items($order): array {
         $items = [];
         if (!$order || !method_exists($order, 'get_items')) {
@@ -2032,8 +2069,8 @@ final class Nevari_Rest {
             'items_quantity' => array_reduce($items, static function ($carry, $item) {
                 return $carry + (float) $item->get_quantity();
             }, 0),
-            'can_refill' => !empty($refillable_items),
-            'refill_available' => !empty($refillable_items),
+            'can_refill' => $order->get_status() === 'completed' && !empty($refillable_items),
+            'refill_available' => $order->get_status() === 'completed' && !empty($refillable_items),
             'items_summary' => $items_summary,
             'created_at' => $order->get_date_created() ? $order->get_date_created()->date('c') : null,
             'updated_at' => $order->get_date_modified() ? $order->get_date_modified()->date('c') : null,
@@ -4057,6 +4094,75 @@ final class Nevari_Rest {
         return Nevari_Helpers::success(self::customer_settings_payload($user_id));
     }
 
+    public static function customers_profile_image_update(WP_REST_Request $request): WP_REST_Response {
+        $user_id = get_current_user_id();
+        if (!$user_id || !Nevari_Helpers::is_patient($user_id)) {
+            return Nevari_Helpers::error('forbidden', 'Customer profile images can only be updated by authenticated patients.', 403);
+        }
+        if ($response = Nevari_Helpers::rate_limit('rest_customer_profile_image_write', 12, HOUR_IN_SECONDS, ['user:' . $user_id])) {
+            return $response;
+        }
+
+        $params = Nevari_Helpers::get_json_params($request);
+        $allowed_keys = ['filename', 'mime_type', 'data_base64'];
+        foreach (array_keys($params) as $key) {
+            if (!in_array((string) $key, $allowed_keys, true)) {
+                return Nevari_Helpers::error('validation_error', 'Unexpected profile image field supplied.', 422);
+            }
+        }
+
+        $filename = isset($params['filename']) ? sanitize_file_name((string) $params['filename']) : '';
+        $mime_type = isset($params['mime_type']) ? sanitize_text_field((string) $params['mime_type']) : '';
+        $data_base64 = isset($params['data_base64']) ? preg_replace('/\s+/', '', (string) $params['data_base64']) : '';
+        $allowed_mimes = [
+            'image/jpeg' => ['jpg', 'jpeg'],
+            'image/png' => ['png'],
+            'image/gif' => ['gif'],
+            'image/webp' => ['webp'],
+        ];
+        $extension = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+
+        if ($filename === '' || $data_base64 === '' || !isset($allowed_mimes[$mime_type]) || !in_array($extension, $allowed_mimes[$mime_type], true)) {
+            return Nevari_Helpers::error('validation_error', 'A valid JPG, PNG, GIF, or WebP image is required.', 422);
+        }
+
+        $bytes = base64_decode($data_base64, true);
+        if ($bytes === false || strlen($bytes) < 1 || strlen($bytes) > 2 * 1024 * 1024 || !@getimagesizefromstring($bytes)) {
+            return Nevari_Helpers::error('validation_error', 'Profile image data is invalid or larger than 2 MB.', 422);
+        }
+
+        $upload = wp_upload_bits($filename, null, $bytes);
+        if (!empty($upload['error'])) {
+            return Nevari_Helpers::error('media_upload_failed', 'The profile image could not be uploaded.', 500);
+        }
+
+        $attachment_id = wp_insert_attachment([
+            'post_mime_type' => $mime_type,
+            'post_title' => sanitize_text_field(pathinfo($filename, PATHINFO_FILENAME)),
+            'post_status' => 'inherit',
+            'post_author' => $user_id,
+        ], $upload['file']);
+        if (is_wp_error($attachment_id) || !$attachment_id) {
+            return Nevari_Helpers::error('media_upload_failed', 'The profile image attachment could not be created.', 500);
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        $metadata = wp_generate_attachment_metadata((int) $attachment_id, $upload['file']);
+        if ($metadata) {
+            wp_update_attachment_metadata((int) $attachment_id, $metadata);
+        }
+
+        $url = esc_url_raw((string) wp_get_attachment_url((int) $attachment_id));
+        update_user_meta($user_id, self::CUSTOMER_PROFILE_IMAGE_ID_META_KEY, (int) $attachment_id);
+        update_user_meta($user_id, self::CUSTOMER_PROFILE_IMAGE_URL_META_KEY, $url);
+
+        return Nevari_Helpers::success([
+            'id' => (int) $attachment_id,
+            'avatar_url' => $url,
+            'profile_image' => $url,
+            'profile' => Nevari_Helpers::user_summary($user_id),
+        ], [], 201);
+    }
     private static function role_change_allowed_targets(string $current_role): array {
         return match ($current_role) {
             'customer', 'patient' => ['doctor', 'pharmacist'],
@@ -6190,6 +6296,14 @@ final class Nevari_Rest {
             'refundTracking' => true,
             'twoFactorEnabled' => false,
             'savedMethods' => [],
+        
+            'bloodGroup' => '',
+            'genotype' => '',
+            'allergies' => [],
+            'currentMedications' => [],
+            'existingConditions' => [],
+            'emergencyContactName' => '',
+            'emergencyContactPhoneNumber' => '',
         ];
     }
 
@@ -6203,6 +6317,8 @@ final class Nevari_Rest {
             'phone' => 24,
             'address' => 200,
             'timezone' => 80,
+            'emergencyContactName' => 120,
+            'emergencyContactPhoneNumber' => 24,
         ];
         foreach ($text_fields as $field => $max_length) {
             if (!array_key_exists($field, $params)) {
@@ -6216,10 +6332,58 @@ final class Nevari_Rest {
             if ($field === 'email' && $value !== '' && !is_email($value)) {
                 return new WP_Error('validation_error', 'A valid notification email is required.', ['status' => 422]);
             }
-            if ($field === 'phone') {
-                $value = preg_replace('/[^0-9+\-\s()]/', '', $value);
+            if ($field === 'phone' || $field === 'emergencyContactPhoneNumber') {
+                $value = preg_replace('/[^0-9+-s()]/', '', $value);
             }
             $settings[$field] = $value;
+        }
+
+        if (array_key_exists('bloodGroup', $params)) {
+            $allowed_blood_groups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+            $blood_group = strtoupper(trim(sanitize_text_field((string) $params['bloodGroup'])));
+            $settings['bloodGroup'] = in_array($blood_group, $allowed_blood_groups, true) ? $blood_group : '';
+        }
+
+        if (array_key_exists('genotype', $params)) {
+            $allowed_genotypes = ['AA', 'AS', 'AC', 'SS', 'SC', 'CC'];
+            $genotype = strtoupper(trim(sanitize_text_field((string) $params['genotype'])));
+            $settings['genotype'] = in_array($genotype, $allowed_genotypes, true) ? $genotype : '';
+        }
+
+        $array_text_fields = [
+            'allergies' => 120,
+            'currentMedications' => 120,
+            'existingConditions' => 120,
+        ];
+        foreach ($array_text_fields as $field => $max_length) {
+            if (!array_key_exists($field, $params)) {
+                continue;
+            }
+            $values = [];
+            if (is_array($params[$field])) {
+                foreach ($params[$field] as $raw_value) {
+                    $value = trim(wp_html_excerpt(sanitize_text_field((string) $raw_value), $max_length, ''));
+                    if ($value !== '') {
+                        $values[] = $value;
+                    }
+                }
+            }
+            $settings[$field] = array_values(array_unique($values));
+        }
+
+        $emergency_name = (string) ($settings['emergencyContactName'] ?? '');
+        $emergency_phone = (string) ($settings['emergencyContactPhoneNumber'] ?? '');
+        if ($emergency_phone !== '') {
+            $digits = preg_replace('/D+/', '', $emergency_phone);
+            if (strpos($digits, '234') === 0 && strlen($digits) === 13) {
+                $digits = '0' . substr($digits, 3);
+            }
+            if (strlen($digits) !== 11) {
+                return new WP_Error('validation_error', 'Emergency contact phone number must be a valid Nigerian phone number.', ['status' => 422]);
+            }
+        }
+        if ($emergency_name !== '' && $emergency_phone === '') {
+            return new WP_Error('validation_error', 'Emergency contact phone number is required when emergency contact name is provided.', ['status' => 422]);
         }
 
         if (array_key_exists('preferredConsultationType', $params)) {

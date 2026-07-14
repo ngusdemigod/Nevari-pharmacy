@@ -113,7 +113,7 @@ async function validateAndBuildPayload(request) {
   const uploadFieldError = rejectUnknownFields(uploadedMedicalFiles, [...UPLOAD_LABELS], "uploadedMedicalFiles");
   if (uploadFieldError) return { error: invalid(uploadFieldError, "uploadedMedicalFiles") };
   const customerEmail = sanitizeText(body.customerEmail, { max: 254 });
-  const customerName = sanitizeText(body.customerName || patient.name || "Customer", { max: 120 });
+  const customerName = sanitizeText(body.customerName || patient.name || "Patient", { max: 120 });
   const customerPhone = sanitizeText(body.customerPhone || patient.emergencyContact, { max: 24 });
   const baseUrl = String(body.baseUrl || "").trim();
   const appOrigin = sanitizeText(body.appOrigin, { max: 300 });
@@ -140,9 +140,9 @@ async function validateAndBuildPayload(request) {
 
   const mobilityStatus = sanitizeText(patient.mobilityStatus, { max: 120 });
   if (!requiredText(mobilityStatus, 2, 120) || !/^[a-zA-Z\s'.-]{2,120}$/.test(mobilityStatus)) return { error: invalid("Mobility status is required.", "mobilityStatus") };
-  if (customerEmail && !isValidEmail(customerEmail)) return { error: invalid("Customer email is invalid.", "customerEmail") };
+  if (customerEmail && !isValidEmail(customerEmail)) return { error: invalid("Patient email is invalid.", "customerEmail") };
   if (adminEmail && !isValidEmail(adminEmail)) return { error: invalid("Admin email is invalid.", "adminEmail") };
-  if (customerPhone && !isValidPhone(customerPhone)) return { error: invalid("Customer phone is invalid.", "customerPhone") };
+  if (customerPhone && !isValidPhone(customerPhone)) return { error: invalid("Patient phone is invalid.", "customerPhone") };
   if (baseUrl && !isAllowedUrl(baseUrl)) return { error: invalid("Backend URL is invalid.", "baseUrl") };
   if (!isValidAppOrigin(appOrigin, request)) return { error: invalid("Application origin is invalid.", "appOrigin") };
   if (clinicalRequirements.some((item) => !CLINICAL_REQUIREMENTS.has(sanitizeText(item, { max: 80 })))) {

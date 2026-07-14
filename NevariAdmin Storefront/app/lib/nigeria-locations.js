@@ -1,0 +1,45 @@
+export const NIGERIA_STATE_CITY_MAP = {
+  Abia: ["Aba", "Arochukwu", "Bende", "Ohafia", "Umuahia"],
+  Adamawa: ["Ganye", "Jimeta", "Mubi", "Numan", "Yola"],
+  "Akwa Ibom": ["Abak", "Eket", "Ikot Ekpene", "Oron", "Uyo"],
+  Anambra: ["Awka", "Nnewi", "Obosi", "Onitsha", "Otuocha"],
+  Bauchi: ["Azare", "Bauchi", "Jama'are", "Katagum", "Misau"],
+  Bayelsa: ["Brass", "Kaiama", "Ogbia", "Sagbama", "Yenagoa"],
+  Benue: ["Gboko", "Katsina-Ala", "Makurdi", "Otukpo", "Vandeikya"],
+  Borno: ["Bama", "Biu", "Dikwa", "Gwoza", "Maiduguri"],
+  "Cross River": ["Calabar", "Ikom", "Obanliku", "Ogoja", "Ugep"],
+  Delta: ["Agbor", "Asaba", "Sapele", "Ughelli", "Warri"],
+  Ebonyi: ["Abakaliki", "Afikpo", "Ezza", "Ikwo", "Onueke"],
+  Edo: ["Auchi", "Benin City", "Ekpoma", "Irrua", "Uromi"],
+  Ekiti: ["Ado Ekiti", "Ikere", "Ikole", "Ise", "Oye"],
+  Enugu: ["Awgu", "Enugu", "Nsukka", "Oji River", "Udi"],
+  FCT: ["Abaji", "Abuja", "Bwari", "Gwagwalada", "Kuje"],
+  Gombe: ["Bajoga", "Deba", "Dukku", "Gombe", "Kaltungo"],
+  Imo: ["Mbaise", "Ngor Okpala", "Okigwe", "Orlu", "Owerri"],
+  Jigawa: ["Dutse", "Gumel", "Hadejia", "Kazaure", "Ringim"],
+  Kaduna: ["Kafanchan", "Kaduna", "Sabon Gari", "Zaria", "Zonkwa"],
+  Kano: ["Bichi", "Dambatta", "Gaya", "Kano", "Wudil"],
+  Katsina: ["Daura", "Funtua", "Kankia", "Katsina", "Malumfashi"],
+  Kebbi: ["Argungu", "Birnin Kebbi", "Jega", "Yauri", "Zuru"],
+  Kogi: ["Anyigba", "Idah", "Kabba", "Lokoja", "Okene"],
+  Kwara: ["Ilorin", "Jebba", "Lafiagi", "Offa", "Omu-Aran"],
+  Lagos: ["Badagry", "Epe", "Ikorodu", "Ikeja", "Lekki", "Lagos"],
+  Nasarawa: ["Akwanga", "Karu", "Keffi", "Lafia", "Nasarawa"],
+  Niger: ["Bida", "Kontagora", "Lapai", "Minna", "Suleja"],
+  Ogun: ["Abeokuta", "Ijebu Ode", "Ilaro", "Ota", "Sagamu"],
+  Ondo: ["Akure", "Ikare", "Okitipupa", "Ondo", "Owo"],
+  Osun: ["Ede", "Ife", "Ilesa", "Iwo", "Osogbo"],
+  Oyo: ["Ibadan", "Iseyin", "Ogbomoso", "Oyo", "Saki"],
+  Plateau: ["Barkin Ladi", "Jos", "Langtang", "Pankshin", "Shendam"],
+  Rivers: ["Bonny", "Eleme", "Omoku", "Port Harcourt", "Tai"],
+  Sokoto: ["Gwadabawa", "Illela", "Sokoto", "Tambuwal", "Wurno"],
+  Taraba: ["Bali", "Jalingo", "Serti", "Takum", "Wukari"],
+  Yobe: ["Damaturu", "Gashua", "Geidam", "Nguru", "Potiskum"],
+  Zamfara: ["Anka", "Gusau", "Kaura Namoda", "Talata Mafara", "Zurmi"],
+};
+
+export const NIGERIA_STATES = Object.keys(NIGERIA_STATE_CITY_MAP);
+
+export function citiesForNigeriaState(state) {
+  return NIGERIA_STATE_CITY_MAP[String(state || "").trim()] || [];
+}

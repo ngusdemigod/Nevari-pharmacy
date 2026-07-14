@@ -53,7 +53,7 @@ export async function POST(request, { params }) {
       return Response.json({ success: false, error: { message: "Snapshot token does not match this MTM request." } }, { status: 403 });
     }
     if (String(snapshot.customerUserId || "") !== String(mtmRequest.customer_user_id || "")) {
-      return Response.json({ success: false, error: { message: "Snapshot token is not valid for this customer." } }, { status: 403 });
+      return Response.json({ success: false, error: { message: "Snapshot token is not valid for this patient." } }, { status: 403 });
     }
     if (String(snapshot.requestReference || "") !== String(mtmRequest.request_reference || mtmRequest.id || "")) {
       return Response.json({ success: false, error: { message: "Snapshot token does not match the current MTM request reference." } }, { status: 409 });

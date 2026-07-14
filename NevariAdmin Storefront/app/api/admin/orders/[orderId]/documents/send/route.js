@@ -92,7 +92,7 @@ function fallbackBody(documentType, data, paymentUrl = "") {
   const paymentLink = documentType === "invoice" && paymentUrl && Number(data?.totals?.balance_due || 0) > 0
     ? `<p><a href="${escapeHtml(paymentUrl)}" target="_blank" rel="noopener noreferrer">Pay now</a></p>`
     : "";
-  return `<p>Hello ${escapeHtml(data.customer?.name || "Customer")},</p><p>Your ${escapeHtml(title.toLowerCase())} for order <strong>#${escapeHtml(data.order_number)}</strong> is attached.</p>${paymentLink}<p>Thank you for choosing Nevari Health.</p>`;
+  return `<p>Hello ${escapeHtml(data.customer?.name || "Patient")},</p><p>Your ${escapeHtml(title.toLowerCase())} for order <strong>#${escapeHtml(data.order_number)}</strong> is attached.</p>${paymentLink}<p>Thank you for choosing Nevari Health.</p>`;
 }
 
 function fallbackText(documentType, data, paymentUrl = "") {
@@ -100,7 +100,7 @@ function fallbackText(documentType, data, paymentUrl = "") {
   const paymentText = documentType === "invoice" && paymentUrl && Number(data?.totals?.balance_due || 0) > 0
     ? ` Pay now: ${paymentUrl}`
     : "";
-  return `Hello ${data.customer?.name || "Customer"}, your ${title.toLowerCase()} for order #${data.order_number} is attached.${paymentText}`;
+  return `Hello ${data.customer?.name || "Patient"}, your ${title.toLowerCase()} for order #${data.order_number} is attached.${paymentText}`;
 }
 
 function appPaymentUrl(appOrigin, invoiceNumber, paymentToken) {
@@ -174,7 +174,7 @@ export async function POST(request, { params }) {
             sanitizeText(key, { max: 60 }),
             sanitizeText(value, { max: 500 })
           ])),
-          customer_name: data.customer?.name || "Customer",
+          customer_name: data.customer?.name || "Patient",
           customer_email: data.customer?.email || "",
           order_id: String(data.order_id || ""),
           invoice_number: data.invoice_number || "",

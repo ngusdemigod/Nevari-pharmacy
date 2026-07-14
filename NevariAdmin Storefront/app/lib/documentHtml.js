@@ -262,7 +262,7 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
 </head>
 <body>
   <div class="inv-wrap">
-    <h2 class="sr-only">Nevari Health ${escapeHtml(badgeLabel.toLowerCase())} for ${escapeHtml(customer.name || "Customer")}</h2>
+    <h2 class="sr-only">Nevari Health ${escapeHtml(badgeLabel.toLowerCase())} for ${escapeHtml(customer.name || "Patient")}</h2>
     <div class="inv-header">
       <div class="brand-lockup">
         <img src="${escapeHtml(appOrigin)}/ne.webp" alt="Nevari logo" class="brand-logo" />
@@ -276,7 +276,7 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
     <div class="inv-meta">
       <div>
         <div class="meta-label">Billed to</div>
-        <div class="meta-value" style="font-size:15px; font-weight:700;">${escapeHtml(customer.name || "Customer")}</div>
+        <div class="meta-value" style="font-size:15px; font-weight:700;">${escapeHtml(customer.name || "Patient")}</div>
         <div class="meta-value" style="color:#6b7280; margin-top:2px;">${escapeHtml(customer.email || "")}</div>
         <div class="meta-value" style="color:#6b7280;">${escapeHtml(customer.phone || "")}</div>
         ${customer.address ? `<div class="meta-value" style="color:#6b7280; margin-top:6px;">${escapeHtml(customer.address)}</div>` : ""}
@@ -395,14 +395,14 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
     </header>
     <section class="customer-row">
       <div class="customer-details">
-        <p class="section-label">${escapeHtml(isPrescription ? "Patient Details" : "Customer Details")}</p>
-        <h2 class="company-name">${escapeHtml(data?.customer?.name || "Customer")}</h2>
+        <p class="section-label">${escapeHtml(isPrescription ? "Patient Details" : "Patient Details")}</p>
+        <h2 class="company-name">${escapeHtml(data?.customer?.name || "Patient")}</h2>
         <p><strong>Email:</strong> ${escapeHtml(data?.customer?.email || "n/a")}</p>
         <p><strong>Phone:</strong> ${escapeHtml(data?.customer?.phone || "n/a")}</p>
-        <p><strong>Customer ID:</strong> ${escapeHtml(data?.order_id || "n/a")}</p>
+        <p><strong>Patient ID:</strong> ${escapeHtml(data?.order_id || "n/a")}</p>
       </div>
       <div class="customer-address">
-        <p class="section-label">Customer Address</p>
+        <p class="section-label">Patient Address</p>
         <p>${escapeHtml(data?.customer?.address || "n/a")}</p>
       </div>
     </section>

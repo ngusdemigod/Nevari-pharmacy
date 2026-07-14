@@ -76,8 +76,8 @@ export async function sendConfirmationEmails({
     ? `${buildPaymentButtonHtml(paymentUrl, "Pay Now")}<p><strong>Payment link:</strong> <a href="${escapeHtml(paymentUrl)}">${escapeHtml(paymentUrl)}</a></p>`
     : "";
   const appointmentVariables = {
-    patient_name: customerName || appointment?.patient?.display_name || "Customer",
-    customer_name: customerName || appointment?.patient?.display_name || "Customer",
+    patient_name: customerName || appointment?.patient?.display_name || "Patient",
+    customer_name: customerName || appointment?.patient?.display_name || "Patient",
     doctor_name: doctorName,
     customer_email: customerEmail || appointment?.patient?.email || "",
     customer_phone: "",
@@ -112,7 +112,7 @@ export async function sendConfirmationEmails({
     amount_paid: amountPaid,
   };
   const customerBody = [
-    `<p>Hello ${escapeHtml(customerName || "Customer")},</p>`,
+    `<p>Hello ${escapeHtml(customerName || "Patient")},</p>`,
     `<p>Your appointment is confirmed with ${escapeHtml(doctorName)}.</p>`,
     `<p><strong>Date:</strong> ${escapeHtml(dateLabel)}<br/>`,
     `<strong>Time:</strong> ${escapeHtml(timeLabel)}<br/>`,
@@ -123,7 +123,7 @@ export async function sendConfirmationEmails({
   ].join("");
   const doctorBody = [
     `<p>Hello ${escapeHtml(doctorName)},</p>`,
-    `<p>The appointment with ${escapeHtml(customerName || "Customer")} is confirmed.</p>`,
+    `<p>The appointment with ${escapeHtml(customerName || "Patient")} is confirmed.</p>`,
     `<p><strong>Date:</strong> ${escapeHtml(dateLabel)}<br/>`,
     `<strong>Time:</strong> ${escapeHtml(timeLabel)}<br/>`,
     `<strong>Duration:</strong> ${escapeHtml(String(durationMinutes))} minutes<br/>`,
@@ -133,7 +133,7 @@ export async function sendConfirmationEmails({
   ].join("");
   const adminBody = [
     "<p>An appointment has been confirmed.</p>",
-    `<p><strong>Customer:</strong> ${escapeHtml(customerName || "Customer")}<br/>`,
+    `<p><strong>Patient:</strong> ${escapeHtml(customerName || "Patient")}<br/>`,
     `<strong>Doctor:</strong> ${escapeHtml(doctorName)}<br/>`,
     `<strong>Date:</strong> ${escapeHtml(dateLabel)}<br/>`,
     `<strong>Time:</strong> ${escapeHtml(timeLabel)}<br/>`,
@@ -156,7 +156,7 @@ export async function sendConfirmationEmails({
         subject: `Appointment confirmed with ${doctorName}`,
         variables: appointmentVariables,
         body_html: customerBody,
-        body_text: `Hello ${customerName || "Customer"}, your appointment is confirmed with ${doctorName} on ${dateLabel} at ${timeLabel}.`
+        body_text: `Hello ${customerName || "Patient"}, your appointment is confirmed with ${doctorName} on ${dateLabel} at ${timeLabel}.`
       });
   const doctorDispatchReason = !doctorId ? "missing_doctor_id" : !doctorEmail ? "missing_doctor_email" : "";
   const doctorDispatch = !doctorEmail
@@ -176,14 +176,14 @@ export async function sendConfirmationEmails({
           dashboard_link: doctorDashboardLink,
         },
         body_html: doctorBody,
-        body_text: `Hello ${doctorName}, the appointment with ${customerName || "Customer"} is confirmed for ${dateLabel} at ${timeLabel}.`
+        body_text: `Hello ${doctorName}, the appointment with ${customerName || "Patient"} is confirmed for ${dateLabel} at ${timeLabel}.`
       });
   const adminDispatch = adminEmail
     ? await sendUpstreamEmail(baseUrl, accessToken, {
       template_key: "admin_notification",
       recipient_email: adminEmail,
       send_now: true,
-      subject: `Appointment confirmed: ${customerName || "Customer"}`,
+      subject: `Appointment confirmed: ${customerName || "Patient"}`,
       body_html: adminBody
     })
     : { sent: false, reason: "missing_admin_email" };
@@ -232,7 +232,7 @@ export async function POST(request) {
   if (!appointmentId) return invalid("Appointment is required.", "appointmentId");
   if (!resolvedBaseUrl || !isAllowedUrl(resolvedBaseUrl)) return invalid("Backend URL is invalid.", "baseUrl");
   if (!accessToken) return NextResponse.json(customerSessionError().data, { status: 401 });
-  if (customerEmail && !isValidEmail(customerEmail)) return invalid("Customer email is invalid.", "customerEmail");
+  if (customerEmail && !isValidEmail(customerEmail)) return invalid("Patient email is invalid.", "customerEmail");
   if (adminEmail && !isValidEmail(adminEmail)) return invalid("Admin email is invalid.", "adminEmail");
 
   const result = await sendConfirmationEmails({

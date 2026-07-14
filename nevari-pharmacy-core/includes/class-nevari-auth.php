@@ -62,6 +62,12 @@ final class Nevari_Auth {
             'permission_callback' => '__return_true',
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/password-reset/confirm', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'password_reset_confirm'],
+            'permission_callback' => '__return_true',
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/register-customer', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'register_customer'],
@@ -251,10 +257,7 @@ final class Nevari_Auth {
         if (!$user && (string) $frontend['frontend_type'] === 'patient_dashboard') {
             $given_name = sanitize_text_field((string) ($google_payload['given_name'] ?? ''));
             $family_name = sanitize_text_field((string) ($google_payload['family_name'] ?? ''));
-            $display_name = sanitize_text_field((string) ($google_payload['name'] ?? trim($given_name . ' ' . $family_name)));
-            if ($display_name === '') {
-                $display_name = preg_replace('/@.+$/', '', $email);
-            }
+            $display_name = self::preferred_customer_display_name($given_name, $family_name, $email);
             $email_parts = explode('@', $email);
             $user_id = wp_insert_user([
                 'user_login' => sanitize_user($email_parts[0] . '_' . wp_generate_password(4, false)),
@@ -385,29 +388,11 @@ final class Nevari_Auth {
         }
 
         $reset_user = self::find_user_by_login_or_email($username);
-        if (!$reset_user || !self::user_can_access_frontend($reset_user, (string) $frontend['frontend_type'])) {
-            Nevari_Audit::log('security', 'nevari', 'auth.password_reset_requested', 'success', [
-                'message' => 'Password reset requested.',
-                'metadata' => [
-                    'frontend_type' => $frontend['frontend_type'],
-                    'frontend_origin' => $frontend['frontend_origin'],
-                    'result' => 'ineligible_or_unknown_user',
-                ],
-            ]);
-            return Nevari_Helpers::success(['submitted' => true]);
-        }
-
-        $result = retrieve_password($username);
-        if (is_wp_error($result)) {
-            Nevari_Audit::log('security', 'nevari', 'auth.password_reset_requested', 'success', [
-                'message' => 'Password reset requested.',
-                'metadata' => [
-                    'frontend_type' => $frontend['frontend_type'],
-                    'frontend_origin' => $frontend['frontend_origin'],
-                    'result' => $result->get_error_code(),
-                ],
-            ]);
-            return Nevari_Helpers::success(['submitted' => true]);
+        if ($reset_user instanceof WP_User && self::user_can_access_frontend($reset_user, (string) $frontend['frontend_type'])) {
+            $reset_key = get_password_reset_key($reset_user);
+            if (!is_wp_error($reset_key)) {
+                self::send_dashboard_password_reset_email($reset_user, self::dashboard_password_reset_url($frontend, $reset_user, (string) $reset_key));
+            }
         }
 
         Nevari_Audit::log('security', 'nevari', 'auth.password_reset_requested', 'success', [
@@ -415,10 +400,72 @@ final class Nevari_Auth {
             'metadata' => [
                 'frontend_type' => $frontend['frontend_type'],
                 'frontend_origin' => $frontend['frontend_origin'],
+                'username_hash' => hash('sha256', strtolower($username)),
             ],
         ]);
 
-        return Nevari_Helpers::success(['submitted' => true]);
+        return Nevari_Helpers::success([
+            'message' => 'If an account exists for that username, a password reset link has been sent.',
+        ]);
+    }
+
+    public static function password_reset_confirm(WP_REST_Request $request): WP_REST_Response {
+        $params = Nevari_Helpers::get_json_params($request);
+        $login = isset($params['login']) ? sanitize_text_field((string) $params['login']) : '';
+        $key = isset($params['key']) ? sanitize_text_field((string) $params['key']) : '';
+        $password = isset($params['password']) ? (string) $params['password'] : '';
+        $ip = Nevari_Helpers::client_ip();
+
+        if ($response = Nevari_Helpers::rate_limit('auth_password_reset_confirm_ip', 5, 15 * MINUTE_IN_SECONDS, [$ip])) {
+            return $response;
+        }
+        if ($response = Nevari_Helpers::rate_limit('auth_password_reset_confirm_login', 5, 15 * MINUTE_IN_SECONDS, [sanitize_user(strtolower($login), true) ?: 'unknown'])) {
+            return $response;
+        }
+        if ($login === '' || $key === '' || $password === '') {
+            return Nevari_Helpers::error('validation_error', 'Login, reset key, and password are required.', 422);
+        }
+        if (strlen($password) < 8) {
+            return Nevari_Helpers::error('validation_error', 'Password must be at least 8 characters.', 422, ['field' => 'password']);
+        }
+
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        if (!$frontend) {
+            $frontend_error = Nevari_Connections::request_authorization_error();
+            return Nevari_Helpers::error($frontend_error['code'] ?? 'untrusted_frontend', $frontend_error['message'] ?? 'This frontend request is not authorized for the pharmacy installation.', 403);
+        }
+
+        $user = check_password_reset_key($key, $login);
+        if (is_wp_error($user) || !($user instanceof WP_User)) {
+            return Nevari_Helpers::error('invalid_reset_link', 'This password reset link is invalid or has expired.', 400);
+        }
+        if (!self::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
+            return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
+        }
+
+        reset_password($user, $password);
+        clean_user_cache($user);
+
+        $first_name = (string) get_user_meta((int) $user->ID, 'first_name', true);
+        $last_name = (string) get_user_meta((int) $user->ID, 'last_name', true);
+        $display_name = self::preferred_customer_display_name($first_name, $last_name, (string) $user->user_email);
+        if ($display_name !== '' && strtolower(trim((string) $user->display_name)) === 'customer') {
+            wp_update_user(['ID' => (int) $user->ID, 'display_name' => $display_name]);
+        }
+
+        Nevari_Audit::log('security', 'nevari', 'auth.password_reset_confirmed', 'success', [
+            'actor_user_id' => (int) $user->ID,
+            'related_user_id' => (int) $user->ID,
+            'message' => 'Password reset completed from dashboard reset flow.',
+            'metadata' => [
+                'frontend_type' => $frontend['frontend_type'],
+                'frontend_origin' => $frontend['frontend_origin'],
+            ],
+        ]);
+
+        return Nevari_Helpers::success([
+            'message' => 'Password reset successful.',
+        ]);
     }
 
     public static function register_customer(WP_REST_Request $request): WP_REST_Response {
@@ -437,10 +484,10 @@ final class Nevari_Auth {
         $first_name = isset($params['first_name']) ? sanitize_text_field((string) $params['first_name']) : '';
         $last_name = isset($params['last_name']) ? sanitize_text_field((string) $params['last_name']) : '';
         $password = isset($params['password']) ? (string) $params['password'] : '';
-        $display_name = trim($first_name . ' ' . $last_name);
+        $display_name = self::preferred_customer_display_name($first_name, $last_name, $email);
 
-        if (!$email || !is_email($email) || !$display_name || strlen($password) < 8) {
-            return Nevari_Helpers::error('validation_error', 'Valid name, email, and password with at least 8 characters are required.', 422);
+        if (!$email || !is_email($email) || strlen($password) < 8) {
+            return Nevari_Helpers::error('validation_error', 'A valid email and an 8+ character password are required.', 422);
         }
         if ($response = Nevari_Helpers::rate_limit('auth_register_email', 5, HOUR_IN_SECONDS, [strtolower($email)])) {
             return $response;
@@ -962,6 +1009,59 @@ final class Nevari_Auth {
         return false;
     }
 
+    public static function preferred_customer_display_name(string $first_name, string $last_name, string $email): string {
+        $normalized_last_name = sanitize_text_field($last_name);
+        if ($normalized_last_name !== '') {
+            return $normalized_last_name;
+        }
+
+        $normalized_first_name = sanitize_text_field($first_name);
+        if ($normalized_first_name !== '') {
+            return $normalized_first_name;
+        }
+
+        return self::email_local_part($email);
+    }
+
+    private static function email_local_part(string $email): string {
+        $normalized_email = sanitize_email($email);
+        if (!$normalized_email || strpos($normalized_email, '@') === false) {
+            return '';
+        }
+        [$local] = explode('@', $normalized_email, 2);
+        return sanitize_text_field((string) preg_replace('/[._-]+/', ' ', $local));
+    }
+
+    private static function dashboard_password_reset_url(array $frontend, WP_User $user, string $reset_key): string {
+        $origin = untrailingslashit((string) ($frontend['frontend_origin'] ?? ''));
+        return $origin . '/reset-password?' . http_build_query([
+            'login' => $user->user_login,
+            'key' => $reset_key,
+        ]);
+    }
+
+    private static function send_dashboard_password_reset_email(WP_User $user, string $reset_url): void {
+        $display_name = self::preferred_customer_display_name(
+            (string) get_user_meta((int) $user->ID, 'first_name', true),
+            (string) get_user_meta((int) $user->ID, 'last_name', true),
+            (string) $user->user_email
+        ) ?: $user->user_login;
+
+        Nevari_Emails::queue_or_send([
+            'recipient_user_id' => (int) $user->ID,
+            'recipient_email' => $user->user_email,
+            'subject' => 'Reset your Nevari dashboard password',
+            'body_html' => sprintf(
+                '<p>Hello %1$s,</p><p>We received a request to reset your password.</p><p><a href="%2$s">Reset password</a></p><p>If you did not request this, you can ignore this email.</p>',
+                esc_html($display_name),
+                esc_url($reset_url)
+            ),
+            'body_text' => sprintf("Hello %1$s,\n\nUse this link to reset your password:\n%2$s\n\nIf you did not request this, you can ignore this email.", $display_name, $reset_url),
+            'related_object_type' => 'password_reset',
+            'related_object_id' => (int) $user->ID,
+        ], true);
+    }
+
     private static function find_user_by_login_or_email(string $username): ?WP_User {
         $user = strpos($username, '@') !== false ? get_user_by('email', $username) : get_user_by('login', $username);
         return $user instanceof WP_User ? $user : null;
@@ -969,14 +1069,25 @@ final class Nevari_Auth {
 
     public static function format_user(WP_User $user): array {
         $all_caps = array_keys(array_filter((array) $user->allcaps));
-        $avatar_url = esc_url_raw((string) get_user_meta((int) $user->ID, 'nevari_google_picture', true));
+        $avatar_url = esc_url_raw((string) get_user_meta((int) $user->ID, '_nevari_customer_profile_image_url', true));
+        if ($avatar_url === '') {
+            $avatar_url = esc_url_raw((string) get_user_meta((int) $user->ID, 'nevari_google_picture', true));
+        }
         if ($avatar_url === '') {
             $avatar_url = get_avatar_url((int) $user->ID, ['size' => 128]) ?: '';
+        }
+        $first_name = (string) get_user_meta((int) $user->ID, 'first_name', true);
+        $last_name = (string) get_user_meta((int) $user->ID, 'last_name', true);
+        $display_name = trim((string) $user->display_name);
+        if ($display_name === '' || strtolower($display_name) === 'customer') {
+            $display_name = self::preferred_customer_display_name($first_name, $last_name, (string) $user->user_email);
         }
         return [
             'id' => (int) $user->ID,
             'email' => $user->user_email,
-            'display_name' => $user->display_name,
+            'display_name' => $display_name,
+            'first_name' => $first_name,
+            'last_name' => $last_name,
             'avatar_url' => $avatar_url,
             'roles' => array_values((array) $user->roles),
             'capabilities' => array_values(array_filter($all_caps, static function ($cap) {
@@ -1053,7 +1164,10 @@ final class Nevari_Auth {
         if ($family_name !== '' && get_user_meta((int) $user->ID, 'last_name', true) === '') {
             update_user_meta((int) $user->ID, 'last_name', $family_name);
         }
-        if ($name !== '' && trim((string) $user->display_name) === '') {
+        $preferred_display_name = self::preferred_customer_display_name($given_name, $family_name, (string) $user->user_email);
+        if ($preferred_display_name !== '' && in_array(strtolower(trim((string) $user->display_name)), ['', 'customer'], true)) {
+            wp_update_user(['ID' => (int) $user->ID, 'display_name' => $preferred_display_name]);
+        } elseif ($name !== '' && trim((string) $user->display_name) === '') {
             wp_update_user(['ID' => (int) $user->ID, 'display_name' => $name]);
         }
     }

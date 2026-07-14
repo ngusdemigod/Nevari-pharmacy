@@ -56,6 +56,15 @@ export function withBaseUrl(session, params = {}) {
   };
 }
 
+export function withSessionCacheScope(session, params = {}) {
+  const scopedParams = { ...params };
+  const userId = String(session?.user?.id || "").trim();
+  if (userId) {
+    scopedParams._viewer = userId;
+  }
+  return withBaseUrl(session, scopedParams);
+}
+
 export function isAdminCacheKey(resource) {
   const prefix = `${ADMIN_API_PREFIX}/${resource}`;
   return (key) => typeof key === "string" && key.startsWith(prefix);

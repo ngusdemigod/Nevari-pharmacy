@@ -364,6 +364,7 @@ final class Nevari_Helpers {
             'rest_prescriptions_read' => ['limit' => 120, 'window' => MINUTE_IN_SECONDS],
             'rest_prescriptions_show' => ['limit' => 180, 'window' => MINUTE_IN_SECONDS],
             'rest_prescriptions_write' => ['limit' => 20, 'window' => MINUTE_IN_SECONDS],
+            'rest_customer_profile_image_write' => ['limit' => 12, 'window' => HOUR_IN_SECONDS],
             'rest_emails_write' => ['limit' => 5, 'window' => MINUTE_IN_SECONDS],
             'rest_emails_templates_write' => ['limit' => 10, 'window' => MINUTE_IN_SECONDS],
             'rest_email_logs_read' => ['limit' => 60, 'window' => MINUTE_IN_SECONDS],
@@ -643,7 +644,10 @@ final class Nevari_Helpers {
         if (!$user) {
             return null;
         }
-        $avatar_url = (string) get_user_meta((int) $user->ID, 'nevari_google_picture', true);
+        $avatar_url = (string) get_user_meta((int) $user->ID, '_nevari_customer_profile_image_url', true);
+        if ($avatar_url === '') {
+            $avatar_url = (string) get_user_meta((int) $user->ID, 'nevari_google_picture', true);
+        }
         if ($avatar_url === '') {
             $avatar_url = (string) get_avatar_url((int) $user->ID);
         }
@@ -651,6 +655,8 @@ final class Nevari_Helpers {
             'id' => (int) $user->ID,
             'email' => $user->user_email,
             'display_name' => $user->display_name,
+            'first_name' => (string) get_user_meta((int) $user->ID, 'first_name', true),
+            'last_name' => (string) get_user_meta((int) $user->ID, 'last_name', true),
             'avatar_url' => esc_url_raw($avatar_url),
             'phone' => (string) get_user_meta((int) $user->ID, 'billing_phone', true),
             'address' => (string) get_user_meta((int) $user->ID, 'billing_address_1', true),

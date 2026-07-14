@@ -11,7 +11,7 @@ final class Nevari_Subscriptions {
     private const PLAN_NAME = 'Nevari Access Pro';
     private const PLAN_INTERVAL = 'monthly';
     // Legacy column names still say "kobo"; subscription amounts are stored as raw admin-entered values.
-    private const PLAN_AMOUNT_KOBO = 1000;
+    private const PLAN_AMOUNT_KOBO = 5000;
     private const PLAN_CURRENCY = 'NGN';
     private const CHECKOUT_TYPE_AUTO = 'auto_generated';
     private const CHECKOUT_TYPE_MANUAL = 'manual';
@@ -39,6 +39,22 @@ final class Nevari_Subscriptions {
                 'methods' => WP_REST_Server::READABLE,
                 'callback' => [__CLASS__, 'me'],
                 'permission_callback' => [__CLASS__, 'auth_required'],
+            ]);
+
+            register_rest_route(NEVARI_PHARMACY_REST_NS, '/' . $base_path . '/me/history', [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'history'],
+                'permission_callback' => [__CLASS__, 'patient_required'],
+                'args' => [
+                    'page' => [
+                        'default' => 1,
+                        'sanitize_callback' => 'absint',
+                    ],
+                    'per_page' => [
+                        'default' => 25,
+                        'sanitize_callback' => 'absint',
+                    ],
+                ],
             ]);
 
             register_rest_route(NEVARI_PHARMACY_REST_NS, '/' . $base_path . '/admin', [
@@ -77,6 +93,11 @@ final class Nevari_Subscriptions {
 
     public static function auth_required(): bool {
         return Nevari_Auth::api_session_required();
+    }
+
+    public static function patient_required(): bool {
+        $user_id = Nevari_Auth::api_session_user_id();
+        return $user_id > 0 && Nevari_Helpers::is_patient($user_id);
     }
 
     public static function store_admin_required(): bool {
@@ -580,17 +601,8 @@ final class Nevari_Subscriptions {
             return;
         }
 
-        self::$syncing_plan_post = true;
-        try {
-            self::sync_subscription_plan_table(self::plan_row_from_post($post));
-            self::dispatch_subscription_webhook('subscription.updated', [
-                'plan_id' => (int) $post_id,
-                'plan_key' => sanitize_key((string) get_post_meta($post_id, '_nevari_plan_key', true)),
-                'source' => 'wordpress_admin',
-            ]);
-        } finally {
-            self::$syncing_plan_post = false;
-        }
+        $plan_key = sanitize_key((string) get_post_meta($post_id, '_nevari_plan_key', true)) ?: self::PLAN_KEY;
+        self::sync_subscription_plan_post(self::plan_definition_for_key($plan_key));
     }
 
     public static function register_plan_meta_box(): void {
@@ -615,25 +627,26 @@ final class Nevari_Subscriptions {
 
         wp_nonce_field('nevari_subscription_plan_meta', 'nevari_subscription_plan_meta_nonce');
         ?>
+        <div class="notice notice-info inline"><p><?php esc_html_e('Subscription CPT entries are synced from the Nevari subscription table and stay read-only here so Elementor can consume them without plan drift.', 'nevari-pharmacy-core'); ?></p></div>
         <div class="nevari-subscription-meta-grid">
             <p>
                 <label for="nevari_subscription_amount"><strong><?php esc_html_e('Amount', 'nevari-pharmacy-core'); ?></strong></label><br>
-                <input id="nevari_subscription_amount" name="nevari_subscription_amount" type="number" class="widefat" min="0" step="1" value="<?php echo esc_attr((string) max(0, $amount)); ?>" placeholder="0">
-                <span class="description"><?php esc_html_e('Store the raw subscription amount. Free plans should use 0.', 'nevari-pharmacy-core'); ?></span>
+                <input id="nevari_subscription_amount" name="nevari_subscription_amount" type="number" class="widefat" min="0" step="1" value="<?php echo esc_attr((string) max(0, $amount)); ?>" placeholder="0" readonly disabled>
+                <span class="description"><?php esc_html_e('The canonical subscription amount now lives in the subscription plan table.', 'nevari-pharmacy-core'); ?></span>
             </p>
             <p>
                 <label for="nevari_subscription_description"><strong><?php esc_html_e('Description', 'nevari-pharmacy-core'); ?></strong></label><br>
-                <textarea id="nevari_subscription_description" name="nevari_subscription_description" rows="4" class="widefat"><?php echo esc_textarea($description); ?></textarea>
+                <textarea id="nevari_subscription_description" name="nevari_subscription_description" rows="4" class="widefat" readonly disabled><?php echo esc_textarea($description); ?></textarea>
             </p>
             <p>
                 <label for="nevari_subscription_features"><strong><?php esc_html_e('Features', 'nevari-pharmacy-core'); ?></strong></label><br>
-                <textarea id="nevari_subscription_features" name="nevari_subscription_features" rows="6" class="widefat" placeholder="<?php echo esc_attr("Feature one\nFeature two\nFeature three"); ?>"><?php echo esc_textarea($features); ?></textarea>
-                <span class="description"><?php esc_html_e('Enter one feature per line.', 'nevari-pharmacy-core'); ?></span>
+                <textarea id="nevari_subscription_features" name="nevari_subscription_features" rows="6" class="widefat" placeholder="<?php echo esc_attr("Feature one\nFeature two\nFeature three"); ?>" readonly disabled><?php echo esc_textarea($features); ?></textarea>
+                <span class="description"><?php esc_html_e('Manage features from the dashboard subscription plan table.', 'nevari-pharmacy-core'); ?></span>
             </p>
             <p>
                 <label for="nevari_subscription_checkout_link"><strong><?php esc_html_e('Checkout link', 'nevari-pharmacy-core'); ?></strong></label><br>
                 <input id="nevari_subscription_checkout_link" name="nevari_subscription_checkout_link" type="url" class="widefat" value="<?php echo esc_attr($checkout_link); ?>" placeholder="<?php echo esc_attr(self::default_checkout_link()); ?>" readonly>
-                <span class="description"><?php esc_html_e('This value is auto-generated from the plan settings.', 'nevari-pharmacy-core'); ?></span>
+                <span class="description"><?php esc_html_e('This deep link is the canonical Elementor button target for subscription checkout.', 'nevari-pharmacy-core'); ?></span>
             </p>
         </div>
         <?php
@@ -659,7 +672,13 @@ final class Nevari_Subscriptions {
         update_post_meta($post_id, '_nevari_amount_kobo', $amount);
         update_post_meta($post_id, '_nevari_subscription_description', $description);
         update_post_meta($post_id, '_nevari_subscription_features', $features);
-        update_post_meta($post_id, '_nevari_subscription_checkout_link', self::default_checkout_link());
+
+        // Rebuild from the post's own plan_key/interval so a manual wp-admin save doesn't
+        // drop the plan-specific ?plan=&interval= deep link back to the bare default.
+        $plan_key = sanitize_key((string) get_post_meta($post_id, '_nevari_plan_key', true));
+        $interval_unit = sanitize_key((string) get_post_meta($post_id, '_nevari_interval_unit', true)) ?: self::PLAN_INTERVAL;
+        $checkout_link = $plan_key !== '' ? self::build_checkout_link($plan_key, $interval_unit) : self::default_checkout_link();
+        update_post_meta($post_id, '_nevari_subscription_checkout_link', $checkout_link ?: self::default_checkout_link());
     }
 
     private static function sync_subscription_plan_table(object $plan_row): void {
@@ -843,6 +862,12 @@ final class Nevari_Subscriptions {
     }
 
     private static function default_checkout_link(): string {
+        if (class_exists('Nevari_Helpers')) {
+            $url = Nevari_Helpers::frontend_dashboard_url('/subscription');
+            if ($url !== '') {
+                return esc_url_raw($url);
+            }
+        }
         if (function_exists('home_url')) {
             return esc_url_raw(trailingslashit(home_url('/subscription')));
         }
@@ -1167,12 +1192,26 @@ final class Nevari_Subscriptions {
             }
         }
 
+        // The subscription_plans table only has these columns; checkout_type/description/features/checkout_link
+        // live in the metadata JSON blob and are re-derived via normalize_plan_definition() on read.
+        $table_payload = [
+            'plan_key' => $plan_data['plan_key'],
+            'plan_code' => $plan_data['plan_code'],
+            'name' => $plan_data['name'],
+            'amount_kobo' => $plan_data['amount_kobo'],
+            'currency' => $plan_data['currency'],
+            'interval_unit' => $plan_data['interval_unit'],
+            'status' => $plan_data['status'],
+            'metadata' => $plan_data['metadata'],
+            'updated_at' => $plan_data['updated_at'],
+        ];
+
         if ($existing) {
-            $wpdb->update($plans_table, $plan_data, ['id' => (int) $existing->id]);
+            $wpdb->update($plans_table, $table_payload, ['id' => (int) $existing->id]);
             $saved_plan_id = (int) $existing->id;
         } else {
-            $plan_data['created_at'] = $now;
-            $wpdb->insert($plans_table, $plan_data);
+            $table_payload['created_at'] = $now;
+            $wpdb->insert($plans_table, $table_payload);
             $saved_plan_id = (int) $wpdb->insert_id;
         }
 
@@ -1276,6 +1315,120 @@ final class Nevari_Subscriptions {
     public static function me(): WP_REST_Response {
         $user_id = Nevari_Auth::api_session_user_id();
         return Nevari_Helpers::success(self::subscription_payload_for_user($user_id));
+    }
+
+    public static function history(WP_REST_Request $request): WP_REST_Response {
+        global $wpdb;
+
+        $user_id = Nevari_Auth::api_session_user_id();
+        $page = max(1, absint($request->get_param('page')));
+        $per_page = min(100, max(1, absint($request->get_param('per_page')) ?: 25));
+        $payments_table = Nevari_Helpers::table('subscription_payments');
+        $subscriptions_table = Nevari_Helpers::table('subscriptions');
+        $events = [];
+
+        $payments = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, reference, gateway, amount_kobo, currency, status, verified_at, created_at, updated_at FROM {$payments_table} WHERE user_id = %d ORDER BY created_at DESC, id DESC LIMIT 250",
+            $user_id
+        ));
+
+        foreach ($payments ?: [] as $payment) {
+            $raw_status = sanitize_key((string) ($payment->status ?? 'pending'));
+            $status = in_array($raw_status, ['success', 'verified'], true)
+                ? 'successful'
+                : (in_array($raw_status, ['failed', 'error'], true) ? 'failed' : 'pending');
+            $occurred_at = $status === 'successful' && !empty($payment->verified_at)
+                ? (string) $payment->verified_at
+                : ((string) ($payment->updated_at ?: $payment->created_at));
+
+            $events[] = [
+                'id' => 'payment-' . (int) $payment->id,
+                'type' => 'payment',
+                'status' => $status,
+                'title' => $status === 'successful' ? 'Payment successful' : ($status === 'failed' ? 'Payment failed' : 'Payment pending'),
+                'description' => 'Nevari Access Pro subscription payment',
+                'amount' => (int) $payment->amount_kobo,
+                'currency' => sanitize_text_field((string) ($payment->currency ?: self::PLAN_CURRENCY)),
+                'reference' => sanitize_text_field((string) $payment->reference),
+                'gateway' => sanitize_key((string) $payment->gateway),
+                'occurred_at' => $occurred_at,
+            ];
+        }
+
+        $subscriptions = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, status, amount_kobo, currency, starts_at, ends_at, cancelled_at, created_at, updated_at FROM {$subscriptions_table} WHERE user_id = %d ORDER BY created_at DESC, id DESC LIMIT 100",
+            $user_id
+        ));
+
+        foreach ($subscriptions ?: [] as $subscription) {
+            $subscription_id = (int) $subscription->id;
+            $created_at = (string) ($subscription->starts_at ?: $subscription->created_at);
+            if ($created_at !== '') {
+                $events[] = [
+                    'id' => 'subscription-started-' . $subscription_id,
+                    'type' => 'subscription',
+                    'status' => 'activated',
+                    'title' => 'Subscription activated',
+                    'description' => 'Nevari Access Pro membership started',
+                    'amount' => (int) $subscription->amount_kobo,
+                    'currency' => sanitize_text_field((string) ($subscription->currency ?: self::PLAN_CURRENCY)),
+                    'reference' => '',
+                    'gateway' => '',
+                    'occurred_at' => $created_at,
+                ];
+            }
+
+            $raw_status = sanitize_key((string) $subscription->status);
+            $lifecycle_status = '';
+            $lifecycle_title = '';
+            $lifecycle_date = '';
+            if (!empty($subscription->cancelled_at)) {
+                $lifecycle_status = 'deactivated';
+                $lifecycle_title = 'Subscription deactivated';
+                $lifecycle_date = (string) $subscription->cancelled_at;
+            } elseif (in_array($raw_status, ['paused', 'pause'], true)) {
+                $lifecycle_status = 'paused';
+                $lifecycle_title = 'Subscription paused';
+                $lifecycle_date = (string) $subscription->updated_at;
+            } elseif (in_array($raw_status, ['cancelled', 'expired', 'disabled', 'inactive'], true)) {
+                $lifecycle_status = $raw_status === 'expired' ? 'expired' : 'deactivated';
+                $lifecycle_title = $raw_status === 'expired' ? 'Subscription expired' : 'Subscription deactivated';
+                $lifecycle_date = (string) ($subscription->ends_at ?: $subscription->updated_at);
+            }
+
+            if ($lifecycle_status !== '' && $lifecycle_date !== '') {
+                $events[] = [
+                    'id' => 'subscription-status-' . $subscription_id,
+                    'type' => 'subscription',
+                    'status' => $lifecycle_status,
+                    'title' => $lifecycle_title,
+                    'description' => 'Nevari Access Pro membership status changed',
+                    'amount' => 0,
+                    'currency' => sanitize_text_field((string) ($subscription->currency ?: self::PLAN_CURRENCY)),
+                    'reference' => '',
+                    'gateway' => '',
+                    'occurred_at' => $lifecycle_date,
+                ];
+            }
+        }
+
+        usort($events, static function (array $left, array $right): int {
+            return strcmp((string) $right['occurred_at'], (string) $left['occurred_at']);
+        });
+
+        $total = count($events);
+        $offset = ($page - 1) * $per_page;
+        return Nevari_Helpers::success([
+            'items' => array_values(array_slice($events, $offset, $per_page)),
+            'page' => $page,
+            'per_page' => $per_page,
+            'total' => $total,
+            'total_pages' => max(1, (int) ceil($total / $per_page)),
+        ]);
+    }
+
+    public static function pause(): WP_REST_Response {
+        return self::cancel();
     }
 
     public static function admin(): WP_REST_Response {
@@ -1791,6 +1944,16 @@ final class Nevari_Subscriptions {
         $customer_code = sanitize_text_field((string) ($data['customer']['customer_code'] ?? ''));
         $plan_code = sanitize_text_field((string) ($data['plan_object']['plan_code'] ?? $data['plan']['plan_code'] ?? ''));
 
+        if (($subscription_code === '' || $email_token === '') && $customer_code !== '') {
+            $recovered_details = self::recover_paystack_details_from_customer($customer_code, $plan_code, $secret_key);
+            if ($subscription_code === '') {
+                $subscription_code = $recovered_details['subscription_code'];
+            }
+            if ($email_token === '') {
+                $email_token = $recovered_details['email_token'];
+            }
+        }
+
         $existing_subscription = $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM {$subscriptions_table} WHERE user_id = %d ORDER BY id DESC LIMIT 1",
             $user_id
@@ -1843,6 +2006,7 @@ final class Nevari_Subscriptions {
             'reference' => $reference,
             'subscription_id' => $subscription_id,
             'has_subscription_code' => $subscription_code !== '',
+            'has_email_token' => $email_token !== '',
         ]);
         self::increment_subscription_version($subscription_id);
         self::refresh_subscription_cache($user_id);
@@ -1931,6 +2095,370 @@ final class Nevari_Subscriptions {
         }
         $decoded = json_decode((string) $value, true);
         return is_array($decoded) ? $decoded : [];
+    }
+
+    private static function paystack_subscription_details_from_payload(array $payload): array {
+        $data = [];
+        if (is_array($payload['data'] ?? null)) {
+            $data = $payload['data'];
+        } elseif (is_array($payload['paystack']['data'] ?? null)) {
+            $data = $payload['paystack']['data'];
+        } elseif (is_array($payload['paystack'] ?? null)) {
+            $data = $payload['paystack'];
+        } else {
+            $data = $payload;
+        }
+
+        return [
+            'subscription_code' => sanitize_text_field((string) (
+                $data['subscription']['subscription_code']
+                ?? $data['subscription_code']
+                ?? $data['subscription']['code']
+                ?? ''
+            )),
+            'email_token' => sanitize_text_field((string) (
+                $data['subscription']['email_token']
+                ?? $data['email_token']
+                ?? ''
+            )),
+            'customer_code' => sanitize_text_field((string) (
+                $data['customer']['customer_code']
+                ?? $data['customer']['code']
+                ?? $data['customer_code']
+                ?? ''
+            )),
+            'manage_billing_url' => esc_url_raw((string) (
+                $data['subscription']['manage_link']
+                ?? $data['manage_link']
+                ?? $payload['manage_billing_url']
+                ?? ''
+            )),
+        ];
+    }
+
+    private static function recover_paystack_cancel_details(object $subscription, int $user_id, string $secret_key): array {
+        $details = [
+            'subscription_code' => sanitize_text_field((string) ($subscription->subscription_code ?? '')),
+            'email_token' => self::paystack_email_token_from_subscription($subscription),
+            'customer_code' => sanitize_text_field((string) ($subscription->customer_code ?? '')),
+            'manage_billing_url' => self::paystack_manage_link_from_subscription($subscription),
+        ];
+        if ($details['subscription_code'] !== '' && $details['email_token'] !== '') {
+            return $details;
+        }
+
+        global $wpdb;
+        $subscriptions_table = Nevari_Helpers::table('subscriptions');
+        $related_subscriptions = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$subscriptions_table} WHERE user_id = %d AND id != %d ORDER BY updated_at DESC, id DESC LIMIT 10",
+            $user_id,
+            (int) ($subscription->id ?? 0)
+        ));
+        foreach ($related_subscriptions ?: [] as $related_subscription) {
+            if (!is_object($related_subscription)) {
+                continue;
+            }
+
+            $related_details = [
+                'subscription_code' => sanitize_text_field((string) ($related_subscription->subscription_code ?? '')),
+                'email_token' => self::paystack_email_token_from_subscription($related_subscription),
+                'customer_code' => sanitize_text_field((string) ($related_subscription->customer_code ?? '')),
+                'manage_billing_url' => self::paystack_manage_link_from_subscription($related_subscription),
+            ];
+
+            foreach ($related_details as $key => $value) {
+                if ($details[$key] === '' && $value !== '') {
+                    $details[$key] = $value;
+                }
+            }
+
+            if ($details['subscription_code'] !== '' && $details['email_token'] !== '') {
+                return $details;
+            }
+        }
+
+        $payments_table = Nevari_Helpers::table('subscription_payments');
+        $payment = null;
+
+        if (!empty($subscription->reference)) {
+            $payment = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$payments_table} WHERE user_id = %d AND reference = %s LIMIT 1",
+                $user_id,
+                sanitize_text_field((string) $subscription->reference)
+            ));
+        }
+
+        if (!$payment) {
+            $payment = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$payments_table} WHERE user_id = %d AND subscription_id = %d ORDER BY id DESC LIMIT 1",
+                $user_id,
+                (int) ($subscription->id ?? 0)
+            ));
+        }
+
+        $payment_rows = [];
+        if ($payment) {
+            $payment_rows[] = $payment;
+        }
+
+        $recent_payments = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$payments_table} WHERE user_id = %d AND gateway = %s AND status IN ('verified', 'success') ORDER BY verified_at DESC, id DESC LIMIT 10",
+            $user_id,
+            'paystack'
+        ));
+        foreach ($recent_payments ?: [] as $recent_payment) {
+            if (!is_object($recent_payment)) {
+                continue;
+            }
+
+            $already_added = false;
+            foreach ($payment_rows as $existing_payment) {
+                if ((int) ($existing_payment->id ?? 0) === (int) ($recent_payment->id ?? 0)) {
+                    $already_added = true;
+                    break;
+                }
+            }
+
+            if (!$already_added) {
+                $payment_rows[] = $recent_payment;
+            }
+        }
+
+        foreach ($payment_rows as $payment_row) {
+            $payment_details = self::paystack_subscription_details_from_payload(self::payment_payload($payment_row->payload ?? ''));
+            if ($details['subscription_code'] === '' && !empty($payment_row->paystack_subscription_code)) {
+                $payment_details['subscription_code'] = sanitize_text_field((string) $payment_row->paystack_subscription_code);
+            }
+
+            foreach ($payment_details as $key => $value) {
+                if ($details[$key] === '' && $value !== '') {
+                    $details[$key] = $value;
+                }
+            }
+
+            if ($details['subscription_code'] !== '' && $details['email_token'] !== '') {
+                break;
+            }
+        }
+
+        if (($details['subscription_code'] === '' || $details['email_token'] === '') && !empty($subscription->reference) && $secret_key !== '') {
+            $reference = sanitize_text_field((string) $subscription->reference);
+            $response = wp_remote_get('https://api.paystack.co/transaction/verify/' . rawurlencode($reference), [
+                'timeout' => 30,
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $secret_key,
+                ],
+            ]);
+            if (!is_wp_error($response)) {
+                $status = (int) wp_remote_retrieve_response_code($response);
+                $body = json_decode((string) wp_remote_retrieve_body($response), true);
+                $data = is_array($body) ? ($body['data'] ?? []) : [];
+                $metadata_user_id = (int) ($data['metadata']['user_id'] ?? 0);
+                $verified_reference = sanitize_text_field((string) ($data['reference'] ?? ''));
+
+                if ($status >= 200 && $status < 300 && is_array($data) && $verified_reference === $reference && ($metadata_user_id <= 0 || $metadata_user_id === $user_id)) {
+                    $verified_details = self::paystack_subscription_details_from_payload(['data' => $data]);
+                    foreach ($verified_details as $key => $value) {
+                        if ($details[$key] === '' && $value !== '') {
+                            $details[$key] = $value;
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($details['subscription_code'] !== '' && $details['email_token'] === '' && $secret_key !== '') {
+            $fetched_details = self::paystack_fetch_subscription($details['subscription_code'], $secret_key);
+            foreach ($fetched_details as $key => $value) {
+                if ($details[$key] === '' && $value !== '') {
+                    $details[$key] = $value;
+                }
+            }
+        }
+
+        if (($details['subscription_code'] === '' || $details['email_token'] === '') && $details['customer_code'] !== '' && $secret_key !== '') {
+            $customer_details = self::recover_paystack_details_from_customer(
+                $details['customer_code'],
+                sanitize_text_field((string) ($subscription->plan_code ?? '')),
+                $secret_key
+            );
+            foreach ($customer_details as $key => $value) {
+                if ($details[$key] === '' && $value !== '') {
+                    $details[$key] = $value;
+                }
+            }
+        }
+
+        return $details;
+    }
+
+    private static function paystack_fetch_subscription(string $subscription_code, string $secret_key): array {
+        $details = [
+            'subscription_code' => '',
+            'email_token' => '',
+            'customer_code' => '',
+        ];
+        if ($subscription_code === '' || $secret_key === '') {
+            return $details;
+        }
+
+        $response = wp_remote_get('https://api.paystack.co/subscription/' . rawurlencode($subscription_code), [
+            'timeout' => 30,
+            'headers' => [
+                'Authorization' => 'Bearer ' . $secret_key,
+            ],
+        ]);
+        if (is_wp_error($response)) {
+            self::storefront_log('subscription.recover.fetch_subscription_failed', 'error', [
+                'subscription_code' => self::mask_code($subscription_code),
+                'error_message' => $response->get_error_message(),
+            ], $response->get_error_message());
+            return $details;
+        }
+
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $body = json_decode((string) wp_remote_retrieve_body($response), true);
+        $data = is_array($body) ? ($body['data'] ?? null) : null;
+        if ($status < 200 || $status >= 300 || empty($body['status']) || !is_array($data)) {
+            self::storefront_log('subscription.recover.fetch_subscription_failed', 'error', [
+                'subscription_code' => self::mask_code($subscription_code),
+                'http_status' => $status,
+            ], 'Paystack subscription lookup failed.');
+            return $details;
+        }
+
+        $details['subscription_code'] = sanitize_text_field((string) ($data['subscription_code'] ?? ''));
+        $details['email_token'] = sanitize_text_field((string) ($data['email_token'] ?? ''));
+        $details['customer_code'] = sanitize_text_field((string) ($data['customer']['customer_code'] ?? ''));
+
+        return $details;
+    }
+
+    private static function recover_paystack_details_from_customer(string $customer_code, string $plan_code, string $secret_key): array {
+        $details = [
+            'subscription_code' => '',
+            'email_token' => '',
+            'customer_code' => '',
+        ];
+        if ($customer_code === '' || $secret_key === '') {
+            return $details;
+        }
+
+        $response = wp_remote_get('https://api.paystack.co/customer/' . rawurlencode($customer_code), [
+            'timeout' => 30,
+            'headers' => [
+                'Authorization' => 'Bearer ' . $secret_key,
+            ],
+        ]);
+        if (is_wp_error($response)) {
+            self::storefront_log('subscription.recover.customer_lookup_failed', 'error', [
+                'customer_code' => self::mask_code($customer_code),
+                'error_message' => $response->get_error_message(),
+            ], $response->get_error_message());
+            return $details;
+        }
+
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $body = json_decode((string) wp_remote_retrieve_body($response), true);
+        $data = is_array($body) ? ($body['data'] ?? null) : null;
+        if ($status < 200 || $status >= 300 || empty($body['status']) || !is_array($data)) {
+            self::storefront_log('subscription.recover.customer_lookup_failed', 'error', [
+                'customer_code' => self::mask_code($customer_code),
+                'http_status' => $status,
+            ], 'Paystack customer lookup failed.');
+            return $details;
+        }
+
+        $candidates = is_array($data['subscriptions'] ?? null) ? $data['subscriptions'] : [];
+
+        if (!$candidates) {
+            $customer_id = (int) ($data['id'] ?? 0);
+            if ($customer_id > 0) {
+                $list_response = wp_remote_get('https://api.paystack.co/subscription?customer=' . $customer_id . '&perPage=50', [
+                    'timeout' => 30,
+                    'headers' => [
+                        'Authorization' => 'Bearer ' . $secret_key,
+                    ],
+                ]);
+                if (!is_wp_error($list_response)) {
+                    $list_status = (int) wp_remote_retrieve_response_code($list_response);
+                    $list_body = json_decode((string) wp_remote_retrieve_body($list_response), true);
+                    if ($list_status >= 200 && $list_status < 300 && !empty($list_body['status']) && is_array($list_body['data'] ?? null)) {
+                        $candidates = $list_body['data'];
+                    }
+                }
+            }
+        }
+
+        $candidates = array_values(array_filter($candidates, static function ($candidate) {
+            return is_array($candidate) && !empty($candidate['subscription_code']);
+        }));
+        if (!$candidates) {
+            self::storefront_log('subscription.recover.customer_no_subscriptions', 'error', [
+                'customer_code' => self::mask_code($customer_code),
+            ], 'No Paystack subscriptions were found for this customer.');
+            return $details;
+        }
+
+        $disableable = array_values(array_filter($candidates, static function ($candidate) {
+            $candidate_status = strtolower(sanitize_key((string) ($candidate['status'] ?? '')));
+            return !in_array($candidate_status, ['cancelled', 'canceled', 'complete', 'completed'], true);
+        }));
+
+        if ($plan_code !== '' && $disableable) {
+            $plan_matches = array_values(array_filter($disableable, static function ($candidate) use ($plan_code) {
+                $candidate_plan_code = sanitize_text_field((string) (
+                    $candidate['plan']['plan_code']
+                    ?? $candidate['plan_code']
+                    ?? ''
+                ));
+                return $candidate_plan_code !== '' && $candidate_plan_code === $plan_code;
+            }));
+            if ($plan_matches) {
+                $disableable = $plan_matches;
+            }
+        }
+
+        if (!$disableable) {
+            if (count($candidates) !== 1) {
+                self::storefront_log('subscription.recover.customer_no_match', 'error', [
+                    'customer_code' => self::mask_code($customer_code),
+                    'candidate_count' => count($candidates),
+                ], 'No disableable Paystack subscription could be matched for this customer.');
+                return $details;
+            }
+            $disableable = $candidates;
+        }
+
+        usort($disableable, static function ($a, $b) {
+            $a_created = strtotime((string) ($a['createdAt'] ?? $a['created_at'] ?? '')) ?: 0;
+            $b_created = strtotime((string) ($b['createdAt'] ?? $b['created_at'] ?? '')) ?: 0;
+            if ($a_created !== $b_created) {
+                return $b_created <=> $a_created;
+            }
+            return ((int) ($b['id'] ?? 0)) <=> ((int) ($a['id'] ?? 0));
+        });
+        $chosen = $disableable[0];
+
+        $details['subscription_code'] = sanitize_text_field((string) ($chosen['subscription_code'] ?? ''));
+        $details['email_token'] = sanitize_text_field((string) ($chosen['email_token'] ?? ''));
+        $details['customer_code'] = $customer_code;
+
+        if ($details['subscription_code'] !== '' && $details['email_token'] === '') {
+            $fetched_details = self::paystack_fetch_subscription($details['subscription_code'], $secret_key);
+            if ($fetched_details['email_token'] !== '') {
+                $details['email_token'] = $fetched_details['email_token'];
+            }
+        }
+
+        self::storefront_log('subscription.recover.customer_lookup', 'success', [
+            'customer_code' => self::mask_code($customer_code),
+            'subscription_code' => self::mask_code($details['subscription_code']),
+            'has_email_token' => $details['email_token'] !== '',
+            'candidate_count' => count($candidates),
+        ]);
+
+        return $details;
     }
 
     private static function valid_pending_checkout_for_user(int $user_id, int $subscription_id, int $amount, string $currency): ?array {
@@ -2200,13 +2728,27 @@ final class Nevari_Subscriptions {
             $lookup = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$subscriptions_table} WHERE user_id = %d ORDER BY id DESC LIMIT 1", $user_id));
         }
 
+        $email_token = sanitize_text_field((string) ($data['email_token'] ?? $data['subscription']['email_token'] ?? ''));
+        if ($email_token === '' && $lookup) {
+            $email_token = self::paystack_email_token_from_subscription($lookup);
+        }
+        $customer_code = self::paystack_event_customer_code($data);
+        $manage_billing_url = $lookup ? self::paystack_manage_link_from_subscription($lookup) : '';
+        $metadata = ['source' => 'paystack_webhook', 'paystack' => $data];
+        if ($email_token !== '') {
+            $metadata['paystack_email_token'] = $email_token;
+        }
+        if ($manage_billing_url !== '') {
+            $metadata['manage_billing_url'] = $manage_billing_url;
+        }
+
         $subscription_data = [
             'user_id' => $user_id,
             'plan_key' => sanitize_key((string) ($plan['plan_key'] ?? self::PLAN_KEY)),
             'plan_code' => sanitize_text_field((string) ($plan['plan_code'] ?? self::paystack_event_plan_code($data))),
             'reference' => $reference,
-            'subscription_code' => $subscription_code,
-            'customer_code' => self::paystack_event_customer_code($data),
+            'subscription_code' => $subscription_code !== '' ? $subscription_code : sanitize_text_field((string) ($lookup->subscription_code ?? '')),
+            'customer_code' => $customer_code !== '' ? $customer_code : sanitize_text_field((string) ($lookup->customer_code ?? '')),
             'status' => sanitize_key($status),
             'amount_kobo' => self::paystack_event_amount($data, $plan),
             'currency' => sanitize_text_field((string) ($data['currency'] ?? $data['transaction']['currency'] ?? $plan['currency'] ?? self::PLAN_CURRENCY)),
@@ -2214,7 +2756,7 @@ final class Nevari_Subscriptions {
             'starts_at' => self::paystack_event_datetime($data, ['created_at', 'started_at', 'paid_at']) ?: $now,
             'ends_at' => $ends_at,
             'cancelled_at' => $cancelled ? $now : null,
-            'metadata' => wp_json_encode(['source' => 'paystack_webhook', 'paystack' => $data]),
+            'metadata' => wp_json_encode($metadata),
             'updated_at' => $now,
         ];
 
@@ -2365,18 +2907,6 @@ final class Nevari_Subscriptions {
             return Nevari_Helpers::error('subscription_not_found', 'No active paid subscription was found for this user.', 404);
         }
 
-        $subscription_code = sanitize_text_field((string) ($subscription->subscription_code ?? ''));
-        $email_token = self::paystack_email_token_from_subscription($subscription);
-        if ($subscription_code === '' || $email_token === '') {
-            self::storefront_log('subscription.cancel.paystack_details_missing', 'error', [
-                'user_id' => $user_id,
-                'subscription_id' => (int) $subscription->id,
-                'has_subscription_code' => $subscription_code !== '',
-                'has_email_token' => $email_token !== '',
-            ], 'Paystack cancellation details are missing for this subscription.');
-            return Nevari_Helpers::error('paystack_cancel_details_missing', 'This subscription cannot be cancelled automatically because Paystack cancellation details are missing. Please contact support.', 400);
-        }
-
         $settings = Nevari_Helpers::payment_gateway_settings();
         $secret_key = (string) ($settings['paystack']['secret_key'] ?? '');
         if ($secret_key === '') {
@@ -2385,6 +2915,60 @@ final class Nevari_Subscriptions {
                 'subscription_id' => (int) $subscription->id,
             ], 'Paystack secret key is not configured.');
             return Nevari_Helpers::error('paystack_not_configured', 'Paystack secret key is not configured.', 500);
+        }
+
+        $existing_subscription_code = sanitize_text_field((string) ($subscription->subscription_code ?? ''));
+        $existing_email_token = self::paystack_email_token_from_subscription($subscription);
+        $existing_customer_code = sanitize_text_field((string) ($subscription->customer_code ?? ''));
+        $existing_manage_billing_url = self::paystack_manage_link_from_subscription($subscription);
+        $recovered_details = self::recover_paystack_cancel_details($subscription, $user_id, $secret_key);
+        $subscription_code = $recovered_details['subscription_code'];
+        $email_token = $recovered_details['email_token'];
+
+        if (
+            $subscription_code !== $existing_subscription_code
+            || $email_token !== $existing_email_token
+            || $recovered_details['customer_code'] !== $existing_customer_code
+            || $recovered_details['manage_billing_url'] !== $existing_manage_billing_url
+        ) {
+            $metadata = self::subscription_metadata($subscription);
+            if ($email_token !== '') {
+                $metadata['paystack_email_token'] = $email_token;
+            }
+            if ($recovered_details['manage_billing_url'] !== '') {
+                $metadata['manage_billing_url'] = $recovered_details['manage_billing_url'];
+            }
+
+            $wpdb->update($subscriptions_table, [
+                'subscription_code' => $subscription_code,
+                'customer_code' => $recovered_details['customer_code'],
+                'metadata' => wp_json_encode($metadata),
+                'updated_at' => Nevari_Helpers::now(),
+            ], [
+                'id' => (int) $subscription->id,
+            ]);
+        }
+
+        if ($subscription_code === '' || $email_token === '') {
+            $diagnostic_details = [
+                'has_subscription_code' => $subscription_code !== '',
+                'has_email_token' => $email_token !== '',
+                'stored_subscription_code' => $existing_subscription_code !== '',
+                'stored_email_token' => $existing_email_token !== '',
+                'stored_customer_code' => $existing_customer_code !== '',
+                'stored_manage_billing_url' => $existing_manage_billing_url !== '',
+            ];
+            self::storefront_log('subscription.cancel.paystack_details_missing', 'error', [
+                'user_id' => $user_id,
+                'subscription_id' => (int) $subscription->id,
+                'has_subscription_code' => $subscription_code !== '',
+                'has_email_token' => $email_token !== '',
+                'stored_subscription_code' => $existing_subscription_code !== '',
+                'stored_email_token' => $existing_email_token !== '',
+                'stored_customer_code' => $existing_customer_code !== '',
+                'stored_manage_billing_url' => $existing_manage_billing_url !== '',
+            ], 'Paystack cancellation details are missing for this subscription.');
+            return Nevari_Helpers::error('paystack_cancel_details_missing', 'This subscription cannot be cancelled automatically because Paystack cancellation details are missing. Please contact support.', 400, $diagnostic_details);
         }
 
         $response = wp_remote_post('https://api.paystack.co/subscription/disable', [
@@ -2501,6 +3085,19 @@ final class Nevari_Subscriptions {
 
         $now = Nevari_Helpers::now();
         $plan_code = sanitize_text_field((string) $body['data']['plan_code']);
+
+        // Merge into existing metadata (checkout_link/description/features/etc.) rather than
+        // overwriting it with the raw Paystack response, which would otherwise wipe those fields.
+        $existing_metadata = [];
+        if ($existing && !empty($existing->metadata)) {
+            $decoded = json_decode((string) $existing->metadata, true);
+            if (is_array($decoded)) {
+                $existing_metadata = $decoded;
+            }
+        }
+        $existing_metadata['paystack'] = $body['data'];
+        $merged_metadata = wp_json_encode($existing_metadata);
+
         if ($existing) {
             $wpdb->update($plans_table, [
                 'plan_code' => $plan_code,
@@ -2509,7 +3106,7 @@ final class Nevari_Subscriptions {
                 'currency' => $currency,
                 'interval_unit' => $interval,
                 'status' => 'active',
-                'metadata' => wp_json_encode($body['data']),
+                'metadata' => $merged_metadata,
                 'updated_at' => $now,
             ], ['id' => (int) $existing->id]);
         } else {
@@ -2521,7 +3118,7 @@ final class Nevari_Subscriptions {
                 'currency' => $currency,
                 'interval_unit' => $interval,
                 'status' => 'active',
-                'metadata' => wp_json_encode($body['data']),
+                'metadata' => $merged_metadata,
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
@@ -2760,22 +3357,142 @@ final class Nevari_Subscriptions {
         return $row ? self::normalize_plan_definition($row) : self::current_plan_definition();
     }
 
+    private static function infer_plan_tier(array $definition): string {
+        $amount = (int) ($definition['amount_kobo'] ?? 0);
+        if ($amount <= 0) {
+            return 'free';
+        }
+
+        $haystack = strtolower(trim((string) (($definition['plan_key'] ?? '') . ' ' . ($definition['name'] ?? ''))));
+        foreach (['enterprise', 'business', 'premium', 'max'] as $keyword) {
+            if ($haystack !== '' && strpos($haystack, $keyword) !== false) {
+                return 'enterprise';
+            }
+        }
+
+        foreach (['starter', 'basic', 'lite', 'essential'] as $keyword) {
+            if ($haystack !== '' && strpos($haystack, $keyword) !== false) {
+                return 'starter';
+            }
+        }
+
+        return 'pro';
+    }
+
+    private static function available_plans_payload(): array {
+        global $wpdb;
+
+        self::ensure_system_plans();
+
+        $plans = [];
+        $free_definition = self::default_free_plan_definition();
+        $free_definition['id'] = self::FREE_PLAN_KEY;
+        $plans[self::FREE_PLAN_KEY] = $free_definition;
+
+        $current_definition = self::current_plan_definition();
+        $current_key = sanitize_key((string) ($current_definition['plan_key'] ?? self::PLAN_KEY)) ?: self::PLAN_KEY;
+        $current_definition['id'] = $current_key;
+        $plans[$current_key] = $current_definition;
+
+        $plans_table = Nevari_Helpers::table('subscription_plans');
+        $rows = $wpdb->get_results("SELECT * FROM {$plans_table} WHERE status = 'active' ORDER BY amount_kobo ASC, id ASC");
+
+        foreach ($rows ?: [] as $row) {
+            if (!is_object($row)) {
+                continue;
+            }
+            $definition = self::normalize_plan_definition($row);
+            $plan_key = sanitize_key((string) ($definition['plan_key'] ?? ''));
+            if ($plan_key === '') {
+                continue;
+            }
+            $definition['id'] = (string) ((int) ($row->id ?? 0) ?: $plan_key);
+            $plans[$plan_key] = $definition;
+        }
+
+        uasort($plans, static function (array $left, array $right): int {
+            $amount_compare = ((int) ($left['amount_kobo'] ?? 0)) <=> ((int) ($right['amount_kobo'] ?? 0));
+            if ($amount_compare !== 0) {
+                return $amount_compare;
+            }
+            return strcasecmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? ''));
+        });
+
+        $payload = [];
+        $rank = 1;
+        foreach ($plans as $definition) {
+            $plan_key = sanitize_key((string) ($definition['plan_key'] ?? ''));
+            if ($plan_key === '') {
+                continue;
+            }
+            $payload[] = [
+                'id' => sanitize_text_field((string) ($definition['id'] ?? $plan_key)) ?: $plan_key,
+                'plan_key' => $plan_key,
+                'name' => self::sanitize_subscription_text($definition['name'] ?? $plan_key),
+                'price' => self::normalize_subscription_amount($definition['amount_kobo'] ?? 0),
+                'currency' => sanitize_text_field((string) ($definition['currency'] ?? self::PLAN_CURRENCY)) ?: self::PLAN_CURRENCY,
+                'rank' => $rank++,
+                'tier' => self::infer_plan_tier($definition),
+            ];
+        }
+
+        return $payload;
+    }
+
+    private static function payment_method_summary_from_subscription(object $row): ?array {
+        $metadata = self::subscription_metadata($row);
+        $authorization = null;
+
+        if (is_array($metadata['authorization'] ?? null)) {
+            $authorization = $metadata['authorization'];
+        } elseif (is_array($metadata['customer']['authorization'] ?? null)) {
+            $authorization = $metadata['customer']['authorization'];
+        } elseif (is_array($metadata['data']['authorization'] ?? null)) {
+            $authorization = $metadata['data']['authorization'];
+        } elseif (is_array($metadata['paystack']['data']['authorization'] ?? null)) {
+            $authorization = $metadata['paystack']['data']['authorization'];
+        }
+
+        $channel = sanitize_key((string) ((is_array($authorization) ? ($authorization['channel'] ?? '') : '') ?: ($metadata['channel'] ?? '')));
+        if (in_array($channel, ['transfer', 'dedicated_nuban'], true)) {
+            $channel = 'bank_transfer';
+        } elseif ($channel === 'mobilemoney') {
+            $channel = 'mobile_money';
+        }
+        if (!in_array($channel, ['card', 'bank', 'bank_transfer', 'ussd', 'qr', 'mobile_money'], true)) {
+            return null;
+        }
+
+        $summary = ['channel' => $channel];
+        $card_type = sanitize_text_field((string) (is_array($authorization) ? ($authorization['card_type'] ?? $authorization['brand'] ?? '') : ''));
+        if ($card_type !== '') {
+            $summary['card_type'] = $card_type;
+        }
+        $bank = sanitize_text_field((string) (is_array($authorization) ? ($authorization['bank'] ?? '') : ($metadata['bank'] ?? '')));
+        if ($bank !== '') {
+            $summary['bank'] = $bank;
+        }
+
+        return $summary;
+    }
     private static function subscription_payload_from_claims(int $user_id, array $claims): array {
         $is_paid = !empty($claims['is_paid']);
         $plan_key = sanitize_key((string) ($claims['plan_key'] ?? self::FREE_PLAN_KEY));
-        $plan_definition = self::plan_definition_for_key($is_paid ? $plan_key : self::PLAN_KEY);
+        $resolved_plan_key = $is_paid ? $plan_key : self::FREE_PLAN_KEY;
+        $plan_definition = self::plan_definition_for_key($resolved_plan_key);
         $protected_features = self::protected_features_for_paid_access($is_paid);
         $quota_payload = self::consultation_quota_payload($user_id, $claims);
 
         return [
-            'plan' => (string) ($claims['plan'] ?? ($is_paid ? self::PLAN_NAME : 'Free')),
-            'plan_key' => $is_paid ? $plan_key : self::FREE_PLAN_KEY,
+            'plan' => (string) ($claims['plan'] ?? ($is_paid ? ($plan_definition['name'] ?? self::PLAN_NAME) : 'Free')),
+            'plan_key' => $resolved_plan_key,
             'status' => sanitize_key((string) ($claims['status'] ?? 'none')),
-            'tier' => sanitize_key((string) ($claims['tier'] ?? ($is_paid ? 'pro' : 'free'))),
+            'tier' => sanitize_key((string) ($claims['tier'] ?? self::infer_plan_tier($plan_definition))),
             'is_paid' => $is_paid,
             'can_access_therapy_management' => $protected_features['therapy_management'],
             'can_refill' => $protected_features['refills'],
             'protected_features' => $protected_features,
+            'start_date' => !empty($claims['starts_at']) ? (string) $claims['starts_at'] : null,
             'renewal_date' => !empty($claims['expires_at']) ? gmdate('M j, Y', strtotime((string) $claims['expires_at'])) : '',
             'ends_at' => $claims['expires_at'] ?? null,
             'access_ends_at' => $claims['expires_at'] ?? null,
@@ -2788,6 +3505,8 @@ final class Nevari_Subscriptions {
             'amount' => $is_paid ? self::normalize_subscription_amount($plan_definition['amount_kobo'] ?? self::PLAN_AMOUNT_KOBO) : 0,
             'currency' => $plan_definition['currency'] ?: self::PLAN_CURRENCY,
             'interval' => $plan_definition['interval_unit'] === 'manual' ? 'month' : $plan_definition['interval_unit'],
+            'payment_method' => null,
+            'available_plans' => self::available_plans_payload(),
             'paystack_subscription_code' => '',
             'paystack_email_token' => '',
             'subscription_code_masked' => '',
@@ -2809,7 +3528,21 @@ final class Nevari_Subscriptions {
 
     private static function subscription_payload_for_user(int $user_id): array {
         $claims = self::subscription_claims_for_user($user_id);
-        return self::subscription_payload_from_claims($user_id, $claims);
+        $payload = self::subscription_payload_from_claims($user_id, $claims);
+        $legacy = self::legacy_subscription_payload_for_user($user_id);
+        $payload['available_plans'] = self::available_plans_payload();
+        if (!empty($legacy['start_date'])) {
+            $payload['start_date'] = $legacy['start_date'];
+        }
+        if (!empty($legacy['payment_method'])) {
+            $payload['payment_method'] = $legacy['payment_method'];
+        }
+        foreach (['paystack_subscription_code', 'paystack_email_token', 'subscription_code_masked', 'manage_billing_url', 'checkout_url', 'authorization_url', 'checkout_expires_at', 'checkout_link', 'active_subscriptions', 'latest_subscription'] as $field) {
+            if (!empty($legacy[$field])) {
+                $payload[$field] = $legacy[$field];
+            }
+        }
+        return $payload;
     }
 
     private static function legacy_subscription_payload_for_user(int $user_id): array {
@@ -2841,10 +3574,12 @@ final class Nevari_Subscriptions {
             'plan' => $has_paid_access ? $plan_name : 'Free',
             'plan_key' => $has_paid_access ? ($plan_definition['plan_key'] ?? self::PLAN_KEY) : 'free',
             'status' => $status ?: 'none',
+            'tier' => $has_paid_access ? self::infer_plan_tier($plan_definition) : 'free',
             'is_paid' => $has_paid_access,
             'can_access_therapy_management' => $protected_features['therapy_management'],
             'can_refill' => $protected_features['refills'],
             'protected_features' => $protected_features,
+            'start_date' => !empty($row->created_at) ? (string) $row->created_at : null,
             'renewal_date' => !empty($row->renewal_date) ? gmdate('M j, Y', strtotime((string) $row->renewal_date)) : '',
             'ends_at' => !empty($row->ends_at) ? (string) $row->ends_at : null,
             'access_ends_at' => !empty($row->ends_at) ? (string) $row->ends_at : null,
@@ -2857,6 +3592,7 @@ final class Nevari_Subscriptions {
             'amount' => $current_amount,
             'currency' => $plan_definition['currency'] ?: self::PLAN_CURRENCY,
             'interval' => $plan_definition['interval_unit'] === 'manual' ? 'month' : $plan_definition['interval_unit'],
+            'payment_method' => self::payment_method_summary_from_subscription($row),
             'paystack_subscription_code' => sanitize_text_field((string) $row->subscription_code),
             'paystack_email_token' => self::paystack_email_token_from_subscription($row),
             'subscription_code_masked' => self::mask_code((string) $row->subscription_code),
@@ -2955,10 +3691,12 @@ final class Nevari_Subscriptions {
             'plan' => 'Free',
             'plan_key' => 'free',
             'status' => 'none',
+            'tier' => 'free',
             'is_paid' => false,
             'can_access_therapy_management' => false,
             'can_refill' => false,
             'protected_features' => $protected_features,
+            'start_date' => null,
             'renewal_date' => '',
             'ends_at' => null,
             'free_consultations_total' => 0,
@@ -2969,6 +3707,8 @@ final class Nevari_Subscriptions {
             'amount' => $current_amount,
             'currency' => $currency,
             'interval' => $plan_definition['interval_unit'] === 'manual' ? 'month' : $plan_definition['interval_unit'],
+            'payment_method' => null,
+            'available_plans' => self::available_plans_payload(),
             'paystack_subscription_code' => '',
             'paystack_email_token' => '',
             'subscription_code_masked' => '',
@@ -3024,14 +3764,70 @@ final class Nevari_Subscriptions {
         return is_array($decoded) ? $decoded : [];
     }
 
+    private static function paystack_token_from_url(string $url): string {
+        $url = trim($url);
+        if ($url === '') {
+            return '';
+        }
+
+        $query = parse_url($url, PHP_URL_QUERY);
+        if (is_string($query) && $query !== '') {
+            $params = [];
+            parse_str($query, $params);
+            foreach (['email_token', 'token', 'subscription_token'] as $key) {
+                $value = sanitize_text_field((string) ($params[$key] ?? ''));
+                if ($value !== '') {
+                    return $value;
+                }
+            }
+        }
+
+        $fragment = parse_url($url, PHP_URL_FRAGMENT);
+        if (is_string($fragment) && $fragment !== '') {
+            $fragment_params = [];
+            parse_str($fragment, $fragment_params);
+            foreach (['email_token', 'token', 'subscription_token'] as $key) {
+                $value = sanitize_text_field((string) ($fragment_params[$key] ?? ''));
+                if ($value !== '') {
+                    return $value;
+                }
+            }
+        }
+
+        if (preg_match('/(?:email_token|subscription_token|token)=([A-Za-z0-9_-]+)/i', $url, $matches) && !empty($matches[1])) {
+            return sanitize_text_field((string) $matches[1]);
+        }
+
+        return '';
+    }
+
     private static function paystack_email_token_from_subscription(object $row): string {
         $metadata = self::subscription_metadata($row);
-        return sanitize_text_field((string) (
+        $token = sanitize_text_field((string) (
             $metadata['paystack_email_token']
             ?? $metadata['subscription']['email_token']
             ?? $metadata['email_token']
+            ?? $metadata['paystack']['email_token']
+            ?? $metadata['paystack']['subscription']['email_token']
             ?? ''
         ));
+        if ($token !== '') {
+            return $token;
+        }
+
+        foreach ([
+            $metadata['manage_billing_url'] ?? '',
+            $metadata['manage_link'] ?? '',
+            $metadata['subscription']['manage_link'] ?? '',
+            $metadata['paystack']['subscription']['manage_link'] ?? '',
+        ] as $candidate_url) {
+            $candidate = self::paystack_token_from_url((string) $candidate_url);
+            if ($candidate !== '') {
+                return $candidate;
+            }
+        }
+
+        return '';
     }
 
     private static function paystack_manage_link_from_subscription(object $row): string {
@@ -3040,6 +3836,7 @@ final class Nevari_Subscriptions {
             $metadata['manage_billing_url']
             ?? $metadata['manage_link']
             ?? $metadata['subscription']['manage_link']
+            ?? $metadata['paystack']['subscription']['manage_link']
             ?? ''
         ));
     }
@@ -3080,3 +3877,7 @@ final class Nevari_Subscriptions {
         Nevari_Audit::log('dashboard', 'customer', $event, in_array($status, ['success', 'error'], true) ? $status : 'success', $payload);
     }
 }
+
+
+
+

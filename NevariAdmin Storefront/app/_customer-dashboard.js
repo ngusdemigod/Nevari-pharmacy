@@ -7,8 +7,13 @@ import useSWR, { useSWRConfig } from "swr";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowLeft01Icon, ArrowRight01Icon, ArrowUpRight01Icon, BatteryFullIcon, Calendar03Icon, Clock01Icon, Doctor01Icon, FileUploadIcon, Home01Icon, Logout01Icon, MedicalMaskIcon, Medicine01Icon, Menu01Icon, MoreHorizontalIcon, Search01Icon, Settings01Icon, ShoppingBasket01Icon, ShoppingCart01Icon, SignalFull01Icon, Upload01Icon, UserIcon, Wallet01Icon, Wifi01Icon } from "@hugeicons/core-free-icons";
 import { removeById, replaceById, updateListPayload, upsertById } from "../lib/fetcher";
-import { isProxyAppointmentsKey, isProxyDoctorsKey, isProxyOrdersKey, swrKeys, withBaseUrl } from "../lib/swrKeys";
+import { isProxyAppointmentsKey, isProxyDoctorsKey, isProxyOrdersKey, swrKeys, withBaseUrl, withSessionCacheScope } from "../lib/swrKeys";
 import ManageSubscription from "./components/profile/ManageSubscription";
+import cartBenefitIcon from "./assets/cart.png";
+import micBenefitIcon from "./assets/mic.png";
+import pillBenefitIcon from "./assets/pill.png";
+import proBadgeImage from "./assets/probadge.jpg";
+import proSealImage from "./assets/proseal.png";
 import { BrandedSpinner } from "./components/BrandedSpinner";
 import { FRONTENDS } from "./components/frontend-config";
 import { clearGuestConsultationDraft, readGuestConsultationDraft } from "./components/guest-consultation-draft";
@@ -17,9 +22,11 @@ import { apiRequest, buildDashboardCacheKey, buildUrl, clearDashboardCacheForFro
 import { performGlobalLogout } from "./components/role-session";
 import { buildSWRRevealSignature, useSWRReveal } from "./components/useSWRReveal";
 import SubscriptionGate from "./components/subscription/SubscriptionGate";
+import Paywall from "./components/subscription/Paywall";
 import { useSubscription } from "./hooks/use-subscription";
 import { RoleShell, SkeletonBox } from "./_doctor-dashboard";
-import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, normalizeCustomerSettingsPayload, requestMtmReschedule, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest, updateCustomerSettings } from "./lib/nevari-api";
+import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, normalizeCustomerSettingsPayload, requestMtmReschedule, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest, updateCustomerSettings, uploadCustomerProfileImage } from "./lib/nevari-api";
+import { citiesForNigeriaState, NIGERIA_STATES } from "./lib/nigeria-locations";
 
 const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
 const ADMIN_APPOINTMENT_SETTINGS_KEY = "nevari_admin_appointment_settings";
@@ -34,18 +41,34 @@ const NURSE_REQUEST_YES_NO_FIELDS = ["liveInCareRequired", "wheelchairAssistance
 const NURSE_REQUEST_YES_NO_OPTIONS = ["Yes", "No"];
 const NURSE_REQUEST_CLINICAL_REQUIREMENTS = ["Medication Administration", "Catheter Care", "Blood Pressure Monitoring", "Diabetes Monitoring", "IV Therapy", "Feeding Tube Support"];
 const NURSE_REQUEST_UPLOAD_LABELS = ["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"];
-const PAYWALL_PRO_MONTHLY_AMOUNT = 10_000;
+const PAYWALL_PRO_MONTHLY_AMOUNT = 5_000;
 const IV_THERAPY_OPTIONS = [
   "Beauty & Radiance Drips",
   "Anti-Aging & Regenerative Drips",
-  "Weight Management Drips Assistance",
+  "Weight Management",
   "Hair & Nail Restoration",
   "Vitamin & Hydration Drips"
 ];
 const IV_THERAPY_YES_NO_OPTIONS = ["Yes", "No"];
-const pages = ["overview", "orders", "appointment", "request", "therapy", "iv-therapy", "profile"];
+const pages = ["overview", "orders", "appointment", "request", "therapy", "iv-therapy", "profile", "subscription-management"];
 const CUSTOMER_DASHBOARD_REFRESH_MS = 60_000;
 const CUSTOMER_MOBILE_BREAKPOINT = 960;
+
+function isCustomerMobileViewport() {
+  if (typeof window === "undefined") {
+    return true;
+  }
+
+  const widths = [
+    window.innerWidth,
+    window.visualViewport?.width,
+    document.documentElement?.clientWidth,
+    window.screen?.width,
+  ].filter((width) => Number.isFinite(width) && width > 0);
+
+  return widths.length === 0 || Math.min(...widths) <= CUSTOMER_MOBILE_BREAKPOINT;
+}
+
 const pageLabels = {
   overview: "Overview",
   appointment: "Appointments",
@@ -55,8 +78,29 @@ const pageLabels = {
   settings: "Settings",
   profile: "My Profile",
   therapy: "Medication Therapy Management",
-  "iv-therapy": "IV Therapy"
+  "iv-therapy": "IV Therapy (Wellness infusions)",
+  "subscription-management": "Nevari Access Pro"
 };
+
+
+const PROFILE_IMAGE_MAX_SIZE_BYTES = 5 * 1024 * 1024;
+const PROFILE_IMAGE_SERVER_MAX_BYTES = 2 * 1024 * 1024;
+const PROFILE_IMAGE_EXPORT_SIZE = 640;
+const PROFILE_IMAGE_MIN_ZOOM = 1;
+const PROFILE_IMAGE_MAX_ZOOM = 3;
+const CUSTOMER_HEALTH_BLOOD_GROUP_OPTIONS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+const CUSTOMER_HEALTH_GENOTYPE_OPTIONS = ["AA", "AS", "AC", "SS", "SC", "CC"];
+const CUSTOMER_NOTIFICATION_OPTIONS = [
+  ["appointmentReminders", "Appointment reminders"],
+  ["prescriptionAlerts", "Medication reminders"],
+  ["paymentReceipts", "Payment updates"]
+];
+const CUSTOMER_SEARCH_QUICK_OPTIONS = [
+  ["appointment", "Appointments"],
+  ["therapy", "Prescriptions"],
+  ["profile", "Lab Results"],
+  ["orders", "Orders"]
+];
 
 function createIvTherapyFormState() {
   return {
@@ -64,6 +108,8 @@ function createIvTherapyFormState() {
       name: "",
       gender: "",
       address: "",
+      state: "",
+      city: "",
       cityState: "",
       phoneNumber: ""
     },
@@ -92,14 +138,158 @@ function normalizeCustomerName(value) {
   return normalized.toLowerCase() === "customer" ? "" : normalized;
 }
 
-function resolveCustomerPreferredName({ settingsDisplayName = "", profile = {}, sessionUser = {} } = {}) {
+function getProfileImageRateLimitRetrySeconds(error) {
+  const code = String(error?.code || error?.payload?.error?.code || '').trim().toLowerCase();
+    if (code !== 'too_many_requests') {
+        return 0;
+          }
+            const details = error?.details || error?.payload?.error?.details || {};
+              const retryAfter = Number(error?.retryAfter || details?.retry_after || 0);
+                if (Number.isFinite(retryAfter) && retryAfter > 0) {
+                    return Math.ceil(retryAfter);
+                      }
+                        const resetAt = Date.parse(String(details?.reset_at || ''));
+                          if (Number.isFinite(resetAt)) {
+                              return Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+                                }
+                                  return 60;
+                                  }
+                                  
+function formatProfileImageRateLimitMessage(seconds) {
+  const safeSeconds = Math.max(1, Math.ceil(Number(seconds || 0)));
+    const minutes = Math.max(1, Math.ceil(safeSeconds / 60));
+      return 'Too many profile image updates. Please try again in ' + minutes + ' minute' + (minutes === 1 ? '' : 's') + '.';
+      }
+      
+function describeProfileImageUploadError(error) {
+  const retrySeconds = getProfileImageRateLimitRetrySeconds(error);
+    if (retrySeconds > 0) {
+        return formatProfileImageRateLimitMessage(retrySeconds);
+          }
+            return error?.message || 'Unable to upload image. Please try again.';
+            }
+            
+function emailLocalName(value) {
+  const email = String(value || '').trim();
+  return email.includes(String.fromCharCode(64)) ? email.split(String.fromCharCode(64))[0].replace(/[._-]+/g, ' ').trim() : '';
+}
+
+function fullNameFromParts(source = {}) {
+  return [source?.first_name || source?.firstName, source?.last_name || source?.lastName]
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
+function resolveCustomerPreferredName({ settingsDisplayName = '', profile = {}, sessionUser = {} } = {}) {
   return normalizeCustomerName(settingsDisplayName)
-    || normalizeCustomerName(profile?.display_name)
-    || normalizeCustomerName(sessionUser?.display_name)
-    || normalizeCustomerName(sessionUser?.name)
     || normalizeCustomerName(profile?.last_name || profile?.lastName)
     || normalizeCustomerName(sessionUser?.last_name || sessionUser?.lastName)
-    || "Customer";
+    || normalizeCustomerName(profile?.first_name || profile?.firstName)
+    || normalizeCustomerName(sessionUser?.first_name || sessionUser?.firstName)
+    || normalizeCustomerName(profile?.display_name)
+    || normalizeCustomerName(sessionUser?.display_name)
+    || normalizeCustomerName(fullNameFromParts(profile))
+    || normalizeCustomerName(fullNameFromParts(sessionUser))
+    || normalizeCustomerName(sessionUser?.name)
+    || normalizeCustomerName(emailLocalName(profile?.email || sessionUser?.email))
+    || 'Patient';
+}
+function normalizeCustomerIdentityValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function resolveCustomerSessionStorageIdentity(user = {}) {
+  const id = String(user?.id || "").trim();
+  if (id) {
+    return id;
+  }
+  return normalizeCustomerIdentityValue(user?.email);
+}
+
+function buildCustomerSettingsStorageKey(user = {}) {
+  const identity = resolveCustomerSessionStorageIdentity(user);
+  return identity ? `${CUSTOMER_SETTINGS_KEY}:${identity}` : "";
+}
+
+function readCustomerStoragePayload(key) {
+  if (typeof window === "undefined" || !key) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function isStoredCustomerSettingsOwnedBySession(settings = {}, sessionUser = {}) {
+  const storedEmail = normalizeCustomerIdentityValue(settings?.email);
+  const sessionEmail = normalizeCustomerIdentityValue(sessionUser?.email);
+  return Boolean(storedEmail && sessionEmail && storedEmail === sessionEmail);
+}
+
+function buildCustomerFallbackProfile(sessionUser = {}, settingsDisplayName = "") {
+  return {
+    id: sessionUser?.id || null,
+    email: sessionUser?.email || "",
+    display_name: resolveCustomerPreferredName({ settingsDisplayName, sessionUser }),
+    first_name: String(sessionUser?.first_name || sessionUser?.firstName || "").trim(),
+    last_name: String(sessionUser?.last_name || sessionUser?.lastName || "").trim(),
+    avatar_url: sessionUser?.avatar_url || sessionUser?.avatarUrl || sessionUser?.picture || "",
+    roles: resolveUserRoles(sessionUser)
+  };
+}
+
+function isCustomerProfileOwnedBySession(profile = {}, sessionUser = {}) {
+  const profileId = String(profile?.id || "").trim();
+  const sessionId = String(sessionUser?.id || "").trim();
+  if (profileId && sessionId) {
+    return profileId === sessionId;
+  }
+  const profileEmail = normalizeCustomerIdentityValue(profile?.email);
+  const sessionEmail = normalizeCustomerIdentityValue(sessionUser?.email);
+  return Boolean(profileEmail && sessionEmail && profileEmail === sessionEmail);
+}
+
+function resolveCustomerProfileForSession({ profile = {}, sessionUser = {}, settingsDisplayName = "" } = {}) {
+  const fallbackProfile = buildCustomerFallbackProfile(sessionUser, settingsDisplayName);
+  if (!isCustomerProfileOwnedBySession(profile, sessionUser)) {
+    return fallbackProfile;
+  }
+  const mergedProfile = { ...fallbackProfile, ...profile };
+  return {
+    ...mergedProfile,
+    display_name: resolveCustomerPreferredName({
+      settingsDisplayName,
+      profile: mergedProfile,
+      sessionUser
+    })
+  };
+}function resolveCustomerFullName(profile = {}, sessionUser = {}, fallbackName = "Patient") {
+  const firstName = String(profile?.first_name || profile?.firstName || sessionUser?.first_name || sessionUser?.firstName || "").trim();
+  const lastName = String(profile?.last_name || profile?.lastName || sessionUser?.last_name || sessionUser?.lastName || "").trim();
+  const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+  if (fullName) {
+    return fullName;
+  }
+  return String(profile?.display_name || sessionUser?.display_name || sessionUser?.name || fallbackName || "Patient").trim() || "Patient";
+}
+
+function composeCityStateValue(city = "", state = "") {
+  return [String(city || "").trim(), String(state || "").trim()].filter(Boolean).join(", ");
+}
+
+function buildIvTherapyPatientPayload(patient = {}) {
+  const state = String(patient.state || "").trim();
+  const city = String(patient.city || "").trim();
+  return {
+    ...patient,
+    state,
+    city,
+    cityState: composeCityStateValue(city, state),
+  };
 }
 
 function buildIvTherapyStepErrors(step, form) {
@@ -117,7 +307,8 @@ function buildIvTherapyStepErrors(step, form) {
       errors.gender = "Select a valid gender.";
     }
     if (!String(patient.address || "").trim()) errors.address = "Address is required.";
-    if (!String(patient.cityState || "").trim()) errors.cityState = "City/State is required.";
+    if (!String(patient.state || "").trim()) errors.state = "State is required.";
+    if (!String(patient.city || "").trim()) errors.city = "City is required.";
     if (!/^[0-9+\-()\s]{7,24}$/.test(String(patient.phoneNumber || "").trim())) errors.phoneNumber = "Enter a valid phone number.";
   }
 
@@ -313,21 +504,17 @@ async function fetchCustomerDashboardPayload(session, settings, fallbackState = 
     : (liveDoctors || []);
   const blockingErrors = [];
   if (hasOrderFailure || hasUpcomingFailure || hasPastFailure) {
-    blockingErrors.push("Oops! Connection error. We’re showing your last available dashboard data.");
+    blockingErrors.push("Oops! Connection error. WeÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢re showing your last available dashboard data.");
   }
-  const fallbackProfile = {
-    id: session.user?.id || null,
-    email: session.user?.email || "",
-    display_name: resolveCustomerPreferredName({ settingsDisplayName: settings.displayName, sessionUser: session.user }),
-    first_name: String(session.user?.first_name || session.user?.firstName || "").trim(),
-    last_name: String(session.user?.last_name || session.user?.lastName || "").trim(),
-    avatar_url: session.user?.avatar_url || session.user?.avatarUrl || session.user?.picture || "",
-    roles: resolveUserRoles(session.user)
-  };
+  const resolvedProfile = resolveCustomerProfileForSession({
+    profile: resolvedDashboard.profile || {},
+    sessionUser: session.user,
+    settingsDisplayName: settings.displayName
+  });
 
   return {
     error: blockingErrors[0] || "",
-    dashboard: { ...resolvedDashboard, profile: { ...fallbackProfile, ...(resolvedDashboard.profile || {}) } },
+    dashboard: { ...resolvedDashboard, profile: resolvedProfile },
     settings: normalizeCustomerSettingsPayload(resolvedDashboard.settings || fallbackState.settings || settings),
     orders: resolvedOrders,
     appointments: resolvedAppointments,
@@ -357,6 +544,92 @@ async function fetchCustomerAppointments(session) {
 
 async function fetchCustomerDoctors(session) {
   return apiRequest(session, "/doctors", { params: { per_page: 24, page: 1 }, suppressHttpError: true });
+}
+
+function normalizeProfileAvatarUrl(value) {
+  return String(value || "").trim();
+}
+
+function profileAvatarUrlKey(value) {
+  const normalized = normalizeProfileAvatarUrl(value);
+  if (!normalized) {
+    return "";
+  }
+  return normalized.replace(/[?#].*$/, "");
+}
+
+function withProfileAvatarRefreshToken(value, token) {
+  const normalized = normalizeProfileAvatarUrl(value);
+  if (!normalized) {
+    return "";
+  }
+  const safeToken = String(token || "").trim();
+  if (!safeToken) {
+    return normalized;
+  }
+  return normalized + (normalized.includes("?") ? "&" : "?") + "nevari_avatar_v=" + encodeURIComponent(safeToken);
+}
+
+function mergeCustomerProfileAvatar(profile, avatarUrl) {
+  const nextAvatarUrl = normalizeProfileAvatarUrl(avatarUrl);
+  if (!nextAvatarUrl) {
+    return { ...(profile || {}) };
+  }
+
+  return {
+    ...(profile || {}),
+    avatar_url: nextAvatarUrl,
+    profile_image: nextAvatarUrl,
+  };
+}
+
+function patchCustomerProfileAvatarState(current, avatarUrl) {
+  if (!current) {
+    return current;
+  }
+
+  const nextProfile = mergeCustomerProfileAvatar(current.dashboard?.profile || current.profile || {}, avatarUrl);
+  return {
+    ...current,
+    profile: {
+      ...(current.profile || {}),
+      ...nextProfile,
+    },
+    dashboard: {
+      ...(current.dashboard || {}),
+      profile: {
+        ...(current.dashboard?.profile || {}),
+        ...nextProfile,
+      },
+    },
+  };
+}
+
+function persistPatientSessionAvatar(avatarUrl) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const normalized = normalizeProfileAvatarUrl(avatarUrl);
+  if (!normalized) {
+    return;
+  }
+  try {
+    const storageKey = FRONTENDS.patient?.storageKey;
+    if (!storageKey) {
+      return;
+    }
+    const current = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+    const next = {
+      ...current,
+      user: {
+        ...(current?.user || {}),
+        avatar_url: normalized,
+        avatarUrl: normalized,
+        picture: normalized,
+      },
+    };
+    window.localStorage.setItem(storageKey, JSON.stringify(next));
+  } catch {}
 }
 
 function createJourneyState() {
@@ -633,28 +906,222 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
   return errors;
 }
 
-function getCustomerSettingsFieldErrors(settings) {
+function sanitizeCustomerHealthChip(value, max = 80) {
+  return sanitizeClientText(value || "", { max }).trim();
+}
+
+function normalizeCustomerHealthChipList(values) {
+  return Array.from(new Set((Array.isArray(values) ? values : [])
+    .map((item) => sanitizeCustomerHealthChip(item))
+    .filter(Boolean)));
+}
+
+function isValidCustomerPhoneNumber(value, { allowEmpty = true } = {}) {
+  const normalized = normalizeMtmPhoneNumber(value);
+  if (!normalized) {
+    return allowEmpty;
+  }
+  return normalized.length === 11;
+}
+
+function validateCustomerProfileImageFile(file) {
+  if (!file) {
+    return "Select an image to continue.";
+  }
+  if (!String(file.type || "").toLowerCase().startsWith("image/")) {
+    return "Please choose a valid image file.";
+  }
+  if (Number(file.size || 0) > PROFILE_IMAGE_MAX_SIZE_BYTES) {
+    return "Image size must be 5MB or less.";
+  }
+  return "";
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getProfileImageBaseScale(naturalWidth, naturalHeight, cropSize = 1) {
+  if (!naturalWidth || !naturalHeight || !cropSize) {
+    return 1;
+  }
+  return Math.max(cropSize / naturalWidth, cropSize / naturalHeight);
+}
+
+function getProfileImageOffsetLimits(naturalWidth, naturalHeight, scale, cropSize = 1) {
+  const scaledWidth = naturalWidth * scale;
+  const scaledHeight = naturalHeight * scale;
+  return {
+    x: Math.max(0, (scaledWidth - cropSize) / 2),
+    y: Math.max(0, (scaledHeight - cropSize) / 2),
+  };
+}
+
+function clampProfileImageOffsets(offsetX, offsetY, naturalWidth, naturalHeight, scale, cropSize = 1) {
+  const limits = getProfileImageOffsetLimits(naturalWidth, naturalHeight, scale, cropSize);
+  return {
+    x: clampNumber(offsetX, -limits.x, limits.x),
+    y: clampNumber(offsetY, -limits.y, limits.y),
+  };
+}
+
+function createProfileImageCropState({ naturalWidth, naturalHeight, zoom = PROFILE_IMAGE_MIN_ZOOM, offsetX = 0, offsetY = 0, cropSize = 1 }) {
+  const baseScale = getProfileImageBaseScale(naturalWidth, naturalHeight, cropSize);
+  const nextZoom = clampNumber(Number(zoom) || PROFILE_IMAGE_MIN_ZOOM, PROFILE_IMAGE_MIN_ZOOM, PROFILE_IMAGE_MAX_ZOOM);
+  const scale = baseScale * nextZoom;
+  const offset = clampProfileImageOffsets(offsetX, offsetY, naturalWidth, naturalHeight, scale, cropSize);
+  return {
+    naturalWidth,
+    naturalHeight,
+    cropSize,
+    baseScale,
+    zoom: nextZoom,
+    scale,
+    offsetX: offset.x,
+    offsetY: offset.y,
+  };
+}
+
+function loadImageDimensions(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      resolve({
+        naturalWidth: image.naturalWidth || image.width || 0,
+        naturalHeight: image.naturalHeight || image.height || 0,
+      });
+      URL.revokeObjectURL(objectUrl);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Unable to read the selected image."));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function buildProfileImageUploadName(fileName = "", mimeType = "") {
+  const originalName = String(fileName || "").trim() || "profile-image";
+  const stem = originalName.replace(/\.[^.]+$/, "") || "profile-image";
+  if (mimeType === "image/png") {
+    return stem + ".png";
+  }
+  if (mimeType === "image/webp") {
+    return stem + ".webp";
+  }
+  return stem + ".jpg";
+}
+
+function resolveCustomerHealthRecordRows(settings) {
+  const normalized = normalizeCustomerSettingsPayload(settings);
+  const emergencyContact = normalized.emergencyContactName
+    ? normalized.emergencyContactName + (normalized.emergencyContactPhoneNumber ? " ? " + normalized.emergencyContactPhoneNumber : "")
+    : "Not added";
+  return [
+    ["Blood Group", normalized.bloodGroup || "Not added"],
+    ["Genotype", normalized.genotype || "Not added"],
+    ["Allergies", normalized.allergies.length ? normalized.allergies.join(", ") : "Not added"],
+    ["Current Medications", normalized.currentMedications.length ? normalized.currentMedications.join(", ") : "Not added"],
+    ["Existing Conditions", normalized.existingConditions.length ? normalized.existingConditions.join(", ") : "Not added"],
+    ["Emergency Contact", emergencyContact],
+  ];
+}
+
+function getCustomerProfileReminderItems(missingLabels = []) {
+  const items = [];
+  const labels = new Set(Array.isArray(missingLabels) ? missingLabels : []);
+  const addItem = (label) => {
+    if (!items.includes(label)) {
+      items.push(label);
+    }
+  };
+
+  if (labels.has("Display Name")) addItem("Add your display name");
+  if (labels.has("Email")) addItem("Add your email address");
+  if (labels.has("Phone Number")) addItem("Add your current phone number");
+  if (labels.has("Address")) addItem("Confirm your home address");
+  if (labels.has("Blood Group")) addItem("Add your blood group");
+  if (labels.has("Genotype")) addItem("Add your genotype");
+  if (labels.has("Emergency Contact Name") || labels.has("Emergency Contact Phone Number")) addItem("Add an emergency contact");
+
+  return items;
+}
+function getCustomerProfileCompletion(settings, profile = {}) {
+  const normalized = normalizeCustomerSettingsPayload(settings);
+  const requiredEntries = [
+    ["Display Name", normalized.displayName || profile?.display_name || ""],
+    ["Email", normalized.email || profile?.email || ""],
+    ["Phone Number", normalized.phone || profile?.phone || ""],
+    ["Address", normalized.address || profile?.address || ""],
+    ["Blood Group", normalized.bloodGroup],
+    ["Genotype", normalized.genotype],
+    ["Emergency Contact Name", normalized.emergencyContactName],
+    ["Emergency Contact Phone Number", normalized.emergencyContactPhoneNumber],
+  ];
+  const completed = requiredEntries.filter(([, value]) => String(value || "").trim()).length;
+  const total = requiredEntries.length;
+  return {
+    completed,
+    total,
+    percent: total ? Math.round((completed / total) * 100) : 0,
+    missingLabels: requiredEntries.filter(([, value]) => !String(value || "").trim()).map(([label]) => label),
+    isComplete: completed === total,
+  };
+}
+
+function mergeCustomerPrefillValue(currentValue, nextValue) {
+  if (Array.isArray(currentValue)) {
+    return currentValue.length ? currentValue : normalizeCustomerHealthChipList(nextValue);
+  }
+  return String(currentValue || "").trim() ? currentValue : nextValue;
+}
+
+function getCustomerSettingsFieldErrors(settings, { requireAll = false } = {}) {
   const errors = {};
   const displayName = sanitizeClientText(settings?.displayName || "", { max: 120 }).trim();
   const email = sanitizeClientText(settings?.email || "", { max: 254 }).replace(/\s+/g, "");
-  const phone = String(settings?.phone || "").replace(/\D/g, "");
+  const phone = String(settings?.phone || "").trim();
   const address = sanitizeClientText(settings?.address || "", { max: 200 }).trim();
   const timezone = sanitizeClientText(settings?.timezone || "", { max: 80 }).trim();
+  const bloodGroup = String(settings?.bloodGroup || "").trim();
+  const genotype = String(settings?.genotype || "").trim();
+  const emergencyContactName = sanitizeClientText(settings?.emergencyContactName || "", { max: 120 }).trim();
+  const emergencyContactPhoneNumber = String(settings?.emergencyContactPhoneNumber || "").trim();
 
-  if (displayName && !/^[a-zA-Z\s'.-]{2,120}$/.test(displayName)) {
+  if (!displayName && requireAll) {
+    errors.displayName = "Display name is required.";
+  } else if (displayName && !/^[a-zA-Zs'.-]{2,120}$/.test(displayName)) {
     errors.displayName = minLengthError("Display name", 2);
   }
-  if (email && !isValidEmailAddress(email)) {
+  if (!email && requireAll) {
+    errors.email = "Email is required.";
+  } else if (email && !isValidEmailAddress(email)) {
     errors.email = "Enter a valid email address.";
   }
-  if (String(settings?.phone || "").trim() && phone.length !== 11) {
+  if (!phone && requireAll) {
+    errors.phone = "Phone number is required.";
+  } else if (phone && !isValidCustomerPhoneNumber(phone, { allowEmpty: false })) {
     errors.phone = exactLengthError("Phone number", 11);
   }
-  if (address && address.length < 5) {
+  if (!address && requireAll) {
+    errors.address = "Address is required.";
+  } else if (address && address.length < 5) {
     errors.address = minLengthError("Address", 5);
   }
   if (timezone && timezone.length < 2) {
     errors.timezone = minLengthError("Timezone", 2);
+  }
+  if (bloodGroup && !CUSTOMER_HEALTH_BLOOD_GROUP_OPTIONS.includes(bloodGroup)) {
+    errors.bloodGroup = "Select a valid blood group.";
+  }
+  if (genotype && !CUSTOMER_HEALTH_GENOTYPE_OPTIONS.includes(genotype)) {
+    errors.genotype = "Select a valid genotype.";
+  }
+  if (emergencyContactName && !emergencyContactPhoneNumber) {
+    errors.emergencyContactPhoneNumber = "Emergency contact phone number is required when a name is added.";
+  } else if (emergencyContactPhoneNumber && !isValidCustomerPhoneNumber(emergencyContactPhoneNumber, { allowEmpty: false })) {
+    errors.emergencyContactPhoneNumber = exactLengthError("Emergency contact phone number", 11);
   }
 
   return errors;
@@ -692,22 +1159,33 @@ function defaultCustomerSettings() {
   return normalizeCustomerSettingsPayload({ timezone: storedStoreTimeZone() });
 }
 
-function readStoredCustomerSettingsPayload() {
+function readStoredCustomerSettingsPayload(sessionUser = null) {
   if (typeof window === "undefined") {
     return {};
   }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(CUSTOMER_SETTINGS_KEY) || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
+  const scopedKey = buildCustomerSettingsStorageKey(sessionUser);
+  const scopedSettings = readCustomerStoragePayload(scopedKey);
+  if (Object.keys(scopedSettings).length) {
+    window.localStorage.removeItem(CUSTOMER_SETTINGS_KEY);
+    return scopedSettings;
+  }
+  const legacySettings = readCustomerStoragePayload(CUSTOMER_SETTINGS_KEY);
+  if (!scopedKey) {
     return {};
   }
+  if (Object.keys(legacySettings).length) {
+    if (isStoredCustomerSettingsOwnedBySession(legacySettings, sessionUser)) {
+      window.localStorage.setItem(scopedKey, JSON.stringify(normalizeCustomerSettingsPayload(legacySettings)));
+    }
+    window.localStorage.removeItem(CUSTOMER_SETTINGS_KEY);
+  }
+  return readCustomerStoragePayload(scopedKey);
 }
 
-function loadCustomerSettings() {
+function loadCustomerSettings(sessionUser = null) {
   return normalizeCustomerSettingsPayload({
     ...defaultCustomerSettings(),
-    ...readStoredCustomerSettingsPayload()
+    ...readStoredCustomerSettingsPayload(sessionUser)
   });
 }
 
@@ -727,11 +1205,16 @@ function loadStorefrontSettings() {
   }
 }
 
-function persistCustomerSettings(settings) {
+function persistCustomerSettings(settings, sessionUser = null) {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(CUSTOMER_SETTINGS_KEY, JSON.stringify(normalizeCustomerSettingsPayload(settings)));
+  const scopedKey = buildCustomerSettingsStorageKey(sessionUser);
+  if (!scopedKey) {
+    return;
+  }
+  window.localStorage.setItem(scopedKey, JSON.stringify(normalizeCustomerSettingsPayload(settings)));
+  window.localStorage.removeItem(CUSTOMER_SETTINGS_KEY);
 }
 
 export default function CustomerDashboard({ initialPage = "overview", initialMtmRequestId = "" } = {}) {
@@ -746,6 +1229,13 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const [selectedAppointment, setSelectedAppointment] = useState(null);
   const [appointmentRescheduleTarget, setAppointmentRescheduleTarget] = useState(null);
   const [consultationQuotaDismissed, setConsultationQuotaDismissed] = useState(false);
+  const [profileImageSaving, setProfileImageSaving] = useState(false);
+  const [profileImageRefreshing, setProfileImageRefreshing] = useState(false);
+  const [pendingProfileAvatarUrl, setPendingProfileAvatarUrl] = useState("");
+  const [profileImageError, setProfileImageError] = useState("");
+  const [profileImageSuccess, setProfileImageSuccess] = useState("");
+  const [profileImageCooldownUntil, setProfileImageCooldownUntil] = useState(0);
+  const profileImageInputRef = useRef(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [appointmentActionBusy, setAppointmentActionBusy] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
@@ -753,14 +1243,24 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const [refillOrderBusy, setRefillOrderBusy] = useState(null);
   const [desktopSearchQuery, setDesktopSearchQuery] = useState("");
   const [desktopSearchPreviousPage, setDesktopSearchPreviousPage] = useState("overview");
+  const [desktopSearchOpen, setDesktopSearchOpen] = useState(false);
+  const desktopSearchRef = useRef(null);
+  const [dashboardToast, setDashboardToast] = useState({ type: "", message: "" });
+  const [profileSaveBusy, setProfileSaveBusy] = useState(false);
+  const [profileSaveError, setProfileSaveError] = useState("");
+  const [overviewProfilePromptVisible, setOverviewProfilePromptVisible] = useState(false);
+  const profileReminderShownRef = useRef(false);
+  const profileReminderSessionRef = useRef("");
+  const profileReminderCloseRef = useRef(null);
   const [storeUrl, setStoreUrl] = useState("#");
   const [appointmentsData, setAppointmentsData] = useState(null);
   const [appointmentsLoadingState, setAppointmentsLoadingState] = useState(false);
   const [journey, setJourney] = useState(createJourneyState());
   const [guestConsultationDraft, setGuestConsultationDraft] = useState(null);
   const [reviewDeepLinkHandled, setReviewDeepLinkHandled] = useState(false);
-  const [settings, setSettings] = useState(() => loadCustomerSettings());
+  const [settings, setSettings] = useState(() => defaultCustomerSettings());
   const customerSettingsHydratedRef = useRef(false);
+  const [customerSettingsHydrated, setCustomerSettingsHydrated] = useState(false);
   const customerSettingsFingerprintRef = useRef(JSON.stringify(defaultCustomerSettings()));
   const customerSettingsSessionRef = useRef("");
   const guestConsultationDraftHandledRef = useRef(false);
@@ -769,23 +1269,32 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const minimumBookingMinutes = useMemo(() => normalizeBookingMinutes(storefrontSettings.minimumConsultationMinutes), [storefrontSettings.minimumConsultationMinutes]);
 
   useEffect(() => {
-    setDocumentMetadata(`Nevari Customer | ${pageLabels[page] || titleCase(page)}`, `${pageLabels[page] || titleCase(page)} view for the Nevari Customer dashboard.`);
+    setDocumentMetadata(`Nevari Patient | ${pageLabels[page] || titleCase(page)}`, `${pageLabels[page] || titleCase(page)} view for the Nevari Patient dashboard.`);
   }, [page]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    if (typeof window === "undefined") {
       setIsCustomerMobile(true);
       return undefined;
     }
-    const mediaQuery = window.matchMedia(`(max-width: ${CUSTOMER_MOBILE_BREAKPOINT}px)`);
-    const syncCustomerMobile = (event) => setIsCustomerMobile(event.matches);
-    syncCustomerMobile(mediaQuery);
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", syncCustomerMobile);
-      return () => mediaQuery.removeEventListener("change", syncCustomerMobile);
-    }
-    mediaQuery.addListener(syncCustomerMobile);
-    return () => mediaQuery.removeListener(syncCustomerMobile);
+
+    const mediaQuery = typeof window.matchMedia === "function"
+      ? window.matchMedia(`(max-width: ${CUSTOMER_MOBILE_BREAKPOINT}px)`)
+      : null;
+    const syncCustomerMobile = () => setIsCustomerMobile(
+      Boolean(mediaQuery?.matches) || isCustomerMobileViewport()
+    );
+
+    syncCustomerMobile();
+    window.addEventListener("resize", syncCustomerMobile);
+    window.visualViewport?.addEventListener("resize", syncCustomerMobile);
+    mediaQuery?.addEventListener?.("change", syncCustomerMobile);
+
+    return () => {
+      window.removeEventListener("resize", syncCustomerMobile);
+      window.visualViewport?.removeEventListener("resize", syncCustomerMobile);
+      mediaQuery?.removeEventListener?.("change", syncCustomerMobile);
+    };
   }, []);
 
   useEffect(() => {
@@ -802,10 +1311,39 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   }, [isCustomerMobile]);
 
   useEffect(() => {
+    if (!dashboardToast.message || typeof window === "undefined") {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => setDashboardToast({ type: "", message: "" }), 3200);
+    return () => window.clearTimeout(timeoutId);
+  }, [dashboardToast]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+    function handleOutside(event) {
+      if (!desktopSearchRef.current?.contains(event.target)) {
+        setDesktopSearchOpen(false);
+      }
+    }
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setDesktopSearchOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, []);
+
+  useEffect(() => {
     const normalizedSettings = normalizeCustomerSettingsPayload(settings);
-    const hasStoredCustomerSettings = Object.keys(readStoredCustomerSettingsPayload()).length > 0;
-    if (customerSettingsHydratedRef.current || hasStoredCustomerSettings) {
-      persistCustomerSettings(normalizedSettings);
+    if (customerSettingsHydratedRef.current && session?.user) {
+      persistCustomerSettings(normalizedSettings, session.user);
     }
     if (!session?.accessToken || !customerSettingsHydratedRef.current || typeof window === "undefined") {
       return undefined;
@@ -818,7 +1356,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       try {
         const savedSettings = normalizeCustomerSettingsPayload(await updateCustomerSettings(session, normalizedSettings));
         customerSettingsFingerprintRef.current = JSON.stringify(savedSettings);
-        persistCustomerSettings(savedSettings);
+        persistCustomerSettings(savedSettings, session.user);
         setSettings((current) => {
           const currentFingerprint = JSON.stringify(normalizeCustomerSettingsPayload(current));
           return currentFingerprint === customerSettingsFingerprintRef.current ? current : savedSettings;
@@ -897,14 +1435,16 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   }, [authResolved, page, pathname, router]);
 
   useEffect(() => {
-    const nextSessionKey = String(session?.user?.id || "");
+    const nextSessionKey = resolveCustomerSessionStorageIdentity(session?.user);
     if (customerSettingsSessionRef.current === nextSessionKey) {
       return;
     }
     customerSettingsSessionRef.current = nextSessionKey;
     customerSettingsHydratedRef.current = false;
-    customerSettingsFingerprintRef.current = JSON.stringify(loadCustomerSettings());
-  }, [session?.user?.id]);
+    setCustomerSettingsHydrated(false);
+    customerSettingsFingerprintRef.current = JSON.stringify(loadCustomerSettings(session?.user));
+    setSettings(defaultCustomerSettings());
+  }, [session?.user]);
 
   const cachedCustomerState = (cacheKey && isSessionUsable(session))
     ? readDashboardCache(cacheKey, DASHBOARD_CACHE_TTL_MS)?.state
@@ -914,13 +1454,13 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     [cachedCustomerState, session, settings]
   );
   const customerSummaryKey = session
-    ? swrKeys.proxy.path("/customer-dashboard/summary", withBaseUrl(session))
+    ? swrKeys.proxy.path("/customer-dashboard/summary", withSessionCacheScope(session))
     : null;
   const customerOrdersKey = session && ["orders", "settings", "profile", "search"].includes(page)
     ? swrKeys.proxy.path("/orders", withBaseUrl(session, { per_page: 24, page: 1 }))
     : null;
   const customerAppointmentsEnabled = Boolean(session) && ["overview", "appointment", "settings", "profile", "search"].includes(page);
-  const customerDoctorsKey = session && ["settings", "profile", "search"].includes(page)
+  const customerDoctorsKey = session && ["settings", "search"].includes(page)
     ? swrKeys.proxy.path("/doctors", withBaseUrl(session, { per_page: 24, page: 1 }))
     : null;
   const { data: summaryState = emptyCustomerState, mutate: mutateSummary, isLoading } = useSWR(
@@ -931,8 +1471,12 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       refreshInterval: CUSTOMER_DASHBOARD_REFRESH_MS,
       revalidateOnFocus: false,
       onSuccess: (nextState) => {
+        const cachedState = pendingProfileAvatarUrl
+          && profileAvatarUrlKey(nextState?.dashboard?.profile?.avatar_url || nextState?.dashboard?.profile?.profile_image) !== profileAvatarUrlKey(pendingProfileAvatarUrl)
+          ? patchCustomerProfileAvatarState(nextState, pendingProfileAvatarUrl)
+          : nextState;
         if (cacheKey) {
-          writeDashboardCache(cacheKey, { state: nextState });
+          writeDashboardCache(cacheKey, { state: cachedState });
         }
       }
     }
@@ -1028,18 +1572,215 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     });
   }
 
-  const profile = state.dashboard?.profile || {};
+  const baseProfile = state.dashboard?.profile || {};
+  const confirmedProfileAvatarUrl = normalizeProfileAvatarUrl(baseProfile.avatar_url || baseProfile.profile_image);
+  const fallbackProfileAvatarUrl = normalizeProfileAvatarUrl(session?.user?.avatar_url || session?.user?.avatarUrl || session?.user?.picture);
+  const resolvedProfileAvatarUrl = pendingProfileAvatarUrl && profileAvatarUrlKey(confirmedProfileAvatarUrl) !== profileAvatarUrlKey(pendingProfileAvatarUrl)
+    ? pendingProfileAvatarUrl
+    : (confirmedProfileAvatarUrl || fallbackProfileAvatarUrl);
+  const profile = useMemo(() => ({
+    ...baseProfile,
+    avatar_url: resolvedProfileAvatarUrl,
+    profile_image: resolvedProfileAvatarUrl || normalizeProfileAvatarUrl(baseProfile.profile_image),
+  }), [baseProfile, resolvedProfileAvatarUrl]);
   const customerDisplayName = resolveCustomerPreferredName({
     settingsDisplayName: settings.displayName,
     profile,
     sessionUser: session?.user,
   });
+  const customerFullName = resolveCustomerFullName(profile, session?.user, customerDisplayName);
+  const customerEmailAddress = String(profile.email || session?.user?.email || settings.email || "No email available").trim() || "No email available";
+  const customerProfileCompletion = useMemo(() => getCustomerProfileCompletion(settings, profile), [profile, settings]);
+  const customerProfileReminderItems = useMemo(() => getCustomerProfileReminderItems(customerProfileCompletion.missingLabels), [customerProfileCompletion.missingLabels]);
+
   useEffect(() => {
-    if (!session?.user?.id || customerSettingsHydratedRef.current) {
+    if (pendingProfileAvatarUrl && confirmedProfileAvatarUrl && profileAvatarUrlKey(confirmedProfileAvatarUrl) === profileAvatarUrlKey(pendingProfileAvatarUrl)) {
+      setPendingProfileAvatarUrl("");
+      setProfileImageRefreshing(false);
+    }
+  }, [confirmedProfileAvatarUrl, pendingProfileAvatarUrl]);
+
+  function showDashboardToast(message, type = "success") {
+    setDashboardToast({ type, message: String(message || "").trim() });
+  }
+
+  async function persistCustomerProfileSettings(nextSettings, { successMessage = "Profile updated successfully.", errorMessage = "Something went wrong. Please try again." } = {}) {
+    if (!session?.accessToken) {
+      throw new Error("Your session expired. Please log in again.");
+    }
+    const normalizedSettings = normalizeCustomerSettingsPayload(nextSettings);
+    const errors = getCustomerSettingsFieldErrors(normalizedSettings, { requireAll: true });
+    if (Object.keys(errors).length) {
+      const validationError = new Error("Please review the highlighted fields.");
+      validationError.fieldErrors = errors;
+      throw validationError;
+    }
+
+    setProfileSaveBusy(true);
+    setProfileSaveError("");
+    try {
+      const savedSettings = normalizeCustomerSettingsPayload(await updateCustomerSettings(session, normalizedSettings));
+      customerSettingsFingerprintRef.current = JSON.stringify(savedSettings);
+      persistCustomerSettings(savedSettings, session.user);
+      setSettings(savedSettings);
+      showDashboardToast(successMessage, "success");
+      return savedSettings;
+    } catch (error) {
+      const message = error?.message || errorMessage;
+      setProfileSaveError(message);
+      showDashboardToast(message, "error");
+      throw error;
+    } finally {
+      setProfileSaveBusy(false);
+    }
+  }
+
+  async function handleProfileImageSelected(fileOrEvent) {
+    const preparedUpload = fileOrEvent && typeof fileOrEvent === "object" && typeof fileOrEvent.data_base64 === "string"
+      ? fileOrEvent
+      : null;
+    const file = preparedUpload?.file || fileOrEvent?.target?.files?.[0] || fileOrEvent || null;
+    const nextInput = fileOrEvent?.target || profileImageInputRef.current;
+    let uploadedAvatarUrl = "";
+    setProfileImageError("");
+        setProfileImageSuccess("");
+            setProfileImageCooldownUntil(0);
+            if (!preparedUpload) {
+      const validationMessage = validateCustomerProfileImageFile(file);
+      if (validationMessage) {
+        setProfileImageError(validationMessage);
+        if (nextInput) {
+          nextInput.value = "";
+        }
+        return false;
+      }
+    }
+    setProfileImageSaving(true);
+    setProfileImageRefreshing(false);
+    try {
+      const payload = preparedUpload
+        ? {
+            filename: preparedUpload.filename,
+            mime_type: preparedUpload.mime_type,
+            data_base64: preparedUpload.data_base64,
+          }
+        : {
+            filename: file.name,
+            mime_type: file.type,
+            data_base64: await readFileAsBase64(file),
+          };
+      const result = await uploadCustomerProfileImage(session, payload);
+      uploadedAvatarUrl = normalizeProfileAvatarUrl(result?.avatar_url || result?.src || "");
+      if (uploadedAvatarUrl) {
+        const refreshedAvatarUrl = withProfileAvatarRefreshToken(uploadedAvatarUrl, Date.now());
+        setPendingProfileAvatarUrl(refreshedAvatarUrl);
+        setProfileImageRefreshing(true);
+        await mutateSummary((current) => patchCustomerProfileAvatarState(current, refreshedAvatarUrl), { revalidate: false });
+        setSession((current) => current ? {
+          ...current,
+          user: {
+            ...(current.user || {}),
+            avatar_url: refreshedAvatarUrl,
+            avatarUrl: refreshedAvatarUrl,
+            picture: refreshedAvatarUrl,
+          },
+        } : current);
+        persistPatientSessionAvatar(refreshedAvatarUrl);
+        if (cacheKey) {
+          writeDashboardCache(cacheKey, {
+            state: patchCustomerProfileAvatarState(summaryState, refreshedAvatarUrl),
+          });
+        }
+      }
+      setProfileImageSuccess("Profile image updated successfully.");
+      showDashboardToast("Profile image updated successfully.", "success");
+      if (customerSummaryKey) {
+        void globalMutate(customerSummaryKey).then((refreshedState) => {
+          const refreshedAvatarUrl = normalizeProfileAvatarUrl(
+            refreshedState?.dashboard?.profile?.avatar_url
+            || refreshedState?.dashboard?.profile?.profile_image
+            || refreshedState?.profile?.avatar_url
+            || refreshedState?.profile?.profile_image
+          );
+          if (uploadedAvatarUrl && profileAvatarUrlKey(refreshedAvatarUrl) === profileAvatarUrlKey(uploadedAvatarUrl)) {
+            setPendingProfileAvatarUrl("");
+          }
+        }).finally(() => {
+          setProfileImageRefreshing(false);
+        });
+      } else {
+        setProfileImageRefreshing(false);
+      }
+      return true;
+    } catch (error) {
+      setProfileImageRefreshing(false);
+      if (!uploadedAvatarUrl) {
+        setPendingProfileAvatarUrl("");
+      }
+      const retrySeconds = getProfileImageRateLimitRetrySeconds(error);
+      if (retrySeconds > 0) {
+        setProfileImageCooldownUntil(Date.now() + (retrySeconds * 1000));
+      }
+      const message = describeProfileImageUploadError(error);
+      setProfileImageError(message);
+      showDashboardToast(message, "error");
+      return false;
+    } finally {
+      setProfileImageSaving(false);
+      if (nextInput) {
+        nextInput.value = "";
+      }
+    }
+  }
+
+  useEffect(() => {
+    const sessionIdentity = resolveCustomerSessionStorageIdentity(session?.user);
+    if (!sessionIdentity) {
+      profileReminderSessionRef.current = "";
+      profileReminderShownRef.current = false;
+      setOverviewProfilePromptVisible(false);
+      return undefined;
+    }
+    if (profileReminderSessionRef.current !== sessionIdentity) {
+      profileReminderSessionRef.current = sessionIdentity;
+      profileReminderShownRef.current = false;
+    }
+    if (!authResolved || page !== "overview" || !customerSettingsHydrated || customerProfileCompletion.isComplete || profileReminderShownRef.current || !customerProfileReminderItems.length) {
+      if (customerProfileCompletion.isComplete) {
+        setOverviewProfilePromptVisible(false);
+      }
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      profileReminderShownRef.current = true;
+      setOverviewProfilePromptVisible(true);
+    }, 180);
+    return () => window.clearTimeout(timeoutId);
+  }, [authResolved, customerProfileCompletion.isComplete, customerProfileReminderItems.length, customerSettingsHydrated, page, session?.user?.email, session?.user?.id]);
+
+  useEffect(() => {
+    if (!overviewProfilePromptVisible || typeof document === "undefined") {
+      return undefined;
+    }
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        dismissOverviewProfilePrompt();
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    window.setTimeout(() => profileReminderCloseRef.current?.focus?.(), 0);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [overviewProfilePromptVisible]);
+
+  function dismissOverviewProfilePrompt() {
+    setOverviewProfilePromptVisible(false);
+  }
+  useEffect(() => {
+    if (!resolveCustomerSessionStorageIdentity(session?.user) || customerSettingsHydratedRef.current) {
       return;
     }
     const summarySettings = normalizeCustomerSettingsPayload(summaryState.settings || state.dashboard?.settings || {});
-    const storedSettingsPayload = readStoredCustomerSettingsPayload();
+    const storedSettingsPayload = readStoredCustomerSettingsPayload(session.user);
     const storedSettings = normalizeCustomerSettingsPayload(storedSettingsPayload);
     const storedSettingKeys = new Set(Object.keys(storedSettingsPayload));
     const mergedSettings = normalizeCustomerSettingsPayload({
@@ -1057,10 +1798,11 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       }
     });
     customerSettingsHydratedRef.current = true;
+    setCustomerSettingsHydrated(true);
     customerSettingsFingerprintRef.current = JSON.stringify(mergedSettings);
-    persistCustomerSettings(mergedSettings);
+    persistCustomerSettings(mergedSettings, session.user);
     setSettings(mergedSettings);
-  }, [customerDisplayName, profile.address, profile.email, profile.phone, session?.user?.email, session?.user?.id, settings, state.dashboard?.settings, summaryState.settings]);
+  }, [customerDisplayName, profile.address, profile.email, profile.phone, session?.user, settings, state.dashboard?.settings, summaryState.settings]);
   const visibleDoctors = useMemo(() => sortPreferredDoctors(state.doctors, settings.preferredDoctorIds), [settings.preferredDoctorIds, state.doctors]);
   const subscriptionState = useSubscription(session);
   const mtmRequestsKey = session && page === "therapy"
@@ -1240,7 +1982,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const selectedDoctor = visibleDoctors.find((doctor) => String(doctor.user_id || doctor.id) === String(journey.doctorId)) || null;
   const pageQueryLoading = (
     (page === "orders" && ordersQuery.isLoading && !ordersQuery.data) ||
-    (["settings", "profile"].includes(page) && ((ordersQuery.isLoading && !ordersQuery.data) || (appointmentsLoadingState && !appointmentsData)))
+    (page === "settings" && ((ordersQuery.isLoading && !ordersQuery.data) || (appointmentsLoadingState && !appointmentsData)))
   );
   const ordersLoading = Boolean(customerOrdersKey) && ordersQuery.isLoading && !Array.isArray(ordersQuery.data);
   const appointmentsLoading = customerAppointmentsEnabled && appointmentsLoadingState && !Array.isArray(appointmentsData);
@@ -1759,6 +2501,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const consultationQuotaResetLabel = String(subscription.free_consultations_reset_label || "").trim();
   const isProSubscription = String(subscription.plan_key || "").toLowerCase() === "nevari_access_pro" || Boolean(subscription.is_paid);
   const customerSettingsErrors = getCustomerSettingsFieldErrors(settings);
+
   const showConsultationQuotaNotice = page === "appointment" && isProSubscription && !consultationQuotaDismissed;
   const consultationQuotaTitle = consultationQuotaRemaining <= 0 ? "Free Monthly Consultation Allowance Used" : "Free Monthly Consultation";
   const consultationQuotaBody = consultationQuotaRemaining <= 0
@@ -1768,7 +2511,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
 
   if (!isCustomerMobile) {
     return <RoleShell
-      title="Nevari Customer"
+      title="Nevari Patient"
       pages={pages}
       active={page}
       onPageChange={setPage}
@@ -1778,15 +2521,17 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       onLogout={handleLogout}
       logoutBusy={logoutBusy}
       sidebarFooter={<div className="customer-desktop-sidebar-profile">
-        <div className="customer-mobile-avatar">
+        <div className="customer-mobile-avatar customer-desktop-sidebar-avatar">
           {profile.avatar_url ? <img src={profile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
-          <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(settings.displayName || profile.display_name || "Customer")}</span>
+          <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(customerFullName)}</span>
         </div>
-        <span>{settings.displayName || profile.display_name || "Tee Godwin"}</span>
-        <strong aria-hidden="true">...</strong>
+        <div className="customer-desktop-sidebar-profile-copy">
+          <strong>{customerFullName}</strong>
+          <span>{customerEmailAddress}</span>
+        </div>
       </div>}
       topContent={<div className="customer-desktop-topbar">
-        <label className="customer-desktop-search-shell" aria-label="Search dashboard">
+        <label ref={desktopSearchRef} className={"customer-desktop-search-shell customer-desktop-search-shell-interactive" + (desktopSearchOpen ? " is-open" : "")} aria-label="Search dashboard">
           <HugeiconsIcon icon={Search01Icon} size={18} strokeWidth={1.8} />
           <input
             type="search"
@@ -1794,18 +2539,38 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
             placeholder="Search here for orders, appointments etc"
             aria-label="Search here for orders, appointments etc"
             onFocus={() => {
+              setDesktopSearchOpen(true);
               if (page !== "search") {
                 openDesktopSearch(desktopSearchQuery);
               }
             }}
             onChange={(event) => openDesktopSearch(event.target.value)}
           />
+          {desktopSearchQuery ? <button type="button" className="customer-desktop-search-clear" aria-label="Clear search" onClick={() => {
+            setDesktopSearchQuery("");
+            setDesktopSearchOpen(true);
+          }}>?</button> : null}
+          {desktopSearchOpen ? <div className="customer-desktop-search-dropdown">
+            {desktopSearchQuery.trim().length < 3
+              ? CUSTOMER_SEARCH_QUICK_OPTIONS.map(([nextPage, label]) => <button key={nextPage} type="button" onClick={() => {
+                setDesktopSearchOpen(false);
+                setDesktopSearchQuery("");
+                setPage(nextPage);
+              }}>{label}</button>)
+              : desktopSearchResults.length
+                ? desktopSearchResults.slice(0, 4).map((result) => <button key={result.key} type="button" onClick={() => {
+                  setDesktopSearchOpen(false);
+                  result.onSelect();
+                }}><span>{result.label}</span><small>{result.area}</small></button>)
+                : <div className="customer-desktop-search-empty">No results found</div>}
+          </div> : null}
         </label>
       </div>}
     >
       {showSkeleton ? <CustomerDesktopSkeleton page={page} /> : null}
       {!showSkeleton && page === "overview" ? <CustomerMobileDashboard
         session={session}
+        setSession={setSession}
         page={page}
         setPage={setPage}
         showSkeleton={false}
@@ -2026,6 +2791,15 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         orders={state.orders}
         appointments={state.appointments}
         settings={settings}
+        displayName={customerDisplayName}
+        uploading={profileImageSaving}
+        imageRefreshing={profileImageRefreshing}
+        imageError={profileImageError}
+        imageSuccess={profileImageSuccess}
+                imageCooldownUntil={profileImageCooldownUntil}
+                        imageInputRef={profileImageInputRef}
+                        onProfileImageSelect={handleProfileImageSelected}
+        onProfileImageOpen={() => profileImageInputRef.current?.click()}
         onSettingsChange={setSettings}
         onLogout={handleLogout}
         logoutBusy={logoutBusy}
@@ -2036,13 +2810,25 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         appointments={state.appointments}
         doctors={visibleDoctors}
         settings={settings}
+        displayName={customerDisplayName}
+        uploading={profileImageSaving}
+        imageRefreshing={profileImageRefreshing}
+        imageError={profileImageError}
+        imageSuccess={profileImageSuccess}
+                imageCooldownUntil={profileImageCooldownUntil}
+                        imageInputRef={profileImageInputRef}
+                        onProfileImageSelect={handleProfileImageSelected}
+        onProfileImageOpen={() => profileImageInputRef.current?.click()}
         subscriptionState={subscriptionState}
         onSettingsChange={setSettings}
+        onViewSubscription={() => setPage("subscription-management")}
         onLogout={handleLogout}
         logoutBusy={logoutBusy}
       /> : null}
+      {!showSkeleton && page === "subscription-management" ? <CustomerSubscriptionManagementScreen embeddedDesktop onBack={() => setPage("profile")} subscriptionState={subscriptionState} /> : null}
       {!showSkeleton && page === "request" ? <CustomerMobileDashboard
         session={session}
+        setSession={setSession}
         page={page}
         setPage={setPage}
         showSkeleton={false}
@@ -2361,6 +3147,29 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       refillOrderBusy={refillOrderBusy}
       onClose={() => setSelectedOrder(null)}
     /> : null}
+    {overviewProfilePromptVisible ? <div className="customer-profile-reminder-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissOverviewProfilePrompt(); }}>
+      <div className="customer-profile-reminder-modal" role="dialog" aria-modal="true" aria-labelledby="customer-profile-reminder-title" aria-describedby="customer-profile-reminder-description" onMouseDown={(event) => event.stopPropagation()}>
+        <button ref={profileReminderCloseRef} className="customer-profile-reminder-close" type="button" onClick={dismissOverviewProfilePrompt} aria-label="Dismiss profile reminder">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" focusable="false"><path d="M6 6 18 18M18 6 6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+        </button>
+        <div className="customer-profile-reminder-body">
+          <div className="customer-profile-reminder-icon" aria-hidden="true"><svg viewBox="0 0 96 96" width="96" height="96" fill="none"><circle cx="48" cy="48" r="41" stroke="#e8eef6" strokeWidth="10" /><path d="M48 7a41 41 0 0 1 0 82" stroke="#0b3779" strokeWidth="10" strokeLinecap="round" /><circle cx="48" cy="48" r="29" fill="#0b3779" /><path d="M48 41a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm-10 15c1.7-7 5-10 10-10s8.3 3 10 10" stroke="white" strokeWidth="2.4" strokeLinecap="round" /></svg></div>
+          <span className="customer-profile-reminder-kicker">Profile reminder</span>
+          <h2 id="customer-profile-reminder-title">Keep your profile up to date</h2>
+          <p id="customer-profile-reminder-description">Complete your details so we can personalise your care, contact you when needed, and make future appointments quicker.</p>
+          <section className="customer-profile-reminder-progress" aria-label="Profile completion">
+            <div className="customer-profile-reminder-progress-head"><strong>Your profile is almost complete</strong><strong>{customerProfileCompletion.percent}%</strong></div>
+            <div className="customer-profile-reminder-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={customerProfileCompletion.percent}><span style={{ width: `${customerProfileCompletion.percent}%` }} /></div>
+            <ul>{customerProfileReminderItems.map((item) => <li key={item}><svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.6" /><path d="M10 6v5M10 14h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg><span>{item}</span></li>)}</ul>
+          </section>
+          <p className="customer-profile-reminder-privacy"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6V10Z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg><span>Your information is securely stored and only used to support your care.</span></p>
+        </div>
+        <div className="customer-profile-reminder-actions">
+          <button type="button" className="customer-profile-reminder-secondary" onClick={dismissOverviewProfilePrompt}>Remind me later</button>
+          <button type="button" className="customer-profile-reminder-primary" onClick={() => { setOverviewProfilePromptVisible(false); setPage("profile"); }}>Update profile <span aria-hidden="true">-&gt;</span></button>
+        </div>
+      </div>
+    </div> : null}`n    {dashboardToast.message ? <div className={"snackbar auth-snackbar " + (dashboardToast.type || "success")} role="status" aria-live="polite"><span className="snackbar-message">{dashboardToast.message}</span></div> : null}
   </>;
 }
 
@@ -2374,7 +3183,9 @@ function hasCustomerDashboardData(state) {
 }
 
 function buildCustomerBootstrapState(session, settings, fallbackState = emptyCustomerState) {
-  const fallbackProfile = fallbackState?.dashboard?.profile || {};
+  const fallbackProfile = isCustomerProfileOwnedBySession(fallbackState?.dashboard?.profile || {}, session?.user)
+    ? (fallbackState?.dashboard?.profile || {})
+    : {};
   const sessionUser = session?.user || {};
 
   return {
@@ -2384,20 +3195,14 @@ function buildCustomerBootstrapState(session, settings, fallbackState = emptyCus
       ...(fallbackState?.dashboard || {}),
       store_currency: fallbackState?.dashboard?.store_currency || SSR_SAFE_STORE_CURRENCY,
       store_timezone: fallbackState?.dashboard?.store_timezone || SSR_SAFE_STORE_TIMEZONE,
-      profile: {
-        id: fallbackProfile.id || sessionUser.id || null,
-        email: fallbackProfile.email || settings.email || sessionUser.email || "",
-        display_name: resolveCustomerPreferredName({
-          settingsDisplayName: settings.displayName,
-          profile: fallbackProfile,
-          sessionUser,
-        }),
-        first_name: String(fallbackProfile.first_name || sessionUser.first_name || sessionUser.firstName || "").trim(),
-        last_name: String(fallbackProfile.last_name || sessionUser.last_name || sessionUser.lastName || "").trim(),
-        roles: (Array.isArray(fallbackProfile.roles) && fallbackProfile.roles.length)
-          ? fallbackProfile.roles
-          : resolveUserRoles(sessionUser)
-      }
+      profile: resolveCustomerProfileForSession({
+        profile: {
+          ...fallbackProfile,
+          email: fallbackProfile.email || settings.email || sessionUser.email || ""
+        },
+        sessionUser,
+        settingsDisplayName: settings.displayName
+      })
     },
     orders: Array.isArray(fallbackState?.orders) ? fallbackState.orders : [],
     appointments: Array.isArray(fallbackState?.appointments) ? fallbackState.appointments : [],
@@ -2586,17 +3391,17 @@ function CustomerAppHeader({ profile }) {
     <div className="profile-mini">
       <div className="avatar">
         {profile.avatar_url ? <img src={profile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
-        <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(profile.display_name || "Customer")}</span>
+        <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(profile.display_name || "Patient")}</span>
       </div>
       <div>
         <div className="small muted">Hello,</div>
-        <div className="card-title">{profile.display_name || "Customer"}</div>
+        <div className="card-title">{profile.display_name || "Patient"}</div>
       </div>
     </div>
   </div>;
 }
 
-function CustomerOverview({ doctors, orders, appointments, orderCounts, onOpenPage, onOpenAvailability, onOpenAppointment, storeCurrency, storeTimeZone, storeUrl, greetingName = "Customer" }) {
+function CustomerOverview({ doctors, orders, appointments, orderCounts, onOpenPage, onOpenAvailability, onOpenAppointment, storeCurrency, storeTimeZone, storeUrl, greetingName = "Patient" }) {
   const [query, setQuery] = useState("");
   const searchResults = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -2609,7 +3414,7 @@ function CustomerOverview({ doctors, orders, appointments, orderCounts, onOpenPa
       .map((order) => ({
         key: `order-${order.id}`,
         label: `Order #${order.number}`,
-        meta: `${money(order.total, storeCurrency)} · ${titleCase(order.status)}`,
+        meta: `${money(order.total, storeCurrency)} Ãƒâ€šÃ‚Â· ${titleCase(order.status)}`,
         page: "orders"
       }));
     const appointmentMatches = appointments
@@ -2784,7 +3589,7 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
           <span className="customer-detail-summary-icon"><DashboardIcon name="appointment" /></span>
           <div>
             <div className="customer-detail-summary-title">{doctor?.display_name || `Doctor #${appointment.doctor_user_id}`}</div>
-            <div className="customer-detail-summary-sub">{friendlyDate(appointment.start_at, storeTimeZone)} • {formatTime(appointment.start_at, storeTimeZone)}</div>
+            <div className="customer-detail-summary-sub">{friendlyDate(appointment.start_at, storeTimeZone)} ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {formatTime(appointment.start_at, storeTimeZone)}</div>
           </div>
           <div className="appointment-status-stack">
             <span className={`chip ${statusTone}`}><span className="chip-dot" />{statusLabel}</span>
@@ -2909,7 +3714,7 @@ function DoctorCards({ doctors, doctorsUnavailable, loading = false, onOpenAvail
           </div>
           <div className="booking-meta">
             <h4>{doctor.display_name || "Doctor"}</h4>
-            <p>{doctor.specialties?.[0] || "General consultation"} {doctor.years_experience ? `· ${doctor.years_experience} years exp` : ""}</p>
+            <p>{doctor.specialties?.[0] || "General consultation"} {doctor.years_experience ? `Ãƒâ€šÃ‚Â· ${doctor.years_experience} years exp` : ""}</p>
           </div>
           <button className="doctor-rating-trigger" type="button" onClick={() => onOpenReviews(doctor)}>
             <span aria-hidden="true">*</span>
@@ -2984,7 +3789,7 @@ function OrdersPage({ orders, counts, expandedOrderId, loading = false, onToggle
               <div className="customer-order-main">
                 <div>
                   <div className="card-title">{orderPrimaryLabel(order)}</div>
-                  <div className="card-desc">Order ID {order.number} · {quantity} items</div>
+                  <div className="card-desc">Order ID {order.number} Ãƒâ€šÃ‚Â· {quantity} items</div>
                   <span className={`status-badge ${typeMeta.tone}`}>{typeMeta.label}</span>
                 </div>
               </div>
@@ -3006,10 +3811,10 @@ function OrdersPage({ orders, counts, expandedOrderId, loading = false, onToggle
               </div>
               <div className="toolbar customer-order-actions">
                 <button className="pill-button" type="button" onClick={() => onToggleOrder(order.id)}>View</button>
-                {order.can_refill || order.refill_available ? <button className="button-primary" type="button" disabled={refillOrderBusy === order.id} onClick={() => onRefillOrder?.(order)}>{refillOrderBusy === order.id ? <BrandedSpinner label="Creating refill" /> : "Refill"}</button> : null}
-                {order.status === "completed" ? <button className="customer-order-pdf-button" type="button" aria-label="Open documents" title="Open documents" onClick={() => onOpenOrderDocuments(order)}>
+                {order.status === "completed" ? <button className="customer-order-pdf-button" type="button" aria-label="Open receipt" title="Open receipt" onClick={() => onOpenOrderDocuments(order)}>
                   <DashboardIcon name="orders" />
                 </button> : null}
+                {order.status === "completed" && (order.can_refill || order.refill_available) ? <button className="button-primary" type="button" disabled={refillOrderBusy === order.id} onClick={() => onRefillOrder?.(order)}>{refillOrderBusy === order.id ? <BrandedSpinner label="Creating refill order" /> : "Refill Order"}</button> : null}
                 {order.status === "pending" ? <button className="pill-button danger" type="button" onClick={() => onCancelPendingOrder(order)}>Cancel order</button> : null}
               </div>
             </div> : null}
@@ -3428,7 +4233,7 @@ function OrderDetailsModal({ order, storeCurrency, onOpenOrderDocuments, onCance
   const canCancel = String(order?.status || "").toLowerCase() === "pending";
   const orderPaymentUrl = resolveOrderPaymentUrl(order);
   const canPayNow = Boolean(orderPaymentUrl);
-  const canRefill = Boolean(order?.can_refill || order?.refill_available);
+  const canRefill = String(order?.status || "").toLowerCase() === "completed" && Boolean(order?.can_refill || order?.refill_available);
   const items = Array.isArray(order?.items) ? order.items : [];
   const subtotal = items.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.price || 0)), 0);
   const deliveryFee = Math.max(0, Number(order?.total || 0) - subtotal);
@@ -3497,7 +4302,7 @@ function OrderDetailsModal({ order, storeCurrency, onOpenOrderDocuments, onCance
         <h3 className="detail-section-title">Delivery Progress</h3>
         <div className="detail-card timeline">
           {timeline.map((step) => <div key={step.label} className={`timeline-step ${step.done ? "done" : ""}`}>
-            <span className="timeline-dot">{step.done ? "✓" : ""}</span>
+            <span className="timeline-dot">{step.done ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“" : ""}</span>
             <div><div className="timeline-title">{step.label}</div></div>
           </div>)}
         </div>
@@ -3505,8 +4310,8 @@ function OrderDetailsModal({ order, storeCurrency, onOpenOrderDocuments, onCance
 
       <div className="action-stack">
         {canPayNow ? <a className="btn btn-primary btn-wide appointment-link-cta" href={orderPaymentUrl} target="_blank" rel="noreferrer">Pay now</a> : null}
-        {canRefill ? <button className="btn btn-primary btn-wide" type="button" disabled={refillOrderBusy === order?.id} onClick={() => onRefillOrder?.(order)}>{refillOrderBusy === order?.id ? <BrandedSpinner label="Creating refill" /> : "Refill"}</button> : null}
         <button className="btn btn-outline btn-wide" type="button" onClick={() => onOpenOrderDocuments(order)}>Open receipt</button>
+        {canRefill ? <button className="btn btn-primary btn-wide" type="button" disabled={refillOrderBusy === order?.id} onClick={() => onRefillOrder?.(order)}>{refillOrderBusy === order?.id ? <BrandedSpinner label="Creating refill order" /> : "Refill Order"}</button> : null}
         {canCancel ? <button className="btn btn-danger btn-wide" type="button" onClick={() => onCancelPendingOrder(order)}>Cancel order</button> : null}
       </div>
     </section>
@@ -3537,7 +4342,7 @@ function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, 
 
   return <section className="appointment-mobile-sheet">
     <div className="appointment-mobile-header">
-      <button className="appointment-circle-button" type="button" aria-label="Go back" onClick={onBack}>{"←"}</button>
+      <button className="appointment-circle-button" type="button" aria-label="Go back" onClick={onBack}>{"ÃƒÂ¢Ã¢â‚¬Â Ã‚Â"}</button>
     </div>
     <div className="appointment-surface-card">
       <div className="appointment-surface-head">
@@ -3749,7 +4554,7 @@ function PatientReviewsPage({ doctor, journey, pastAppointments, onBack, onRevie
       <div className="appointment-surface-head">
         <div>
           <h3>{doctor?.display_name || "Doctor"}</h3>
-          <p>{Number(summary.average || 0).toFixed(1)} / 5 · {summary.count || 0} reviews</p>
+          <p>{Number(summary.average || 0).toFixed(1)} / 5 Ãƒâ€šÃ‚Â· {summary.count || 0} reviews</p>
         </div>
       </div>
       {[5, 4, 3, 2, 1].map((rating) => {
@@ -3874,17 +4679,25 @@ function CustomerStatusActions({ children }) {
   return <div className="customer-flow-status-actions">{children}</div>;
 }
 
-function SettingsPage({ profile, doctors, orders, appointments, settings, validationErrors = {}, onSettingsChange, onLogout, logoutBusy = false }) {
+function SettingsPage({ profile, doctors, orders, appointments, settings, displayName = "Patient", uploading = false, imageRefreshing = false, imageError = "", imageSuccess = "", imageInputRef = null, onProfileImageSelect, onProfileImageOpen, validationErrors = {}, onSettingsChange, onLogout, logoutBusy = false }) {
   const invoiceCount = orders.filter((order) => ["processing", "completed"].includes(String(order.status || "").toLowerCase())).length;
   return <div className="customer-dashboard-stack customer-desktop-boxed-page">
     <section className="customer-list-shell customer-settings-shell">
       <div className="profile-card customer-settings-hero">
-        <div className="avatar">
-          {profile.avatar_url ? <img src={profile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
-          <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(settings.displayName || profile.display_name || "Customer")}</span>
-        </div>
+        <CustomerProfilePhotoWidget
+          profile={profile}
+          displayName={displayName}
+          uploading={uploading}
+          refreshing={imageRefreshing}
+          error={imageError}
+          success={imageSuccess}
+          inputRef={imageInputRef}
+          onSelect={onProfileImageSelect}
+          onOpen={onProfileImageOpen}
+          className="customer-desktop-photo-slot"
+        />
         <div>
-          <div className="card-title">{settings.displayName || profile.display_name || "Customer"}</div>
+          <div className="card-title">{displayName}</div>
           <div className="card-desc">{settings.email || profile.email || "No email available"}</div>
           <div className="profile-stats">
             <span className="profile-stat">{appointments.length} appointments</span>
@@ -3921,7 +4734,7 @@ function SettingsPage({ profile, doctors, orders, appointments, settings, valida
             <div className="card-desc">Identity and delivery information</div>
           </div>
           <div className="customer-settings-form-grid">
-              <label><span>Display name</span><input value={settings.displayName} className={validationErrors.displayName ? "has-error" : ""} placeholder={profile.display_name || "Customer"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />{validationErrors.displayName ? <small className="customer-mobile-field-error">{validationErrors.displayName}</small> : null}</label>
+              <label><span>Display name</span><input value={settings.displayName} className={validationErrors.displayName ? "has-error" : ""} placeholder={displayName} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />{validationErrors.displayName ? <small className="customer-mobile-field-error">{validationErrors.displayName}</small> : null}</label>
               <label><span>Email</span><input type="email" inputMode="email" value={settings.email} className={validationErrors.email ? "has-error" : ""} placeholder={profile.email || "customer@email.com"} onChange={(event) => onSettingsChange((current) => ({ ...current, email: sanitizeClientText(event.target.value, { max: 254 }).replace(/\s+/g, "") }))} />{validationErrors.email ? <small className="customer-mobile-field-error">{validationErrors.email}</small> : null}</label>
               <label><span>Phone number</span><input type="tel" inputMode="tel" maxLength={11} value={settings.phone} className={validationErrors.phone ? "has-error" : ""} placeholder="+234 ..." onChange={(event) => onSettingsChange((current) => ({ ...current, phone: normalizeMtmPhoneNumber(event.target.value) }))} />{validationErrors.phone ? <small className="customer-mobile-field-error">{validationErrors.phone}</small> : null}</label>
               <label><span>Address</span><textarea rows={3} className={validationErrors.address ? "has-error" : ""} value={settings.address} onChange={(event) => onSettingsChange((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />{validationErrors.address ? <small className="customer-mobile-field-error">{validationErrors.address}</small> : null}</label>
@@ -3990,7 +4803,847 @@ function SettingsToggle({ label, checked, onChange }) {
   </label>;
 }
 
-function ProfilePage({ profile, orders, appointments, doctors, settings, subscriptionState = null, validationErrors = {}, onSettingsChange, onLogout, logoutBusy = false }) {
+function CustomerProfilePhotoWidget({ profile, displayName, uploading, refreshing = false, error, success, cooldownUntil = 0, inputRef, onSelect, onOpen, className = "" }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadSettling, setUploadSettling] = useState(false);
+  const [pendingFile, setPendingFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [localError, setLocalError] = useState("");
+  const [cropError, setCropError] = useState("");
+  const [loadingCropImage, setLoadingCropImage] = useState(false);
+  const [cropState, setCropState] = useState(null);
+  const [pendingImageMeta, setPendingImageMeta] = useState(null);
+  const [cropViewportSize, setCropViewportSize] = useState(0);
+    const [cooldownNow, setCooldownNow] = useState(() => Date.now());
+      const avatarUrl = String(profile?.avatar_url || "").trim();
+  const previousUploadingRef = useRef(false);
+  const triggerRef = useRef(null);
+  const viewerCloseRef = useRef(null);
+  const uploadCloseRef = useRef(null);
+  const cropSurfaceRef = useRef(null);
+  const dragStateRef = useRef(null);
+
+  useEffect(() => {
+    let timeoutId;
+
+    if (refreshing) {
+      setUploadSettling(false);
+    } else if (previousUploadingRef.current) {
+      setUploadSettling(true);
+      timeoutId = window.setTimeout(() => setUploadSettling(false), 720);
+    }
+
+    previousUploadingRef.current = refreshing;
+    return () => {
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [avatarUrl, refreshing]);
+
+  useEffect(() => {
+    if (!pendingFile) {
+      setPreviewUrl("");
+      return undefined;
+    }
+    const nextUrl = URL.createObjectURL(pendingFile);
+    setPreviewUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [pendingFile]);
+
+  useEffect(() => {
+    if (!viewerOpen && !uploadOpen) {
+      return undefined;
+    }
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setViewerOpen(false);
+        setUploadOpen(false);
+        setMenuOpen(false);
+        setPendingFile(null);
+        setPendingImageMeta(null);
+        setCropState(null);
+        setCropError("");
+        setLocalError("");
+        if (inputRef?.current) {
+          inputRef.current.value = "";
+        }
+        window.setTimeout(() => triggerRef.current?.focus(), 0);
+      }
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [inputRef, uploadOpen, viewerOpen]);
+
+  useEffect(() => {
+    if (viewerOpen) {
+      viewerCloseRef.current?.focus();
+    }
+  }, [viewerOpen]);
+
+  useEffect(() => {
+    if (uploadOpen) {
+      uploadCloseRef.current?.focus();
+    }
+  }, [uploadOpen]);
+
+  useEffect(() => {
+    if (!uploadOpen) {
+      setCropViewportSize(0);
+      return undefined;
+    }
+
+    function measureCropViewport() {
+      const nextSize = Number(cropSurfaceRef.current?.clientWidth || 0);
+      setCropViewportSize((current) => (current !== nextSize ? nextSize : current));
+    }
+
+    measureCropViewport();
+
+    if (typeof ResizeObserver === "function" && cropSurfaceRef.current) {
+      const observer = new ResizeObserver(() => measureCropViewport());
+      observer.observe(cropSurfaceRef.current);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", measureCropViewport);
+    return () => window.removeEventListener("resize", measureCropViewport);
+  }, [uploadOpen]);
+
+  useEffect(() => {
+    if (!pendingImageMeta || !cropViewportSize) {
+      return;
+    }
+
+    setCropState((current) => createProfileImageCropState({
+      naturalWidth: pendingImageMeta.naturalWidth,
+      naturalHeight: pendingImageMeta.naturalHeight,
+      cropSize: cropViewportSize,
+      zoom: current?.zoom || PROFILE_IMAGE_MIN_ZOOM,
+      offsetX: current?.offsetX || 0,
+      offsetY: current?.offsetY || 0,
+    }));
+  }, [cropViewportSize, pendingImageMeta]);
+
+  useEffect(() => {
+    function handlePointerMove(event) {
+      const dragState = dragStateRef.current;
+      if (!dragState) {
+        return;
+      }
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      const nextOffsetX = dragState.originX + (event.clientX - dragState.startX);
+      const nextOffsetY = dragState.originY + (event.clientY - dragState.startY);
+      setCropState((current) => {
+        if (!current) {
+          return current;
+        }
+        return createProfileImageCropState({
+          ...current,
+          offsetX: nextOffsetX,
+          offsetY: nextOffsetY,
+        });
+      });
+    }
+
+    function stopDragging() {
+      dragStateRef.current = null;
+    }
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", stopDragging);
+    window.addEventListener("pointercancel", stopDragging);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopDragging);
+      window.removeEventListener("pointercancel", stopDragging);
+    };
+  }, []);
+
+  function restoreFocus() {
+    window.setTimeout(() => triggerRef.current?.focus(), 0);
+  }
+
+  function resetCropState(meta) {
+    if (!meta || !cropViewportSize) {
+      setCropState(null);
+      return;
+    }
+    setCropState(createProfileImageCropState({
+      naturalWidth: meta.naturalWidth,
+      naturalHeight: meta.naturalHeight,
+      cropSize: cropViewportSize,
+    }));
+  }
+
+  function closeMenu() {
+    setMenuOpen(false);
+  }
+
+  function closeViewer() {
+    setViewerOpen(false);
+    restoreFocus();
+  }
+
+  function closeUploadModal({ force = false } = {}) {
+    if (uploading && !force) {
+      return;
+    }
+    setUploadOpen(false);
+    setPendingFile(null);
+    setPendingImageMeta(null);
+    setCropState(null);
+    setCropError("");
+    setLocalError("");
+    setLoadingCropImage(false);
+    dragStateRef.current = null;
+    if (inputRef?.current) {
+      inputRef.current.value = "";
+    }
+    restoreFocus();
+  }
+
+  function handleAvatarClick() {
+    if (uploading || refreshing) {
+      return;
+    }
+    setMenuOpen((open) => !open);
+  }
+
+  function handleViewPhoto() {
+    closeMenu();
+    if (avatarUrl) {
+      setViewerOpen(true);
+    }
+  }
+
+  function handleUploadPhoto() {
+    closeMenu();
+    setPendingFile(null);
+    setPendingImageMeta(null);
+    setCropState(null);
+    setCropError("");
+    setLocalError("");
+    setUploadOpen(false);
+    window.setTimeout(() => inputRef?.current?.click(), 0);
+  }
+
+  async function handleNativeFileChange(event) {
+    const file = event.target.files?.[0] || null;
+    const validationMessage = validateCustomerProfileImageFile(file);
+    if (validationMessage) {
+      setPendingFile(null);
+      setPendingImageMeta(null);
+      setCropState(null);
+      setCropError("");
+      setLocalError(validationMessage);
+      return;
+    }
+
+    setLoadingCropImage(true);
+    setCropError("");
+    setLocalError("");
+    try {
+      const dimensions = await loadImageDimensions(file);
+      const meta = {
+        naturalWidth: dimensions.naturalWidth,
+        naturalHeight: dimensions.naturalHeight,
+      };
+      setPendingFile(file);
+      setPendingImageMeta(meta);
+      setUploadOpen(true);
+      if (cropViewportSize) {
+        resetCropState(meta);
+      }
+    } catch (loadError) {
+      setPendingFile(null);
+      setPendingImageMeta(null);
+      setCropState(null);
+      setLocalError(loadError?.message || "Unable to read the selected image.");
+    } finally {
+      setLoadingCropImage(false);
+    }
+  }
+
+  function handleCropPointerDown(event) {
+    if (!cropState || loadingCropImage) {
+      return;
+    }
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    dragStateRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: cropState.offsetX,
+      originY: cropState.offsetY,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function handleZoomChange(event) {
+    const nextZoom = Number(event.target.value || PROFILE_IMAGE_MIN_ZOOM);
+    setCropState((current) => current ? createProfileImageCropState({
+      ...current,
+      zoom: nextZoom,
+    }) : current);
+  }
+
+  function handleResetCrop() {
+    setCropError("");
+    resetCropState(pendingImageMeta);
+  }
+
+  async function handleSaveImage() {
+    if (profileImageCooldownActive) {
+      setCropError(formatProfileImageRateLimitMessage(profileImageCooldownSeconds));
+      return;
+    }
+    if (!pendingFile || !cropState || uploading || loadingCropImage) {
+      setCropError("Select an image to continue.");
+      return;
+    }
+
+    setCropError("");
+    try {
+      const preparedUpload = await renderCroppedProfileImage(pendingFile, cropState);
+      const uploadSucceeded = await onSelect?.(preparedUpload);
+      if (uploadSucceeded !== false) {
+        closeUploadModal({ force: true });
+      }
+    } catch (saveError) {
+      setCropError(saveError?.message || "Unable to prepare the selected image.");
+    }
+  }
+
+  const profileImageCooldownSeconds = Math.max(0, Math.ceil((Number(cooldownUntil || 0) - cooldownNow) / 1000));
+      const profileImageCooldownActive = profileImageCooldownSeconds > 0;
+        const saveDisabled = uploading || loadingCropImage || !pendingFile || !cropState || profileImageCooldownActive;
+        
+  const widgetClassName = [
+      "customer-mobile-photo-widget",
+    className,
+    refreshing ? "is-refreshing" : "",
+    uploadSettling ? "is-upload-settling" : "",
+  ].filter(Boolean).join(" ");
+
+  const cropImageStyle = cropState && cropViewportSize ? {
+    width: (cropState.naturalWidth * cropState.scale) + "px",
+    height: (cropState.naturalHeight * cropState.scale) + "px",
+    transform: "translate(" + (cropState.offsetX - ((cropState.naturalWidth * cropState.scale) / 2)) + "px, " + (cropState.offsetY - ((cropState.naturalHeight * cropState.scale) / 2)) + "px)",
+  } : undefined;
+
+  return (
+    <div className={widgetClassName}>
+      <button
+        ref={triggerRef}
+        className="customer-mobile-photo-button"
+        type="button"
+        onClick={handleAvatarClick}
+        disabled={uploading || refreshing}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label="Open profile image options"
+      >
+        <div className="customer-mobile-avatar large customer-mobile-photo-avatar">
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt=""
+              onError={(event) => {
+                event.currentTarget.style.display = "none";
+                event.currentTarget.nextElementSibling.style.display = "inline";
+              }}
+            />
+          ) : null}
+          <span style={{ display: avatarUrl ? "none" : "inline" }}>{initials(displayName)}</span>
+          {refreshing ? <span className="customer-mobile-photo-processing" aria-hidden="true"><span className="appointment-cta-spinner" /></span> : null}
+        </div>
+        <span className="customer-mobile-photo-camera" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" focusable="false">
+            <path d="M8.6 6.5 10 4.75h4l1.4 1.75H18a3 3 0 0 1 3 3v6.75a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V9.5a3 3 0 0 1 3-3h2.6Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+            <path d="M12 15.75a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Z" stroke="currentColor" strokeWidth="1.8" />
+          </svg>
+        </span>
+      </button>
+
+      {menuOpen ? (
+        <div className="customer-mobile-photo-menu" role="menu" aria-label="Profile photo options">
+          <button type="button" role="menuitem" onClick={handleViewPhoto} disabled={!avatarUrl}>
+            View Image
+          </button>
+          <button type="button" role="menuitem" onClick={handleUploadPhoto} disabled={refreshing}>
+            Upload Image
+          </button>
+          <button type="button" role="menuitem" onClick={closeMenu}>
+            Close
+          </button>
+        </div>
+      ) : null}
+
+      {viewerOpen && avatarUrl ? (
+        <div className="customer-photo-viewer" role="dialog" aria-modal="true" aria-label="Profile image preview" onClick={closeViewer}>
+          <div className="customer-photo-viewer-card customer-profile-modal-card" onClick={(event) => event.stopPropagation()}>
+            <button ref={viewerCloseRef} className="customer-photo-viewer-close" type="button" onClick={closeViewer} aria-label="Close profile image preview">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" focusable="false">
+                <path d="M6 6 18 18M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+            <img src={avatarUrl} alt={displayName + " profile"} className="customer-photo-viewer-image" />
+          </div>
+        </div>
+      ) : null}
+
+      <input ref={inputRef} className="customer-mobile-photo-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={handleNativeFileChange} />
+
+      {uploadOpen ? (
+        <div className="customer-photo-viewer customer-profile-upload-modal" role="dialog" aria-modal="true" aria-label="Upload Profile Image" onClick={() => { if (!uploading) { closeUploadModal(); } }}>
+          <div className="customer-photo-viewer-card customer-profile-modal-card customer-profile-upload-card" onClick={(event) => event.stopPropagation()}>
+            <button ref={uploadCloseRef} className="customer-photo-viewer-close" type="button" onClick={closeUploadModal} aria-label="Close upload profile image modal" disabled={uploading}>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" focusable="false">
+                <path d="M6 6 18 18M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+            <div className="customer-profile-modal-head">
+              <span className="customer-section-kicker">Profile image</span>
+              <h3>Edit Image</h3>
+              <p>Drag to frame your photo, then save the square crop for your profile avatar.</p>
+            </div>
+            <div className="customer-profile-cropper-shell">
+              <div
+                ref={cropSurfaceRef}
+                className={"customer-profile-cropper-surface" + (loadingCropImage ? " is-loading" : "")}
+                onPointerDown={handleCropPointerDown}
+                role="presentation"
+              >
+                {previewUrl && cropState && cropViewportSize ? <img src={previewUrl} alt="Profile crop preview" className="customer-profile-cropper-image" style={cropImageStyle} draggable="false" /> : null}
+                <div className="customer-profile-cropper-overlay" aria-hidden="true">
+                  <div className="customer-profile-cropper-ring" />
+                </div>
+                <p className="customer-profile-cropper-hint">Drag to reposition image</p>
+                {loadingCropImage || (previewUrl && !cropViewportSize) ? <div className="customer-profile-cropper-loading"><span className="appointment-cta-spinner" aria-label="Loading image" /></div> : null}
+              </div>
+              <div className="customer-profile-cropper-toolbar">
+                <label className="customer-profile-cropper-control" htmlFor="customer-profile-cropper-zoom">
+                  <span>Zoom</span>
+                  <input
+                    id="customer-profile-cropper-zoom"
+                    type="range"
+                    min={PROFILE_IMAGE_MIN_ZOOM}
+                    max={PROFILE_IMAGE_MAX_ZOOM}
+                    step="0.01"
+                    value={cropState?.zoom || PROFILE_IMAGE_MIN_ZOOM}
+                    onChange={handleZoomChange}
+                    disabled={!cropState || loadingCropImage || uploading}
+                  />
+                </label>
+              </div>
+            </div>
+            {localError ? <small className="customer-mobile-field-error">{localError}</small> : null}
+            {cropError ? <small className="customer-mobile-field-error">{cropError}</small> : null}
+            <div className="customer-profile-modal-actions">
+              <button type="button" className="pill-button tertiary" onClick={closeUploadModal} disabled={uploading}>Cancel</button>
+              <button type="button" className="pill-button primary" onClick={handleSaveImage} disabled={saveDisabled}>
+                {uploading ? <span className="appointment-cta-spinner" aria-label="Saving image" /> : (profileImageCooldownActive ? 'Try again in ' + Math.max(1, Math.ceil(profileImageCooldownSeconds / 60)) + 'm' : "Save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {uploading || refreshing ? <span className="sr-only customer-mobile-save-status" aria-live="polite">Uploading profile photo</span> : null}
+      {error ? <small className="customer-mobile-field-error">{error}</small> : null}
+      {success ? <small className="customer-mobile-save-success">{success}</small> : null}
+    </div>
+  );
+}
+
+
+function formatSubscriptionAmountNumber(value) {
+  return new Intl.NumberFormat("en-NG", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+}
+
+function formatSubscriptionCtaAmount(value, currency = "NGN") {
+  return `${String(currency || "NGN").trim().toUpperCase() || "NGN"}${formatSubscriptionAmountNumber(value)}`;
+}
+
+function formatSubscriptionMemberSince(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
+function formatSubscriptionPaymentMethodLabel(paymentMethod) {
+  if (!paymentMethod) {
+    return "Visa Card";
+  }
+
+  const channel = String(paymentMethod.channel || "").trim().toLowerCase();
+  if (channel === "card") {
+    const cardType = String(paymentMethod.cardType || paymentMethod.card_type || "").trim();
+    return cardType ? `${cardType.charAt(0).toUpperCase()}${cardType.slice(1)} Card` : "Visa Card";
+  }
+  if (channel === "bank_transfer") {
+    return "Bank Transfer";
+  }
+  if (channel === "bank") {
+    return paymentMethod.bank ? `Bank · ${paymentMethod.bank}` : "Bank";
+  }
+  if (channel === "ussd") {
+    return "USSD";
+  }
+  if (channel === "qr") {
+    return "QR Payment";
+  }
+  if (channel === "mobile_money") {
+    return "Mobile Money";
+  }
+  return "Visa Card";
+}
+
+function isActiveCustomerProSubscription(subscription = {}) {
+  const status = String(subscription?.status || "").trim().toLowerCase();
+  const planKey = String(subscription?.plan_key || subscription?.plan || "").trim().toLowerCase();
+  const tier = String(subscription?.tier || "").trim().toLowerCase();
+  return !["", "free", "none", "cancelled", "expired"].includes(status) && planKey !== "free" && tier !== "free";
+}
+
+function CustomerSubscriptionBenefit({ accentClass, description, icon, title }) {
+  const iconSrc = icon?.src || icon;
+  return <article className="customer-subscription-benefit-row">
+    <span className={`customer-subscription-benefit-icon ${accentClass}`}>
+      <img src={iconSrc} alt="" aria-hidden="true" draggable="false" />
+    </span>
+    <div className="customer-subscription-benefit-copy">
+      <strong>{title}</strong>
+      <p>{description}</p>
+    </div>
+  </article>;
+}
+
+function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenMenu, subscriptionState }) {
+  const subscription = subscriptionState?.subscription || {};
+  const [activeTab, setActiveTab] = useState("subscription");
+  const [dialogStep, setDialogStep] = useState("");
+  const [dialogBusy, setDialogBusy] = useState(false);
+  const [dialogError, setDialogError] = useState("");
+  const [cancelledView, setCancelledView] = useState(() => ["cancelled", "expired"].includes(String(subscription?.status || "").trim().toLowerCase()));
+  const primaryActionRef = useRef(null);
+  const restoreFocusRef = useRef(null);
+  const monthlyAmount = Number(resolveSubscriptionMonthlyAmount(subscription) || PAYWALL_PRO_MONTHLY_AMOUNT || 0);
+  const currency = String(subscription?.currency || "NGN").trim().toUpperCase() || "NGN";
+  const ctaAmountLabel = formatSubscriptionCtaAmount(monthlyAmount, currency);
+  const memberSince = formatSubscriptionMemberSince(subscription?.startDate || subscription?.start_date);
+  const startDateLabel = shortDate(subscription?.startDate || subscription?.start_date || "") || "Jun 2, 2026";
+  const renewsOnLabel = shortDate(subscription?.nextPaymentDate || subscription?.next_payment_date || subscription?.renewal_date || "") || "Jul 2, 2026";
+  const paymentMethodLabel = formatSubscriptionPaymentMethodLabel(subscription?.paymentMethod || subscription?.payment_method);
+  const manageBillingUrl = String(subscription?.manage_billing_url || "").trim();
+  const isActiveSubscriber = isActiveCustomerProSubscription(subscription) && !cancelledView;
+  const dialogLabelId = "customer-subscription-dialog-title";
+  const benefits = [
+    {
+      accentClass: "is-violet",
+      description: "Access more doctor and care specialist consultations, giving you faster medical attention, consistent follow-ups, and better continuity of care whenever you need support.",
+      icon: micBenefitIcon,
+      title: "5x more Doctor Consultations.",
+    },
+    {
+      accentClass: "is-amber",
+      description: "Get professional medication reviews and guidance to help you understand your prescriptions, manage side effects, and stay on track with your treatment plan.",
+      icon: pillBenefitIcon,
+      title: "Medical Therapy Management",
+    },
+    {
+      accentClass: "is-green",
+      description: "Enjoy convenient prescription refill processing and doorstep medication delivery, helping you stay consistent with treatment.",
+      icon: cartBenefitIcon,
+      title: "Free Prescription Refills and Deliveries",
+    }
+  ];
+
+  useEffect(() => {
+    const status = String(subscription?.status || "").trim().toLowerCase();
+    if (["cancelled", "expired"].includes(status)) {
+      setCancelledView(true);
+    }
+  }, [subscription?.status]);
+
+  useEffect(() => {
+    if (!dialogStep || typeof window === "undefined") {
+      return undefined;
+    }
+
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement) {
+      restoreFocusRef.current = activeElement;
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape" && !dialogBusy) {
+        event.preventDefault();
+        closeDialog();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [dialogBusy, dialogStep]);
+
+  function closeDialog() {
+    if (dialogBusy) {
+      return;
+    }
+
+    setDialogStep("");
+    setDialogError("");
+    window.setTimeout(() => {
+      restoreFocusRef.current?.focus?.();
+      primaryActionRef.current?.focus?.();
+    }, 0);
+  }
+
+  async function handlePrimaryAction() {
+    setDialogError("");
+    if (isActiveSubscriber) {
+      setDialogStep("details");
+      return;
+    }
+
+    try {
+      await subscriptionState?.launchCheckout?.({
+        plan: "nevari_access_pro",
+        frequency: "monthly",
+      });
+    } catch {
+      // Shared hook exposes its own user-facing errors.
+    }
+  }
+
+  function handleChangePaymentMethod() {
+    if (!manageBillingUrl) {
+      return;
+    }
+    window.location.assign(manageBillingUrl);
+  }
+
+  function shouldFallbackToBillingPortal(error) {
+    return String(error?.code || "").trim().toLowerCase() === "paystack_cancel_details_missing" && manageBillingUrl !== "";
+  }
+
+  async function handleCancelPlan() {
+    if (dialogBusy) {
+      return;
+    }
+
+    setDialogError("");
+    setDialogBusy(true);
+    try {
+      await subscriptionState?.cancelCurrentSubscription?.();
+      setCancelledView(true);
+      setDialogStep("cancelled");
+    } catch (error) {
+      if (shouldFallbackToBillingPortal(error)) {
+        window.location.assign(manageBillingUrl);
+        return;
+      }
+      setDialogError(String(error?.message || "The plan could not be cancelled right now."));
+    } finally {
+      setDialogBusy(false);
+    }
+  }
+
+  const surfaceClassName = `customer-subscription-management-shell ${embeddedDesktop ? "is-desktop" : "is-mobile"}`;
+  const statusText = isActiveSubscriber
+    ? memberSince
+      ? `Active member since ${memberSince}`
+      : "Active member"
+    : "";
+
+  if (subscriptionState?.isLoading) {
+    return <section className={surfaceClassName} aria-busy="true">
+      <div className="customer-subscription-management-card customer-subscription-management-card--loading">
+        <BrandedSpinner label="Loading subscription details" />
+      </div>
+    </section>;
+  }
+
+  return <section className={surfaceClassName}>
+    <div className="customer-subscription-management-tabs" role="tablist" aria-label="Nevari Access Pro sections">
+      <button className={activeTab === "subscription" ? "active" : ""} type="button" role="tab" aria-selected={activeTab === "subscription"} onClick={() => setActiveTab("subscription")}>Subscription</button>
+      <button className={activeTab === "history" ? "active" : ""} type="button" role="tab" aria-selected={activeTab === "history"} onClick={() => setActiveTab("history")}>History</button>
+    </div>
+
+    {activeTab === "subscription" ? (isActiveSubscriber ? <div className="customer-subscription-management-card" role="tabpanel" aria-label="Subscription">
+      <header className="customer-subscription-management-header">
+        <div className="customer-subscription-management-title-row">
+          <h1>Nevari Access</h1>
+          <img src={proBadgeImage.src || proBadgeImage} alt="Pro" className="customer-subscription-management-badge" draggable="false" />
+        </div>
+        {statusText ? <p className="customer-subscription-management-status is-active">{statusText}</p> : null}
+      </header>
+
+      <img
+        src={proSealImage.src || proSealImage}
+        alt="Nevari Access Pro seal"
+        className="customer-subscription-management-seal"
+        draggable="false"
+      />
+
+      <section className="customer-subscription-management-benefits" aria-label="Your benefits">
+        <h2>Your Benefits</h2>
+        <div className="customer-subscription-benefit-list">
+          {benefits.map((benefit) => <CustomerSubscriptionBenefit key={benefit.title} {...benefit} />)}
+        </div>
+      </section>
+
+      {(subscriptionState?.actionError || dialogError) && !dialogStep ? <p className="customer-mobile-field-error customer-subscription-management-error" role="alert">{dialogError || subscriptionState.actionError}</p> : null}
+
+      <button
+        ref={primaryActionRef}
+        type="button"
+        className="customer-subscription-management-cta"
+        onClick={() => {
+          void handlePrimaryAction();
+        }}
+        disabled={Boolean(subscriptionState?.isActionBusy)}
+      >
+        {subscriptionState?.isActionBusy ? <span className="appointment-cta-spinner" aria-label="Processing subscription action" /> : (isActiveSubscriber ? "Manage Plan" : `Subscribe for ${ctaAmountLabel}/month`)}
+      </button>
+    </div> : <div className="customer-subscription-management-paywall" role="tabpanel" aria-label="Subscription">
+      <Paywall
+        busy={Boolean(subscriptionState?.isActionBusy)}
+        error={subscriptionState?.actionError || ""}
+        onOpenMenu={onOpenMenu}
+        onSubscribe={() => subscriptionState?.launchCheckout?.({
+          plan: "nevari_access_pro",
+          frequency: "monthly",
+        })}
+        priceLabel={formatSubscriptionPriceLabel(subscription)}
+      />
+    </div>) : <section className="customer-subscription-history-panel" role="tabpanel" aria-label="History">
+      <header className="customer-subscription-history-header">
+        <div>
+          <h2>Payment history</h2>
+          <p>Payments and Nevari Access Pro membership changes.</p>
+        </div>
+        <button type="button" onClick={() => subscriptionState?.refreshHistory?.()} disabled={Boolean(subscriptionState?.isHistoryLoading)}>Refresh</button>
+      </header>
+
+      {subscriptionState?.isHistoryLoading ? <div className="customer-subscription-history-state" aria-busy="true"><BrandedSpinner label="Loading subscription history" /></div> : null}
+      {subscriptionState?.historyError ? <p className="customer-mobile-field-error customer-subscription-history-error" role="alert">{subscriptionState.historyError}</p> : null}
+      {!subscriptionState?.isHistoryLoading && !subscriptionState?.historyError && !subscriptionState?.history?.length ? <div className="customer-subscription-history-state">
+        <strong>No payment history yet</strong>
+        <p>Your subscription payments and membership changes will appear here.</p>
+      </div> : null}
+      {subscriptionState?.history?.length ? <div className="customer-subscription-history-list">
+        {subscriptionState.history.map((item) => <article className="customer-subscription-history-item" key={item.id}>
+          <span className={`customer-subscription-history-icon is-${String(item.status || "pending").toLowerCase()}`} aria-hidden="true" />
+          <div className="customer-subscription-history-copy">
+            <div>
+              <strong>{item.title || "Subscription update"}</strong>
+              <span className={`customer-subscription-history-badge is-${String(item.status || "pending").toLowerCase()}`}>{titleCase(item.status || "pending")}</span>
+            </div>
+            <p>{item.description || "Nevari Access Pro activity"}</p>
+            <small>{shortDate(item.occurred_at) || "Date unavailable"}{item.reference ? ` · ${item.reference}` : ""}</small>
+          </div>
+          {item.type === "payment" ? <strong className="customer-subscription-history-amount">{money(Number(item.amount || 0), item.currency || "NGN")}</strong> : null}
+        </article>)}
+      </div> : null}
+    </section>}
+
+    {activeTab === "subscription" && dialogStep && typeof document !== "undefined" ? createPortal(
+      <div className="customer-subscription-dialog-layer">
+        <ModalScrim className="customer-modal-scrim customer-subscription-dialog-backdrop" label="Close subscription dialog" onDismiss={dialogBusy ? undefined : closeDialog} />
+        <section className={`customer-subscription-dialog-card customer-subscription-dialog-card--${dialogStep}`} role="dialog" aria-modal="true" aria-labelledby={dialogLabelId}>
+          {dialogStep === "details" ? <>
+            <div className="customer-subscription-dialog-head">
+              <h3 id={dialogLabelId}>Active Subscription</h3>
+            </div>
+            <div className="customer-subscription-dialog-plan-row">
+              <div className="customer-subscription-management-title-row is-dialog">
+                <span>Nevari Access</span>
+                <img src={proBadgeImage.src || proBadgeImage} alt="Pro" className="customer-subscription-management-badge" draggable="false" />
+              </div>
+              <div className="customer-subscription-dialog-price"><span>{currency}</span><strong>{formatSubscriptionAmountNumber(monthlyAmount)}</strong></div>
+            </div>
+            <div className="customer-subscription-dialog-meta-grid">
+              <div>
+                <span>Start date</span>
+                <strong>{startDateLabel}</strong>
+              </div>
+              <div>
+                <span>Renews on</span>
+                <strong>{renewsOnLabel}</strong>
+              </div>
+              <div className="customer-subscription-dialog-payment">
+                <span>Payment method</span>
+                <div>
+                  <strong>{paymentMethodLabel}</strong>
+                  <button type="button" className="customer-subscription-dialog-change" onClick={handleChangePaymentMethod} disabled={!manageBillingUrl}>Change</button>
+                </div>
+              </div>
+            </div>
+            {dialogError ? <p className="customer-mobile-field-error customer-subscription-dialog-error" role="alert">{dialogError}</p> : null}
+            <div className="customer-subscription-dialog-actions">
+              <button type="button" className="customer-subscription-dialog-button secondary" onClick={closeDialog} disabled={dialogBusy}>Go Back</button>
+              <button type="button" className="customer-subscription-dialog-button danger" onClick={() => { setDialogError(""); setDialogStep("confirm"); }} disabled={dialogBusy}>Cancel Plan</button>
+            </div>
+          </> : null}
+
+          {dialogStep === "confirm" ? <>
+            <div className="customer-subscription-dialog-head">
+              <h3 id={dialogLabelId}>Are you sure?</h3>
+              <p>You&apos;ll lose access to all that <span className="customer-subscription-inline-plan">Nevari Access Pro</span> has to offer</p>
+            </div>
+            <ul className="customer-subscription-dialog-list">
+              <li>Virtual Doctor Consultation</li>
+              <li>Book a Home Care Nurse</li>
+              <li>Prescription Refills &amp; Uploads</li>
+              <li>IV Infusion Therapy</li>
+              <li>Care Navigation &amp; Support</li>
+              <li>Medication Therapy Management</li>
+            </ul>
+            {dialogError ? <p className="customer-mobile-field-error customer-subscription-dialog-error" role="alert">{dialogError}</p> : null}
+            <div className="customer-subscription-dialog-actions">
+              <button type="button" className="customer-subscription-dialog-button secondary" onClick={closeDialog} disabled={dialogBusy}>Don&apos;t cancel</button>
+              <button type="button" className="customer-subscription-dialog-button danger" onClick={() => { void handleCancelPlan(); }} disabled={dialogBusy}>{dialogBusy ? "Cancelling..." : "Cancel Plan"}</button>
+            </div>
+          </> : null}
+
+          {dialogStep === "cancelled" ? <>
+            <div className="customer-subscription-dialog-head">
+              <h3 id={dialogLabelId}>Your Plan is Cancelled</h3>
+              <p>Sorry to see you go. You&apos;ll lose your Nevari Access Pro benefits on {renewsOnLabel}.</p>
+            </div>
+            <div className="customer-subscription-dialog-actions is-single">
+              <button type="button" className="customer-subscription-dialog-button primary" onClick={closeDialog}>Continue</button>
+            </div>
+          </> : null}
+        </section>
+      </div>,
+      document.body
+    ) : null}
+  </section>;
+}
+
+function ProfilePage({ profile, orders, appointments, doctors, settings, displayName = "Patient", uploading = false, imageRefreshing = false, imageError = "", imageSuccess = "", imageCooldownUntil = 0, imageInputRef = null, onProfileImageSelect, onProfileImageOpen, subscriptionState = null, validationErrors = {}, onSettingsChange, onLogout, logoutBusy = false, onSaveSettings, profileSaveBusy = false, profileSaveError = "", onViewSubscription = null }) {
   const interactedDoctorCount = new Set([
     ...appointments.map((appointment) => String(
       appointment?.doctor_user_id
@@ -4005,90 +5658,240 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, subscri
       || ""
     ).trim())
   ].filter(Boolean)).size;
+  const completion = useMemo(() => getCustomerProfileCompletion(settings, profile), [profile, settings]);
+  const healthRows = useMemo(() => resolveCustomerHealthRecordRows(settings), [settings]);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileTab, setProfileTab] = useState("user");
+  const [isEditingHealth, setIsEditingHealth] = useState(false);
+  const [profileDraft, setProfileDraft] = useState(() => normalizeCustomerSettingsPayload(settings));
+  const [healthDraft, setHealthDraft] = useState(() => normalizeCustomerSettingsPayload(settings));
+  const [profileFieldErrors, setProfileFieldErrors] = useState({});
+  const [healthFieldErrors, setHealthFieldErrors] = useState({});
+  const [chipDrafts, setChipDrafts] = useState({ allergies: "", currentMedications: "", existingConditions: "" });
+  const firstEditableInputRef = useRef(null);
 
-  return <div className="customer-dashboard-stack customer-desktop-boxed-page">
+  useEffect(() => {
+    if (!isEditingProfile) {
+      setProfileDraft(normalizeCustomerSettingsPayload(settings));
+      setProfileFieldErrors({});
+    }
+    if (!isEditingHealth) {
+      setHealthDraft(normalizeCustomerSettingsPayload(settings));
+      setHealthFieldErrors({});
+    }
+  }, [isEditingHealth, isEditingProfile, settings]);
+
+  useEffect(() => {
+    if (isEditingProfile) {
+      firstEditableInputRef.current?.focus();
+    }
+  }, [isEditingProfile]);
+
+  function updateProfileDraft(key, value) {
+    setProfileDraft((current) => normalizeCustomerSettingsPayload({ ...current, [key]: value }));
+  }
+
+  function updateHealthDraft(key, value) {
+    setHealthDraft((current) => normalizeCustomerSettingsPayload({ ...current, [key]: value }));
+  }
+
+  function addChip(key) {
+    const nextValue = sanitizeCustomerHealthChip(chipDrafts[key]);
+    if (!nextValue) {
+      return;
+    }
+    const nextItems = normalizeCustomerHealthChipList([...(healthDraft[key] || []), nextValue]);
+    updateHealthDraft(key, nextItems);
+    setChipDrafts((current) => ({ ...current, [key]: "" }));
+  }
+
+  function removeChip(key, item) {
+    updateHealthDraft(key, (healthDraft[key] || []).filter((entry) => entry !== item));
+  }
+
+  async function saveProfileChanges() {
+    const nextErrors = getCustomerSettingsFieldErrors(profileDraft, { requireAll: true });
+    if (Object.keys(nextErrors).length) {
+      setProfileFieldErrors(nextErrors);
+      return;
+    }
+    setProfileFieldErrors({});
+    const saved = await onSaveSettings?.(profileDraft, { successMessage: "Profile updated successfully." });
+    if (saved) {
+      setIsEditingProfile(false);
+    }
+  }
+
+  async function saveHealthChanges() {
+    const normalizedHealthDraft = normalizeCustomerSettingsPayload({
+      ...settings,
+      bloodGroup: healthDraft.bloodGroup,
+      genotype: healthDraft.genotype,
+      allergies: normalizeCustomerHealthChipList(healthDraft.allergies),
+      currentMedications: normalizeCustomerHealthChipList(healthDraft.currentMedications),
+      existingConditions: normalizeCustomerHealthChipList(healthDraft.existingConditions),
+      emergencyContactName: sanitizeClientText(healthDraft.emergencyContactName || "", { max: 120 }),
+      emergencyContactPhoneNumber: normalizeMtmPhoneNumber(healthDraft.emergencyContactPhoneNumber || ""),
+    });
+    const nextErrors = getCustomerSettingsFieldErrors(normalizedHealthDraft);
+    if (Object.keys(nextErrors).length) {
+      setHealthFieldErrors(nextErrors);
+      return;
+    }
+    setHealthFieldErrors({});
+    const saved = await onSaveSettings?.(normalizedHealthDraft, { successMessage: "Health records saved securely." });
+    if (saved) {
+      setIsEditingHealth(false);
+      setChipDrafts({ allergies: "", currentMedications: "", existingConditions: "" });
+    }
+  }
+
+  function renderChipField(key, label) {
+    const items = Array.isArray(healthDraft[key]) ? healthDraft[key] : [];
+    return (
+      <label className="customer-profile-modal-field customer-profile-chip-field">
+        <span>{label}</span>
+        <div className="customer-profile-chip-composer">
+          <input
+            value={chipDrafts[key]}
+            onChange={(event) => setChipDrafts((current) => ({ ...current, [key]: sanitizeCustomerHealthChip(event.target.value) }))}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addChip(key);
+              }
+            }}
+            placeholder={"Add " + label.toLowerCase()}
+          />
+          <button type="button" className="pill-button tertiary" onClick={() => addChip(key)}>Add</button>
+        </div>
+        <div className="customer-profile-chip-list">
+          {items.length ? items.map((item) => (
+            <span key={item} className="customer-profile-chip">
+              <span>{item}</span>
+              <button type="button" onClick={() => removeChip(key, item)} aria-label={"Remove " + item}>?</button>
+            </span>
+          )) : <small className="customer-profile-muted">None added.</small>}
+        </div>
+      </label>
+    );
+  }
+
+  return <div className={`customer-dashboard-stack customer-desktop-boxed-page ${profileTab === "notifications" ? "customer-profile-notifications-active" : ""}`}>
+    <div className="customer-profile-desktop-tabs" role="tablist" aria-label="Profile sections">
+      <button type="button" role="tab" aria-selected={profileTab === "user"} className={profileTab === "user" ? "active" : ""} onClick={() => setProfileTab("user")}>User</button>
+      <button type="button" role="tab" aria-selected={profileTab === "notifications"} className={profileTab === "notifications" ? "active" : ""} onClick={() => setProfileTab("notifications")}>Notification Settings</button>
+    </div>
+    <section className="customer-profile-desktop-notifications" aria-label="Notification settings">
+      {CUSTOMER_NOTIFICATION_OPTIONS.map(([key, label]) => <label key={key}><span>{label}</span><input type="checkbox" checked={Boolean(settings[key])} onChange={(event) => onSettingsChange?.((current) => ({ ...current, [key]: event.target.checked }))} /></label>)}
+    </section>
     <section className="customer-profile-hero">
-      <div className="avatar customer-profile-avatar">
-        {profile.avatar_url ? <img src={profile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
-        <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(settings.displayName || profile.display_name || "Customer")}</span>
-      </div>
+      <CustomerProfilePhotoWidget
+        profile={profile}
+        displayName={displayName}
+        uploading={uploading}
+        refreshing={imageRefreshing}
+        error={imageError}
+        success={imageSuccess}
+                cooldownUntil={imageCooldownUntil}
+                        inputRef={imageInputRef}
+        onSelect={onProfileImageSelect}
+        onOpen={onProfileImageOpen}
+        className="customer-desktop-photo-slot"
+      />
       <div>
         <span className="customer-section-kicker">My Profile</span>
-        <h2>{settings.displayName || profile.display_name || "Customer"}</h2>
+        <h2>{displayName}</h2>
         <p className="customer-hero-text">Edit your profile inline. Email stays locked to your account.</p>
+        <div className="customer-profile-completion-badge">Profile {completion.percent}% complete</div>
       </div>
       <button className="pill-button danger" type="button" onClick={onLogout} disabled={logoutBusy}>
         {logoutBusy ? <span className="appointment-cta-spinner" aria-label="Logging out" /> : "Logout"}
       </button>
     </section>
-    <section className="customer-stats-row customer-profile-stats-row">
-      <article className="customer-profile-card">
-        <span>Orders placed</span>
-        <strong>{orders.length}</strong>
-      </article>
-      <article className="customer-profile-card">
-        <span>Appointments booked</span>
-        <strong>{appointments.length}</strong>
-      </article>
-      <article className="customer-profile-card">
-        <span>Doctors interacted with</span>
-        <strong>{interactedDoctorCount}</strong>
-      </article>
-    </section>
 
     <section className="customer-profile-grid customer-profile-grid-editable">
       <article className="customer-profile-card customer-profile-card-wide customer-profile-subscription-card">
         <ManageSubscription
+          profileVariant
           subscription={subscriptionState?.subscription}
           loading={subscriptionState?.isLoading}
           busy={subscriptionState?.isActionBusy}
           error={subscriptionState?.actionError}
           onUpgrade={() => subscriptionState?.launchCheckout?.()}
+          onPause={async () => {
+            await subscriptionState?.pauseCurrentSubscription?.();
+          }}
           onCancel={async () => {
             await subscriptionState?.cancelCurrentSubscription?.();
           }}
+          onView={onViewSubscription}
         />
       </article>
-      <article className="customer-profile-card customer-profile-card-wide customer-profile-upload-card">
-        <div className="customer-mobile-upload-group">
+
+      <article className="customer-profile-card customer-profile-card-wide customer-profile-edit-card">
+        <div className="customer-profile-card-head">
           <div>
-            <strong>Your photo</strong>
-            <p>This will be displayed on your profile.</p>
+            <span>Personal Details</span>
+            <small>Keep your main contact details up to date.</small>
           </div>
-          <div className="customer-mobile-upload-row customer-profile-upload-row">
-            <div className="customer-mobile-avatar large customer-profile-upload-avatar">
-              {profile.avatar_url ? <img src={profile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
-              <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(settings.displayName || profile.display_name || "Customer")}</span>
-            </div>
-            <button className="customer-mobile-dropzone customer-profile-dropzone" type="button">
-              <div className="customer-mobile-upload-icon"><MobileIcon name="upload" /></div>
-              <span><strong>Click to upload</strong> or drag and drop</span>
-              <small>SVG, PNG, JPG or GIF (max. 800x400px)</small>
-            </button>
-          </div>
+          
         </div>
+        <div className="customer-profile-detail-grid">
+          <label><span>Display Name</span><input ref={firstEditableInputRef} value={profileDraft.displayName} readOnly={false} className={profileFieldErrors.displayName ? "has-error" : ""} onChange={(event) => updateProfileDraft("displayName", sanitizeClientText(event.target.value, { max: 120 }))} />{profileFieldErrors.displayName ? <small className="customer-mobile-field-error">{profileFieldErrors.displayName}</small> : null}</label>
+          <label><span>Email</span><input value={profileDraft.email} onChange={(event) => updateProfileDraft("email", sanitizeClientText(event.target.value, { max: 160 }))} /></label>
+          <label><span>Phone Number</span><input type="tel" inputMode="tel" maxLength={11} value={profileDraft.phone} readOnly={false} className={profileFieldErrors.phone ? "has-error" : ""} onChange={(event) => updateProfileDraft("phone", normalizeMtmPhoneNumber(event.target.value))} />{profileFieldErrors.phone ? <small className="customer-mobile-field-error">{profileFieldErrors.phone}</small> : null}</label>
+          <label className="customer-profile-detail-grid-wide"><span>Address</span><textarea rows={3} value={profileDraft.address} readOnly={false} className={profileFieldErrors.address ? "has-error" : ""} onChange={(event) => updateProfileDraft("address", sanitizeClientText(event.target.value, { max: 200 }))} />{profileFieldErrors.address ? <small className="customer-mobile-field-error">{profileFieldErrors.address}</small> : null}</label>
+        </div>
+        {profileSaveError ? <small className="customer-mobile-field-error">{profileSaveError}</small> : null}
+        <div className="customer-profile-inline-actions"><button type="button" className="pill-button tertiary" onClick={() => { setProfileDraft(normalizeCustomerSettingsPayload(settings)); setProfileFieldErrors({}); }} disabled={profileSaveBusy}>Cancel</button><button type="button" className="pill-button" onClick={saveProfileChanges} disabled={profileSaveBusy}>{profileSaveBusy ? <span className="appointment-cta-spinner" aria-label="Saving profile" /> : "Save Changes"}</button></div>
       </article>
-      <article className="customer-profile-card customer-profile-card-wide">
-        <span>Display name</span>
-          <input value={settings.displayName} className={validationErrors.displayName ? "has-error" : ""} placeholder={profile.display_name || "Customer"} onChange={(event) => onSettingsChange((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />
-          {validationErrors.displayName ? <small className="customer-mobile-field-error">{validationErrors.displayName}</small> : null}
-      </article>
-      <article className="customer-profile-card customer-profile-card-half">
-        <span>Email address</span>
-        <input value={profile.email || "No email available"} readOnly aria-readonly="true" />
-      </article>
-      <article className="customer-profile-card customer-profile-card-half customer-profile-card-phone">
-        <span>Phone number</span>
-          <input type="tel" inputMode="tel" maxLength={11} value={settings.phone} className={validationErrors.phone ? "has-error" : ""} placeholder="+234 ..." onChange={(event) => onSettingsChange((current) => ({ ...current, phone: normalizeMtmPhoneNumber(event.target.value) }))} />
-          {validationErrors.phone ? <small className="customer-mobile-field-error">{validationErrors.phone}</small> : null}
-      </article>
-      <article className="customer-profile-card customer-profile-card-wide">
-        <span>Address</span>
-          <textarea rows={3} className={validationErrors.address ? "has-error" : ""} value={settings.address} onChange={(event) => onSettingsChange((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
-          {validationErrors.address ? <small className="customer-mobile-field-error">{validationErrors.address}</small> : null}
+
+      <article className="customer-profile-card customer-profile-card-wide customer-profile-health-card">
+        <div className="customer-profile-card-head">
+          <div>
+            <span>Key Health Records</span>
+            <small>Your health information is private and is used only to support your care experience.</small>
+          </div>
+          
+        </div>
+                <div className="customer-profile-health-grid customer-profile-health-grid-editable">
+          <label className="customer-profile-health-field"><span>Blood Group</span><select value={healthDraft.bloodGroup} onChange={(event) => updateHealthDraft("bloodGroup", event.target.value)}><option value="">Not added</option>{CUSTOMER_HEALTH_BLOOD_GROUP_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+          <label className="customer-profile-health-field"><span>Genotype</span><select value={healthDraft.genotype} onChange={(event) => updateHealthDraft("genotype", event.target.value)}><option value="">Not added</option>{CUSTOMER_HEALTH_GENOTYPE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+          {renderChipField("allergies", "Allergies")}
+          {renderChipField("currentMedications", "Current Medications")}
+          {renderChipField("existingConditions", "Existing Conditions")}
+          <label className="customer-profile-health-field"><span>Emergency Contact Name</span><input value={healthDraft.emergencyContactName} onChange={(event) => updateHealthDraft("emergencyContactName", sanitizeClientText(event.target.value, { max: 120 }))} /></label>
+          <label className="customer-profile-health-field"><span>Emergency Contact Phone Number</span><input type="tel" inputMode="tel" maxLength={11} value={healthDraft.emergencyContactPhoneNumber} onChange={(event) => updateHealthDraft("emergencyContactPhoneNumber", normalizeMtmPhoneNumber(event.target.value))} />{healthFieldErrors.emergencyContactPhoneNumber ? <small className="customer-mobile-field-error">{healthFieldErrors.emergencyContactPhoneNumber}</small> : null}</label>
+        </div>
+        <div className="customer-profile-inline-actions"><button type="button" className="pill-button tertiary" onClick={() => { setHealthDraft(normalizeCustomerSettingsPayload(settings)); setHealthFieldErrors({}); setChipDrafts({ allergies: "", currentMedications: "", existingConditions: "" }); }} disabled={profileSaveBusy}>Cancel</button><button type="button" className="pill-button" onClick={saveHealthChanges} disabled={profileSaveBusy}>{profileSaveBusy ? <span className="appointment-cta-spinner" aria-label="Saving health records" /> : "Save health records"}</button></div>
       </article>
     </section>
-    
+
+    {false && isEditingHealth ? <div className="customer-photo-viewer customer-profile-upload-modal" role="dialog" aria-modal="true" aria-label="Edit Health Records" onClick={() => setIsEditingHealth(false)}>
+      <div className="customer-photo-viewer-card customer-profile-modal-card customer-health-records-modal" onClick={(event) => event.stopPropagation()}>
+        <button className="customer-photo-viewer-close" type="button" onClick={() => setIsEditingHealth(false)} aria-label="Close edit health records modal">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" focusable="false">
+            <path d="M6 6 18 18M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
+        <div className="customer-profile-modal-head">
+          <span className="customer-section-kicker">Profile</span>
+          <h3>Edit Health Records</h3>
+          <p>Save the most important details your care team may need quickly.</p>
+        </div>
+        <div className="customer-profile-modal-grid">
+          <label className="customer-profile-modal-field"><span>Blood Group</span><select value={healthDraft.bloodGroup} onChange={(event) => updateHealthDraft("bloodGroup", event.target.value)}><option value="">Select blood group</option>{CUSTOMER_HEALTH_BLOOD_GROUP_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{healthFieldErrors.bloodGroup ? <small className="customer-mobile-field-error">{healthFieldErrors.bloodGroup}</small> : null}</label>
+          <label className="customer-profile-modal-field"><span>Genotype</span><select value={healthDraft.genotype} onChange={(event) => updateHealthDraft("genotype", event.target.value)}><option value="">Select genotype</option>{CUSTOMER_HEALTH_GENOTYPE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{healthFieldErrors.genotype ? <small className="customer-mobile-field-error">{healthFieldErrors.genotype}</small> : null}</label>
+          {renderChipField("allergies", "Allergies")}
+          {renderChipField("currentMedications", "Current Medications")}
+          {renderChipField("existingConditions", "Existing Conditions")}
+          <label className="customer-profile-modal-field"><span>Emergency Contact Name</span><input value={healthDraft.emergencyContactName} onChange={(event) => updateHealthDraft("emergencyContactName", sanitizeClientText(event.target.value, { max: 120 }))} /></label>
+          <label className="customer-profile-modal-field"><span>Emergency Contact Phone Number</span><input type="tel" inputMode="tel" maxLength={11} value={healthDraft.emergencyContactPhoneNumber} onChange={(event) => updateHealthDraft("emergencyContactPhoneNumber", normalizeMtmPhoneNumber(event.target.value))} />{healthFieldErrors.emergencyContactPhoneNumber ? <small className="customer-mobile-field-error">{healthFieldErrors.emergencyContactPhoneNumber}</small> : null}</label>
+        </div>
+        <div className="customer-profile-modal-actions"><button type="button" className="pill-button tertiary" onClick={() => { setHealthDraft(normalizeCustomerSettingsPayload(settings)); setHealthFieldErrors({}); setChipDrafts({ allergies: "", currentMedications: "", existingConditions: "" }); setIsEditingHealth(false); }} disabled={profileSaveBusy}>Cancel</button><button type="button" className="pill-button" onClick={saveHealthChanges} disabled={profileSaveBusy}>{profileSaveBusy ? <span className="appointment-cta-spinner" aria-label="Saving health records" /> : "Save Changes"}</button></div>
+      </div>
+    </div> : null}
   </div>;
 }
 
@@ -4114,11 +5917,93 @@ function initials(value) {
     .toUpperCase() || "N";
 }
 
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve(result.includes(',') ? result.split(',').pop() : result);
+    };
+    reader.onerror = () => reject(new Error('Unable to read the selected image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function renderCroppedProfileImage(file, cropState) {
+  if (!file || !cropState?.naturalWidth || !cropState?.naturalHeight || !cropState?.scale) {
+    throw new Error("Select an image to continue.");
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const sourceImage = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Unable to prepare the selected image."));
+      image.src = objectUrl;
+    });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = PROFILE_IMAGE_EXPORT_SIZE;
+    canvas.height = PROFILE_IMAGE_EXPORT_SIZE;
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) {
+      throw new Error("Unable to prepare the selected image.");
+    }
+
+    const cropSize = cropState.cropSize || 1;
+    const sourceWidth = cropSize / cropState.scale;
+    const sourceHeight = cropSize / cropState.scale;
+    const sourceX = (cropState.naturalWidth / 2) - (sourceWidth / 2) - (cropState.offsetX / cropState.scale);
+    const sourceY = (cropState.naturalHeight / 2) - (sourceHeight / 2) - (cropState.offsetY / cropState.scale);
+
+    context.drawImage(
+      sourceImage,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      PROFILE_IMAGE_EXPORT_SIZE,
+      PROFILE_IMAGE_EXPORT_SIZE
+    );
+
+    const preferredMimeType = file.type === "image/png" || file.type === "image/webp" ? file.type : "image/jpeg";
+    const qualitySteps = preferredMimeType === "image/jpeg" ? [0.92, 0.82, 0.74, 0.64, 0.54] : [undefined];
+
+    for (const quality of qualitySteps) {
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) {
+            resolve(result);
+            return;
+          }
+          reject(new Error("Unable to prepare the selected image."));
+        }, preferredMimeType, quality);
+      });
+
+      if (blob.size <= PROFILE_IMAGE_SERVER_MAX_BYTES) {
+        const dataBase64 = await readFileAsBase64(blob);
+        return {
+          file,
+          filename: buildProfileImageUploadName(file.name, preferredMimeType),
+          mime_type: preferredMimeType,
+          data_base64: dataBase64,
+        };
+      }
+    }
+
+    throw new Error("Cropped image is too large to upload. Please zoom out or choose a smaller image.");
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 function firstName(value) {
   return String(value || "")
     .trim()
     .split(/\s+/)
-    .filter(Boolean)[0] || "Customer";
+    .filter(Boolean)[0] || "Patient";
 }
 
 function orderPrimaryLabel(order) {
@@ -4482,7 +6367,7 @@ function appendLocalReview(reviewsPayload, reviewDraft, profile) {
       rating: reviewDraft.rating,
       review_text: reviewDraft.reviewText || "Helpful consultation.",
       created_at: new Date().toISOString(),
-      patient: { display_name: profile.display_name || "Customer" }
+      patient: { display_name: profile.display_name || "Patient" }
     }, ...(current.reviews || [])]
   };
 }
@@ -4595,7 +6480,7 @@ function resolveOrderPaymentUrl(order) {
   if (paymentUrl && /\/pay\//i.test(paymentUrl)) {
     return paymentUrl;
   }
-  // Do not fall back to WooCommerce checkout URLs for customer dashboard pay actions.
+  // Do not fall back to WooCommerce checkout URLs for patient dashboard pay actions.
   return "";
 }
 
@@ -4935,6 +6820,7 @@ function localTimeInputValue(date = new Date()) {
 
 function CustomerMobileDashboard({
   session,
+  setSession,
   page,
   setPage,
   showSkeleton,
@@ -5000,6 +6886,7 @@ function CustomerMobileDashboard({
   logoutBusy = false,
   embeddedDesktop = false
 }) {
+  const { mutate: mobileGlobalMutate } = useSWRConfig();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [previousPage, setPreviousPage] = useState("overview");
   const [searchQuery, setSearchQuery] = useState("");
@@ -5018,9 +6905,32 @@ function CustomerMobileDashboard({
   const [appointmentComposerSuccess, setAppointmentComposerSuccess] = useState(null);
   const [localAppointments, setLocalAppointments] = useState([]);
   const [consultationQuotaDismissed, setConsultationQuotaDismissed] = useState(false);
+  const [profileImageSaving, setProfileImageSaving] = useState(false);
+  const [profileImageRefreshing, setProfileImageRefreshing] = useState(false);
+  const [pendingProfileAvatarUrl, setPendingProfileAvatarUrl] = useState("");
+  const [profileImageError, setProfileImageError] = useState("");
+  const [profileImageSuccess, setProfileImageSuccess] = useState("");
+  const [profileImageCooldownUntil, setProfileImageCooldownUntil] = useState(0);
+  const profileImageInputRef = useRef(null);
+  const confirmedProfileAvatarUrl = normalizeProfileAvatarUrl(profile?.avatar_url || profile?.profile_image);
+  const fallbackProfileAvatarUrl = normalizeProfileAvatarUrl(session?.user?.avatar_url || session?.user?.avatarUrl || session?.user?.picture);
+  const resolvedProfileAvatarUrl = pendingProfileAvatarUrl && profileAvatarUrlKey(confirmedProfileAvatarUrl) !== profileAvatarUrlKey(pendingProfileAvatarUrl)
+    ? pendingProfileAvatarUrl
+    : (confirmedProfileAvatarUrl || fallbackProfileAvatarUrl);
+  const resolvedProfile = useMemo(() => ({
+    ...(profile || {}),
+    avatar_url: resolvedProfileAvatarUrl,
+    profile_image: resolvedProfileAvatarUrl || normalizeProfileAvatarUrl(profile?.profile_image),
+  }), [profile, resolvedProfileAvatarUrl]);
+  useEffect(() => {
+    if (pendingProfileAvatarUrl && confirmedProfileAvatarUrl && profileAvatarUrlKey(confirmedProfileAvatarUrl) === profileAvatarUrlKey(pendingProfileAvatarUrl)) {
+      setPendingProfileAvatarUrl("");
+      setProfileImageRefreshing(false);
+    }
+  }, [confirmedProfileAvatarUrl, pendingProfileAvatarUrl]);
   const customerDisplayName = resolveCustomerPreferredName({
     settingsDisplayName: settings?.displayName,
-    profile,
+    profile: resolvedProfile,
     sessionUser: session?.user,
   });
   const [requestStep, setRequestStep] = useState(1);
@@ -5098,7 +7008,82 @@ function CustomerMobileDashboard({
   const [calendarDay, setCalendarDay] = useState(7);
   const [calendarTime, setCalendarTime] = useState("09:41");
   const [customerSettingsTouched, setCustomerSettingsTouched] = useState({});
+  const [customerSettingsSaveStatus, setCustomerSettingsSaveStatus] = useState("");
+  const [customerSettingsSaveError, setCustomerSettingsSaveError] = useState("");
   const customerSettingsErrors = getCustomerSettingsFieldErrors(settings);
+  useEffect(() => {
+    const emergencySummary = [settings?.emergencyContactName, settings?.emergencyContactPhoneNumber].filter(Boolean).join(" - ");
+    const allergiesLabel = normalizeCustomerHealthChipList(settings?.allergies).join(", ");
+    const medicationsLabel = normalizeCustomerHealthChipList(settings?.currentMedications).join(", ");
+    const conditionsLabel = normalizeCustomerHealthChipList(settings?.existingConditions).join(", ");
+    const resolvedAddress = String(settings?.address || profile?.address || "").trim();
+    const resolvedPhone = String(settings?.phone || profile?.phone || "").trim();
+    const resolvedEmail = String(settings?.email || profile?.email || "").trim();
+
+    setRequestForm((current) => {
+      const next = {
+        ...current,
+        name: mergeCustomerPrefillValue(current.name, customerDisplayName),
+        address: mergeCustomerPrefillValue(current.address, resolvedAddress),
+        emergencyContact: mergeCustomerPrefillValue(current.emergencyContact, emergencySummary),
+        conditions: mergeCustomerPrefillValue(current.conditions, conditionsLabel),
+        allergies: mergeCustomerPrefillValue(current.allergies, allergiesLabel),
+        currentMedication: mergeCustomerPrefillValue(current.currentMedication, medicationsLabel),
+      };
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+
+    setMtmForm((current) => {
+      const next = {
+        ...current,
+        patient: {
+          ...current.patient,
+          name: mergeCustomerPrefillValue(current.patient.name, customerDisplayName),
+          address: mergeCustomerPrefillValue(current.patient.address, resolvedAddress),
+          phoneNumber: mergeCustomerPrefillValue(current.patient.phoneNumber, resolvedPhone),
+          emergencyContact: mergeCustomerPrefillValue(current.patient.emergencyContact, settings?.emergencyContactName || ""),
+        },
+        emergencyContact: {
+          ...current.emergencyContact,
+          caregiverName: mergeCustomerPrefillValue(current.emergencyContact.caregiverName, settings?.emergencyContactName || ""),
+          phoneNumber: mergeCustomerPrefillValue(current.emergencyContact.phoneNumber, settings?.emergencyContactPhoneNumber || ""),
+          emailAddress: mergeCustomerPrefillValue(current.emergencyContact.emailAddress, resolvedEmail),
+          address: mergeCustomerPrefillValue(current.emergencyContact.address, resolvedAddress),
+        },
+        medicalHistory: {
+          ...current.medicalHistory,
+          chronicConditions: mergeCustomerPrefillValue(current.medicalHistory.chronicConditions, conditionsLabel),
+          drugAllergies: mergeCustomerPrefillValue(current.medicalHistory.drugAllergies, allergiesLabel),
+        },
+      };
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+
+    setIvTherapyForm((current) => {
+      const next = {
+        ...current,
+        patient: {
+          ...current.patient,
+          name: mergeCustomerPrefillValue(current.patient.name, customerDisplayName),
+          address: mergeCustomerPrefillValue(current.patient.address, resolvedAddress),
+          phoneNumber: mergeCustomerPrefillValue(current.patient.phoneNumber, resolvedPhone),
+        },
+        clinicalHistory: {
+          ...current.clinicalHistory,
+          chronicConditionsDetails: mergeCustomerPrefillValue(current.clinicalHistory.chronicConditionsDetails, conditionsLabel),
+          currentMedicationsDetails: mergeCustomerPrefillValue(current.clinicalHistory.currentMedicationsDetails, medicationsLabel),
+          allergiesDetails: mergeCustomerPrefillValue(current.clinicalHistory.allergiesDetails, allergiesLabel),
+        },
+      };
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+  }, [customerDisplayName, profile?.address, profile?.email, profile?.phone, settings]);
+  const mobileHealthRows = useMemo(() => resolveCustomerHealthRecordRows(settings), [settings]);
+  const [mobileHealthDraft, setMobileHealthDraft] = useState(() => normalizeCustomerSettingsPayload(settings));
+  const [mobileHealthErrors, setMobileHealthErrors] = useState({});
+  const [mobileChipDrafts, setMobileChipDrafts] = useState({ allergies: "", currentMedications: "", existingConditions: "" });
+  const [mobileProfileDraft, setMobileProfileDraft] = useState(() => normalizeCustomerSettingsPayload(settings));
+  const [mobileProfileErrors, setMobileProfileErrors] = useState({});
   const appointmentPageLoading = page === "appointment"
     && appointmentsLoading
     && !upcomingAppointments.length
@@ -5227,10 +7212,7 @@ function CustomerMobileDashboard({
   }, [mtmSnackbar]);
 
   useEffect(() => {
-    const suggestedName = sanitizeClientText(
-      settings.displayName || profile.display_name || session?.user?.display_name || session?.user?.name || "",
-      { max: 120 }
-    ).replace(/[^a-zA-Z\s'.-]/g, "");
+    const suggestedName = sanitizeClientText(customerDisplayName || "", { max: 120 }).replace(/[^a-zA-Z\s'.-]/g, "");
     if (!suggestedName) {
       return;
     }
@@ -5246,7 +7228,7 @@ function CustomerMobileDashboard({
         },
       };
     });
-  }, [profile.display_name, session?.user?.display_name, session?.user?.name, settings.displayName]);
+  }, [customerDisplayName]);
 
   useEffect(() => {
     if (!["all", "request", "upcoming", "previous"].includes(appointmentTab)) {
@@ -5460,7 +7442,7 @@ function CustomerMobileDashboard({
         key: `order-${order.id}`,
         area: "Orders",
         label: `Order #${order.number || order.id}`,
-        meta: `${money(order.total, storeCurrency)} · ${titleCase(order.status)}`,
+        meta: `${money(order.total, storeCurrency)} Ãƒâ€šÃ‚Â· ${titleCase(order.status)}`,
         onSelect: () => {
           setExpandedOrderId(order.id);
           setSelectedOrder(order);
@@ -5486,7 +7468,7 @@ function CustomerMobileDashboard({
           key: `appointment-${appointment.id}`,
           area: "Appointments",
           label: `Appointment #${appointment.id}`,
-          meta: `${shortDate(appointment.start_at, true, storeTimeZone)} · ${doctor?.display_name || "Doctor"}`,
+          meta: `${shortDate(appointment.start_at, true, storeTimeZone)} Ãƒâ€šÃ‚Â· ${doctor?.display_name || "Doctor"}`,
           onSelect: () => {
             setSelectedAppointment(appointment);
             goToPage("overview");
@@ -5876,6 +7858,14 @@ function CustomerMobileDashboard({
       return;
     }
     if (requestSubmitting) return;
+    const normalizedCareDetails = { ...careDetails };
+    const finalCareErrors = getRequestStep3Errors({ source: normalizedCareDetails });
+    if (Object.keys(finalCareErrors).length) {
+      setRequestStep(3);
+      setRequestStep3ShowErrors(true);
+      setRequestStep3Errors(finalCareErrors);
+      return;
+    }
     setRequestSubmitError("");
     setRequestSubmitting(true);
     setRequestSubmitLoadingState(true);
@@ -5890,7 +7880,7 @@ function CustomerMobileDashboard({
         body: JSON.stringify({
           careType: selectedCareType,
           patient: requestForm,
-          careDetails,
+          careDetails: normalizedCareDetails,
           clinicalRequirements,
           uploadedMedicalFiles: Object.fromEntries(Object.entries(uploadedMedicalFiles).map(([key, value]) => [key, value?.name || ""])),
           customerEmail: profile.email || settings.email || "",
@@ -5904,7 +7894,7 @@ function CustomerMobileDashboard({
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const errorField = String(result?.error?.field || result?.error?.details?.field || "").trim();
+        const errorField = String(result?.error?.field || result?.error?.details?.field || "").trim().replace(/^careDetails\./, "");
         const errorMessage = String(result?.error?.message || "Unable to submit nurse request.");
         if (["preferredDate", "preferredTime", "visitType", "duration", "careShift"].includes(errorField)) {
           setRequestStep(3);
@@ -5921,9 +7911,9 @@ function CustomerMobileDashboard({
         status: "pending_review",
         title: `Nurse Visit Request - ${selectedCareType}`,
         careType: selectedCareType,
-        preferredDate: careDetails.preferredDate,
-        preferredTime: careDetails.preferredTime,
-        visitType: careDetails.visitType
+        preferredDate: normalizedCareDetails.preferredDate,
+        preferredTime: normalizedCareDetails.preferredTime,
+        visitType: normalizedCareDetails.visitType
       };
       await nurseRequestsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, created) : [created], { revalidate: false });
       void nurseRequestsQuery.mutate();
@@ -5978,6 +7968,7 @@ function CustomerMobileDashboard({
 
   const ivTherapyStepErrors = buildIvTherapyStepErrors(ivTherapyStep, ivTherapyForm);
   const showIvTherapyFieldError = (key) => Boolean(ivTherapyStepErrors[key]) && ivTherapyShowErrors;
+  const ivTherapyAvailableCities = useMemo(() => citiesForNigeriaState(ivTherapyForm.patient.state), [ivTherapyForm.patient.state]);
 
   async function handleIvTherapyContinue() {
     if (ivTherapySubmitting) {
@@ -5998,15 +7989,16 @@ function CustomerMobileDashboard({
     setIvTherapySubmitError("");
     setIvTherapySubmitting(true);
     try {
+      const patientPayload = buildIvTherapyPatientPayload(ivTherapyForm.patient);
       const created = await submitCustomerIvTherapyRequest(session, {
-        patient: ivTherapyForm.patient,
+        patient: patientPayload,
         clinicalHistory: ivTherapyForm.clinicalHistory,
         therapyTypes: ivTherapyForm.therapyTypes,
         goals: ivTherapyForm.goals,
         consent: ivTherapyForm.consent,
         customerEmail: profile.email || settings.email || "",
-        customerName: ivTherapyForm.patient.name || settings.displayName || profile.display_name || "",
-        customerPhone: settings.phone || ivTherapyForm.patient.phoneNumber || "",
+        customerName: patientPayload.name || settings.displayName || profile.display_name || "",
+        customerPhone: settings.phone || patientPayload.phoneNumber || "",
         appOrigin: typeof window !== "undefined" ? window.location.origin : "",
         baseUrl: session?.baseUrl || "",
         frontendType: session?.frontendType || "patient",
@@ -6089,10 +8081,219 @@ function CustomerMobileDashboard({
     });
   }
 
+  useEffect(() => {
+    setMobileHealthDraft(normalizeCustomerSettingsPayload(settings));
+    setMobileHealthErrors({});
+    setMobileChipDrafts({ allergies: "", currentMedications: "", existingConditions: "" });
+  }, [settings]);
+
+  useEffect(() => {
+    setMobileProfileDraft(normalizeCustomerSettingsPayload(settings));
+    setMobileProfileErrors({});
+  }, [settings]);
+
+  function updateMobileHealthDraft(key, value) {
+    setMobileHealthDraft((current) => normalizeCustomerSettingsPayload({ ...current, [key]: value }));
+  }
+
+  function addMobileHealthChip(key) {
+    const nextValue = sanitizeCustomerHealthChip(mobileChipDrafts[key]);
+    if (!nextValue) {
+      return;
+    }
+    updateMobileHealthDraft(key, normalizeCustomerHealthChipList([...(mobileHealthDraft[key] || []), nextValue]));
+    setMobileChipDrafts((current) => ({ ...current, [key]: "" }));
+  }
+
+  function removeMobileHealthChip(key, item) {
+    updateMobileHealthDraft(key, (mobileHealthDraft[key] || []).filter((entry) => entry !== item));
+  }
+
+  async function saveMobileHealthRecords() {
+    const normalizedDraft = normalizeCustomerSettingsPayload({
+      ...settings,
+      bloodGroup: mobileHealthDraft.bloodGroup,
+      genotype: mobileHealthDraft.genotype,
+      allergies: normalizeCustomerHealthChipList(mobileHealthDraft.allergies),
+      currentMedications: normalizeCustomerHealthChipList(mobileHealthDraft.currentMedications),
+      existingConditions: normalizeCustomerHealthChipList(mobileHealthDraft.existingConditions),
+      emergencyContactName: sanitizeClientText(mobileHealthDraft.emergencyContactName || "", { max: 120 }),
+      emergencyContactPhoneNumber: normalizeMtmPhoneNumber(mobileHealthDraft.emergencyContactPhoneNumber || ""),
+    });
+    const errors = getCustomerSettingsFieldErrors(normalizedDraft);
+    if (Object.keys(errors).length) {
+      setMobileHealthErrors(errors);
+      return;
+    }
+    setCustomerSettingsSaveStatus('saving');
+    setCustomerSettingsSaveError('');
+    setMobileHealthErrors({});
+    try {
+      const savedSettings = normalizeCustomerSettingsPayload(await updateCustomerSettings(session, normalizedDraft));
+      setSettings(savedSettings);
+      setCustomerSettingsSaveStatus('saved');
+    } catch (error) {
+      setCustomerSettingsSaveStatus('error');
+      setCustomerSettingsSaveError(error?.message || 'Unable to save health records.');
+    }
+  }
+
+  async function saveMobileProfileChanges() {
+    const normalizedDraft = normalizeCustomerSettingsPayload({
+      ...settings,
+      displayName: sanitizeClientText(mobileProfileDraft.displayName || '', { max: 120 }),
+      phone: normalizeMtmPhoneNumber(mobileProfileDraft.phone || ''),
+      address: sanitizeClientText(mobileProfileDraft.address || '', { max: 200 }),
+      email: sanitizeClientText(mobileProfileDraft.email || '', { max: 254 }).replace(/\s+/g, ''),
+    });
+    const errors = getCustomerSettingsFieldErrors(normalizedDraft, { requireAll: true });
+    if (Object.keys(errors).length) {
+      setMobileProfileErrors(errors);
+      return;
+    }
+    setCustomerSettingsSaveStatus('saving');
+    setCustomerSettingsSaveError('');
+    setMobileProfileErrors({});
+    try {
+      const savedSettings = normalizeCustomerSettingsPayload(await updateCustomerSettings(session, normalizedDraft));
+      setSettings(savedSettings);
+      setCustomerSettingsSaveStatus('saved');
+    } catch (error) {
+      setCustomerSettingsSaveStatus('error');
+      setCustomerSettingsSaveError(error?.message || 'Unable to save profile settings.');
+    }
+  }
+
   function markCustomerSettingsFieldBlurred(key) {
     setCustomerSettingsTouched((current) => ({ ...current, [key]: true }));
   }
 
+  async function flushCustomerSettingsOnBlur(key) {
+    markCustomerSettingsFieldBlurred(key);
+    const normalizedSettings = normalizeCustomerSettingsPayload(settings);
+    const errors = getCustomerSettingsFieldErrors(normalizedSettings);
+    if (errors[key]) {
+      setCustomerSettingsSaveStatus('');
+      setCustomerSettingsSaveError(errors[key]);
+      return;
+    }
+    if (!session?.accessToken) return;
+    setCustomerSettingsSaveStatus('saving');
+    setCustomerSettingsSaveError('');
+    try {
+      const savedSettings = normalizeCustomerSettingsPayload(await updateCustomerSettings(session, normalizedSettings));
+      setSettings(savedSettings);
+      setCustomerSettingsSaveStatus('saved');
+    } catch (error) {
+      setCustomerSettingsSaveStatus('error');
+      setCustomerSettingsSaveError(error?.message || 'Unable to save profile settings.');
+    }
+  }
+
+  async function handleCustomerNotificationToggle(key, value) {
+    const nextSettings = normalizeCustomerSettingsPayload({ ...settings, [key]: value });
+    setSettings(nextSettings);
+    setCustomerSettingsSaveStatus('saving');
+    setCustomerSettingsSaveError('');
+    try {
+      const savedSettings = normalizeCustomerSettingsPayload(await updateCustomerSettings(session, nextSettings));
+      setSettings(savedSettings);
+      setCustomerSettingsSaveStatus('saved');
+    } catch (error) {
+      setSettings(settings);
+      setCustomerSettingsSaveStatus('error');
+      setCustomerSettingsSaveError(error?.message || 'Unable to save notification settings.');
+    }
+  }
+  async function handleProfileImageSelected(fileOrEvent) {
+    const preparedUpload = fileOrEvent && typeof fileOrEvent === "object" && typeof fileOrEvent.data_base64 === "string"
+      ? fileOrEvent
+      : null;
+    const file = preparedUpload?.file || fileOrEvent?.target?.files?.[0] || fileOrEvent || null;
+    const nextInput = fileOrEvent?.target || profileImageInputRef.current;
+    setProfileImageError("");
+        setProfileImageSuccess("");
+            setProfileImageCooldownUntil(0);
+            if (!preparedUpload) {
+      const validationMessage = validateCustomerProfileImageFile(file);
+      if (validationMessage) {
+        setProfileImageError(validationMessage);
+        if (nextInput) {
+          nextInput.value = "";
+        }
+        return false;
+      }
+    }
+    setProfileImageSaving(true);
+    setProfileImageRefreshing(false);
+    let uploadedAvatarUrl = "";
+    try {
+      const payload = preparedUpload
+        ? {
+            filename: preparedUpload.filename,
+            mime_type: preparedUpload.mime_type,
+            data_base64: preparedUpload.data_base64,
+          }
+        : {
+            filename: file.name,
+            mime_type: file.type,
+            data_base64: await readFileAsBase64(file),
+          };
+      const result = await uploadCustomerProfileImage(session, payload);
+      uploadedAvatarUrl = normalizeProfileAvatarUrl(result?.avatar_url || result?.src || "");
+      if (uploadedAvatarUrl) {
+        const refreshedAvatarUrl = withProfileAvatarRefreshToken(uploadedAvatarUrl, Date.now());
+        setPendingProfileAvatarUrl(refreshedAvatarUrl);
+        setProfileImageRefreshing(true);
+        void mobileGlobalMutate(
+          swrKeys.proxy.path('/customer-dashboard/summary', withSessionCacheScope(session)),
+          (current) => patchCustomerProfileAvatarState(current, refreshedAvatarUrl),
+          { revalidate: false }
+        );
+        setSession?.((current) => current ? {
+          ...current,
+          user: {
+            ...(current.user || {}),
+            avatar_url: refreshedAvatarUrl,
+            avatarUrl: refreshedAvatarUrl,
+            picture: refreshedAvatarUrl,
+          },
+        } : current);
+        persistPatientSessionAvatar(refreshedAvatarUrl);
+      }
+      setProfileImageSuccess('Profile image updated successfully.');
+      void mobileGlobalMutate(swrKeys.proxy.path('/customer-dashboard/summary', withSessionCacheScope(session))).then((refreshedState) => {
+        const refreshedAvatarUrl = normalizeProfileAvatarUrl(
+          refreshedState?.dashboard?.profile?.avatar_url
+          || refreshedState?.dashboard?.profile?.profile_image
+          || refreshedState?.profile?.avatar_url
+          || refreshedState?.profile?.profile_image
+        );
+        if (uploadedAvatarUrl && refreshedAvatarUrl === uploadedAvatarUrl) {
+          setPendingProfileAvatarUrl("");
+        }
+      }).finally(() => {
+        setProfileImageRefreshing(false);
+      });
+      return true;
+    } catch (error) {
+      setProfileImageRefreshing(false);
+      if (!uploadedAvatarUrl) {
+        setPendingProfileAvatarUrl("");
+      }
+      const retrySeconds = getProfileImageRateLimitRetrySeconds(error);
+      if (retrySeconds > 0) {
+        setProfileImageCooldownUntil(Date.now() + (retrySeconds * 1000));
+      }
+      setProfileImageError(describeProfileImageUploadError(error));
+      return false;
+    } finally {
+      setProfileImageSaving(false);
+      if (nextInput) {
+        nextInput.value = "";
+      }
+    }
+  }
   function toggleMtmBarrier(option) {
     setMtmForm((current) => {
       const barriers = Array.isArray(current.adherenceAssessment.barriers) ? current.adherenceAssessment.barriers : [];
@@ -6307,7 +8508,7 @@ function CustomerMobileDashboard({
         <div className="customer-mobile-drawer-brand" aria-label="Nevari logo">
           <img src="/ne.webp" alt="Nevari" width="32" height="32" />
         </div>
-        <nav className="customer-mobile-drawer-nav" aria-label="Customer menu">
+        <nav className="customer-mobile-drawer-nav" aria-label="Patient menu">
           {[
             { id: "overview", label: "Overview", icon: "home" },
             { id: "orders", label: "Orders", icon: "orders" },
@@ -6316,6 +8517,7 @@ function CustomerMobileDashboard({
             { id: "request", label: "Request a Nurse", icon: "nurse" },
             { id: "therapy", label: "Medication Therapy Management", icon: "cross" },
             { id: "iv-therapy", label: "IV Therapy", icon: "cross" },
+            { id: "subscription-management", label: "Nevari Access Pro", icon: "wallet" },
             { id: "profile", label: "Profile", icon: "profile" }
           ].map((item) => (
             <button
@@ -6350,12 +8552,12 @@ function CustomerMobileDashboard({
         <div className="customer-mobile-drawer-footer">
           <div className="customer-mobile-drawer-profile">
             <div className="customer-mobile-avatar">
-              {profile.avatar_url ? <img src={profile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
-              <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(settings.displayName || profile.display_name || "Customer")}</span>
+              {resolvedProfile.avatar_url ? <img src={resolvedProfile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
+              <span style={{ display: resolvedProfile.avatar_url ? "none" : "inline" }}>{initials(customerDisplayName)}</span>
             </div>
             <div>
-              <strong>{settings.displayName || profile.display_name || "Tee Godwin"}</strong>
-              <span>{profile.email || settings.email || "tee@example.com"}</span>
+              <strong>{customerDisplayName}</strong>
+              <span>{resolvedProfile.email || settings.email || "tee@example.com"}</span>
             </div>
             <button className="customer-mobile-more" type="button" aria-label="More options">
               <MobileIcon name="more" />
@@ -6567,7 +8769,7 @@ function CustomerMobileDashboard({
                   <small>{statusLabel}</small>
                 </div>
                 <div className="customer-mobile-pill">{quantity}</div>
-                {order.can_refill || order.refill_available ? (
+                {String(order.status || "").toLowerCase() === "completed" && (order.can_refill || order.refill_available) ? (
                   <button
                     className="pill-button customer-mobile-refill-button"
                     type="button"
@@ -6577,7 +8779,7 @@ function CustomerMobileDashboard({
                       onRefillOrder?.(order);
                     }}
                   >
-                    {refillOrderBusy === order.id ? <BrandedSpinner label="Creating refill" /> : "Refill"}
+                    {refillOrderBusy === order.id ? <BrandedSpinner label="Creating refill order" /> : "Refill Order"}
                   </button>
                 ) : null}
                 <button className="customer-mobile-row-overlay" type="button" aria-label="Open order details" onClick={() => setSelectedOrder(order)} />
@@ -6778,7 +8980,7 @@ function CustomerMobileDashboard({
                           onClick={() => mtmLabResultsInputRef.current?.click()}
                         >
                           <span>Lab Results</span>
-                          {mtmLabResultsFiles.length ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
+                          {mtmLabResultsFiles.length ? <span className="customer-mobile-upload-success">ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“</span> : <MobileIcon name="upload-file" />}
                         </button>
                         <input
                           ref={mtmLabResultsInputRef}
@@ -7046,8 +9248,17 @@ function CustomerMobileDashboard({
     </div>;
   }
 
+  if (page === "subscription-management") {
+    return <div className="customer-mobile-app customer-subscription-management-app">
+      {renderDrawer()}
+      <main className={`customer-mobile-frame ${pageTransitionClass}`}>
+        <CustomerSubscriptionManagementScreen onOpenMenu={() => setDrawerOpen(true)} subscriptionState={subscriptionState} />
+      </main>
+    </div>;
+  }
+
   if (page === "profile" || page === "settings") {
-    return <div className="customer-mobile-app">
+    return <div className="customer-mobile-app customer-profile-mobile-app">
       {renderDrawer()}
       <main className={`customer-mobile-frame ${pageTransitionClass}`}>
         {renderHeader("Profile")}
@@ -7067,8 +9278,13 @@ function CustomerMobileDashboard({
             </button>
           ))}
         </div>
-        {profileTab === "user" ? <section className="customer-mobile-panel">
+        {profileTab === "user" ? <section className="customer-mobile-panel customer-profile-mobile-panel">
+          <section className="customer-profile-mobile-hero" aria-label="Profile photo">
+            <CustomerProfilePhotoWidget profile={resolvedProfile} displayName={customerDisplayName} uploading={profileImageSaving} refreshing={profileImageRefreshing} error={profileImageError} success={profileImageSuccess} cooldownUntil={profileImageCooldownUntil} inputRef={profileImageInputRef} onSelect={handleProfileImageSelected} onOpen={() => profileImageInputRef.current?.click()} />
+          </section>
+          <section className="customer-profile-mobile-section customer-profile-mobile-subscription-section">
           <ManageSubscription
+            profileVariant
             subscription={subscriptionState.subscription}
             loading={subscriptionState.isLoading}
             busy={subscriptionState.isActionBusy}
@@ -7077,79 +9293,84 @@ function CustomerMobileDashboard({
               plan: "nevari_access_pro",
               frequency: "monthly",
             })}
+            onPause={async () => {
+              await subscriptionState.pauseCurrentSubscription();
+            }}
             onCancel={async () => {
               await subscriptionState.cancelCurrentSubscription();
             }}
+            onView={() => setPage("subscription-management")}
           />
+          </section>
+          <section className="customer-profile-mobile-section customer-profile-mobile-personal-section">
+          <div className="customer-profile-card-head">
+            <div>
+              <span>Personal Details</span>
+              <small>Keep your main contact details up to date. Select any field and edit it directly.</small>
+            </div>
+          </div>
           <label className="customer-mobile-field">
             <span>Display Name:</span>
-            <input value={settings.displayName} className={showCustomerSettingsFieldError("displayName") ? "has-error" : ""} placeholder={profile.display_name || "Tee Godwin"} onBlur={() => markCustomerSettingsFieldBlurred("displayName")} onChange={(event) => setSettings((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />
-            {showCustomerSettingsFieldError("displayName") ? <small className="customer-mobile-field-error">{customerSettingsErrors.displayName}</small> : null}
+            <input value={mobileProfileDraft.displayName} readOnly={false} className={(mobileProfileErrors.displayName || showCustomerSettingsFieldError("displayName")) ? "has-error" : ""} placeholder={profile.display_name || "Tee Godwin"} onChange={(event) => setMobileProfileDraft((current) => ({ ...current, displayName: sanitizeClientText(event.target.value, { max: 120 }) }))} />
+            {mobileProfileErrors.displayName ? <small className="customer-mobile-field-error">{mobileProfileErrors.displayName}</small> : null}
           </label>
-          <label className="customer-mobile-field">
-            <span>Email:</span>
-            <input value={profile.email || settings.email || ""} readOnly />
-          </label>
+
           <label className="customer-mobile-field">
             <span>Phone Number:</span>
-            <input type="tel" inputMode="tel" maxLength={11} value={settings.phone} className={showCustomerSettingsFieldError("phone") ? "has-error" : ""} placeholder="+234 000 000 0000" onBlur={() => markCustomerSettingsFieldBlurred("phone")} onChange={(event) => setSettings((current) => ({ ...current, phone: normalizeMtmPhoneNumber(event.target.value) }))} />
-            {showCustomerSettingsFieldError("phone") ? <small className="customer-mobile-field-error">{customerSettingsErrors.phone}</small> : null}
+            <input type="tel" inputMode="tel" maxLength={11} value={mobileProfileDraft.phone} readOnly={false} className={mobileProfileErrors.phone ? "has-error" : ""} placeholder="+234 000 000 0000" onChange={(event) => setMobileProfileDraft((current) => ({ ...current, phone: normalizeMtmPhoneNumber(event.target.value) }))} />
+            {mobileProfileErrors.phone ? <small className="customer-mobile-field-error">{mobileProfileErrors.phone}</small> : null}
           </label>
           <label className="customer-mobile-field">
             <span>Address:</span>
-            <input value={settings.address} className={showCustomerSettingsFieldError("address") ? "has-error" : ""} placeholder="No. 1, Example Street" onBlur={() => markCustomerSettingsFieldBlurred("address")} onChange={(event) => setSettings((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
-            {showCustomerSettingsFieldError("address") ? <small className="customer-mobile-field-error">{customerSettingsErrors.address}</small> : null}
+            <input value={mobileProfileDraft.address} readOnly={false} className={mobileProfileErrors.address ? "has-error" : ""} placeholder="No. 1, Example Street" onChange={(event) => setMobileProfileDraft((current) => ({ ...current, address: sanitizeClientText(event.target.value, { max: 200 }) }))} />
+            {mobileProfileErrors.address ? <small className="customer-mobile-field-error">{mobileProfileErrors.address}</small> : null}
           </label>
           <label className="customer-mobile-field">
             <span>Email:</span>
-            <input type="email" inputMode="email" value={settings.email} className={showCustomerSettingsFieldError("email") ? "has-error" : ""} placeholder="example@domain.com" onBlur={() => markCustomerSettingsFieldBlurred("email")} onChange={(event) => setSettings((current) => ({ ...current, email: sanitizeClientText(event.target.value, { max: 254 }).replace(/\s+/g, "") }))} />
-            {showCustomerSettingsFieldError("email") ? <small className="customer-mobile-field-error">{customerSettingsErrors.email}</small> : null}
+            <input type="email" inputMode="email" value={mobileProfileDraft.email} className={mobileProfileErrors.email ? "has-error" : ""} onChange={(event) => setMobileProfileDraft((current) => ({ ...current, email: sanitizeClientText(event.target.value, { max: 254 }).replace(/\s+/g, "") }))} />
+            {mobileProfileErrors.email ? <small className="customer-mobile-field-error">{mobileProfileErrors.email}</small> : null}
           </label>
-          <div className="customer-mobile-upload-group">
-            <div>
-              <strong>Your photo</strong>
-              <p>This will be displayed on your profile.</p>
-            </div>
-            <div className="customer-mobile-upload-row">
-              <div className="customer-mobile-avatar large">
-                {profile.avatar_url ? <img src={profile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
-                <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(settings.displayName || profile.display_name || "Customer")}</span>
+          {customerSettingsSaveStatus === "saving" ? <small className="customer-mobile-save-status">Saving profile...</small> : null}
+          {customerSettingsSaveStatus === "saved" ? <small className="customer-mobile-save-success">Profile saved.</small> : null}
+          {customerSettingsSaveStatus === "error" && customerSettingsSaveError ? <small className="customer-mobile-field-error">{customerSettingsSaveError}</small> : null}
+          <div className="customer-profile-inline-actions"><button type="button" className="pill-button tertiary" onClick={() => { setMobileProfileDraft(normalizeCustomerSettingsPayload(settings)); setMobileProfileErrors({}); }} disabled={customerSettingsSaveStatus === "saving"}>Cancel</button><button type="button" className="pill-button" onClick={() => { void saveMobileProfileChanges(); }} disabled={customerSettingsSaveStatus === "saving"}>{customerSettingsSaveStatus === "saving" ? <span className="appointment-cta-spinner" aria-label="Saving profile" /> : "Save Changes"}</button></div>
+          </section>
+          <article className="customer-profile-mobile-section customer-profile-card customer-mobile-health-card customer-profile-mobile-health-card">
+            <div className="customer-profile-card-head">
+              <div>
+                <span>Key Health Records</span>
+                <small>Your health information is private and is used only to support your care experience.</small>
               </div>
-              <button className="customer-mobile-dropzone" type="button">
-                <div className="customer-mobile-upload-icon"><MobileIcon name="upload" /></div>
-                <span><strong>Click to upload</strong> or drag and drop</span>
-                <small>SVG, PNG, JPG or GIF (max. 800x400px)</small>
-              </button>
             </div>
-          </div>
-          <button className="customer-mobile-primary-button" type="button">Continue</button>
-        </section> : <section className="customer-mobile-panel customer-mobile-toggle-panel">
-          {[
-            ["Email Reminders", settings.emailReminders],
-            ["Appointment Reminders", settings.appointmentReminders],
-            ["Prescription Reminders", settings.prescriptionAlerts],
-            ["Payment Receipts", settings.paymentReceipts],
-            ["Two-factor Authentication", settings.twoFactorEnabled]
-          ].map(([label, checked]) => (
-            <label className="customer-mobile-toggle-row" key={label}>
+            
+            <div className="customer-profile-mobile-health-form">
+              <label className="customer-profile-mobile-health-field"><span>Blood group</span><select value={mobileHealthDraft.bloodGroup} onChange={(event) => updateMobileHealthDraft("bloodGroup", event.target.value)}><option value="">Not added</option>{CUSTOMER_HEALTH_BLOOD_GROUP_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{mobileHealthErrors.bloodGroup ? <small className="customer-mobile-field-error">{mobileHealthErrors.bloodGroup}</small> : null}</label>
+              <label className="customer-profile-mobile-health-field"><span>Genotype</span><select value={mobileHealthDraft.genotype} onChange={(event) => updateMobileHealthDraft("genotype", event.target.value)}><option value="">Not added</option>{CUSTOMER_HEALTH_GENOTYPE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{mobileHealthErrors.genotype ? <small className="customer-mobile-field-error">{mobileHealthErrors.genotype}</small> : null}</label>
+              {[["allergies", "Allergies"], ["currentMedications", "Current medications"], ["existingConditions", "Existing conditions"]].map(([key, label]) => <label className="customer-profile-mobile-health-field" key={key}><span>{label}</span><input value={Array.isArray(mobileHealthDraft[key]) ? mobileHealthDraft[key].join(", ") : ""} placeholder="Not added" onChange={(event) => updateMobileHealthDraft(key, normalizeCustomerHealthChipList(event.target.value.split(",")))} /></label>)}
+              <label className="customer-profile-mobile-health-field"><span>Emergency contact name</span><input value={mobileHealthDraft.emergencyContactName} placeholder="Not added" onChange={(event) => updateMobileHealthDraft("emergencyContactName", sanitizeClientText(event.target.value, { max: 120 }))} /></label>
+              <label className="customer-profile-mobile-health-field"><span>Emergency contact phone number</span><input type="tel" inputMode="tel" maxLength={11} value={mobileHealthDraft.emergencyContactPhoneNumber} placeholder="Not added" onChange={(event) => updateMobileHealthDraft("emergencyContactPhoneNumber", normalizeMtmPhoneNumber(event.target.value))} />{mobileHealthErrors.emergencyContactPhoneNumber ? <small className="customer-mobile-field-error">{mobileHealthErrors.emergencyContactPhoneNumber}</small> : null}</label>
+            </div>
+            {customerSettingsSaveStatus === "saving" ? <small className="customer-mobile-save-status">Saving health records...</small> : null}
+            {customerSettingsSaveStatus === "saved" ? <small className="customer-mobile-save-success">Health records saved.</small> : null}
+            {customerSettingsSaveStatus === "error" && customerSettingsSaveError ? <small className="customer-mobile-field-error">{customerSettingsSaveError}</small> : null}
+            <div className="customer-profile-mobile-health-actions"><button type="button" className="pill-button" onClick={() => { void saveMobileHealthRecords(); }} disabled={customerSettingsSaveStatus === "saving"}>{customerSettingsSaveStatus === "saving" ? <span className="appointment-cta-spinner" aria-label="Saving health records" /> : "Save health records"}</button></div>
+          </article>
+        </section> : <section className="customer-mobile-panel customer-mobile-toggle-panel customer-profile-mobile-notification-panel">
+          {CUSTOMER_NOTIFICATION_OPTIONS.map(([key, label]) => (
+            <label className="customer-mobile-toggle-row" key={key}>
               <span>{label}</span>
               <input
                 type="checkbox"
-                checked={Boolean(checked)}
+                checked={Boolean(settings[key])}
                 onChange={(event) => {
-                  const next = event.target.checked;
-                  setSettings((current) => {
-                    if (label === "Email Reminders") return { ...current, emailReminders: next };
-                    if (label === "Appointment Reminders") return { ...current, appointmentReminders: next };
-                    if (label === "Prescription Reminders") return { ...current, prescriptionAlerts: next };
-                    if (label === "Payment Receipts") return { ...current, paymentReceipts: next };
-                    return { ...current, twoFactorEnabled: next };
-                  });
+                  handleCustomerNotificationToggle(key, event.target.checked);
                 }}
               />
             </label>
           ))}
-          <button className="customer-mobile-primary-button" type="button">Continue</button>
+          {customerSettingsSaveStatus === "saving" ? <small className="customer-mobile-save-status">Saving profile...</small> : null}
+          {customerSettingsSaveStatus === "saved" ? <small className="customer-mobile-save-success">Profile saved.</small> : null}
+          {customerSettingsSaveStatus === "error" && customerSettingsSaveError ? <small className="customer-mobile-field-error">{customerSettingsSaveError}</small> : null}
         </section>}
       </main>
     </div>;
@@ -7161,8 +9382,8 @@ function CustomerMobileDashboard({
       <main className={`customer-mobile-frame ${pageTransitionClass}`}>
         {embeddedDesktop ? <header className="customer-request-desktop-header customer-overview-desktop-header">
           <span>Welcome back, {customerDisplayName}</span>
-          <h1>IV Therapy</h1>
-        </header> : renderHeader("IV Therapy")}
+          <h1>IV Therapy (Wellness infusions)</h1>
+        </header> : renderHeader("IV Therapy (Wellness infusions)")}
         <section className="customer-mobile-flow customer-iv-therapy-shell">
           {!ivTherapySubmitted ? <>
             <div className="customer-mobile-step-title">Step {ivTherapyStep} of 5 - {IV_THERAPY_STEP_TITLES[ivTherapyStep] || "IV Therapy"}</div>
@@ -7170,14 +9391,13 @@ function CustomerMobileDashboard({
             <div className={`customer-mobile-step-panel customer-iv-therapy-panel ${ivTherapyAnimatingOut ? "is-out" : "is-in"}`}>
               {ivTherapyStep === 1 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
                 {[
-                  ["Name:", "name", "Enter your full name"],
-                  ["Address:", "address", "Enter your address"],
-                  ["City/State:", "cityState", "Enter your city and state"],
-                  ["Phone Number:", "phoneNumber", "Enter your phone number"]
-                ].map(([label, key, placeholder]) => <label className="customer-mobile-field" key={key}>
+                  ["Name:", "name", "Enter your full name", "text"],
+                  ["Address:", "address", "Enter your address", "text"],
+                  ["Phone Number:", "phoneNumber", "Enter your phone number", "tel"]
+                ].map(([label, key, placeholder, type]) => <label className="customer-mobile-field" key={key}>
                   <span>{label}</span>
                   <input
-                    type={key === "phoneNumber" ? "tel" : "text"}
+                    type={type}
                     value={ivTherapyForm.patient[key]}
                     placeholder={placeholder}
                     className={showIvTherapyFieldError(key) ? "has-error" : ""}
@@ -7185,6 +9405,40 @@ function CustomerMobileDashboard({
                   />
                   {showIvTherapyFieldError(key) ? <small className="customer-mobile-field-error">{ivTherapyStepErrors[key]}</small> : null}
                 </label>)}
+                <label className="customer-mobile-field">
+                  <span>State:</span>
+                  <input
+                    list="customer-iv-therapy-state-options"
+                    value={ivTherapyForm.patient.state}
+                    placeholder="Search state"
+                    className={showIvTherapyFieldError("state") ? "has-error" : ""}
+                    onChange={(event) => {
+                      const nextState = event.target.value;
+                      updateIvTherapyField("patient", "state", nextState);
+                      if (!citiesForNigeriaState(nextState).includes(ivTherapyForm.patient.city)) {
+                        updateIvTherapyField("patient", "city", "");
+                      }
+                    }}
+                  />
+                  <datalist id="customer-iv-therapy-state-options">
+                    {NIGERIA_STATES.map((state) => <option key={state} value={state} />)}
+                  </datalist>
+                  {showIvTherapyFieldError("state") ? <small className="customer-mobile-field-error">{ivTherapyStepErrors.state}</small> : null}
+                </label>
+                <label className="customer-mobile-field">
+                  <span>City:</span>
+                  <input
+                    list="customer-iv-therapy-city-options"
+                    value={ivTherapyForm.patient.city}
+                    placeholder={ivTherapyForm.patient.state ? "Search city" : "Select state first"}
+                    className={showIvTherapyFieldError("city") ? "has-error" : ""}
+                    onChange={(event) => updateIvTherapyField("patient", "city", event.target.value)}
+                  />
+                  <datalist id="customer-iv-therapy-city-options">
+                    {ivTherapyAvailableCities.map((city) => <option key={city} value={city} />)}
+                  </datalist>
+                  {showIvTherapyFieldError("city") ? <small className="customer-mobile-field-error">{ivTherapyStepErrors.city}</small> : null}
+                </label>
                 <label className="customer-mobile-field">
                   <span>Gender:</span>
                   <select
@@ -7490,7 +9744,7 @@ function CustomerMobileDashboard({
               {requestStep === 4 ? <div className="customer-mobile-flow-stack">
                 {NURSE_REQUEST_CLINICAL_REQUIREMENTS.map((label) => {
                   const selected = clinicalRequirements.includes(label);
-                  return <button key={label} type="button" className={`customer-mobile-option-row ${selected ? "active" : ""}`} onClick={() => setClinicalRequirements((current) => selected ? current.filter((item) => item !== label) : [...current, label])}><span>{label}</span><span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "✓" : ""}</span></button>;
+                  return <button key={label} type="button" className={`customer-mobile-option-row ${selected ? "active" : ""}`} onClick={() => setClinicalRequirements((current) => selected ? current.filter((item) => item !== label) : [...current, label])}><span>{label}</span><span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“" : ""}</span></button>;
                 })}
               </div> : null}
               {requestStep === 5 ? <div className="customer-mobile-flow-stack">
@@ -7499,7 +9753,7 @@ function CustomerMobileDashboard({
                   return <div key={label} className="customer-mobile-upload-row-wrap">
                     <button type="button" className={`customer-mobile-upload-row-button ${uploaded ? "uploaded" : ""}`} onClick={() => uploadInputRefs.current[label]?.click()}>
                       <span>{label}</span>
-                      {uploaded ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
+                      {uploaded ? <span className="customer-mobile-upload-success">ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“</span> : <MobileIcon name="upload-file" />}
                     </button>
                     <input ref={(node) => { uploadInputRefs.current[label] = node; }} type="file" className="customer-mobile-hidden-file" onChange={(event) => {
                       const file = event.target.files?.[0];
@@ -7539,7 +9793,7 @@ function CustomerMobileDashboard({
                 <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#22A06B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#22A06B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </div>
               <h2 id="nurse-request-confirmation-title">{requestSubmitLoadingState ? "Submitting request..." : "Request Received!"}</h2>
-              {!requestSubmitLoadingState ? <p>Your nurse request has been received. Our care team will review your details and assign a suitable nurse. You’ll be notified once the visit is confirmed.</p> : null}
+              {!requestSubmitLoadingState ? <p>Your nurse request has been received. Our care team will review your details and assign a suitable nurse. YouÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ll be notified once the visit is confirmed.</p> : null}
               {!requestSubmitLoadingState ? <div className="customer-confirmation-next">
                 <h3>What happens next?</h3>
                 <div className="customer-confirmation-next-row"><span>Status</span><strong className="badge">Pending Review</strong></div>
@@ -7750,7 +10004,7 @@ function CustomerMobileDashboard({
                     }}
                   >
                     <span>{label}</span>
-                    <span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "✓" : ""}</span>
+                    <span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“" : ""}</span>
                   </button>;
                 })}
               </div> : null}
@@ -7761,7 +10015,7 @@ function CustomerMobileDashboard({
                   return <div key={label} className="customer-mobile-upload-row-wrap">
                     <button type="button" className={`customer-mobile-upload-row-button ${uploaded ? "uploaded" : ""}`} onClick={() => uploadInputRefs.current[label]?.click()}>
                       <span>{label}</span>
-                      {uploaded ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
+                      {uploaded ? <span className="customer-mobile-upload-success">ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“</span> : <MobileIcon name="upload-file" />}
                     </button>
                     <input
                       ref={(node) => { uploadInputRefs.current[label] = node; }}
@@ -7805,7 +10059,7 @@ function CustomerMobileDashboard({
             <section className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell">
             <div className="customer-mobile-empty-icon"><MobileIcon name="appointments" /></div>
             <h2>{requestSubmitLoadingState ? "Submitting request..." : "Nurse Request Submitted"}</h2>
-            {!requestSubmitLoadingState ? <p>Your nurse request has been received. Our care team will review your details and assign a suitable nurse. You’ll be notified once the visit is confirmed.</p> : null}
+            {!requestSubmitLoadingState ? <p>Your nurse request has been received. Our care team will review your details and assign a suitable nurse. YouÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ll be notified once the visit is confirmed.</p> : null}
             {!requestSubmitLoadingState ? <div className="detail-card info-list">
               <div className="info-row"><span className="info-label">Care Type</span><span className="info-value">{latestSubmittedRequest?.careType || selectedCareType || "Not set"}</span></div>
               <div className="info-row"><span className="info-label">Preferred Date</span><span className="info-value">{latestSubmittedRequest?.preferredDate || careDetails.preferredDate || "Not set"}</span></div>
@@ -8051,3 +10305,4 @@ function MobileIcon({ name }) {
   };
   return <HugeiconsIcon icon={iconMap[name] || UserIcon} size={20} strokeWidth={1.7} />;
 }
+

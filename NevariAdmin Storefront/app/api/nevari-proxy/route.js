@@ -182,7 +182,7 @@ function buildTargetUrl(requestUrl) {
     if (!/^[a-zA-Z0-9_.-]{1,40}$/.test(key) || String(value).length > 500 || /[<>{}`]/.test(String(value))) {
       throw new Error("Invalid query parameter.");
     }
-    if (key === "baseUrl" || key === "path" || key === "softFail") {
+    if (key === "baseUrl" || key === "path" || key === "softFail" || key === "_viewer") {
       return;
     }
     target.searchParams.set(key, sanitizeText(value, { max: 500 }));
@@ -202,6 +202,13 @@ function softFailStatus(status) {
 
 function withSoftFailStatus(status, softFail) {
   return softFail && softFailStatus(status) ? 200 : status;
+}
+
+function effectiveAuthorization(headers) {
+  if (!headers || typeof headers.get !== "function") {
+    return "";
+  }
+  return String(headers.get("authorization") || "").trim();
 }
 
 async function proxyRequest(request, { params } = {}) {
@@ -251,7 +258,7 @@ async function proxyRequest(request, { params } = {}) {
 
   let response;
   try {
-    response = await fetchWithDedupe(targetUrl, init, request.method, request.headers.get("authorization"), softFail);
+    response = await fetchWithDedupe(targetUrl, init, request.method, effectiveAuthorization(headers), softFail);
   } catch (error) {
     return buildTransportErrorResponse(error, targetUrl, softFail);
   }

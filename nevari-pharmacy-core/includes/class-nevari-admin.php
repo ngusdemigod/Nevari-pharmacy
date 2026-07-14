@@ -922,6 +922,7 @@ final class Nevari_Admin {
             'rest_appointments_write' => ['label' => 'Appointments write', 'default_limit' => 20, 'default_window' => MINUTE_IN_SECONDS],
             'rest_prescriptions_read' => ['label' => 'Prescriptions read', 'default_limit' => 120, 'default_window' => MINUTE_IN_SECONDS],
             'rest_prescriptions_write' => ['label' => 'Prescriptions write', 'default_limit' => 20, 'default_window' => MINUTE_IN_SECONDS],
+            'rest_customer_profile_image_write' => ['label' => 'Customer profile image uploads', 'default_limit' => 12, 'default_window' => HOUR_IN_SECONDS],
             'rest_emails_write' => ['label' => 'Email send/template actions', 'default_limit' => 5, 'default_window' => MINUTE_IN_SECONDS],
             'rest_email_logs_read' => ['label' => 'Email logs read', 'default_limit' => 60, 'default_window' => MINUTE_IN_SECONDS],
             'rest_audit_logs_read' => ['label' => 'Audit logs read', 'default_limit' => 60, 'default_window' => MINUTE_IN_SECONDS],

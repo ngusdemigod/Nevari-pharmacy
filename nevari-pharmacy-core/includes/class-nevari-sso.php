@@ -1086,10 +1086,7 @@ final class Nevari_SSO {
     }
 
     private static function create_customer_from_identity(string $dashboard_user_id, string $email, string $first_name, string $last_name) {
-        $display_name = trim($first_name . ' ' . $last_name);
-        if ($display_name === '') {
-            $display_name = preg_replace('/@.+$/', '', $email);
-        }
+        $display_name = Nevari_Auth::preferred_customer_display_name($first_name, $last_name, $email);
 
         $email_parts = explode('@', $email);
         $user_id = wp_insert_user([

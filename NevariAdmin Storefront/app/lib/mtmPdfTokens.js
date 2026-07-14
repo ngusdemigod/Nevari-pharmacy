@@ -44,7 +44,7 @@ export function createMtmPdfSnapshotToken(requestData, options = {}) {
   }
   const customerUserId = String(options.userId || requestData?.customer_user_id || "").trim();
   if (!customerUserId) {
-    throw new Error("Customer id is required for PDF snapshot signing.");
+    throw new Error("Patient id is required for PDF snapshot signing.");
   }
   const fingerprint = options.fingerprint || buildMtmPdfFingerprint(requestData);
   const issuedAt = Math.floor(Date.now() / 1000);

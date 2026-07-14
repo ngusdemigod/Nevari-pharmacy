@@ -87,9 +87,27 @@ final class Nevari_Iv_Therapy {
         if (empty($patient['address'])) {
             return Nevari_Helpers::error('validation_error', 'Address is required.', 422, ['field' => 'address']);
         }
-        if (empty($patient['cityState'])) {
-            return Nevari_Helpers::error('validation_error', 'City/State is required.', 422, ['field' => 'cityState']);
+        $state = sanitize_text_field((string) ($patient['state'] ?? ''));
+        $city = sanitize_text_field((string) ($patient['city'] ?? ''));
+        $legacy_city_state = sanitize_text_field((string) ($patient['cityState'] ?? ''));
+        if (($state === '' || $city === '') && $legacy_city_state !== '' && strpos($legacy_city_state, ',') !== false) {
+            [$legacy_city, $legacy_state] = array_map('trim', explode(',', $legacy_city_state, 2));
+            if ($city === '') {
+                $city = sanitize_text_field((string) $legacy_city);
+            }
+            if ($state === '') {
+                $state = sanitize_text_field((string) $legacy_state);
+            }
         }
+        if ($state === '') {
+            return Nevari_Helpers::error('validation_error', 'State is required.', 422, ['field' => 'state']);
+        }
+        if ($city === '') {
+            return Nevari_Helpers::error('validation_error', 'City is required.', 422, ['field' => 'city']);
+        }
+        $patient['state'] = $state;
+        $patient['city'] = $city;
+        $patient['cityState'] = $legacy_city_state !== '' ? $legacy_city_state : trim($city . ', ' . $state, ', ');
         if (empty($patient['phoneNumber'])) {
             return Nevari_Helpers::error('validation_error', 'Phone number is required.', 422, ['field' => 'phoneNumber']);
         }
@@ -105,7 +123,7 @@ final class Nevari_Iv_Therapy {
             'id' => 'ivt_' . wp_generate_uuid4(),
             'requestReference' => self::request_reference(),
             'status' => self::STATUS_SUBMITTED,
-            'title' => 'IV Therapy Request',
+            'title' => 'IV Therapy (Wellness infusions) Request',
             'patient' => $patient,
             'clinicalHistory' => $clinical_history,
             'therapyTypes' => $therapy_types,
@@ -190,14 +208,15 @@ final class Nevari_Iv_Therapy {
 
         foreach (self::admin_notification_recipients() as $recipient) {
             $admin_body = sprintf(
-                '<p>A new IV therapy request has been submitted.</p><p><strong>Request:</strong> %1$s<br /><strong>Customer:</strong> %2$s<br /><strong>Phone:</strong> %3$s<br /><strong>Email:</strong> %4$s<br /><strong>Gender:</strong> %5$s<br /><strong>Address:</strong> %6$s<br /><strong>City/State:</strong> %7$s<br /><strong>Therapy Types:</strong> %8$s<br /><strong>Chronic Conditions:</strong> %9$s<br /><strong>Current Medications:</strong> %10$s<br /><strong>Allergies:</strong> %11$s<br /><strong>Previous IV Therapy:</strong> %12$s<br /><strong>Blood Clot History:</strong> %13$s<br /><strong>Main Goal:</strong> %14$s<br /><strong>Expected Results:</strong> %15$s</p>',
+                '<p>A new IV therapy request has been submitted.</p><p><strong>Request:</strong> %1$s<br /><strong>Customer:</strong> %2$s<br /><strong>Phone:</strong> %3$s<br /><strong>Email:</strong> %4$s<br /><strong>Gender:</strong> %5$s<br /><strong>Address:</strong> %6$s<br /><strong>State:</strong> %7$s<br /><strong>City:</strong> %8$s<br /><strong>Therapy Types:</strong> %9$s<br /><strong>Chronic Conditions:</strong> %10$s<br /><strong>Current Medications:</strong> %11$s<br /><strong>Allergies:</strong> %12$s<br /><strong>Previous IV Therapy:</strong> %13$s<br /><strong>Blood Clot History:</strong> %14$s<br /><strong>Main Goal:</strong> %15$s<br /><strong>Expected Results:</strong> %16$s</p>',
                 esc_html($request_reference ?: 'IV Therapy Request'),
                 esc_html($customer_name),
                 esc_html($customer_phone ?: 'n/a'),
                 esc_html($customer_email ?: 'n/a'),
                 esc_html((string) ($patient['gender'] ?? 'n/a')),
                 esc_html((string) ($patient['address'] ?? 'n/a')),
-                esc_html((string) ($patient['cityState'] ?? 'n/a')),
+                esc_html((string) ($patient['state'] ?? 'n/a')),
+                esc_html((string) ($patient['city'] ?? 'n/a')),
                 esc_html($therapy_types ?: 'Not specified'),
                 esc_html((string) ($clinical_history['chronicConditionsDetails'] ?? ($clinical_history['chronicConditions'] ?? 'No'))),
                 esc_html((string) ($clinical_history['currentMedicationsDetails'] ?? ($clinical_history['currentMedications'] ?? 'No'))),
@@ -312,13 +331,30 @@ final class Nevari_Iv_Therapy {
         $customer_user_id = (int) ($item['customerUserId'] ?? $fallback_user_id);
         $customer = $customer_user_id > 0 ? get_user_by('id', $customer_user_id) : null;
 
+                $patient = self::sanitize_deep(is_array($item['patient'] ?? null) ? $item['patient'] : []);
+        $legacy_city_state = sanitize_text_field((string) ($patient['cityState'] ?? ''));
+        $city = sanitize_text_field((string) ($patient['city'] ?? ''));
+        $state = sanitize_text_field((string) ($patient['state'] ?? ''));
+        if (($city === '' || $state === '') && $legacy_city_state !== '' && strpos($legacy_city_state, ',') !== false) {
+            [$legacy_city, $legacy_state] = array_map('trim', explode(',', $legacy_city_state, 2));
+            if ($city === '') {
+                $city = sanitize_text_field((string) $legacy_city);
+            }
+            if ($state === '') {
+                $state = sanitize_text_field((string) $legacy_state);
+            }
+        }
+        $patient['city'] = $city;
+        $patient['state'] = $state;
+        $patient['cityState'] = $legacy_city_state !== '' ? $legacy_city_state : trim($city . ', ' . $state, ', ');
+
         return [
             'id' => sanitize_text_field((string) ($item['id'] ?? '')),
             'request_reference' => sanitize_text_field((string) ($item['requestReference'] ?? self::request_reference())),
             'status' => sanitize_key((string) ($item['status'] ?? self::STATUS_SUBMITTED)),
             'status_label' => 'Submitted',
-            'title' => sanitize_text_field((string) ($item['title'] ?? 'IV Therapy Request')),
-            'patient' => self::sanitize_deep(is_array($item['patient'] ?? null) ? $item['patient'] : []),
+            'title' => sanitize_text_field((string) ($item['title'] ?? 'IV Therapy (Wellness infusions) Request')),
+            'patient' => $patient,
             'clinical_history' => self::sanitize_deep(is_array($item['clinicalHistory'] ?? null) ? $item['clinicalHistory'] : []),
             'therapy_types' => self::sanitize_text_list(is_array($item['therapyTypes'] ?? null) ? $item['therapyTypes'] : []),
             'goals' => self::sanitize_deep(is_array($item['goals'] ?? null) ? $item['goals'] : []),

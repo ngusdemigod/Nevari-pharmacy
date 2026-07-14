@@ -5286,7 +5286,7 @@ td {
 }
 
 .audit-detail-empty {
-  min-height: 100%;
+  min-height: 100dvh;
   padding: 24px;
   display: grid;
   place-items: center;
@@ -5370,15 +5370,9 @@ td {
   position: fixed;
   inset: 0;
   background-color: #f7f9ff;
-  background-image:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0.72) 48%, rgba(255, 255, 255, 0.46) 100%),
-    url("/Frame 95621.png");
-  background-position:
-    center center,
-    bottom center;
-  background-size:
-    cover,
-    cover;
+  background-image: url("/Frame 1984078457.png");
+  background-position: center bottom;
+  background-size: 100% 100%;
   background-repeat: no-repeat;
   padding: 28px 16px 40px;
   z-index: 80;
@@ -5391,7 +5385,7 @@ td {
 
 .auth-gate-shell {
   width: min(440px, 100%);
-  min-height: 100%;
+  min-height: 100dvh;
   margin: 0 auto;
   display: grid;
   place-items: center;
@@ -5892,6 +5886,9 @@ td {
 @media (max-width: 400px) {
   .auth-gate {
     padding: 20px 12px 28px;
+    background-image: url("/Frame 1984078458.png");
+    background-position: center bottom;
+    background-size: 100% 100%;
   }
 
   .auth-gate-shell {
@@ -15249,47 +15246,6 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   box-shadow: 0 14px 30px rgba(14, 41, 85, 0.08);
 }
 
-.customer-mobile-dropzone {
-  min-height: 156px;
-  border: 1px solid #dde2ea;
-  border-radius: 16px;
-  background: #ffffff;
-  color: #6b7280;
-  display: grid;
-  place-items: center;
-  gap: 10px;
-  text-align: center;
-  padding: 20px;
-  box-shadow: 0 18px 40px rgba(14, 41, 85, 0.04);
-}
-
-.customer-mobile-dropzone strong {
-  color: #6c3fff;
-}
-
-.customer-mobile-dropzone small {
-  color: #667085;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.customer-profile-upload-card {
-  padding: 24px;
-}
-
-.customer-profile-upload-row {
-  grid-template-columns: 72px minmax(0, 1fr);
-}
-
-.customer-profile-upload-avatar {
-  width: 72px;
-  height: 72px;
-}
-
-.customer-profile-dropzone {
-  min-height: 188px;
-}
-
 .customer-mobile-toggle-panel {
   gap: 14px;
 }
@@ -17575,7 +17531,7 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
 .subscription-pro-badge {
   display: inline-flex;
   align-items: center;
-  justify-content: start;
+  justify-content: flex-start;
   min-width: 2.6rem;
   height: 1.65rem;
   border-radius: 0.35rem;
@@ -27656,27 +27612,51 @@ button:focus-visible,
   .doctor-flow-shell:has(.customer-request-desktop) .desktop-bottom-nav {
     display: none;
   }
-
   .customer-desktop-sidebar-profile {
     display: grid;
-    grid-template-columns: 26px minmax(0, 1fr) auto;
-    gap: 8px;
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 10px;
     align-items: center;
     color: #202938;
-    font-size: 10px;
   }
 
+  .customer-desktop-sidebar-avatar,
   .customer-desktop-sidebar-profile .customer-mobile-avatar {
-    width: 26px;
-    height: 26px;
+    width: 32px;
+    height: 32px;
     margin: 0;
-    font-size: 9px;
+    font-size: 11px;
+    flex-shrink: 0;
   }
 
-  .customer-desktop-sidebar-profile strong {
+  .customer-desktop-sidebar-profile-copy {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .customer-desktop-sidebar-profile-copy strong {
+    display: block;
+    min-width: 0;
+    color: #202938;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: 0;
+  }
+
+  .customer-desktop-sidebar-profile-copy span {
+    display: block;
+    min-width: 0;
     color: #8b95a5;
-    font-weight: 500;
-    letter-spacing: 1px;
+    font-size: 10px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .role-shell-exact:has(.customer-request-desktop) .desktop-dashboard-page {
@@ -28543,7 +28523,7 @@ body,
 .pharmacist-dashboard-main-embedded .nevari-admin-storefront.embedded-dashboard-page .topbar,
 .pharmacist-dashboard-main-embedded .nevari-admin-storefront.embedded-products-only .topbar {
   grid-template-columns: minmax(280px, 420px) auto minmax(0, 1fr);
-  justify-content: start;
+  justify-content: flex-start;
 }
 
 .pharmacist-dashboard-main-embedded .nevari-admin-storefront.embedded-dashboard-page .topbar-actions,
@@ -29578,9 +29558,14 @@ body:has(.subscription-surface) {
 .customer-appointment-confirmation-modal :is(.customer-flow-status-card-confirmed, .customer-flow-status-card-checkout) {
   width: min(100%, 500px) !important;
   max-width: 500px !important;
-  max-height: calc(100dvh - 40px);
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
   box-shadow: 0 28px 70px rgba(7, 15, 32, 0.28) !important;
+}
+
+.customer-appointment-confirmation-modal .customer-flow-status-page-modal {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .customer-appointment-confirmation-modal .customer-flow-status-panel {
@@ -29617,11 +29602,11 @@ body:has(.subscription-surface) {
   }
 
   .customer-appointment-confirmation-modal .customer-flow-status-page-modal {
-    min-height: calc(100dvh - 24px);
+    min-height: auto;
   }
 
   .customer-appointment-confirmation-modal :is(.customer-flow-status-card-confirmed, .customer-flow-status-card-checkout) {
-    max-height: calc(100dvh - 24px);
+    max-height: none;
   }
 
 .customer-appointment-confirmation-modal .customer-flow-status-actions {
@@ -31027,12 +31012,6 @@ body .customer-mobile-panel > .subscription-manage-card .subscription-feedback.e
   color: #ffffff !important;
 }
 
-.customer-mobile-app .customer-mobile-upload-group .customer-mobile-dropzone,
-.customer-mobile-app .customer-profile-dropzone,
-.customer-desktop-boxed-page .customer-profile-dropzone,
-.customer-desktop-embedded-page .customer-profile-dropzone {
-  border-radius: 16px !important;
-}
 .nevari-admin-storefront .admin-settings-surface {
   display: grid;
   gap: 18px;
@@ -31405,4 +31384,1694 @@ body .customer-mobile-panel > .subscription-manage-card .subscription-feedback.e
   .nevari-admin-storefront .field-card.span-12 {
     grid-column: auto;
   }
+}
+
+
+/* Subscription profile redesign */
+.nevari-subscription-root {
+  width: 100%;
+}
+
+.nevari-subscription-desktop-only,
+.nevari-subscription-mobile-only {
+  width: 100%;
+}
+
+.nevari-subscription-mobile-only {
+  display: none;
+}
+
+.nevari-subscription-card,
+.nevari-subscription-compact-card {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid #E6E8EE;
+  border-radius: 16px;
+  background: #FFFFFF;
+}
+
+.nevari-subscription-card {
+  padding: 24px 26px 0;
+}
+
+.nevari-subscription-full-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 22px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.nevari-subscription-top-copy {
+  min-width: 0;
+}
+
+.nevari-subscription-eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9CA3AF;
+}
+
+.nevari-subscription-value-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.nevari-subscription-amount {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #0F2A5C;
+}
+
+.nevari-subscription-amount-currency {
+  font-size: 16px;
+  font-weight: 600;
+  color: #6B7280;
+  margin-right: 3px;
+}
+
+.nevari-subscription-pro-badge {
+  display: block;
+  flex: none;
+}
+
+.nevari-subscription-free-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: #F4F5F7;
+  color: #6B7280;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nevari-subscription-free-pill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.nevari-subscription-summary-line {
+  margin-top: 8px;
+  color: #6B7280;
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.nevari-subscription-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2E9E6B;
+}
+
+.nevari-subscription-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.nevari-subscription-status--trial {
+  color: #B9770E;
+}
+
+.nevari-subscription-status--past-due {
+  color: #D14343;
+}
+
+.nevari-subscription-cta-wrap {
+  flex: none;
+}
+
+.nevari-subscription-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 999px;
+  border: 0;
+  cursor: pointer;
+  padding: 14px 30px;
+  font-size: 15px;
+  font-weight: 600;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.nevari-subscription-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.nevari-subscription-button--primary {
+  background: #0A2450;
+  color: #FFFFFF;
+}
+
+.nevari-subscription-button--primary:hover {
+  background: #081B3D;
+}
+
+.nevari-subscription-button--secondary {
+  background: #FFFFFF;
+  color: #0F2A5C;
+  border: 1px solid #E6E8EE;
+}
+
+.nevari-subscription-button--secondary:hover {
+  background: #F4F5F7;
+}
+
+.nevari-subscription-button--ghost {
+  background: transparent;
+  color: #6B7280;
+  width: 100%;
+}
+
+.nevari-subscription-button--ghost:hover {
+  background: #F4F5F7;
+  color: #0F2A5C;
+}
+
+.nevari-subscription-button--small {
+  padding: 9px 18px;
+  font-size: 13px;
+}
+
+.nevari-subscription-divider {
+  border-top: 1px solid #EEF0F4;
+  margin: 0 -26px;
+}
+
+.nevari-subscription-meta-grid {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  padding: 18px 0 22px;
+}
+
+.nevari-subscription-meta-item {
+  flex: 1;
+  min-width: 120px;
+}
+
+.nevari-subscription-meta-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9CA3AF;
+  margin-bottom: 6px;
+}
+
+.nevari-subscription-meta-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0F2A5C;
+  overflow-wrap: anywhere;
+}
+
+.nevari-subscription-footer {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 -26px;
+  padding: 16px 26px;
+  border-top: 1px solid #EEF0F4;
+  background: #FAFBFC;
+  border-radius: 0 0 16px 16px;
+}
+
+.nevari-subscription-feedback {
+  margin: 0;
+  padding: 0 0 22px;
+  color: #D14343;
+  font-size: 13px;
+}
+
+.nevari-subscription-compact-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: #F4F5F7;
+  padding: 20px 22px;
+}
+
+.nevari-subscription-compact-chip {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  flex: none;
+  background: #0A2450;
+  color: #FFFFFF;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.nevari-subscription-compact-chip--outline {
+  background: #FFFFFF;
+  color: #0F2A5C;
+  border: 1.5px dashed #9CA3AF;
+}
+
+.nevari-subscription-compact-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.nevari-subscription-compact-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.nevari-subscription-compact-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #0F2A5C;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nevari-subscription-compact-trial {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #B9770E;
+}
+
+.nevari-subscription-compact-trial::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.nevari-subscription-compact-meta {
+  margin-top: 2px;
+  font-size: 13px;
+  color: #6B7280;
+  overflow-wrap: anywhere;
+}
+
+.nevari-subscription-compact-actions {
+  flex: none;
+  display: flex;
+  gap: 8px;
+}
+
+.nevari-subscription-compact-card--free {
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.nevari-subscription-compact-card--free .nevari-subscription-compact-copy {
+  width: 100%;
+  flex: none;
+}
+
+.nevari-subscription-compact-card--free .nevari-subscription-compact-name-row,
+.nevari-subscription-compact-card--free .nevari-subscription-compact-actions {
+  justify-content: center;
+}
+
+.nevari-subscription-skeleton-card {
+  min-height: 240px;
+}
+
+.nevari-subscription-skeleton-block {
+  border-radius: 999px;
+  background: #EEF0F4;
+}
+
+.nevari-subscription-skeleton-block--label {
+  width: 180px;
+  height: 14px;
+}
+
+.nevari-subscription-skeleton-block--value {
+  width: 210px;
+  height: 40px;
+  margin-top: 16px;
+}
+
+.nevari-subscription-skeleton-block--line {
+  width: 260px;
+  height: 16px;
+  margin-top: 14px;
+}
+
+.nevari-subscription-skeleton-spinner {
+  padding: 48px 0 16px;
+}
+
+.nevari-subscription-sheet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px 12px calc(12px + env(safe-area-inset-bottom));
+}
+
+.nevari-subscription-sheet-backdrop,
+.nevari-subscription-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 36, 80, 0.28);
+}
+
+.nevari-subscription-sheet-panel {
+  position: relative;
+  width: min(100%, 560px);
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  background: transparent;
+}
+
+.nevari-subscription-sheet-handle {
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(10, 36, 80, 0.18);
+  margin: 0 auto 10px;
+}
+
+.nevari-subscription-sheet-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.nevari-subscription-close-button {
+  border: 0;
+  background: transparent;
+  color: #6B7280;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nevari-subscription-confirm-shell {
+  position: relative;
+}
+
+@media (max-width: 767px) {
+  .nevari-subscription-desktop-only {
+    display: none;
+  }
+
+  .nevari-subscription-mobile-only {
+    display: block;
+  }
+}
+
+@media (max-width: 480px) {
+  .nevari-subscription-card {
+    padding: 22px 20px 0;
+  }
+
+  .nevari-subscription-divider,
+  .nevari-subscription-footer {
+    margin-left: -20px;
+    margin-right: -20px;
+  }
+
+  .nevari-subscription-footer {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .nevari-subscription-full-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .nevari-subscription-cta-wrap .nevari-subscription-button {
+    width: 100%;
+  }
+
+  .nevari-subscription-amount {
+    font-size: 28px;
+  }
+
+  .nevari-subscription-meta-grid {
+    gap: 18px 24px;
+  }
+
+  .nevari-subscription-compact-card {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .nevari-subscription-compact-name-row,
+  .nevari-subscription-compact-actions {
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nevari-subscription-button {
+    transition: none !important;
+  }
+}
+
+
+.nevari-subscription-button-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  display: inline-block;
+  animation: nevari-subscription-spin 0.7s linear infinite;
+}
+
+@keyframes nevari-subscription-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.customer-mobile-photo-widget {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin: 2px 0 12px;
+}
+
+.customer-desktop-photo-slot {
+  flex: none;
+  justify-items: flex-start;
+  margin: 0;
+}
+
+.customer-mobile-photo-button {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  min-height: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #101828;
+  display: block;
+  padding: 0;
+  cursor: pointer;
+}
+
+.customer-mobile-photo-button:hover,
+.customer-mobile-photo-button:focus-visible {
+  outline: none;
+}
+
+.customer-mobile-photo-button:focus-visible .customer-mobile-photo-avatar {
+  box-shadow: 0 0 0 4px rgba(11, 50, 109, 0.18);
+}
+
+.customer-mobile-photo-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.customer-mobile-photo-widget.is-uploading .customer-mobile-photo-button:disabled {
+  opacity: 1;
+}
+
+.customer-mobile-photo-avatar {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border: 3px solid #ffffff;
+  box-shadow: 0 16px 34px rgba(15, 42, 92, 0.12);
+}
+
+.customer-mobile-photo-avatar::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: inherit;
+  border: 3px solid transparent;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.customer-mobile-photo-widget.is-refreshing .customer-mobile-photo-avatar::after {
+  opacity: 0;
+}
+
+.customer-mobile-photo-widget.is-refreshing .customer-mobile-photo-avatar > img,
+.customer-mobile-photo-widget.is-refreshing .customer-mobile-photo-avatar > span {
+  opacity: 0.52;
+}
+
+.customer-mobile-photo-processing {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.customer-mobile-photo-processing .appointment-cta-spinner {
+  width: 20px;
+  height: 20px;
+}
+
+.customer-mobile-photo-widget.is-upload-settling .customer-mobile-photo-avatar::after {
+  border-color: rgba(11, 85, 217, 0.35);
+  animation: customer-avatar-upload-fade 0.72s ease forwards;
+}
+
+.customer-mobile-photo-camera {
+  position: absolute;
+  right: -2px;
+  bottom: -1px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 3px solid #ffffff;
+  background: #0b326d;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 22px rgba(11, 50, 109, 0.2);
+}
+
+.customer-desktop-photo-slot .customer-mobile-photo-button {
+  width: 80px;
+  height: 80px;
+}
+
+.customer-desktop-photo-slot .customer-mobile-photo-avatar {
+  width: 80px;
+  height: 80px;
+}
+
+.customer-desktop-photo-slot .customer-mobile-photo-camera {
+  right: -2px;
+  bottom: -1px;
+  width: 30px;
+  height: 30px;
+}
+
+.customer-mobile-photo-menu {
+  position: absolute;
+  top: 106px;
+  left: 50%;
+  z-index: 20;
+  min-width: 196px;
+  padding: 8px;
+  border: 1px solid #dde2ea;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(14, 41, 85, 0.16);
+  transform: translateX(-50%);
+}
+
+.customer-desktop-photo-slot .customer-mobile-photo-menu {
+  left: 0;
+  transform: none;
+}
+
+.customer-mobile-photo-menu button {
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #0f2a5c;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.customer-mobile-photo-menu button:hover,
+.customer-mobile-photo-menu button:focus-visible {
+  background: #eef4ff;
+  outline: none;
+}
+
+.customer-mobile-photo-menu button:disabled {
+  color: #98a2b3;
+  cursor: not-allowed;
+}
+
+.customer-photo-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(15, 23, 42, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.customer-photo-viewer-card {
+  position: relative;
+  width: min(92vw, 520px);
+  padding: 20px;
+  border-radius: 28px;
+  background: #ffffff;
+  box-shadow: 0 32px 80px rgba(15, 23, 42, 0.22);
+}
+
+.customer-photo-viewer-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 42, 92, 0.08);
+  color: #0f2a5c;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.customer-photo-viewer-close:hover,
+.customer-photo-viewer-close:focus-visible {
+  background: rgba(11, 50, 109, 0.14);
+  outline: none;
+}
+
+.customer-photo-viewer-image {
+  width: 100%;
+  max-height: min(76vh, 520px);
+  border-radius: 20px;
+  object-fit: contain;
+  display: block;
+}
+
+.customer-mobile-photo-input {
+  display: none;
+}
+
+.customer-mobile-save-status,
+.customer-mobile-save-success {
+  color: #667085;
+  font-size: 13px;
+}
+
+.customer-mobile-save-success {
+  color: #18794e;
+}
+
+@keyframes customer-avatar-upload-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes customer-avatar-upload-fade {
+  0% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+
+.customer-profile-completion-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(11, 50, 109, 0.08);
+  color: #0b326d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.customer-profile-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.customer-profile-card-head > div {
+  display: grid;
+  gap: 6px;
+}
+
+.customer-profile-card-head small,
+.customer-profile-muted {
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.customer-profile-detail-grid,
+.customer-profile-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.customer-profile-detail-grid label,
+.customer-profile-modal-field {
+  display: grid;
+  gap: 8px;
+}
+
+.customer-profile-detail-grid label span,
+.customer-profile-modal-field span {
+  color: #475467;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.customer-profile-detail-grid-wide,
+.customer-profile-chip-field {
+  grid-column: 1 / -1;
+}
+
+.customer-profile-inline-actions,
+.customer-profile-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.customer-profile-health-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.customer-profile-health-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid #e4e7ec;
+}
+
+.customer-profile-health-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.customer-profile-health-row span {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.customer-profile-health-row strong {
+  color: #101828;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.customer-profile-modal-card {
+  animation: customer-profile-modal-enter 0.22s ease;
+}
+
+.customer-profile-modal-head {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.customer-profile-modal-head h3 {
+  margin: 0;
+  color: #101828;
+}
+
+.customer-profile-modal-head p {
+  margin: 0;
+  color: #667085;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.customer-profile-upload-card,
+.customer-health-records-modal,
+.customer-profile-completion-card {
+  width: min(92vw, 720px);
+}
+
+.customer-profile-cropper-shell {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.customer-profile-cropper-surface {
+  position: relative;
+  width: min(100%, 520px);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border-radius: 28px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #dce8f8 0%, #b9c9de 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.customer-profile-cropper-surface.is-loading {
+  cursor: wait;
+}
+
+.customer-profile-cropper-surface:active {
+  cursor: grabbing;
+}
+
+.customer-profile-cropper-image {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+}
+
+.customer-profile-cropper-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.customer-profile-cropper-ring {
+  position: absolute;
+  inset: 7.5%;
+  border-radius: 50%;
+  box-shadow: 0 0 0 999px rgba(15, 23, 42, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.88);
+}
+
+.customer-profile-cropper-ring::before,
+.customer-profile-cropper-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.customer-profile-cropper-ring::before {
+  left: 33.333%;
+  right: 33.333%;
+  border-left: 1px solid rgba(255, 255, 255, 0.45);
+  border-right: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+.customer-profile-cropper-ring::after {
+  top: 33.333%;
+  bottom: 33.333%;
+  border-top: 1px solid rgba(255, 255, 255, 0.45);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+.customer-profile-cropper-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.54);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.customer-profile-cropper-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.customer-profile-upload-card .button-spinner {
+  --spinner-size: 16px;
+}
+
+.customer-profile-cropper-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.customer-profile-cropper-control {
+  display: grid;
+  gap: 8px;
+  flex: 1 1 auto;
+}
+
+.customer-profile-cropper-control span {
+  color: #475467;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.customer-profile-cropper-control input {
+  width: 100%;
+}
+
+.customer-profile-cropper-reset {
+  flex: none;
+}
+
+.customer-profile-upload-actions {
+  display: flex;
+  justify-content: center;
+}
+
+.customer-profile-chip-composer {
+  display: flex;
+  gap: 10px;
+}
+
+.customer-profile-chip-composer input {
+  flex: 1 1 auto;
+}
+
+.customer-profile-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.customer-profile-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #0b326d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.customer-profile-chip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.customer-profile-completion-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.customer-profile-completion-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #0b326d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@keyframes customer-profile-modal-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 960px) {
+  .customer-profile-detail-grid,
+  .customer-profile-modal-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .customer-profile-card-head,
+  .customer-profile-inline-actions,
+  .customer-profile-chip-composer,
+  .customer-profile-health-row,
+  .customer-profile-cropper-toolbar {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .customer-profile-modal-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .customer-profile-modal-actions .pill-button.primary {
+    order: 1;
+  }
+
+  .customer-profile-modal-actions .pill-button.tertiary {
+    order: 2;
+  }
+
+  .customer-profile-upload-card {
+    width: min(94vw, 640px);
+  }
+
+  .customer-profile-cropper-surface {
+    border-radius: 24px;
+  }
+
+  .customer-profile-cropper-hint {
+    bottom: 14px;
+    padding: 8px 14px;
+    font-size: 12px;
+  }
+
+  .customer-profile-health-row strong {
+    text-align: left;
+  }
+}
+
+
+.customer-desktop-search-shell-interactive {
+  position: relative;
+}
+
+.customer-desktop-search-shell-interactive.is-open {
+  box-shadow: 0 0 0 3px rgba(11, 50, 109, 0.12);
+  border-radius: 999px;
+}
+
+.customer-desktop-search-clear {
+  border: 0;
+  background: transparent;
+  color: #667085;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.customer-desktop-search-dropdown {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 0;
+  width: min(100%, 420px);
+  min-width: 280px;
+  padding: 10px;
+  border: 1px solid #dde2ea;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.14);
+  display: grid;
+  gap: 8px;
+  z-index: 30;
+}
+
+.customer-desktop-search-dropdown button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 14px;
+  background: #f8fafc;
+  color: #0f2a5c;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.customer-desktop-search-dropdown button:hover,
+.customer-desktop-search-dropdown button:focus-visible {
+  background: #eef4ff;
+  outline: none;
+}
+
+.customer-desktop-search-dropdown button span {
+  font-weight: 700;
+}
+
+.customer-desktop-search-dropdown button small,
+.customer-desktop-search-empty {
+  color: #667085;
+  font-size: 12px;
+}
+
+.customer-desktop-search-empty {
+  min-height: 44px;
+  border-radius: 14px;
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  padding: 12px 14px;
+}
+
+.customer-mobile-health-card {
+  margin-top: 12px;
+}
+
+
+/* Customer profile mobile prototype */
+.customer-profile-mobile-app {
+  --profile-navy: #062e68;
+  --profile-text: #20314f;
+  --profile-muted: #6d7890;
+  --profile-line: #d9e1ed;
+  --profile-line-soft: #e9edf4;
+  --profile-soft: #f6f8fb;
+  background: #f4f6f9;
+  color: var(--profile-text);
+}
+.customer-profile-mobile-app .customer-mobile-header,
+.customer-profile-mobile-app .customer-mobile-frame { width: min(430px, 100%); }
+.customer-profile-mobile-app .customer-mobile-header { padding: 14px 22px 12px; background: rgba(255,255,255,.96); }
+.customer-profile-mobile-app .customer-mobile-frame { padding: 0 22px calc(30px + env(safe-area-inset-bottom)); background: #fff; }
+.customer-profile-mobile-app .customer-mobile-searchbar { height: 43px; border-color: var(--profile-line); }
+.customer-profile-mobile-app .customer-mobile-searchbar-button span { color: #76829a; font-size: 12px; }
+.customer-profile-mobile-app .customer-mobile-pagehead-row { gap: 13px; margin-top: 13px; min-height: 36px; }
+.customer-profile-mobile-app .customer-mobile-pagehead-row h1 { color: var(--profile-navy); font-size: 22px; line-height: 1.1; letter-spacing: -.02em; }
+.customer-profile-mobile-app .customer-mobile-profile-tabs { position: sticky; top: 104px; z-index: 15; gap: 8px; margin: 0 -22px; padding: 10px 22px 12px; background: rgba(255,255,255,.96); }
+.customer-profile-mobile-app .customer-mobile-pill-tab { min-height: 34px; border-radius: 999px; color: #6c7590; font-size: 12px; }
+.customer-profile-mobile-app .customer-mobile-pill-tab.active { color: #fff; background: var(--profile-navy); font-weight: 600; }
+.customer-profile-mobile-app .customer-profile-mobile-panel { display: block; margin-top: 0; padding: 0; border: 0; background: #fff; }
+.customer-profile-mobile-hero { display: grid; place-items: center; margin: 0 0 16px; padding: 24px 16px 10px; }
+.customer-profile-mobile-hero .customer-mobile-photo-button,
+.customer-profile-mobile-hero .customer-mobile-photo-avatar { width: 86px; height: 86px; }
+.customer-profile-mobile-hero .customer-mobile-photo-avatar { border: 3px solid #fff; background: radial-gradient(circle at 28% 24%, #f0a65b 0 8%, transparent 9%), linear-gradient(135deg, #a98257 0 30%, #4c6d6a 30% 56%, #c0482f 56% 72%, #253b59 72%); color: #fff; font-weight: 700; }
+.customer-profile-mobile-hero .customer-mobile-photo-camera { right: -3px; bottom: -3px; width: 28px; height: 28px; border: 3px solid #fff; background: var(--profile-navy); }
+.customer-profile-mobile-section { margin-top: 16px; border: 1px solid var(--profile-line); border-radius: 20px; background: #fff; overflow: hidden; }
+
+.customer-profile-mobile-subscription-section .nevari-subscription-compact-card { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: center; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.customer-profile-mobile-subscription-section .nevari-subscription-compact-chip { width: 44px; height: 44px; border-radius: 12px; background: var(--profile-navy); }
+.customer-profile-mobile-subscription-section .nevari-subscription-compact-name { color: var(--profile-navy); font-size: 14px; font-weight: 700; }
+.customer-profile-mobile-subscription-section .nevari-subscription-compact-meta { color: var(--profile-muted); font-size: 11px; line-height: 1.45; }
+.customer-profile-mobile-subscription-section .nevari-subscription-button--secondary { min-height: 38px; padding: 0 18px; border: 1px solid var(--profile-line); border-radius: 999px; color: var(--profile-navy); background: #fff; font-size: 12px; font-weight: 600; }
+.customer-profile-mobile-personal-section { padding: 0; }
+.customer-profile-mobile-personal-section > .customer-profile-card-head,
+.customer-profile-mobile-health-card .customer-profile-card-head { display: block; margin: 0; padding: 18px 20px 14px; border-bottom: 1px solid var(--profile-line-soft); }
+.customer-profile-mobile-personal-section > .customer-profile-card-head > div,
+.customer-profile-mobile-health-card .customer-profile-card-head > div { display: grid; gap: 0; }
+.customer-profile-mobile-personal-section > .customer-profile-card-head > div > span { margin-bottom: 4px; color: var(--profile-navy); font-size: 12px; font-weight: 600; }
+.customer-profile-mobile-personal-section > .customer-profile-card-head small,
+.customer-profile-mobile-health-card .customer-profile-card-head small { display: block; margin-top: 5px; color: var(--profile-muted); font-size: 12px; line-height: 1.55; }
+.customer-profile-mobile-personal-section > .customer-profile-card-head > button,
+.customer-profile-mobile-health-card .customer-profile-card-head > button { display: none; }
+.customer-profile-mobile-personal-section > .customer-mobile-field { display: grid; gap: 7px; padding: 0 20px; }
+.customer-profile-mobile-personal-section > .customer-profile-card-head + .customer-mobile-field { margin-top: 18px; }
+.customer-profile-mobile-personal-section > .customer-mobile-field span,
+.customer-profile-mobile-health-card .customer-profile-health-row span { color: #56647e; font-size: 12px; font-weight: 500; }
+.customer-profile-mobile-personal-section > .customer-mobile-field input { min-height: 42px; border: 1px solid var(--profile-line); border-radius: 9px; color: #1e2f4b; background: var(--profile-soft); padding: 0 39px 0 12px; font-size: 12px; }
+.customer-profile-mobile-personal-section > .customer-mobile-field:last-of-type { margin-bottom: 20px; }
+.customer-profile-mobile-personal-section .customer-profile-inline-actions { justify-content: flex-end; margin: 0 20px 20px; }
+.customer-profile-mobile-personal-section .pill-button,
+.customer-profile-mobile-health-card .pill-button { min-height: 38px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.customer-profile-mobile-health-card { padding: 0; }
+.customer-profile-mobile-health-card .customer-profile-card-head > div::before { content: "Health records"; margin-bottom: 4px; color: var(--profile-navy); font-size: 12px; font-weight: 600; }
+.customer-profile-mobile-health-card .customer-profile-card-head > div > span { color: var(--profile-navy); font-size: 16px; }
+.customer-profile-mobile-health-card::before { content: "Your health information is private and is used only to support your care experience."; display: block; margin: 16px 20px 0; padding: 13px 14px; border-radius: 12px; color: #53617b; background: var(--profile-soft); font-size: 11px; line-height: 1.55; }
+.customer-profile-mobile-health-card .customer-profile-health-grid { display: grid; padding: 8px 20px 20px; }
+.customer-profile-mobile-health-card .customer-profile-health-row { display: grid; gap: 8px; padding: 16px 0; border-bottom: 1px solid var(--profile-line-soft); }
+.customer-profile-mobile-health-card .customer-profile-health-row:last-child { border-bottom: 0; }
+.customer-profile-mobile-health-card .customer-profile-health-row strong { display: flex; align-items: center; min-height: 42px; padding: 0 12px; border: 1px solid var(--profile-line); border-radius: 9px; color: #1e2f4b; background: var(--profile-soft); font-size: 12px; font-weight: 500; }
+.customer-profile-mobile-notification-panel { display: block; padding: 0; border: 1px solid var(--profile-line); border-radius: 20px; overflow: hidden; }
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row { min-height: 68px; padding: 16px 20px; border-bottom: 1px solid var(--profile-line-soft); }
+@media (max-width: 480px) { .customer-profile-mobile-subscription-section .nevari-subscription-compact-card { grid-template-columns: 44px minmax(0, 1fr) auto; text-align: left; } }
+@media (max-width: 360px) { .customer-profile-mobile-app .customer-mobile-header, .customer-profile-mobile-app .customer-mobile-frame { padding-left: 16px; padding-right: 16px; } .customer-profile-mobile-app .customer-mobile-profile-tabs { margin-inline: -16px; padding-inline: 16px; } .customer-profile-mobile-subscription-section .nevari-subscription-compact-card { grid-template-columns: 42px minmax(0, 1fr); } .customer-profile-mobile-subscription-section .nevari-subscription-compact-actions { grid-column: 1 / -1; } }
+
+.customer-profile-mobile-personal-section > .customer-profile-card-head > button,
+.customer-profile-mobile-health-card .customer-profile-card-head > button {
+  display: inline-flex;
+  margin-top: 10px;
+}
+.customer-profile-mobile-health-card .customer-profile-card-head > button {
+  float: right;
+}
+
+/* Direct mobile profile forms */
+.customer-profile-mobile-personal-section > .customer-profile-card-head > button,
+.customer-profile-mobile-health-card .customer-profile-card-head > button {
+  display: none;
+}
+.customer-profile-mobile-privacy-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 16px 20px 0;
+  padding: 13px 14px;
+  border-radius: 12px;
+  color: #53617b;
+  background: var(--profile-soft);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.customer-profile-mobile-privacy-note svg { flex: 0 0 auto; color: var(--profile-navy); margin-top: 1px; }
+.customer-profile-mobile-health-form { display: grid; gap: 0; padding: 8px 20px 20px; }
+.customer-profile-mobile-health-field { display: grid; gap: 8px; padding: 16px 0; border-bottom: 1px solid var(--profile-line-soft); }
+.customer-profile-mobile-health-field:last-child { border-bottom: 0; }
+.customer-profile-mobile-health-field > span { color: #56647e; font-size: 12px; font-weight: 500; }
+.customer-profile-mobile-health-field input,
+.customer-profile-mobile-health-field select { width: 100%; min-height: 42px; border: 1px solid var(--profile-line); border-radius: 9px; color: #1e2f4b; background: var(--profile-soft); padding: 0 12px; font-size: 12px; }
+.customer-profile-mobile-health-field input:focus,
+.customer-profile-mobile-health-field select:focus { border-color: var(--profile-navy); background: #fff; outline: 0; }
+.customer-profile-mobile-health-actions { display: flex; justify-content: flex-end; padding: 0 20px 20px; }
+/* Customer profile reminder and desktop prototype */
+.customer-profile-reminder-overlay { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 18px; background: rgba(81, 94, 112, .64); overflow-y: auto; }
+.customer-profile-reminder-modal { position: relative; width: min(590px, 100%); margin: auto; overflow: hidden; border-radius: 30px; background: #fff; color: #0b3779; box-shadow: 0 24px 64px rgba(18, 35, 60, .24); }
+.customer-profile-reminder-body { position: relative; padding: 46px 40px 28px; text-align: center; }
+.customer-profile-reminder-close { position: absolute; top: 28px; right: 27px; display: grid; width: 38px; height: 38px; place-items: center; border: 0; border-radius: 50%; color: #0b3779; background: transparent; cursor: pointer; }
+.customer-profile-reminder-close:focus-visible, .customer-profile-reminder-secondary:focus-visible, .customer-profile-reminder-primary:focus-visible { outline: 3px solid rgba(11, 55, 121, .25); outline-offset: 3px; }
+.customer-profile-reminder-icon { display: grid; place-items: center; margin: 0 auto 23px; }
+.customer-profile-reminder-kicker { display: block; margin-bottom: 11px; color: #0b3779; font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.customer-profile-reminder-modal h2 { margin: 0; color: #0b3779; font-size: clamp(26px, 4vw, 30px); line-height: 1.2; letter-spacing: -.04em; }
+.customer-profile-reminder-modal p { margin: 14px auto 0; max-width: 480px; color: #73839f; font-size: 16px; line-height: 1.75; }
+.customer-profile-reminder-progress { margin-top: 26px; padding: 21px 20px 18px; border: 1px solid #d7e2ef; border-radius: 20px; background: #f5f8fb; text-align: left; }
+.customer-profile-reminder-progress-head { display: flex; justify-content: space-between; gap: 16px; color: #263b5e; font-size: 14px; line-height: 1.4; }
+.customer-profile-reminder-progress-head strong:last-child { color: #0b3779; }
+.customer-profile-reminder-progress-track { height: 9px; margin: 14px 0 14px; overflow: hidden; border-radius: 999px; background: #dce5ef; }
+.customer-profile-reminder-progress-track span { display: block; height: 100%; border-radius: inherit; background: #0b3779; transition: width .2s ease; }
+.customer-profile-reminder-progress ul { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; color: #73839f; font-size: 15px; }
+.customer-profile-reminder-progress li { display: flex; align-items: center; gap: 11px; }
+.customer-profile-reminder-progress li svg { flex: 0 0 auto; color: #0b3779; }
+.customer-profile-reminder-privacy { display: flex; align-items: center; gap: 13px; max-width: none !important; margin: 22px 6px 0 !important; text-align: left; font-size: 13px !important; line-height: 1.45 !important; }
+.customer-profile-reminder-privacy svg { flex: 0 0 auto; color: #00a653; }
+.customer-profile-reminder-actions { display: grid; grid-template-columns: 1fr 1.35fr; gap: 12px; padding: 20px 26px 26px; border-top: 1px solid #e1e8f0; }
+.customer-profile-reminder-actions button { min-height: 52px; padding: 0 20px; border-radius: 999px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.customer-profile-reminder-secondary { border: 1px solid #d3e0ef; color: #0b3779; background: #fff; }
+.customer-profile-reminder-primary { border: 1px solid #0b3779; color: #fff; background: #0b3779; }
+.customer-profile-reminder-primary span { margin-left: 10px; font-size: 20px; line-height: 0; vertical-align: -1px; }
+.nevari-subscription-profile-only { width: 100%; }
+.nevari-subscription-profile-only .nevari-subscription-compact-card { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 16px 20px; border: 1px solid #d7e2ef; border-radius: 22px; background: #f5f8fb; }
+.nevari-subscription-profile-only .nevari-subscription-compact-chip { width: 44px; height: 44px; border-radius: 12px; object-fit: contain; }
+.nevari-subscription-profile-only .nevari-subscription-compact-logo { background: #fff; padding: 7px; }
+.nevari-subscription-profile-only .nevari-subscription-compact-name { color: #0b3779; font-size: 14px; font-weight: 800; }
+.nevari-subscription-profile-only .nevari-subscription-compact-meta { color: #73839f; font-size: 11px; line-height: 1.45; }
+.customer-profile-health-grid-editable { align-items: start; }
+.customer-profile-health-grid-editable .customer-profile-health-field, .customer-profile-health-grid-editable .customer-profile-modal-field { display: grid; gap: 8px; }
+.customer-profile-health-grid-editable label > span { color: #173b70; font-size: 13px; font-weight: 700; }
+.customer-profile-health-grid-editable input, .customer-profile-health-grid-editable select { width: 100%; min-height: 48px; box-sizing: border-box; padding: 0 14px; border: 1px solid #d3e0ef; border-radius: 12px; color: #173b70; background: #f5f8fb; font: inherit; }
+.customer-profile-health-grid-editable .customer-profile-chip-composer { display: flex; gap: 8px; }
+.customer-profile-health-grid-editable .customer-profile-chip-composer input { min-width: 0; }
+
+@media (max-width: 620px) {
+  .customer-profile-reminder-overlay { align-items: start; padding: 16px; }
+  .customer-profile-reminder-body { padding: 38px 22px 23px; }
+  .customer-profile-reminder-modal { border-radius: 24px; }
+  .customer-profile-reminder-actions { grid-template-columns: 1fr; padding: 17px 20px 20px; }
+  .customer-profile-reminder-modal p { font-size: 14px; line-height: 1.6; }
+  .customer-profile-reminder-progress { padding: 17px 15px; }
+  .customer-profile-reminder-progress ul { font-size: 14px; }
+  .nevari-subscription-profile-only .nevari-subscription-compact-card { grid-template-columns: 44px minmax(0, 1fr) auto; padding: 13px 14px; gap: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .customer-profile-reminder-progress-track span { transition: none; }
+}
+.customer-profile-desktop-tabs { display: flex; gap: 8px; margin-bottom: 22px; border-bottom: 1px solid #d7e2ef; }
+.customer-profile-desktop-tabs button { min-width: 180px; padding: 13px 18px; border: 0; border-bottom: 3px solid transparent; color: #73839f; background: transparent; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.customer-profile-desktop-tabs button.active { border-bottom-color: #0b3779; color: #0b3779; }
+.customer-profile-desktop-tabs button:focus-visible { outline: 3px solid rgba(11, 55, 121, .2); outline-offset: 2px; }
+.customer-profile-desktop-notifications { display: none; }
+.customer-profile-notifications-active > :not(.customer-profile-desktop-tabs):not(.customer-profile-desktop-notifications) { display: none !important; }
+.customer-profile-notifications-active .customer-profile-desktop-notifications { display: grid; gap: 0; max-width: 720px; overflow: hidden; border: 1px solid #d7e2ef; border-radius: 22px; background: #fff; }
+.customer-profile-desktop-notifications label { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 64px; padding: 0 22px; border-bottom: 1px solid #e4ebf3; color: #173b70; font-size: 14px; }
+.customer-profile-desktop-notifications label:last-child { border-bottom: 0; }
+.customer-profile-desktop-notifications input { width: 18px; height: 18px; accent-color: #0b3779; }
+@media (max-width: 767px) { .customer-profile-desktop-tabs, .customer-profile-desktop-notifications { display: none !important; } }
+@media (max-width: 720px) {
+  .auth-gate {
+    background-image: url("/Frame 1984078458.png");
+    background-position: center bottom;
+    background-size: 100% 100%;
+  }
+}
+
+/* Keep profile navigation consistent across desktop and mobile. */
+.customer-profile-desktop-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 180px));
+  gap: 8px;
+  margin-bottom: 22px;
+  border-bottom: 0;
+}
+
+.customer-profile-desktop-tabs button,
+.customer-profile-desktop-tabs button.active {
+  min-height: 42px;
+  border: 0;
+  border-radius: 999px;
+  color: #73839f;
+  background: transparent;
+  padding: 0 18px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.customer-profile-desktop-tabs button.active,
+.customer-profile-desktop-tabs button.active:hover {
+  color: #fff;
+  background: #0a2a5e;
+  box-shadow: 0 2px 5px rgba(11, 55, 121, .16);
+}
+
+.customer-mobile-profile-tabs .customer-mobile-pill-tab.active {
+  border-color: var(--profile-navy);
+  color: #fff;
+  background: var(--profile-navy);
+  box-shadow: 0 2px 5px rgba(11, 55, 121, .16);
+}
+
+/* Form fields are separated by spacing rather than visible rules. */
+.customer-profile-detail-grid label,
+.customer-profile-health-grid-editable > label,
+.customer-profile-mobile-personal-section > .customer-mobile-field,
+.customer-profile-mobile-health-field {
+  border-bottom: 0 !important;
+}
+
+.customer-profile-mobile-health-field:last-child,
+.customer-profile-mobile-health-card .customer-profile-health-row:last-child {
+  border-bottom: 0 !important;
+}
+/* Profile tabs and notification controls */
+.customer-profile-desktop-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 180px));
+  gap: 8px;
+  margin-bottom: 22px;
+  border-bottom: 0;
+}
+
+.customer-profile-desktop-tabs button,
+.customer-profile-desktop-tabs button.active,
+.customer-profile-desktop-tabs button.active:hover {
+  min-height: 34px;
+  min-width: 0;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #667085;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.customer-profile-desktop-tabs button.active,
+.customer-profile-desktop-tabs button.active:hover {
+  border-color: #e1e5ea;
+  background: #f1f3f5;
+  color: #667085;
+}
+
+.customer-profile-desktop-tabs button:focus-visible,
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab:focus-visible {
+  outline: 2px solid rgba(11, 50, 109, .28);
+  outline-offset: 2px;
+}
+
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab,
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab.active {
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #667085;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 400;
+  box-shadow: none;
+}
+
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab.active,
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab.active:hover {
+  border-color: #e1e5ea;
+  background: #f1f3f5;
+  color: #667085;
+}
+
+.customer-profile-desktop-notifications input,
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row input {
+  appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  outline: 0;
+  background: #e5e7eb;
+  cursor: pointer;
+}
+
+.customer-profile-desktop-notifications input::after,
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row input::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, .18);
+  transition: transform .2s ease;
+}
+
+.customer-profile-desktop-notifications input:checked,
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row input:checked {
+  background: #0b326d;
+}
+
+.customer-profile-desktop-notifications input:checked::after,
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row input:checked::after {
+  transform: translateX(16px);
+}
+
+.customer-profile-desktop-notifications input:focus-visible,
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row input:focus-visible {
+  box-shadow: 0 0 0 3px rgba(11, 50, 109, .18);
+}
+
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row {
+  min-height: 48px;
+  padding: 0 16px;
+}
+
+
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab.active,
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab.active:hover {
+  border-color: #e1e5ea !important;
+  background: #f1f3f5 !important;
+  background-color: #f1f3f5 !important;
+  background-image: none !important;
+  color: #667085 !important;
+  box-shadow: none !important;
+}
+
+
+/* Subscription management screen */
+.customer-subscription-management-app .customer-mobile-frame { padding: 18px 16px 32px; background: #fff; }
+.customer-subscription-management-shell { display: grid; gap: 18px; width: min(100%, 340px); margin: 0 auto; color: #12356b; }
+.customer-subscription-management-shell.is-desktop { width: min(100%, 680px); padding: 12px 0 40px; }
+.customer-subscription-management-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid #e0e7f0; border-radius: 14px; background: #f4f7fb; }
+.customer-subscription-management-tabs button { min-height: 42px; border: 0; border-radius: 10px; background: transparent; color: #71809a; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: color .2s ease, background-color .2s ease, box-shadow .2s ease; }
+.customer-subscription-management-tabs button.active { background: #fff; color: #123b78; box-shadow: 0 3px 10px rgba(18, 53, 107, .1); }
+.customer-subscription-management-tabs button:focus-visible,
+.customer-subscription-management-cta:focus-visible,
+.customer-subscription-dialog-button:focus-visible,
+.customer-subscription-dialog-change:focus-visible { outline: 2px solid rgba(11, 50, 109, .28); outline-offset: 3px; }
+.customer-subscription-management-card { display: grid; gap: 22px; padding: 4px 0 0; }
+.customer-subscription-management-paywall { min-width: 0; }
+.customer-subscription-management-paywall .subscription-shell { min-height: 0; padding: 0; }
+.customer-subscription-management-card--loading { min-height: 420px; place-items: center; }
+.customer-subscription-management-header { display: grid; gap: 8px; justify-items: center; text-align: center; }
+.customer-subscription-management-title-row { display: inline-flex; align-items: center; gap: 6px; }
+.customer-subscription-management-title-row h1 { margin: 0; color: #153b77; font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
+.customer-subscription-management-title-row.is-dialog { font-size: 13px; font-weight: 600; color: #496185; }
+.customer-subscription-management-badge { width: 34px; height: auto; border-radius: 6px; }
+.customer-subscription-management-status { margin: 0; font-size: 12px; font-weight: 500; }
+.customer-subscription-management-status.is-active { color: #2db24f; }
+.customer-subscription-management-status.is-cancelled { color: #f0a13a; }
+.customer-subscription-management-seal { width: min(178px, 52vw); margin: 0 auto; display: block; }
+.customer-subscription-management-benefits { display: grid; gap: 14px; }
+.customer-subscription-management-benefits h2 { margin: 0; color: #153b77; font-size: 18px; font-weight: 700; }
+.customer-subscription-benefit-list { display: grid; gap: 14px; }
+.customer-subscription-benefit-row { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 12px; align-items: start; }
+.customer-subscription-benefit-icon { width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; }
+.customer-subscription-benefit-icon img { width: 36px; height: 36px; object-fit: contain; }
+.customer-subscription-benefit-icon.is-violet { background: #f5eaff; }
+.customer-subscription-benefit-icon.is-amber { background: #fff0dc; }
+.customer-subscription-benefit-icon.is-green { background: #e7ffe8; }
+.customer-subscription-benefit-copy { display: grid; gap: 4px; }
+.customer-subscription-benefit-copy strong { color: #415370; font-size: 14px; font-weight: 600; line-height: 1.35; }
+.customer-subscription-benefit-copy p { margin: 0; color: #8a93a7; font-size: 12px; line-height: 1.45; }
+.customer-subscription-management-error { margin: -4px 0 0; }
+.customer-subscription-management-cta { min-height: 52px; border: 0; border-radius: 999px; background: #0a2a5e; color: #fff; font: inherit; font-size: 16px; font-weight: 600; cursor: pointer; transition: background-color .2s ease, opacity .2s ease; }
+.customer-subscription-management-cta:disabled { cursor: wait; opacity: .8; }
+.customer-subscription-history-panel { display: grid; gap: 18px; min-height: 420px; }
+.customer-subscription-history-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.customer-subscription-history-header h2 { margin: 0; color: #153b77; font-size: 20px; line-height: 1.2; }
+.customer-subscription-history-header p { margin: 5px 0 0; color: #7e8ba1; font-size: 13px; line-height: 1.45; }
+.customer-subscription-history-header button { min-height: 36px; padding: 7px 14px; border: 1px solid #d5deea; border-radius: 999px; background: #fff; color: #153b77; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.customer-subscription-history-header button:disabled { cursor: wait; opacity: .62; }
+.customer-subscription-history-list { display: grid; gap: 10px; }
+.customer-subscription-history-item { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 16px; border: 1px solid #e3e8ef; border-radius: 15px; background: #fff; box-shadow: 0 5px 16px rgba(19, 55, 108, .04); }
+.customer-subscription-history-icon { width: 10px; height: 10px; margin-top: 5px; border-radius: 999px; background: #f1ad3d; }
+.customer-subscription-history-icon.is-successful, .customer-subscription-history-icon.is-activated { background: #2db24f; }
+.customer-subscription-history-icon.is-failed, .customer-subscription-history-icon.is-deactivated, .customer-subscription-history-icon.is-expired { background: #ef5a5a; }
+.customer-subscription-history-icon.is-paused { background: #8b66d9; }
+.customer-subscription-history-copy { min-width: 0; display: grid; gap: 5px; }
+.customer-subscription-history-copy > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.customer-subscription-history-copy strong { color: #304969; font-size: 14px; line-height: 1.3; }
+.customer-subscription-history-copy p { margin: 0; color: #7e8ba1; font-size: 12px; line-height: 1.4; }
+.customer-subscription-history-copy small { color: #9aa4b4; font-size: 11px; overflow-wrap: anywhere; }
+.customer-subscription-history-badge { display: inline-flex; align-items: center; min-height: 22px; padding: 3px 8px; border-radius: 999px; background: #fff3d9; color: #9b6a0b; font-size: 10px; font-weight: 700; }
+.customer-subscription-history-badge.is-successful, .customer-subscription-history-badge.is-activated { background: #e9f8ed; color: #238a3c; }
+.customer-subscription-history-badge.is-failed, .customer-subscription-history-badge.is-deactivated, .customer-subscription-history-badge.is-expired { background: #ffeded; color: #c53d3d; }
+.customer-subscription-history-badge.is-paused { background: #f2edff; color: #7350bc; }
+.customer-subscription-history-amount { white-space: nowrap; color: #153b77; font-size: 14px; }
+.customer-subscription-history-state { min-height: 260px; display: grid; place-content: center; justify-items: center; gap: 8px; text-align: center; color: #7e8ba1; }
+.customer-subscription-history-state strong { color: #304969; font-size: 15px; }
+.customer-subscription-history-state p { max-width: 280px; margin: 0; font-size: 13px; line-height: 1.5; }
+.customer-subscription-history-error { margin: 0; }
+.customer-subscription-dialog-layer { position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center; padding: 20px; }
+.customer-subscription-dialog-backdrop { background: rgba(15, 23, 42, .42); }
+.customer-subscription-dialog-card { position: relative; width: min(100%, 520px); display: grid; gap: 22px; padding: 24px 16px 18px; border-radius: 22px; background: #fff; color: #193d77; box-shadow: 0 20px 60px rgba(15, 23, 42, .18); }
+.customer-subscription-dialog-card--cancelled { min-height: 340px; align-content: space-between; }
+.customer-subscription-dialog-head { display: grid; gap: 8px; }
+.customer-subscription-dialog-head h3 { margin: 0; font-size: 20px; line-height: 1.15; color: #1b3f77; }
+.customer-subscription-dialog-head p { margin: 0; color: #8a93a7; font-size: 14px; line-height: 1.55; }
+.customer-subscription-inline-plan { color: #1b3f77; font-weight: 600; }
+.customer-subscription-dialog-plan-row { display: grid; gap: 10px; }
+.customer-subscription-dialog-price { display: flex; align-items: flex-end; gap: 6px; color: #153b77; }
+.customer-subscription-dialog-price span { font-size: 14px; font-weight: 500; line-height: 1.2; }
+.customer-subscription-dialog-price strong { font-size: 52px; line-height: .95; letter-spacing: -.04em; }
+.customer-subscription-dialog-meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
+.customer-subscription-dialog-meta-grid > div { display: grid; gap: 6px; }
+.customer-subscription-dialog-meta-grid span { color: #7b879d; font-size: 13px; }
+.customer-subscription-dialog-meta-grid strong { color: #425472; font-size: 14px; font-weight: 500; line-height: 1.15; }
+.customer-subscription-dialog-payment { grid-column: 1 / -1; }
+.customer-subscription-dialog-payment > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.customer-subscription-dialog-payment strong { font-size: 14px; }
+.customer-subscription-dialog-change { min-width: 86px; min-height: 34px; border: 1px solid #e1e5ea; border-radius: 999px; background: #fff; color: #6e7990; font: inherit; font-size: 13px; cursor: pointer; }
+.customer-subscription-dialog-change:disabled { cursor: not-allowed; opacity: .58; }
+.customer-subscription-dialog-list { margin: 0; padding-left: 18px; color: #6d7890; font-size: 15px; line-height: 1.85; }
+.customer-subscription-dialog-error { margin: -8px 0 0; }
+.customer-subscription-dialog-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.customer-subscription-dialog-actions.is-single { grid-template-columns: minmax(0, 1fr); align-self: end; }
+.customer-subscription-dialog-button { min-height: 50px; border-radius: 999px; font: inherit; font-size: 16px; font-weight: 600; cursor: pointer; transition: opacity .2s ease, background-color .2s ease, border-color .2s ease; }
+.customer-subscription-dialog-button.primary { border: 0; background: #0a2a5e; color: #fff; }
+.customer-subscription-dialog-button.secondary { border: 1px solid #c7d2e4; background: #fff; color: #163b75; }
+.customer-subscription-dialog-button.danger { border: 0; background: #ff4b4b; color: #fff; }
+.customer-subscription-dialog-button:disabled { cursor: wait; opacity: .78; }
+@media (min-width: 768px) {
+  .customer-subscription-management-shell { width: min(100%, 420px); }
+  .customer-subscription-management-shell.is-desktop { width: min(100%, 720px); }
+  .customer-subscription-management-card { gap: 26px; }
+  .customer-subscription-management-title-row h1 { font-size: 22px; }
+  .customer-subscription-management-badge { width: 38px; }
+  .customer-subscription-management-seal { width: 208px; }
+  .customer-subscription-history-item { padding: 18px; }
+  .customer-subscription-benefit-copy strong { font-size: 15px; }
+  .customer-subscription-benefit-copy p { font-size: 13px; }
+  .customer-subscription-dialog-card { padding: 28px 22px 22px; }
+}
+@media (max-width: 430px) {
+  .customer-subscription-dialog-layer { padding: 14px; }
+  .customer-subscription-dialog-card { padding: 22px 14px 16px; border-radius: 20px; }
+  .customer-subscription-dialog-price strong { font-size: 44px; font-weight: 500; }
+  .customer-subscription-history-item { grid-template-columns: 10px minmax(0, 1fr); }
+  .customer-subscription-history-amount { grid-column: 2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .customer-subscription-management-cta,
+  .customer-subscription-management-tabs button,
+  .customer-subscription-dialog-button { transition: none; }
+}
+
+/* Profile tab state polish */
+.customer-profile-desktop-tabs button:not(.active),
+.customer-profile-desktop-tabs button:not(.active):hover,
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab:not(.active),
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab:not(.active):hover {
+  border-color: transparent !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  color: #667085 !important;
+  box-shadow: none !important;
+}
+
+.customer-profile-desktop-tabs button.active,
+.customer-profile-desktop-tabs button.active:hover,
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab.active,
+.customer-profile-mobile-app .customer-mobile-profile-tabs .customer-mobile-pill-tab.active:hover {
+  border-color: #e1e5ea !important;
+  background: #f1f3f5 !important;
+  background-color: #f1f3f5 !important;
+  background-image: none !important;
+  color: #667085 !important;
+  box-shadow: none !important;
 }

@@ -68,7 +68,7 @@ export default function GuestConsultationPage() {
   const todayBookingDate = localDateInputValue(new Date());
 
   useEffect(() => {
-    setDocumentMetadata("Nevari Customer | Consultation booking", "Book a consultation and continue after sign-in.");
+    setDocumentMetadata("Nevari Patient | Consultation booking", "Book a consultation and continue after sign-in.");
     const session = loadSession(FRONTENDS.patient);
     if (session?.accessToken) {
       router.replace("/dashboard?page=appointment");

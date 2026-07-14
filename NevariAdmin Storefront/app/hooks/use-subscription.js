@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
@@ -6,9 +6,11 @@ import {
   cancelSubscription as cancelSubscriptionRequest,
   defaultSubscriptionState,
   fetchCurrentSubscription,
+  fetchSubscriptionHistory,
   hasActiveSubscription,
   hasEntitlement,
   initializeSubscription,
+  pauseSubscription as pauseSubscriptionRequest,
   verifySubscription,
 } from "../lib/nevari-api";
 
@@ -48,6 +50,21 @@ function normalizeSubscriptionFrequency(frequency) {
   return String(frequency || "").trim().toLowerCase() || "monthly";
 }
 
+function normalizeCancelSubscriptionErrorMessage(error) {
+  const message = String(error?.message || "").trim();
+  if (message.toLowerCase().includes("paystack cancellation details are missing")) {
+    return "This subscription cannot be cancelled automatically because Paystack cancellation details are missing. Please contact support.";
+  }
+  return message || "The subscription could not be cancelled.";
+}
+
+function isPaidSubscription(subscription = {}) {
+  const status = String(subscription?.status || "").trim().toLowerCase();
+  const planKey = String(subscription?.plan_key || subscription?.plan || "").trim().toLowerCase();
+  const tier = String(subscription?.tier || "").trim().toLowerCase();
+  return hasActiveSubscription(subscription) && !["free", "none"].includes(status) && planKey !== "free" && tier !== "free";
+}
+
 export function useSubscription(session) {
   const [actionError, setActionError] = useState("");
   const [isActionBusy, setIsActionBusy] = useState(false);
@@ -70,6 +87,15 @@ export function useSubscription(session) {
 
   const subscription = swr.data || defaultSubscriptionState();
   const mutateSubscription = swr.mutate;
+  const historySWR = useSWR(
+    shouldFetch ? ["nevari-subscription-history", session.user.id] : null,
+    () => fetchSubscriptionHistory(session),
+    {
+      fallbackData: { items: [], page: 1, perPage: 50, total: 0, totalPages: 1 },
+      revalidateOnFocus: false,
+      dedupingInterval: 30_000,
+    }
+  );
   const active = hasActiveSubscription(subscription);
   const canAccessTherapyManagement = Boolean(
     subscription?.can_access_therapy_management
@@ -122,7 +148,11 @@ export function useSubscription(session) {
 
   async function refresh() {
     setActionError("");
-    return mutateSubscription(undefined, { revalidate: true });
+    const [nextSubscription] = await Promise.all([
+      mutateSubscription(undefined, { revalidate: true }),
+      historySWR.mutate(undefined, { revalidate: true }),
+    ]);
+    return nextSubscription;
   }
 
   async function launchCheckout({ plan = "", frequency = "", callbackUrl = "" } = {}) {
@@ -132,6 +162,11 @@ export function useSubscription(session) {
 
     const checkoutPromise = (async () => {
       setActionError("");
+      if (isPaidSubscription(subscription)) {
+        const error = new Error("You are already a Pro member.");
+        setActionError(error.message);
+        throw error;
+      }
       setIsActionBusy(true);
       const existingCheckoutUrl = String(
         subscription?.checkout_url
@@ -190,17 +225,38 @@ export function useSubscription(session) {
     }
   }
 
+  async function pauseCurrentSubscription() {
+    setActionError("");
+    setIsActionBusy(true);
+    try {
+      const nextSubscription = await pauseSubscriptionRequest(session);
+      await mutateSubscription(nextSubscription, { revalidate: false });
+      return nextSubscription;
+    } catch (error) {
+      const message = String(error?.message || "The subscription could not be paused.");
+      setActionError(message);
+      throw error;
+    } finally {
+      setIsActionBusy(false);
+    }
+  }
+
   async function cancelCurrentSubscription() {
     setActionError("");
     setIsActionBusy(true);
     try {
       const nextSubscription = await cancelSubscriptionRequest(session);
       await mutateSubscription(nextSubscription, { revalidate: false });
+      if (typeof window !== "undefined") {
+        window.location.reload();
+      }
       return nextSubscription;
     } catch (error) {
-      const message = String(error?.message || "The subscription could not be cancelled.");
+      const message = normalizeCancelSubscriptionErrorMessage(error);
+      const nextError = error instanceof Error ? error : new Error(message);
+      nextError.message = message;
       setActionError(message);
-      throw error;
+      throw nextError;
     } finally {
       setIsActionBusy(false);
     }
@@ -238,10 +294,17 @@ export function useSubscription(session) {
     active,
     canAccessTherapyManagement,
     canRefill,
+    history: historySWR.data?.items || [],
+    historyTotal: Number(historySWR.data?.total || 0),
+    isHistoryLoading: shouldFetch && historySWR.isLoading,
+    historyError: historySWR.error ? "Subscription history could not be loaded." : "",
+    refreshHistory: () => historySWR.mutate(undefined, { revalidate: true }),
     refresh,
     launchCheckout,
+    pauseCurrentSubscription,
     verifyCheckout,
     cancelCurrentSubscription,
     dismissSuccess,
   };
 }
+

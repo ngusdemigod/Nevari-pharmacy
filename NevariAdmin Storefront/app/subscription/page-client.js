@@ -8,7 +8,7 @@ import SubscriptionSuccess from "../components/subscription/SubscriptionSuccess"
 import { hydrateStoredSession } from "../components/role-dashboard-utils";
 import { useSubscription } from "../hooks/use-subscription";
 
-const PAYWALL_PRO_MONTHLY_AMOUNT = 10_000;
+const PAYWALL_PRO_MONTHLY_AMOUNT = 5_000;
 
 function sanitizeReturnPath(value) {
   const path = String(value || "").trim();
@@ -149,7 +149,7 @@ export default function SubscriptionPageClient() {
     return <BrandedLoadingScreen className="subscription-shell subscription-shell-loading" label="Verifying your subscription" />;
   }
 
-  if (subscriptionState.showSuccess || subscriptionState.active) {
+  if (subscriptionState.showSuccess) {
     return (
       <SubscriptionSuccess
         busy={subscriptionState.isActionBusy}
@@ -162,15 +162,34 @@ export default function SubscriptionPageClient() {
     );
   }
 
+  if (subscriptionState.active) {
+    return (
+      <SubscriptionSuccess
+        busy={false}
+        title="You are already a Pro member"
+        subtitle="Your Nevari Access Pro subscription is already active. No additional payment is needed."
+        footerCopy="You already have full access to Nevari Access Pro services."
+        ctaLabel="Close"
+        onContinue={() => router.replace('/dashboard?page=overview')}
+      />
+    );
+  }
+
   return (
     <Paywall
       busy={subscriptionState.isActionBusy}
       error={subscriptionState.actionError}
       onOpenMenu={() => router.push(continuePath)}
-      onSubscribe={() => subscriptionState.launchCheckout({
-        plan: requestedPlan || "nevari_access_pro",
-        frequency: requestedFrequency || "monthly",
-      })}
+      onSubscribe={() => {
+        if (subscriptionState.active) {
+          router.replace('/dashboard?page=overview');
+          return Promise.resolve();
+        }
+        return subscriptionState.launchCheckout({
+          plan: requestedPlan || "nevari_access_pro",
+          frequency: requestedFrequency || "monthly",
+        });
+      }}
       priceLabel={priceLabel}
     />
   );

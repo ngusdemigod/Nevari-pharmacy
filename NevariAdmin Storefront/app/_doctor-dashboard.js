@@ -529,7 +529,7 @@ export default function DoctorDashboard() {
             custom_email_only: true,
             items: selectedItems,
             billing: {
-              first_name: firstName || "Customer",
+              first_name: firstName || "Patient",
               last_name: restName.join(" "),
               email: patient.email || "",
               phone: patient.phone || patient.billing_phone || "",
@@ -623,7 +623,7 @@ export default function DoctorDashboard() {
 
       revalidateDoctorGroups(isProxyDashboardDoctorKey);
       await autoRefreshDoctorLists(doctorSummaryKey);
-      showDoctorNotice("Display name updated. Customers and emails will use this name.", "success");
+      showDoctorNotice("Display name updated. Patients and emails will use this name.", "success");
     } catch (error) {
       setDoctorSettings((current) => ({ ...current, displayName: currentDisplayName || current.displayName }));
       showDoctorNotice(error?.message || "The display name update failed.", "error");
@@ -1287,7 +1287,7 @@ function AppointmentCompletionModal({ appointment, products, draft, onChange, on
       <div className="doctor-completion-products">
         <div className="doctor-completion-products-head">
           <strong>Create follow-up product order</strong>
-          <span>Optional. Quantities above zero will be prescribed and emailed to the customer with a payment link.</span>
+          <span>Optional. Quantities above zero will be prescribed and emailed to the patient with a payment link.</span>
         </div>
         {selectedProducts.length ? selectedProducts.map((product) => (
           <label className="doctor-completion-product-row" key={product.id}>
@@ -1670,7 +1670,7 @@ function DoctorDashboardSkeleton({ page }) {
     return <SkeletonTablePanel title="Assigned Products" columns={4} rows={6} />;
   }
   if (page === "patients") {
-    return <SkeletonTablePanel title="Customers" columns={4} rows={6} />;
+    return <SkeletonTablePanel title="Patients" columns={4} rows={6} />;
   }
   if (page === "consultations") {
     return <DoctorConsultationsSkeleton />;
@@ -1942,7 +1942,7 @@ function DoctorOverview({ doctor, dashboard, appointments, orders, patients, rev
               <button className="btn text" type="button" onClick={onOpenConsultations}>View all</button>
             </div>
             {upcoming.length ? upcoming.map((item) => <article className="overview-row" key={item.id}>
-              <div className="overview-avatar" aria-hidden="true">{initials(item.patient?.display_name || "Customer")}</div>
+              <div className="overview-avatar" aria-hidden="true">{initials(item.patient?.display_name || "Patient")}</div>
               <div>
                 <p className="overview-patient-name">{item.patient?.display_name || `Patient #${item.patient_user_id}`}</p>
                 <p className="overview-helper">{titleCase(item.type || "consultation")} - {formatDoctorDateTimeCompact(item.start_at)}</p>
@@ -2550,7 +2550,7 @@ function DoctorMobileOverview({ doctor, appointments, searchTerm, onOpenConsulta
     },
     {
       key: "customer-interactions",
-      label: "Customer interactions",
+      label: "Patient interactions",
       value: appointmentMetrics.customerInteractions,
       icon: <HugeiconsIcon icon={UserIcon} size={18} strokeWidth={1.8} />
     },

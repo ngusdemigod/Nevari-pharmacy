@@ -141,7 +141,7 @@ function normalizeDocumentData(rawOrder, prescription = null, role = "admin") {
     invoice_date: order.created_at,
     due_date: order.due_date || order.created_at,
     customer: {
-      name: order?.billing ? `${order.billing.first_name || ""} ${order.billing.last_name || ""}`.trim() || "Customer" : "Customer",
+      name: order?.billing ? `${order.billing.first_name || ""} ${order.billing.last_name || ""}`.trim() || "Patient" : "Patient",
       email: order?.billing?.email || "",
       phone: order?.billing?.phone || "",
       address: [order?.billing?.address_1, order?.billing?.address_2, order?.billing?.city, order?.billing?.state, order?.billing?.postcode, order?.billing?.country].filter(Boolean).join(", ")

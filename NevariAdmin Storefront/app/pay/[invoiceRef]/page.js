@@ -263,7 +263,7 @@ function PaywallPageContent() {
         <p className="paywall-kicker">Secure invoice payment</p>
         <h1>{data.invoice_number}</h1>
         <div className="paywall-grid">
-          <span>Customer</span><strong>{data.customer?.name || "Customer"}</strong>
+          <span>Patient</span><strong>{data.customer?.name || "Patient"}</strong>
           <span>Email</span><strong>{data.customer?.email || "n/a"}</strong>
             <span>{data?.entity_type === "appointment" ? "Appointment" : "Order"}</span><strong>{data?.entity_type === "appointment" ? `#${data.appointment_id}` : `#${data.order_number || data.order_id}`}</strong>
           <span>Status</span><strong>{titleCase(data.payment_status || data.order_status)}</strong>
@@ -290,8 +290,8 @@ function PaywallPageContent() {
         {error ? <p className="paywall-error">{error}</p> : null}
       </section>
       <style jsx>{`
-        .paywall-page { min-height: 100vh; display: grid; place-items: center; background: #f4f6f8; padding: 24px; color: #111; box-sizing: border-box; }
-        .paywall-card { width: min(520px, 100%); background: #fff; padding: 36px; border: 1px solid #dfe7f0; box-shadow: 0 24px 80px rgba(14, 41, 85, .12); box-sizing: border-box; }
+        .paywall-page { min-height: 100vh; background: #f4f6f8; padding: 24px; color: #111; box-sizing: border-box; overflow-y: auto; }
+        .paywall-card { width: min(520px, 100%); margin: 0 auto; background: #fff; padding: 36px; border: 1px solid #dfe7f0; box-shadow: 0 24px 80px rgba(14, 41, 85, .12); box-sizing: border-box; }
         .paywall-card-loading { min-height: 220px; display: grid; place-items: center; }
         .paywall-card.error { color: #9f2f2f; }
         .paywall-spinner {
@@ -323,7 +323,7 @@ function PaywallPageContent() {
           to { transform: rotate(360deg); }
         }
         @media (max-width: 720px) {
-          .paywall-page { padding: 12px; align-items: start; }
+          .paywall-page { padding: 12px; }
           .paywall-card { padding: 18px; }
           h1 { font-size: 26px; margin-bottom: 16px; }
           .paywall-grid { grid-template-columns: 1fr; gap: 4px; }

@@ -19,7 +19,7 @@ const YES_NO_OPTIONS = new Set(["Yes", "No"]);
 const THERAPY_TYPES = new Set([
   "Beauty & Radiance Drips",
   "Anti-Aging & Regenerative Drips",
-  "Weight Management Drips Assistance",
+  "Weight Management",
   "Hair & Nail Restoration",
   "Vitamin & Hydration Drips",
 ]);
@@ -75,13 +75,13 @@ async function validateAndBuildPayload(request) {
   const therapyTypes = Array.isArray(body.therapyTypes) ? body.therapyTypes : [];
   const consent = sanitizeText(body.consent, { max: 10 });
   const customerEmail = sanitizeText(body.customerEmail, { max: 254 });
-  const customerName = sanitizeText(body.customerName || patient.name || "Customer", { max: 120 });
+  const customerName = sanitizeText(body.customerName || patient.name || "Patient", { max: 120 });
   const customerPhone = sanitizeText(body.customerPhone || patient.phoneNumber, { max: 24 });
   const baseUrl = String(body.baseUrl || "").trim();
   const appOrigin = sanitizeText(body.appOrigin, { max: 300 });
   const frontendType = sanitizeText(body.frontendType || "patient", { max: 40 }) || "patient";
 
-  const patientFieldError = rejectUnknownFields(patient, ["name", "gender", "address", "cityState", "phoneNumber"], "patient");
+  const patientFieldError = rejectUnknownFields(patient, ["name", "gender", "address", "state", "city", "cityState", "phoneNumber"], "patient");
   if (patientFieldError) return { error: invalid(patientFieldError, "patient") };
   const historyFieldError = rejectUnknownFields(clinicalHistory, [
     "chronicConditions",
@@ -101,7 +101,10 @@ async function validateAndBuildPayload(request) {
   const patientName = sanitizeText(patient.name, { max: 120 });
   const gender = sanitizeText(patient.gender, { max: 20 });
   const address = sanitizeText(patient.address, { max: 200 });
-  const cityState = sanitizeText(patient.cityState, { max: 120 });
+  const state = sanitizeText(patient.state, { max: 80 });
+  const city = sanitizeText(patient.city, { max: 80 });
+  const legacyCityState = sanitizeText(patient.cityState, { max: 120 });
+  const cityState = legacyCityState || [city, state].filter(Boolean).join(", ");
   const phoneNumber = sanitizeText(patient.phoneNumber, { max: 24 });
   const primaryReason = sanitizeText(goals.primaryReason, { max: 800 });
   const expectedResults = sanitizeText(goals.expectedResults, { max: 800 });
@@ -109,7 +112,8 @@ async function validateAndBuildPayload(request) {
   if (!requiredText(patientName, 2, 120)) return { error: invalid("Enter a valid patient name.", "name") };
   if (!GENDER_OPTIONS.has(gender)) return { error: invalid("Select a valid gender.", "gender") };
   if (!requiredText(address, 5, 200)) return { error: invalid("Address is required.", "address") };
-  if (!requiredText(cityState, 2, 120)) return { error: invalid("City/State is required.", "cityState") };
+  if (!requiredText(state, 2, 80)) return { error: invalid("State is required.", "state") };
+  if (!requiredText(city, 2, 80)) return { error: invalid("City is required.", "city") };
   if (!isValidPhone(phoneNumber)) return { error: invalid("Phone number is invalid.", "phoneNumber") };
   if (!therapyTypes.length) return { error: invalid("Select at least one IV therapy type.", "therapyTypes") };
   if (therapyTypes.some((item) => !THERAPY_TYPES.has(sanitizeText(item, { max: 80 })))) {
@@ -138,8 +142,8 @@ async function validateAndBuildPayload(request) {
   if (!requiredText(primaryReason, 3, 800)) return { error: invalid("Main goal is required.", "primaryReason") };
   if (!requiredText(expectedResults, 3, 800)) return { error: invalid("Expected results are required.", "expectedResults") };
   if (consent !== "Yes") return { error: invalid("Consent is required before submission.", "consent") };
-  if (customerEmail && !isValidEmail(customerEmail)) return { error: invalid("Customer email is invalid.", "customerEmail") };
-  if (customerPhone && !isValidPhone(customerPhone)) return { error: invalid("Customer phone is invalid.", "customerPhone") };
+  if (customerEmail && !isValidEmail(customerEmail)) return { error: invalid("Patient email is invalid.", "customerEmail") };
+  if (customerPhone && !isValidPhone(customerPhone)) return { error: invalid("Patient phone is invalid.", "customerPhone") };
   if (baseUrl && !isAllowedUrl(baseUrl)) return { error: invalid("Backend URL is invalid.", "baseUrl") };
   if (!isValidAppOrigin(appOrigin, request)) return { error: invalid("Application origin is invalid.", "appOrigin") };
 
@@ -149,6 +153,8 @@ async function validateAndBuildPayload(request) {
         name: patientName,
         gender,
         address,
+        state,
+        city,
         cityState,
         phoneNumber,
       },

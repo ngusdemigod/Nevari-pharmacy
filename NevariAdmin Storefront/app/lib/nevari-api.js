@@ -25,6 +25,13 @@ const CUSTOMER_SETTINGS_DEFAULTS = {
   refundTracking: true,
   twoFactorEnabled: false,
   savedMethods: [],
+  bloodGroup: "",
+  genotype: "",
+  allergies: [],
+  currentMedications: [],
+  existingConditions: [],
+  emergencyContactName: "",
+  emergencyContactPhoneNumber: "",
 };
 
 function readFiniteAmount(value, { divideBy = 1 } = {}) {
@@ -380,6 +387,23 @@ export async function fetchCurrentSubscription(session) {
   return persistSubscription(session?.user?.id, payload);
 }
 
+export async function fetchSubscriptionHistory(session, { page = 1, perPage = 50 } = {}) {
+  const payload = await apiRequest(session, "/subscriptions/me/history", {
+    params: {
+      page: Math.max(1, Number(page) || 1),
+      per_page: Math.min(100, Math.max(1, Number(perPage) || 50)),
+    },
+    suppressHttpError: true,
+  });
+  return {
+    items: Array.isArray(payload?.items) ? payload.items : [],
+    page: Math.max(1, Number(payload?.page) || 1),
+    perPage: Math.max(1, Number(payload?.per_page) || perPage),
+    total: Math.max(0, Number(payload?.total) || 0),
+    totalPages: Math.max(1, Number(payload?.total_pages) || 1),
+  };
+}
+
 export async function initializeSubscription(session, { plan = "pro", frequency = "monthly", callbackUrl = "" } = {}) {
   const body = {
     plan,
@@ -405,7 +429,19 @@ export async function cancelSubscription(session) {
   return persistSubscription(session?.user?.id, payload || {});
 }
 
+export async function pauseSubscription(session) {
+  const payload = await apiRequest(session, "/subscriptions/pause", {
+    method: "POST",
+    body: {},
+  });
+  return persistSubscription(session?.user?.id, payload || {});
+}
+
 export function normalizeCustomerSettingsPayload(payload = {}) {
+  const chipList = (payloadValue) => Array.isArray(payloadValue)
+    ? payloadValue.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+
   return {
     ...CUSTOMER_SETTINGS_DEFAULTS,
     ...payload,
@@ -428,6 +464,13 @@ export function normalizeCustomerSettingsPayload(payload = {}) {
     savedMethods: Array.isArray(payload?.savedMethods || payload?.saved_methods)
       ? (payload.savedMethods || payload.saved_methods).map((value) => String(value || "").trim()).filter(Boolean)
       : [],
+    bloodGroup: String(payload?.bloodGroup || payload?.blood_group || "").trim(),
+    genotype: String(payload?.genotype || "").trim(),
+    allergies: chipList(payload?.allergies),
+    currentMedications: chipList(payload?.currentMedications || payload?.current_medications),
+    existingConditions: chipList(payload?.existingConditions || payload?.existing_conditions),
+    emergencyContactName: String(payload?.emergencyContactName || payload?.emergency_contact_name || "").trim(),
+    emergencyContactPhoneNumber: String(payload?.emergencyContactPhoneNumber || payload?.emergency_contact_phone_number || "").trim(),
   };
 }
 
@@ -444,6 +487,13 @@ export async function updateCustomerSettings(session, body = {}) {
     suppressHttpError: true,
   });
   return normalizeCustomerSettingsPayload(payload || normalizedBody);
+}
+
+export async function uploadCustomerProfileImage(session, body = {}) {
+  return apiRequest(session, "/customers/me/profile-image", {
+    method: "POST",
+    body,
+  });
 }
 
 export async function fetchCustomerMtmRequests(session) {
@@ -741,3 +791,5 @@ export function hasEntitlement(subscription, entitlement) {
   const entitlements = Array.isArray(subscription?.entitlements) ? subscription.entitlements : [];
   return entitlements.includes(required);
 }
+
+
