@@ -8,6 +8,12 @@ const hasSentryUploadCredentials = Boolean(
 
 const nextConfig = {
   productionBrowserSourceMaps: true,
+  // The MTM intake PDF is read from disk at runtime; Vercel's file tracing
+  // cannot detect the dynamic fs path, so include it in each MTM function.
+  outputFileTracingIncludes: {
+    "/api/mtm/**": ["./public/MTM_Patient_Intake_Form.pdf"],
+    "/api/pharmacist/mtm/**": ["./public/MTM_Patient_Intake_Form.pdf"],
+  },
 };
 
 export default withSentryConfig(nextConfig, {
