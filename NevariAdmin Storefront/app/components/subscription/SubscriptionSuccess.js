@@ -4,6 +4,7 @@ import { SubscriptionProBadge, SubscriptionSealArt } from "./SubscriptionVisuals
 
 export default function SubscriptionSuccess({
   onContinue,
+  onOpenMenu = null,
   busy = false,
   title = "Congratulations, you're now on Nevari Access",
   subtitle = "Your subscription is active and ready to use across the dashboard.",
@@ -13,6 +14,11 @@ export default function SubscriptionSuccess({
 }) {
   return (
     <section className="subscription-shell subscription-shell-success">
+      {onOpenMenu ? <button className="subscription-menu-button" type="button" aria-label="Open menu" onClick={onOpenMenu}>
+        <span />
+        <span />
+        <span />
+      </button> : null}
       <div className="subscription-copy-block subscription-copy-block-success">
         <h1 className="subscription-title">
           {title} {showBadge ? <SubscriptionProBadge /> : null}

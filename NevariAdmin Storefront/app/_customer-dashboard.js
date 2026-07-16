@@ -504,7 +504,7 @@ async function fetchCustomerDashboardPayload(session, settings, fallbackState = 
     : (liveDoctors || []);
   const blockingErrors = [];
   if (hasOrderFailure || hasUpcomingFailure || hasPastFailure) {
-    blockingErrors.push("Oops! Connection error. WeÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢re showing your last available dashboard data.");
+    blockingErrors.push("Oops! Connection error. We’re showing your last available dashboard data.");
   }
   const resolvedProfile = resolveCustomerProfileForSession({
     profile: resolvedDashboard.profile || {},
@@ -3169,7 +3169,8 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
           <button type="button" className="customer-profile-reminder-primary" onClick={() => { setOverviewProfilePromptVisible(false); setPage("profile"); }}>Update profile <span aria-hidden="true">-&gt;</span></button>
         </div>
       </div>
-    </div> : null}`n    {dashboardToast.message ? <div className={"snackbar auth-snackbar " + (dashboardToast.type || "success")} role="status" aria-live="polite"><span className="snackbar-message">{dashboardToast.message}</span></div> : null}
+    </div> : null}
+    {dashboardToast.message ? <div className={"snackbar auth-snackbar " + (dashboardToast.type || "success")} role="status" aria-live="polite"><span className="snackbar-message">{dashboardToast.message}</span></div> : null}
   </>;
 }
 
@@ -3414,7 +3415,7 @@ function CustomerOverview({ doctors, orders, appointments, orderCounts, onOpenPa
       .map((order) => ({
         key: `order-${order.id}`,
         label: `Order #${order.number}`,
-        meta: `${money(order.total, storeCurrency)} Ãƒâ€šÃ‚Â· ${titleCase(order.status)}`,
+        meta: `${money(order.total, storeCurrency)} · ${titleCase(order.status)}`,
         page: "orders"
       }));
     const appointmentMatches = appointments
@@ -3589,7 +3590,7 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
           <span className="customer-detail-summary-icon"><DashboardIcon name="appointment" /></span>
           <div>
             <div className="customer-detail-summary-title">{doctor?.display_name || `Doctor #${appointment.doctor_user_id}`}</div>
-            <div className="customer-detail-summary-sub">{friendlyDate(appointment.start_at, storeTimeZone)} ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {formatTime(appointment.start_at, storeTimeZone)}</div>
+            <div className="customer-detail-summary-sub">{friendlyDate(appointment.start_at, storeTimeZone)} • {formatTime(appointment.start_at, storeTimeZone)}</div>
           </div>
           <div className="appointment-status-stack">
             <span className={`chip ${statusTone}`}><span className="chip-dot" />{statusLabel}</span>
@@ -3714,7 +3715,7 @@ function DoctorCards({ doctors, doctorsUnavailable, loading = false, onOpenAvail
           </div>
           <div className="booking-meta">
             <h4>{doctor.display_name || "Doctor"}</h4>
-            <p>{doctor.specialties?.[0] || "General consultation"} {doctor.years_experience ? `Ãƒâ€šÃ‚Â· ${doctor.years_experience} years exp` : ""}</p>
+            <p>{doctor.specialties?.[0] || "General consultation"} {doctor.years_experience ? `· ${doctor.years_experience} years exp` : ""}</p>
           </div>
           <button className="doctor-rating-trigger" type="button" onClick={() => onOpenReviews(doctor)}>
             <span aria-hidden="true">*</span>
@@ -3789,7 +3790,7 @@ function OrdersPage({ orders, counts, expandedOrderId, loading = false, onToggle
               <div className="customer-order-main">
                 <div>
                   <div className="card-title">{orderPrimaryLabel(order)}</div>
-                  <div className="card-desc">Order ID {order.number} Ãƒâ€šÃ‚Â· {quantity} items</div>
+                  <div className="card-desc">Order ID {order.number} · {quantity} items</div>
                   <span className={`status-badge ${typeMeta.tone}`}>{typeMeta.label}</span>
                 </div>
               </div>
@@ -4302,7 +4303,7 @@ function OrderDetailsModal({ order, storeCurrency, onOpenOrderDocuments, onCance
         <h3 className="detail-section-title">Delivery Progress</h3>
         <div className="detail-card timeline">
           {timeline.map((step) => <div key={step.label} className={`timeline-step ${step.done ? "done" : ""}`}>
-            <span className="timeline-dot">{step.done ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“" : ""}</span>
+            <span className="timeline-dot">{step.done ? "✓" : ""}</span>
             <div><div className="timeline-title">{step.label}</div></div>
           </div>)}
         </div>
@@ -4342,7 +4343,7 @@ function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, 
 
   return <section className="appointment-mobile-sheet">
     <div className="appointment-mobile-header">
-      <button className="appointment-circle-button" type="button" aria-label="Go back" onClick={onBack}>{"ÃƒÂ¢Ã¢â‚¬Â Ã‚Â"}</button>
+      <button className="appointment-circle-button" type="button" aria-label="Go back" onClick={onBack}>{"←"}</button>
     </div>
     <div className="appointment-surface-card">
       <div className="appointment-surface-head">
@@ -4554,7 +4555,7 @@ function PatientReviewsPage({ doctor, journey, pastAppointments, onBack, onRevie
       <div className="appointment-surface-head">
         <div>
           <h3>{doctor?.display_name || "Doctor"}</h3>
-          <p>{Number(summary.average || 0).toFixed(1)} / 5 Ãƒâ€šÃ‚Â· {summary.count || 0} reviews</p>
+          <p>{Number(summary.average || 0).toFixed(1)} / 5 · {summary.count || 0} reviews</p>
         </div>
       </div>
       {[5, 4, 3, 2, 1].map((rating) => {
@@ -5485,6 +5486,11 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
   }
 
   return <section className={surfaceClassName}>
+    {!embeddedDesktop && (isActiveSubscriber || activeTab === "history") ? <button className="subscription-menu-button" type="button" aria-label="Open menu" onClick={onOpenMenu}>
+      <span />
+      <span />
+      <span />
+    </button> : null}
     <div className="customer-subscription-management-tabs" role="tablist" aria-label="Nevari Access Pro sections">
       <button className={activeTab === "subscription" ? "active" : ""} type="button" role="tab" aria-selected={activeTab === "subscription"} onClick={() => setActiveTab("subscription")}>Subscription</button>
       <button className={activeTab === "history" ? "active" : ""} type="button" role="tab" aria-selected={activeTab === "history"} onClick={() => setActiveTab("history")}>History</button>
@@ -7442,7 +7448,7 @@ function CustomerMobileDashboard({
         key: `order-${order.id}`,
         area: "Orders",
         label: `Order #${order.number || order.id}`,
-        meta: `${money(order.total, storeCurrency)} Ãƒâ€šÃ‚Â· ${titleCase(order.status)}`,
+        meta: `${money(order.total, storeCurrency)} · ${titleCase(order.status)}`,
         onSelect: () => {
           setExpandedOrderId(order.id);
           setSelectedOrder(order);
@@ -7468,7 +7474,7 @@ function CustomerMobileDashboard({
           key: `appointment-${appointment.id}`,
           area: "Appointments",
           label: `Appointment #${appointment.id}`,
-          meta: `${shortDate(appointment.start_at, true, storeTimeZone)} Ãƒâ€šÃ‚Â· ${doctor?.display_name || "Doctor"}`,
+          meta: `${shortDate(appointment.start_at, true, storeTimeZone)} · ${doctor?.display_name || "Doctor"}`,
           onSelect: () => {
             setSelectedAppointment(appointment);
             goToPage("overview");
@@ -7584,11 +7590,26 @@ function CustomerMobileDashboard({
     return "/";
   }
 
-  function openPharmacyStore() {
+  async function openPharmacyStore() {
     if (typeof window === "undefined") {
       return;
     }
-    window.location.assign(resolvedPharmacyStoreUrl());
+    const fallbackUrl = resolvedPharmacyStoreUrl();
+    if (!isSessionUsable(session)) {
+      window.location.assign(fallbackUrl);
+      return;
+    }
+    try {
+      const data = await apiRequest(session, "/sso/wordpress/start", { method: "POST", body: {} });
+      const ssoUrl = String(data?.redirect_url || data?.complete_url || "").trim();
+      if (ssoUrl) {
+        window.location.assign(ssoUrl);
+        return;
+      }
+    } catch {
+      // SSO handoff is best-effort; fall back to a plain store visit.
+    }
+    window.location.assign(fallbackUrl);
   }
 
   function transitionToRequestStep(nextStep) {
@@ -8321,15 +8342,6 @@ function CustomerMobileDashboard({
     return Object.keys(errors).length === 0;
   }
 
-  const mtmStepIsValid = useMemo(() => Object.keys(buildMtmStepErrors(mtmStep, mtmForm, mtmLabResultsFiles, {
-    medicationEntries: mtmMedicationEntries,
-    requireMedicationDraft: false,
-  })).length === 0, [mtmStep, mtmForm, mtmLabResultsFiles, mtmMedicationEntries]);
-  const mtmCanSubmit = useMemo(() => Object.keys(buildMtmStepErrors(6, mtmForm, mtmLabResultsFiles, {
-      medicationEntries: mtmMedicationEntries,
-      requireMedicationDraft: false,
-    })).length === 0, [mtmForm, mtmLabResultsFiles, mtmMedicationEntries]);
-
   const showRequestStep2FieldError = (key) => Boolean(requestStep2Errors[key]) && (requestStep2Touched[key] || requestStep2ShowErrors);
   const showRequestStep3FieldError = (key) => Boolean(requestStep3Errors[key]) && (requestStep3Touched[key] || requestStep3ShowErrors);
   const showMtmFieldError = (key) => Boolean(mtmStepErrors[key]) && (mtmTouchedFields[key] || mtmShowErrors);
@@ -8980,7 +8992,7 @@ function CustomerMobileDashboard({
                           onClick={() => mtmLabResultsInputRef.current?.click()}
                         >
                           <span>Lab Results</span>
-                          {mtmLabResultsFiles.length ? <span className="customer-mobile-upload-success">ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“</span> : <MobileIcon name="upload-file" />}
+                          {mtmLabResultsFiles.length ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
                         </button>
                         <input
                           ref={mtmLabResultsInputRef}
@@ -9117,7 +9129,7 @@ function CustomerMobileDashboard({
                 {showMtmFieldError("reasonForDiscontinuation") ? <small className="customer-mobile-field-error">{mtmStepErrors.reasonForDiscontinuation}</small> : null}
               {mtmSnackbar ? <div className="customer-mobile-snackbar" role="status" aria-live="polite">{mtmSnackbar}</div> : null}
               <div className="customer-mobile-sticky-actions customer-mtm-sticky-actions">
-                <button className="customer-mobile-primary-button" type="button" disabled={mtmSubmitting || (mtmStep < 6 ? !mtmStepIsValid : !mtmCanSubmit)} onClick={() => {
+                <button className="customer-mobile-primary-button" type="button" disabled={mtmSubmitting} onClick={() => {
                   if (mtmStep < 6) {
                     if (!validateMtmStep(mtmStep)) return;
                     transitionToMtmStep(mtmStep + 1);
@@ -9744,7 +9756,7 @@ function CustomerMobileDashboard({
               {requestStep === 4 ? <div className="customer-mobile-flow-stack">
                 {NURSE_REQUEST_CLINICAL_REQUIREMENTS.map((label) => {
                   const selected = clinicalRequirements.includes(label);
-                  return <button key={label} type="button" className={`customer-mobile-option-row ${selected ? "active" : ""}`} onClick={() => setClinicalRequirements((current) => selected ? current.filter((item) => item !== label) : [...current, label])}><span>{label}</span><span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“" : ""}</span></button>;
+                  return <button key={label} type="button" className={`customer-mobile-option-row ${selected ? "active" : ""}`} onClick={() => setClinicalRequirements((current) => selected ? current.filter((item) => item !== label) : [...current, label])}><span>{label}</span><span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "✓" : ""}</span></button>;
                 })}
               </div> : null}
               {requestStep === 5 ? <div className="customer-mobile-flow-stack">
@@ -9753,7 +9765,7 @@ function CustomerMobileDashboard({
                   return <div key={label} className="customer-mobile-upload-row-wrap">
                     <button type="button" className={`customer-mobile-upload-row-button ${uploaded ? "uploaded" : ""}`} onClick={() => uploadInputRefs.current[label]?.click()}>
                       <span>{label}</span>
-                      {uploaded ? <span className="customer-mobile-upload-success">ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“</span> : <MobileIcon name="upload-file" />}
+                      {uploaded ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
                     </button>
                     <input ref={(node) => { uploadInputRefs.current[label] = node; }} type="file" className="customer-mobile-hidden-file" onChange={(event) => {
                       const file = event.target.files?.[0];
@@ -9793,7 +9805,7 @@ function CustomerMobileDashboard({
                 <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#22A06B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#22A06B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </div>
               <h2 id="nurse-request-confirmation-title">{requestSubmitLoadingState ? "Submitting request..." : "Request Received!"}</h2>
-              {!requestSubmitLoadingState ? <p>Your nurse request has been received. Our care team will review your details and assign a suitable nurse. YouÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ll be notified once the visit is confirmed.</p> : null}
+              {!requestSubmitLoadingState ? <p>Your nurse request has been received. Our care team will review your details and assign a suitable nurse. You’ll be notified once the visit is confirmed.</p> : null}
               {!requestSubmitLoadingState ? <div className="customer-confirmation-next">
                 <h3>What happens next?</h3>
                 <div className="customer-confirmation-next-row"><span>Status</span><strong className="badge">Pending Review</strong></div>
@@ -9836,242 +9848,6 @@ function CustomerMobileDashboard({
             : <NurseRequestHistorySection title="Previous Visits" items={pastNurseRequests} />
         ) : null}
 
-        {!showNurseRequestFlow && appointmentTab !== "request" ? <section className="customer-mobile-list-section customer-mobile-appointment-pane">
-          <AppointmentSection
-            title="Appointments"
-            items={visibleAppointments}
-            doctors={state.doctors}
-            storeTimeZone={storeTimeZone}
-            loading={appointmentsLoading}
-            emptyCtaLabel="Book an appointment"
-            onEmptyCta={() => setAppointmentComposerOpen(true)}
-            onOpenAppointment={openAppointment}
-          />
-        </section> : null}
-
-        {!showNurseRequestFlow && appointmentTab === "request" ? <section className="customer-mobile-flow">
-          {!requestSubmitted ? <>
-            <div className="customer-mobile-step-title">Step {requestStep} of 5 - {requestStep === 1 ? "Care Type" : requestStep === 2 ? "Patient Details" : requestStep === 3 ? "Care Details" : requestStep === 4 ? "Clinical Requirements" : "Upload Medical Information"}</div>
-            <p className="customer-mobile-step-copy">{requestStep === 1 ? "Please select as appropriate:" : requestStep === 2 ? "Please fill out the form" : requestStep === 3 ? "Set the care schedule details." : requestStep === 4 ? "Select required clinical services." : "You can upload any of these, if available:"}</p>
-            <div className={`customer-mobile-step-panel ${requestStepAnimatingOut ? "is-out" : "is-in"}`}>
-              {requestStep === 1 ? <div className="customer-mobile-flow-stack">
-                {NURSE_REQUEST_CARE_TYPES.map((label) => (
-                  <button key={label} type="button" className={`customer-mobile-option-row ${selectedCareType === label ? "active" : ""}`} onClick={() => setSelectedCareType(label)}>
-                    <span>{label}</span>
-                    <span className={`customer-mobile-radio ${selectedCareType === label ? "selected" : ""}`} aria-hidden="true" />
-                  </button>
-                ))}
-              </div> : null}
-
-              {requestStep === 2 ? <div className="customer-mobile-form-stack">
-                {[
-                  { label: "Name:", key: "name", placeholder: "Enter patient full name", required: true },
-                  { label: "Age:", key: "age", placeholder: "Enter age", required: true },
-                  { label: "Gender:", key: "gender", placeholder: "Select gender", required: true },
-                  { label: "Address:", key: "address", placeholder: "Enter home address", required: true },
-                  { label: "Emergency Contact:", key: "emergencyContact", placeholder: "Enter emergency contact number", required: true },
-                  { label: "Mobility Status:", key: "mobilityStatus", placeholder: "Enter mobility status", required: true }
-                ].map(({ label, key, placeholder, required }) => <label className="customer-mobile-field" key={label}>
-                  <span>{label}</span>
-                  {key === "gender" ? <select
-                    value={requestForm[key]}
-                    className={showRequestStep2FieldError(key) ? "has-error" : ""}
-                    onBlur={() => markRequestStep2FieldBlurred(key)}
-                        onChange={(event) => updateRequestFormField(key, event.target.value)}
-                  >
-                    <option value="">Select gender</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                  </select> : <input
-                    type={key === "emergencyContact" ? "tel" : "text"}
-                    inputMode={key === "age" ? "numeric" : key === "emergencyContact" ? "tel" : undefined}
-                    maxLength={key === "age" ? 3 : key === "emergencyContact" ? 20 : key === "address" ? 200 : 120}
-                    pattern={key === "age" ? "\\d{1,3}" : key === "emergencyContact" ? "[0-9+\\-()\\s]{7,20}" : undefined}
-                    value={requestForm[key]}
-                    placeholder={placeholder}
-                    className={showRequestStep2FieldError(key) ? "has-error" : ""}
-                    onBlur={() => markRequestStep2FieldBlurred(key)}
-                      onChange={(event) => updateRequestFormField(key, event.target.value)}
-                  />}
-                  {required && showRequestStep2FieldError(key) ? <small className="customer-mobile-field-error">{requestStep2Errors[key]}</small> : null}
-                </label>)}
-                {[
-                  ["Existing Conditions (If any):", "conditions", "Enter existing conditions"],
-                  ["Allergies (If any):", "allergies", "Enter known allergies"],
-                  ["Current Medication:", "currentMedication", "Enter current medications"]
-                ].map(([label, key, placeholder]) => <label className="customer-mobile-field" key={label}>
-                  <span>{label}</span>
-                  <textarea
-                    rows={4}
-                    value={requestForm[key]}
-                    placeholder={placeholder}
-                    onChange={(event) => setRequestForm((current) => ({ ...current, [key]: sanitizeClientText(event.target.value, { max: 500 }) }))}
-                  />
-                </label>)}
-              </div> : null}
-
-              {requestStep === 3 ? <div className="customer-mobile-form-stack">
-                <div className="customer-mobile-radio-group">
-                  <span>Is this a recurring visit or one time care?</span>
-                  <div className="customer-mobile-inline-radios">
-                    {NURSE_REQUEST_VISIT_TYPES.map((label) => <label key={label}>
-                      <input
-                        type="radio"
-                        name="visitType"
-                        checked={careDetails.visitType === label}
-                        onChange={() => {
-                          updateCareDetailField("visitType", label);
-                        }}
-                      />
-                      <span className="customer-mobile-radio" aria-hidden="true" />
-                      {label}
-                    </label>)}
-                  </div>
-                  {showRequestStep3FieldError("visitType") ? <small className="customer-mobile-field-error">{requestStep3Errors.visitType}</small> : null}
-                </div>
-
-                <label className="customer-mobile-field">
-                  <span>Preferred Visit Date:</span>
-                  <input type="date" min={localDateInputValue(new Date())} value={careDetails.preferredDate} className={showRequestStep3FieldError("preferredDate") ? "has-error" : ""} onBlur={() => markRequestStep3FieldBlurred("preferredDate")} onChange={(event) => {
-                      updateCareDetailField("preferredDate", event.target.value);
-                  }} />
-                  {showRequestStep3FieldError("preferredDate") ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredDate}</small> : null}
-                </label>
-                <label className="customer-mobile-field">
-                  <span>Preferred Time:</span>
-                  <input type="time" min={careDetails.preferredDate === localDateInputValue(new Date()) ? new Date(Date.now() + 60000).toTimeString().slice(0, 5) : undefined} value={careDetails.preferredTime} className={showRequestStep3FieldError("preferredTime") ? "has-error" : ""} onBlur={() => markRequestStep3FieldBlurred("preferredTime")} onChange={(event) => {
-                      updateCareDetailField("preferredTime", event.target.value);
-                  }} />
-                  {showRequestStep3FieldError("preferredTime") ? <small className="customer-mobile-field-error">{requestStep3Errors.preferredTime}</small> : null}
-                </label>
-                <label className="customer-mobile-field">
-                  <span>Duration needed:</span>
-                  <select value={careDetails.duration} className={showRequestStep3FieldError("duration") ? "has-error" : ""} onBlur={() => markRequestStep3FieldBlurred("duration")} onChange={(event) => {
-                      updateCareDetailField("duration", event.target.value);
-                  }}>
-                    <option value="">Select duration</option>
-                    {NURSE_REQUEST_DURATIONS.map((duration) => <option value={duration} key={duration}>{duration}</option>)}
-                  </select>
-                  {showRequestStep3FieldError("duration") ? <small className="customer-mobile-field-error">{requestStep3Errors.duration}</small> : null}
-                </label>
-
-                <div className="customer-mobile-radio-group">
-                  <span>Day/Night Care?</span>
-                  <div className="customer-mobile-inline-radios">
-                    {NURSE_REQUEST_CARE_SHIFTS.map((choice) => <label key={choice}>
-                      <input type="radio" name="careShift" checked={careDetails.careShift === choice} onChange={() => {
-                          updateCareDetailField("careShift", choice);
-                      }} />
-                      <span className="customer-mobile-radio" aria-hidden="true" />
-                      {choice}
-                    </label>)}
-                  </div>
-                  {showRequestStep3FieldError("careShift") ? <small className="customer-mobile-field-error">{requestStep3Errors.careShift}</small> : null}
-                </div>
-
-                {[
-                  ["Live-In Care Required?", "liveInCareRequired"],
-                  ["Wheelchair Assistance Needed?", "wheelchairAssistanceNeeded"],
-                  ["Medical Equipment Present?", "medicalEquipmentPresent"],
-                  ["Requires Lifting Assistance?", "requiresLiftingAssistance"],
-                  ["Any Infectious Disease?", "infectiousDisease"]
-                ].map(([label, key]) => (
-                  <div className="customer-mobile-radio-group" key={label}>
-                    <span>{label}</span>
-                    <div className="customer-mobile-inline-radios">
-                      {NURSE_REQUEST_YES_NO_OPTIONS.map((choice) => <label key={choice}>
-                        <input type="radio" name={key} checked={careDetails[key] === choice} onChange={() => {
-                            updateCareDetailField(key, choice);
-                        }} />
-                        <span className="customer-mobile-radio" aria-hidden="true" />
-                        {choice}
-                      </label>)}
-                    </div>
-                    {showRequestStep3FieldError(key) ? <small className="customer-mobile-field-error">{requestStep3Errors[key]}</small> : null}
-                  </div>
-                ))}
-              </div> : null}
-
-              {requestStep === 4 ? <div className="customer-mobile-flow-stack">
-                {NURSE_REQUEST_CLINICAL_REQUIREMENTS.map((label) => {
-                  const selected = clinicalRequirements.includes(label);
-                  return <button
-                    key={label}
-                    type="button"
-                    className={`customer-mobile-option-row ${selected ? "active" : ""}`}
-                    onClick={() => {
-                      setClinicalRequirements((current) => selected ? current.filter((item) => item !== label) : [...current, label]);
-                    }}
-                  >
-                    <span>{label}</span>
-                    <span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“" : ""}</span>
-                  </button>;
-                })}
-              </div> : null}
-
-              {requestStep === 5 ? <div className="customer-mobile-flow-stack">
-                {NURSE_REQUEST_UPLOAD_LABELS.map((label) => {
-                  const uploaded = uploadedMedicalFiles[label];
-                  return <div key={label} className="customer-mobile-upload-row-wrap">
-                    <button type="button" className={`customer-mobile-upload-row-button ${uploaded ? "uploaded" : ""}`} onClick={() => uploadInputRefs.current[label]?.click()}>
-                      <span>{label}</span>
-                      {uploaded ? <span className="customer-mobile-upload-success">ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“</span> : <MobileIcon name="upload-file" />}
-                    </button>
-                    <input
-                      ref={(node) => { uploadInputRefs.current[label] = node; }}
-                      type="file"
-                      className="customer-mobile-hidden-file"
-                      onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (!file) return;
-                      if (!isAllowedMedicalFile(file)) {
-                        setRequestSubmitError("Upload PDF, DOC, DOCX, PNG, JPG, or WEBP files up to 5MB.");
-                        event.target.value = "";
-                        return;
-                      }
-                      setRequestSubmitError("");
-                      setUploadedMedicalFiles((current) => ({ ...current, [label]: { name: sanitizeClientText(file.name, { max: 180 }) } }));
-                    }}
-                    />
-                    {uploaded ? <div className="customer-mobile-upload-meta">
-                      <small className="customer-mobile-upload-filename" title={uploaded.name}>{uploaded.name}</small>
-                      <div className="customer-mobile-upload-meta-actions">
-                        <button type="button" onClick={() => uploadInputRefs.current[label]?.click()}>Replace</button>
-                        <button type="button" className="customer-mobile-upload-remove" onClick={() => {
-                          setUploadedMedicalFiles((current) => {
-                            const next = { ...current };
-                            delete next[label];
-                            return next;
-                          });
-                          if (uploadInputRefs.current[label]) uploadInputRefs.current[label].value = "";
-                        }}>Remove</button>
-                      </div>
-                    </div> : null}
-                  </div>;
-                })}
-              </div> : null}
-            </div>
-
-            <button className="customer-mobile-primary-button" type="button" disabled={requestContinueDisabled} onClick={handleRequestContinue}>{requestSubmitting ? <BrandedSpinner label="Submitting nurse request" /> : "Continue"}</button>
-            {requestSubmitError ? <small className="customer-mobile-field-error">{requestSubmitError}</small> : null}
-            {requestStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToRequestStep(Math.max(1, requestStep - 1))}>Go Back</button> : null}
-          </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="nurse-request-confirmation-title-secondary">
-            <section className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell">
-            <div className="customer-mobile-empty-icon"><MobileIcon name="appointments" /></div>
-            <h2>{requestSubmitLoadingState ? "Submitting request..." : "Nurse Request Submitted"}</h2>
-            {!requestSubmitLoadingState ? <p>Your nurse request has been received. Our care team will review your details and assign a suitable nurse. YouÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ll be notified once the visit is confirmed.</p> : null}
-            {!requestSubmitLoadingState ? <div className="detail-card info-list">
-              <div className="info-row"><span className="info-label">Care Type</span><span className="info-value">{latestSubmittedRequest?.careType || selectedCareType || "Not set"}</span></div>
-              <div className="info-row"><span className="info-label">Preferred Date</span><span className="info-value">{latestSubmittedRequest?.preferredDate || careDetails.preferredDate || "Not set"}</span></div>
-              <div className="info-row"><span className="info-label">Preferred Time</span><span className="info-value">{latestSubmittedRequest?.preferredTime || careDetails.preferredTime || "Not set"}</span></div>
-              <div className="info-row"><span className="info-label">Visit Type</span><span className="info-value">{latestSubmittedRequest?.visitType || careDetails.visitType || "Not set"}</span></div>
-              <div className="info-row"><span className="info-label">Status</span><span className="info-value">Pending Review</span></div>
-            </div> : null}
-            {!requestSubmitLoadingState ? <button className="customer-mobile-primary-button" type="button" onClick={() => goToPage("overview")}>View Request Status</button> : null}
-            {!requestSubmitLoadingState ? <button className="customer-mobile-secondary-button" type="button" onClick={() => goToPage("overview")}>Back to Home</button> : null}
-            </section>
-          </div>}
-        </section> : null}
 
       </main>
     </div>;

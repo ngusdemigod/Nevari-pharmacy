@@ -153,6 +153,7 @@ export default function SubscriptionPageClient() {
     return (
       <SubscriptionSuccess
         busy={subscriptionState.isActionBusy}
+        onOpenMenu={() => router.push(continuePath)}
         onContinue={async () => {
           await subscriptionState.refresh();
           subscriptionState.dismissSuccess();
@@ -166,6 +167,7 @@ export default function SubscriptionPageClient() {
     return (
       <SubscriptionSuccess
         busy={false}
+        onOpenMenu={() => router.push(continuePath)}
         title="You are already a Pro member"
         subtitle="Your Nevari Access Pro subscription is already active. No additional payment is needed."
         footerCopy="You already have full access to Nevari Access Pro services."

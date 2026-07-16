@@ -4736,7 +4736,9 @@ final class Nevari_Rest {
         if ($doctor_index === false) {
             return count($ids);
         }
-        return ($doctor_index - $last_index + count($ids)) % count($ids);
+        // Rank 0 must go to the doctor AFTER the last-assigned one; without the
+        // extra -1 the previously assigned doctor ranks first and wins every time.
+        return ($doctor_index - $last_index - 1 + 2 * count($ids)) % count($ids);
     }
 
     private static function select_auto_assigned_doctor(string $start, string $end): ?WP_User {

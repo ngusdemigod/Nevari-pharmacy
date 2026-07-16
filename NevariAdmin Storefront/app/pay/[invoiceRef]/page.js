@@ -122,6 +122,11 @@ function PaywallPageContent() {
   }, [searchParams]);
 
   useEffect(() => {
+    document.body.classList.add("paywall-mode");
+    return () => document.body.classList.remove("paywall-mode");
+  }, []);
+
+  useEffect(() => {
     let active = true;
     async function load() {
       setLoading(true);

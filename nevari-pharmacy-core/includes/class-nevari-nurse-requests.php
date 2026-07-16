@@ -269,7 +269,13 @@ final class Nevari_Nurse_Requests {
         if (is_array($value)) {
             $result = [];
             foreach ($value as $key => $item) {
-                $result[sanitize_key((string) $key)] = self::sanitize_deep($item);
+                // Keys are camelCase identifiers (preferredDate, visitType, ...) already
+                // whitelisted upstream; sanitize_key() would lowercase them and break lookups.
+                $safe_key = preg_replace('/[^A-Za-z0-9_\-]/', '', (string) $key);
+                if ($safe_key === '') {
+                    continue;
+                }
+                $result[$safe_key] = self::sanitize_deep($item);
             }
             return $result;
         }
