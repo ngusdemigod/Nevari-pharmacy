@@ -63,6 +63,24 @@ final class Nevari_Plugin {
         Nevari_Admin::init();
         Nevari_Emails::init();
 
+        $this->maybe_run_schema_migrations();
+        $this->register_woocommerce_hooks();
+    }
+
+    /**
+     * Run the idempotent schema/seed routines once per plugin version instead
+     * of on every request. Each ensure_* call issued ~dozens of SHOW COLUMNS /
+     * SELECT queries; running them unconditionally added a ~120-query tax to
+     * every REST call. Gate behind a dedicated version option (separate from
+     * nevari_pharmacy_db_version, which Nevari_Activator::maybe_upgrade()
+     * already advanced before this method runs). Bump NEVARI_PHARMACY_VERSION
+     * whenever the ensure_* definitions change so the migrations re-run.
+     */
+    private function maybe_run_schema_migrations(): void {
+        if (get_option('nevari_runtime_schema_version') === NEVARI_PHARMACY_VERSION) {
+            return;
+        }
+
         $this->ensure_required_email_templates();
         $this->ensure_appointment_lifecycle_columns();
         $this->ensure_appointment_invoice_table();
@@ -70,7 +88,11 @@ final class Nevari_Plugin {
         $this->ensure_round_robin_tracker_table();
         $this->ensure_mtm_workflow_columns();
         $this->ensure_pharmacist_role();
-        $this->register_woocommerce_hooks();
+        if (class_exists('Nevari_Subscriptions')) {
+            Nevari_Subscriptions::ensure_system_plans();
+        }
+
+        update_option('nevari_runtime_schema_version', NEVARI_PHARMACY_VERSION, false);
     }
 
     private function ensure_doctor_routing_columns(): void {

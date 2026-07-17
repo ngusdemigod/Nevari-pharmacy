@@ -30,7 +30,9 @@ final class Nevari_Subscriptions {
         add_action('add_meta_boxes_' . self::PLAN_POST_TYPE, [__CLASS__, 'register_plan_meta_box']);
         add_action('save_post_' . self::PLAN_POST_TYPE, [__CLASS__, 'save_plan_meta_from_post'], 10, 3);
         add_action('save_post_' . self::PLAN_POST_TYPE, [__CLASS__, 'sync_subscription_plan_table_from_post'], 20, 3);
-        self::ensure_system_plans();
+        // System plans are seeded by Nevari_Plugin::maybe_run_schema_migrations()
+        // (version-gated) and by the activator on install/upgrade — not on every
+        // request, which previously ran a table scan per REST call.
     }
 
     public static function register_routes(): void {

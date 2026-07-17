@@ -906,6 +906,32 @@ final class Nevari_Helpers {
         return (bool) self::find_valid_prescription_for_product($patient_user_id, $product_id, $quantity);
     }
 
+    /**
+     * Warm the user object/meta cache for a batch of appointment rows before
+     * formatting them. format_appointment() calls user_summary() twice per row
+     * (doctor + patient), each issuing get_user_by + ~6 get_user_meta reads;
+     * without priming that is an N+1 across the whole list. cache_users() loads
+     * every referenced user and their meta in two queries total.
+     */
+    public static function prime_appointment_caches(array $rows): void {
+        if (!$rows || !function_exists('cache_users')) {
+            return;
+        }
+        $user_ids = [];
+        foreach ($rows as $row) {
+            if (!empty($row->doctor_user_id)) {
+                $user_ids[] = (int) $row->doctor_user_id;
+            }
+            if (!empty($row->patient_user_id)) {
+                $user_ids[] = (int) $row->patient_user_id;
+            }
+        }
+        $user_ids = array_values(array_unique(array_filter($user_ids)));
+        if ($user_ids) {
+            cache_users($user_ids);
+        }
+    }
+
     public static function format_appointment($row): array {
         global $wpdb;
         $order = null;

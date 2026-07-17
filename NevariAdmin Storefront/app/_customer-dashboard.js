@@ -24,7 +24,7 @@ import { buildSWRRevealSignature, useSWRReveal } from "./components/useSWRReveal
 import SubscriptionGate from "./components/subscription/SubscriptionGate";
 import Paywall from "./components/subscription/Paywall";
 import { useSubscription } from "./hooks/use-subscription";
-import { RoleShell, SkeletonBox } from "./_doctor-dashboard";
+import { RoleShell, SkeletonBox } from "./components/role-shell";
 import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, normalizeCustomerSettingsPayload, requestMtmReschedule, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest, updateCustomerSettings, uploadCustomerProfileImage } from "./lib/nevari-api";
 import { citiesForNigeriaState, NIGERIA_STATES } from "./lib/nigeria-locations";
 

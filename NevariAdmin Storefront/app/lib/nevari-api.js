@@ -1,7 +1,9 @@
 "use client";
 
 import { apiRequest } from "../components/role-dashboard-utils";
-import { bytesToBase64, generateBrowserMtmPdf } from "./mtmPdfBrowser";
+// mtmPdfBrowser statically pulls in pdf-lib (~130 KB gzip). It is only needed
+// when submitting an MTM assessment, so load it lazily instead of shipping it
+// in every dashboard bundle.
 
 const STORAGE_PREFIX = "nevari_subscription_state";
 const SUBSCRIPTION_UI_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -615,6 +617,7 @@ export async function submitCustomerMtmRequest(session, body) {
     throw new Error("MTM request snapshot could not be created.");
   }
 
+  const { bytesToBase64, generateBrowserMtmPdf } = await import("./mtmPdfBrowser");
   const pdfBytes = await generateBrowserMtmPdf(createdRequest);
   const uploadResponse = await fetch(`/api/mtm/${encodeURIComponent(String(createdRequest.id))}/submission-pdf?${params.toString()}`, {
     method: "POST",

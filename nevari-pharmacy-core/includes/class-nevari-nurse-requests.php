@@ -51,8 +51,13 @@ final class Nevari_Nurse_Requests {
         $customer_email = sanitize_email((string) ($body['customerEmail'] ?? ''));
         $customer_name = sanitize_text_field((string) ($body['customerName'] ?? ($patient['name'] ?? 'Customer')));
         $customer_phone = sanitize_text_field((string) ($body['customerPhone'] ?? ($patient['emergencyContact'] ?? '')));
-        $admin_email = sanitize_email((string) ($body['adminEmail'] ?? get_option('admin_email')));
-        $app_origin = esc_url_raw((string) ($body['appOrigin'] ?? ''));
+        // Notification recipient and dashboard link origin are derived from
+        // trusted server config only. Never trust client-supplied adminEmail /
+        // appOrigin here — the endpoint is reachable directly (bypassing the
+        // signed proxy), so honoring them would let a caller redirect the
+        // patient-data notification email and inject an arbitrary link target.
+        $admin_email = self::admin_notification_email();
+        $app_origin = self::dashboard_origin();
 
         if ($care_type === '') {
             return Nevari_Helpers::error('validation_error', 'Select a valid care type.', 422, ['field' => 'careType']);
@@ -115,7 +120,8 @@ final class Nevari_Nurse_Requests {
         }
 
         $customer_email = sanitize_email((string) ($request['customerEmail'] ?? ''));
-        $admin_email = sanitize_email((string) ($request['adminEmail'] ?? get_option('admin_email')));
+        // Re-derive from trusted server config; ignore any stored client value.
+        $admin_email = self::admin_notification_email();
         $customer_name = sanitize_text_field((string) ($request['customerName'] ?? 'Customer'));
         $customer_phone = sanitize_text_field((string) ($request['customerPhone'] ?? ''));
         $care_type = sanitize_text_field((string) ($request['careType'] ?? 'Nurse Request'));
@@ -125,7 +131,7 @@ final class Nevari_Nurse_Requests {
         $clinical_requirements = isset($request['clinicalRequirements']) && is_array($request['clinicalRequirements'])
             ? implode(', ', array_map('sanitize_text_field', $request['clinicalRequirements']))
             : '';
-        $app_origin = esc_url_raw((string) ($request['appOrigin'] ?? ''));
+        $app_origin = self::dashboard_origin();
         $uploaded_count = isset($request['uploadedMedicalFiles']) && is_array($request['uploadedMedicalFiles'])
             ? count(array_filter($request['uploadedMedicalFiles']))
             : 0;
@@ -280,6 +286,24 @@ final class Nevari_Nurse_Requests {
             return $result;
         }
         return sanitize_text_field((string) $value);
+    }
+
+    private static function admin_notification_email(): string {
+        $configured = sanitize_email((string) get_option('nevari_care_team_email', ''));
+        if ($configured !== '' && is_email($configured)) {
+            return $configured;
+        }
+        return sanitize_email((string) get_option('admin_email'));
+    }
+
+    private static function dashboard_origin(): string {
+        if (class_exists('Nevari_Helpers') && method_exists('Nevari_Helpers', 'shared_frontend_base_url')) {
+            $origin = esc_url_raw(rtrim((string) Nevari_Helpers::shared_frontend_base_url(), '/'));
+            if ($origin !== '') {
+                return $origin;
+            }
+        }
+        return esc_url_raw(rtrim((string) home_url('/'), '/'));
     }
 
     private static function preferred_datetime(string $date, string $time): string {

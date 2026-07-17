@@ -4715,14 +4715,17 @@ final class Nevari_Rest {
         return $eligible;
     }
 
-    private static function round_robin_rank(string $position, int $doctor_id, array $group_doctor_ids): int {
+    private static function last_assigned_doctor_id(string $position): int {
         global $wpdb;
 
         $table = Nevari_Helpers::table('round_robin_tracker');
-        $last_doctor_id = (int) $wpdb->get_var($wpdb->prepare(
+        return (int) $wpdb->get_var($wpdb->prepare(
             "SELECT last_doctor_id FROM {$table} WHERE doctor_level = %s LIMIT 1",
             $position
         ));
+    }
+
+    private static function round_robin_rank_for(int $last_doctor_id, int $doctor_id, array $group_doctor_ids): int {
         $ids = array_values(array_unique(array_map('intval', $group_doctor_ids)));
         sort($ids);
         if (!$ids) {
@@ -4763,12 +4766,20 @@ final class Nevari_Rest {
                 continue;
             }
             $doctor_ids = array_map(static fn($row) => (int) $row['doctor']->ID, $by_level[$position]);
-            usort($by_level[$position], static function (array $left, array $right) use ($position, $doctor_ids) {
+            // Read the tracker once per level and precompute each doctor's rank,
+            // instead of querying inside the usort comparator (which runs
+            // O(n log n) times and issued two identical SELECTs per comparison).
+            $last_doctor_id = self::last_assigned_doctor_id($position);
+            $ranks = [];
+            foreach ($doctor_ids as $candidate_id) {
+                $ranks[$candidate_id] = self::round_robin_rank_for($last_doctor_id, $candidate_id, $doctor_ids);
+            }
+            usort($by_level[$position], static function (array $left, array $right) use ($ranks) {
                 if ($left['weekly_count'] !== $right['weekly_count']) {
                     return $left['weekly_count'] <=> $right['weekly_count'];
                 }
-                $leftRank = self::round_robin_rank($position, (int) $left['doctor']->ID, $doctor_ids);
-                $rightRank = self::round_robin_rank($position, (int) $right['doctor']->ID, $doctor_ids);
+                $leftRank = $ranks[(int) $left['doctor']->ID] ?? PHP_INT_MAX;
+                $rightRank = $ranks[(int) $right['doctor']->ID] ?? PHP_INT_MAX;
                 if ($leftRank !== $rightRank) {
                     return $leftRank <=> $rightRank;
                 }
@@ -4920,6 +4931,7 @@ final class Nevari_Rest {
         $total = (int) $wpdb->get_var($params ? $wpdb->prepare($total_sql, $params) : $total_sql);
         $sql = "SELECT * FROM {$table} WHERE {$where_sql} ORDER BY start_at {$order} LIMIT %d OFFSET %d";
         $rows = $wpdb->get_results($wpdb->prepare($sql, array_merge($params, [$per_page, $offset])));
+        Nevari_Helpers::prime_appointment_caches($rows ?: []);
         return Nevari_Helpers::success(array_map(['Nevari_Helpers', 'format_appointment'], $rows ?: []), Nevari_Helpers::pagination_meta($page, $per_page, $total));
     }
 

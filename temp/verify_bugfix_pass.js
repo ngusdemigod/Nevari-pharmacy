@@ -176,11 +176,24 @@ async function testPayPage(browser) {
   await context.close();
 }
 
+async function dismissProfileReminder(page) {
+  // The "complete your profile" overlay appears on a delay and intercepts
+  // pointer events; wait for it, then dismiss so drawer interactions work.
+  const overlay = page.locator(".customer-profile-reminder-overlay");
+  await overlay.waitFor({ state: "visible", timeout: 4000 }).catch(() => {});
+  const remindLater = page.locator(".customer-profile-reminder-secondary");
+  if (await remindLater.count().catch(() => 0)) {
+    await remindLater.first().click().catch(() => {});
+    await overlay.waitFor({ state: "detached", timeout: 3000 }).catch(() => {});
+  }
+}
+
 async function testSsoHandoff(browser) {
   const ssoCalls = [];
   const { context, page } = await newDashboardPage(browser, { ssoCalls });
   await page.goto(`${baseUrl}/dashboard`, { waitUntil: "networkidle" });
   await page.waitForSelector("button[aria-label='Open menu']", { timeout: 60000 });
+  await dismissProfileReminder(page);
   await page.locator("button[aria-label='Open menu']").first().click();
   const storeItem = page.locator(".customer-mobile-drawer-item", { hasText: "Pharmacy" }).first();
   await storeItem.waitFor({ state: "visible", timeout: 30000 });
