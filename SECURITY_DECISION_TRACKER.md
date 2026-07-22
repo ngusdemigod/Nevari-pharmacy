@@ -354,6 +354,8 @@ Stale display data can appear after account switching if cache keys or cleanup a
 
 - **Decision:** Store IV Therapy and Nurse Request lifecycles in indexed custom tables with bounded migration batches and temporary legacy fallback.
 - **Decision:** Use an append-only, non-clinical lifecycle event table for status, assignment, scheduling, payment, and notification events.
+- **Decision:** Non-Pro MTM availability may be held before payment only until 23:59:59 in the configured store timezone. Expired holds never block availability, payment cannot silently restore them, and approval requires a paid/credit-backed reservation.
+- **Decision:** MTM submission and slot notifications are decoupled from browser PDF completion; availability notifications are claimed idempotently only after the slot transaction commits.
 - **Decision:** Nurses remain administrator-managed provider records and do not receive authentication accounts.
 - **Decision:** Share the five-consultation Pro allowance through an atomic reservation ledger counted together with paid doctor appointments.
 - **Decision:** Server-created WooCommerce orders carry the configured MTM fee; client prices are ignored.

@@ -1160,7 +1160,7 @@ const MTM_STEP_TITLES = {
   3: "Medical & Clinical History",
   4: "Medication Profile",
   5: "Medication Adherence Assessment",
-  6: "Review and Submit",
+  6: "Review Details",
 };
 
 const IV_THERAPY_STEP_TITLES = {
@@ -3706,10 +3706,11 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
     }
   }
 
-  const paymentReady = ["paid", "quota_reserved"].includes(String(booking?.payment_state || request?.payment?.state || ""));
   const slotState = String(booking?.slot_state || request?.slot_reservation?.state || "unreserved");
   const reservedStart = booking?.reserved_start_at || request?.slot_reservation?.start_at || "";
+  const holdExpiresAt = booking?.slot_hold_expires_at || request?.slot_reservation?.hold_expires_at || "";
   const availableSlots = Array.isArray(booking?.available_slots) ? booking.available_slots : [];
+  const canSelectAvailability = ["pending", "paid", "quota_reserved"].includes(String(booking?.payment_state || "")) && !["reserved_pending_payment", "reserved", "active"].includes(slotState);
 
   return createPortal(<div className="customer-appointment-modal" role="dialog" aria-modal="true" aria-label="MTM request details">
     <ModalScrim className="customer-modal-scrim customer-appointment-modal-backdrop" label="Close MTM request details" onDismiss={onClose} />
@@ -3738,10 +3739,11 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
             <div className="info-row"><span className="info-label">Payment / credit</span><strong className="info-value">{booking.payment_state === "quota_reserved" ? "Pro consultation credit reserved" : titleCase(booking.payment_state || "pending")}</strong></div>
             {booking.payment_state === "quota_reserved" ? <div className="info-row"><span className="info-label">Monthly credits remaining</span><strong className="info-value">{Number(booking.quota_remaining || 0)}</strong></div> : <div className="info-row"><span className="info-label">MTM consultation fee</span><strong className="info-value">{money(booking.fee || 0, booking.currency || "NGN")}</strong></div>}
             <div className="info-row"><span className="info-label">Slot</span><strong className="info-value">{reservedStart ? formatAppointmentListDateTime(reservedStart, storeTimeZone) : "Not selected"}</strong></div>
+            {holdExpiresAt ? <div className="info-row"><span className="info-label">Hold expires</span><strong className="info-value">{formatAppointmentListDateTime(holdExpiresAt, storeTimeZone)}</strong></div> : null}
           </div>
           {booking.payment_required && booking.payment_url ? <a className="customer-mobile-primary-button" href={booking.payment_url} target="_blank" rel="noreferrer" onClick={() => window.setTimeout(() => bookingQuery.mutate(), 1500)}>Pay for MTM consultation</a> : null}
           {booking.payment_required && !booking.payment_url ? <div className="appointment-inline-alert" role="status">Payment could not be resumed. Please contact support with this request reference.</div> : null}
-          {paymentReady && slotState !== "reserved" && slotState !== "active" ? <div className="customer-mtm-slot-picker">
+          {canSelectAvailability ? <div className="customer-mtm-slot-picker">
             <label htmlFor={`mtm-slot-${requestId}`}>Choose a 30-minute consultation slot</label>
             <select id={`mtm-slot-${requestId}`} value={selectedSlot} onChange={(event) => { setSelectedSlot(event.target.value); setSlotError(""); }}>
               <option value="">Select an available slot</option>
@@ -3755,6 +3757,7 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
             </div>
           </div> : null}
           {reservedStart && ["reserved", "active"].includes(slotState) ? <p className="customer-flow-status-inline-message">{slotState === "active" ? "Your consultation slot is confirmed." : "Your slot is reserved pending clinical approval."}</p> : null}
+          {reservedStart && slotState === "reserved_pending_payment" ? <p className="customer-flow-status-inline-message">Your availability is held pending payment{holdExpiresAt ? ` until ${formatAppointmentListDateTime(holdExpiresAt, storeTimeZone)}` : " until the end of today"}.</p> : null}
         </> : null}
       </section>
       <div className="stacked-order-popup-actions">
@@ -4407,9 +4410,23 @@ function OrderDetailsModal({ order, storeCurrency, onOpenOrderDocuments, onCance
   </div>;
 }
 
+function AvailabilitySlotPicker({ providerName, selectedDate, slots, selectedSlot, loading, error, onUpdateDate, onSelectSlot, storeTimeZone, emptyLabel = "Provider not available" }) {
+  const days = nextSevenDays(selectedDate);
+  return <div className="appointment-surface-card">
+    <div className="appointment-surface-head"><div><h3>{parseDateKey(selectedDate).toLocaleString("en-US", { month: "long" })}</h3><p>{providerName}</p></div></div>
+    <div className="appointment-date-strip">
+      {days.map((day) => <button key={day.key} className={`appointment-date-pill ${day.key === selectedDate ? "active" : ""}`} type="button" onClick={() => onUpdateDate(day.key)}><span>{day.weekday}</span><strong>{day.day}</strong></button>)}
+    </div>
+    {loading ? <div className="empty-card compact-empty"><BrandedSpinner label="Loading appointment slots" /></div> : null}
+    {error ? <div className="appointment-inline-alert" role="alert">{error}</div> : null}
+    <div className="appointment-slot-grid">
+      {slots.length ? slots.map((slot) => <button className={`appointment-slot-button ${selectedSlot?.start_at === slot.start_at ? "active" : ""}`} key={slot.start_at} type="button" onClick={() => onSelectSlot(slot)}>{formatTime(slot.start_at, storeTimeZone)}</button>) : !loading && !error ? <div className="empty-card compact-empty"><div className="card-title">{emptyLabel}</div></div> : null}
+    </div>
+  </div>;
+}
+
 function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, onSelectSlot, onDurationChange, onReasonChange, onCreateAppointmentCheckout, minimumBookingMinutes, storeTimeZone }) {
   const [ctaPending, setCtaPending] = useState(false);
-  const days = nextSevenDays(journey.selectedDate);
   const durationOptions = consultationDurationOptions(minimumBookingMinutes);
   const selectedDuration = journey.durationMinutes || minimumBookingMinutes;
   const selectedDurationAvailable = !journey.selectedSlot || durationIsAvailable(journey.slots, journey.selectedSlot, selectedDuration, minimumBookingMinutes);
@@ -4433,30 +4450,7 @@ function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, 
     <div className="appointment-mobile-header">
       <button className="appointment-circle-button" type="button" aria-label="Go back" onClick={onBack}>{"←"}</button>
     </div>
-    <div className="appointment-surface-card">
-      <div className="appointment-surface-head">
-        <div>
-          <h3>{parseDateKey(journey.selectedDate).toLocaleString("en-US", { month: "long" })}</h3>
-          <p>{doctor?.display_name || "Doctor"}</p>
-        </div>
-      </div>
-      <div className="appointment-date-strip">
-        {days.map((day) => <button key={day.key} className={`appointment-date-pill ${day.key === journey.selectedDate ? "active" : ""}`} type="button" onClick={() => onUpdateAvailabilityDate(day.key)}>
-          <span>{day.weekday}</span>
-          <strong>{day.day}</strong>
-        </button>)}
-      </div>
-      {journey.loading ? <div className="empty-card compact-empty"><BrandedSpinner label="Loading appointment slots" /></div> : null}
-      {journey.error ? <div className="appointment-inline-alert">{journey.error}</div> : null}
-      <div className="appointment-slot-grid">
-        {journey.slots.length ? journey.slots.map((slot) => {
-          const active = journey.selectedSlot?.start_at === slot.start_at;
-          return <button className={`appointment-slot-button ${active ? "active" : ""}`} key={slot.start_at} type="button" onClick={() => onSelectSlot(slot)}>
-            {formatTime(slot.start_at, storeTimeZone)}
-          </button>;
-        }) : !journey.loading && !journey.error ? <div className="empty-card compact-empty"><div className="card-title">Doctor not available</div></div> : null}
-      </div>
-    </div>
+    <AvailabilitySlotPicker providerName={doctor?.display_name || "Doctor"} selectedDate={journey.selectedDate} slots={journey.slots} selectedSlot={journey.selectedSlot} loading={journey.loading} error={journey.error} onUpdateDate={onUpdateAvailabilityDate} onSelectSlot={onSelectSlot} storeTimeZone={storeTimeZone} emptyLabel="Doctor not available" />
     <div className="appointment-summary-card">
       <h3>Selected appointment</h3>
       <div className="appointment-summary-row"><span>Date</span><strong>{friendlyDateFromDateKey(journey.selectedDate, storeTimeZone)}</strong></div>
@@ -4476,6 +4470,39 @@ function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, 
     <button className="appointment-primary-cta" type="button" disabled={!journey.selectedSlot || journey.loading || ctaPending || !journey.reason.trim() || !selectedDurationAvailable} onClick={handleCreateAppointmentCheckout}>
       {(journey.loading || ctaPending) ? <AppointmentCtaLoadingState active stage={journey.progressStage || "securing_slot"} /> : "Book appointment"}
     </button>
+  </section>;
+}
+
+function MtmAvailabilityPage({ context, selectedDate, selectedSlot, loading, error, busy, storeTimeZone, onBack, onUpdateDate, onSelectSlot, onRefresh, onReserve }) {
+  const slots = Array.isArray(context?.available_slots) ? context.available_slots.filter((slot) => String(slot.start_at || "").slice(0, 10) === selectedDate) : [];
+  return <section className="appointment-mobile-sheet customer-mtm-availability-screen">
+    <div className="appointment-mobile-header"><button className="appointment-circle-button" type="button" aria-label="Back to review details" onClick={onBack}>←</button></div>
+    <AvailabilitySlotPicker providerName={context?.pharmacist_name || "Assigned pharmacist"} selectedDate={selectedDate} slots={slots} selectedSlot={selectedSlot} loading={loading} error={error} onUpdateDate={onUpdateDate} onSelectSlot={onSelectSlot} storeTimeZone={storeTimeZone} emptyLabel="Pharmacist not available" />
+    <div className="appointment-summary-card">
+      <h3>Selected availability</h3>
+      <div className="appointment-summary-row"><span>Date</span><strong>{friendlyDateFromDateKey(selectedDate, storeTimeZone)}</strong></div>
+      <div className="appointment-summary-row"><span>Time</span><strong>{selectedSlot ? formatTime(selectedSlot.start_at, storeTimeZone) : "Select a time"}</strong></div>
+      <div className="appointment-summary-row"><span>Duration</span><strong>30 minutes</strong></div>
+      <button className="pill-button" type="button" disabled={busy} onClick={onRefresh}>Refresh availability</button>
+    </div>
+    <button className="appointment-primary-cta" type="button" disabled={!selectedSlot || loading || busy} onClick={onReserve}>{busy ? <BrandedSpinner label="Reserving availability" /> : "Confirm availability"}</button>
+  </section>;
+}
+
+function MtmPaymentContinuation({ request, paymentDecision, storeTimeZone, onBackToStatus }) {
+  const reservedAt = request?.slot_reservation?.start_at;
+  return <section className="customer-flow-status-card customer-mobile-full-therapy-shell">
+    <header className="customer-flow-status-head"><CustomerStatusIcon tone="warning" type="warning" /><h2>Availability held pending payment</h2><p>Complete payment before the hold expires to keep this pharmacist slot.</p></header>
+    <CustomerStatusKeyValueList rows={[
+      { label: "Request ID", value: request?.request_reference || `MTM-${String(request?.id || "").padStart(6, "0")}` },
+      { label: "Selected slot", value: reservedAt ? formatAppointmentListDateTime(reservedAt, storeTimeZone) : "Reserved" },
+      { label: "Hold expires", value: request?.slot_reservation?.hold_expires_at ? formatAppointmentListDateTime(request.slot_reservation.hold_expires_at, storeTimeZone) : "End of today" },
+      { label: "Amount", value: money(paymentDecision?.fee || 0, paymentDecision?.currency || "NGN") },
+    ]} />
+    <CustomerStatusActions>
+      {paymentDecision?.payment_url ? <a className="customer-mobile-primary-button" href={paymentDecision.payment_url}>Continue to payment</a> : <p className="customer-mobile-alert" role="alert">The payment link is unavailable. Open request status to retry.</p>}
+      <button className="customer-mobile-secondary-button" type="button" onClick={onBackToStatus}>View Request Status</button>
+    </CustomerStatusActions>
   </section>;
 }
 
@@ -7140,6 +7167,12 @@ function CustomerMobileDashboard({
   const [mtmLoadingState, setMtmLoadingState] = useState(false);
   const [mtmLatestRequest, setMtmLatestRequest] = useState(null);
   const [mtmPaymentDecision, setMtmPaymentDecision] = useState(null);
+  const [mtmBookingStage, setMtmBookingStage] = useState("form");
+  const [mtmBookingContext, setMtmBookingContext] = useState(null);
+  const [mtmBookingDate, setMtmBookingDate] = useState(() => localDateKey(new Date()));
+  const [mtmBookingSlot, setMtmBookingSlot] = useState(null);
+  const [mtmBookingBusy, setMtmBookingBusy] = useState(false);
+  const [mtmBookingError, setMtmBookingError] = useState("");
   const [mtmSelectedRequestId, setMtmSelectedRequestId] = useState(String(initialMtmRequestId || ""));
   const [mtmHistoryModalRequestId, setMtmHistoryModalRequestId] = useState(String(initialMtmRequestId || ""));
   const [mtmStepErrors, setMtmStepErrors] = useState({});
@@ -7365,6 +7398,13 @@ function CustomerMobileDashboard({
       setMtmSubmitError("");
       setMtmLoadingState(false);
       setMtmLatestRequest(null);
+      setMtmPaymentDecision(null);
+      setMtmBookingStage("form");
+      setMtmBookingContext(null);
+      setMtmBookingDate(localDateKey(new Date()));
+      setMtmBookingSlot(null);
+      setMtmBookingBusy(false);
+      setMtmBookingError("");
       setMtmSelectedRequestId("");
       setMtmStepErrors({});
       setMtmLabResultsFiles([]);
@@ -8185,6 +8225,10 @@ function CustomerMobileDashboard({
   }
 
   function transitionToMtmStep(nextStep) {
+      if (mtmLatestRequest?.id && mtmBookingContext && nextStep < 6) {
+        setMtmSnackbar("This assessment is already saved. Complete availability selection, then use request history for further updates.");
+        return;
+      }
       setMtmSubmitError("");
       setMtmStepErrors({});
       setMtmTouchedFields({});
@@ -8646,9 +8690,15 @@ function CustomerMobileDashboard({
       if (nextRequest?.id) {
         setMtmSelectedRequestId(String(nextRequest.id));
       }
-      setMtmSubmitted(true);
       await mtmRequestsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, nextRequest) : (nextRequest ? [nextRequest] : []), { revalidate: false });
       void mtmRequestsQuery.mutate();
+      const bookingContext = await fetchMtmBookingContext(session, nextRequest.id);
+      const firstSlotDate = String(bookingContext?.available_slots?.[0]?.start_at || "").slice(0, 10);
+      setMtmBookingContext(bookingContext);
+      setMtmBookingDate(firstSlotDate || localDateKey(new Date()));
+      setMtmBookingSlot(null);
+      setMtmBookingError("");
+      setMtmBookingStage("availability");
       void prepareCustomerMtmPdf(session, nextRequest, submission?.pdfSnapshot, submission?.pdfImageFiles)
         .then(({ request: preparedRequest }) => {
           if (preparedRequest) {
@@ -8665,6 +8715,54 @@ function CustomerMobileDashboard({
     } finally {
       window.setTimeout(() => setMtmLoadingState(false), 240);
       setMtmSubmitting(false);
+    }
+  }
+
+  async function refreshMtmAvailability() {
+    const requestId = mtmLatestRequest?.id;
+    if (!session || !requestId || mtmBookingBusy) return;
+    setMtmBookingBusy(true);
+    setMtmBookingError("");
+    try {
+      const context = await fetchMtmBookingContext(session, requestId);
+      setMtmBookingContext(context);
+      setMtmBookingSlot((current) => context?.available_slots?.some((slot) => slot.start_at === current?.start_at) ? current : null);
+    } catch (error) {
+      setMtmBookingError(error?.message || "Availability could not be refreshed.");
+    } finally {
+      setMtmBookingBusy(false);
+    }
+  }
+
+  async function confirmMtmAvailability() {
+    if (!session || !mtmLatestRequest?.id || !mtmBookingSlot || mtmBookingBusy) return;
+    setMtmBookingBusy(true);
+    setMtmBookingError("");
+    try {
+      const result = await reserveMtmSlot(session, mtmLatestRequest.id, { start_at: mtmBookingSlot.start_at, timezone: storeTimeZone });
+      const updatedRequest = result?.request || mtmLatestRequest;
+      const paymentDecision = result?.payment_decision || mtmPaymentDecision;
+      setMtmLatestRequest(updatedRequest);
+      setMtmPaymentDecision(paymentDecision);
+      setMtmBookingContext((current) => ({ ...current, slot_state: updatedRequest?.slot_reservation?.state, reserved_start_at: updatedRequest?.slot_reservation?.start_at, slot_hold_expires_at: updatedRequest?.slot_reservation?.hold_expires_at, next_action: result?.next_action }));
+      await mtmRequestsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, updatedRequest) : [updatedRequest], { revalidate: false });
+      if (result?.next_action === "pay") {
+        setMtmBookingStage("payment");
+      } else {
+        setMtmBookingStage("success");
+        setMtmSubmitted(true);
+      }
+    } catch (error) {
+      setMtmBookingError(error?.message || "That availability could not be reserved. Refresh and select another time.");
+      try {
+        const context = await fetchMtmBookingContext(session, mtmLatestRequest.id);
+        setMtmBookingContext(context);
+        setMtmBookingSlot(null);
+      } catch {
+        // Preserve the actionable reservation error when refresh also fails.
+      }
+    } finally {
+      setMtmBookingBusy(false);
     }
   }
 
@@ -9172,7 +9270,25 @@ function CustomerMobileDashboard({
               ))}
             </div>
             {mtmSubmitError ? <p className="customer-mobile-alert">{mtmSubmitError}</p> : null}
-            {mtmTab === "request" && !showMtmSuccessState ? <section className="customer-mtm-mobile-flow">
+            {mtmTab === "request" && mtmBookingStage === "availability" ? <MtmAvailabilityPage
+              context={mtmBookingContext}
+              selectedDate={mtmBookingDate}
+              selectedSlot={mtmBookingSlot}
+              loading={mtmBookingBusy && !mtmBookingContext}
+              error={mtmBookingError}
+              busy={mtmBookingBusy}
+              storeTimeZone={storeTimeZone}
+              onBack={() => { setMtmBookingStage("form"); setMtmStep(6); }}
+              onUpdateDate={(date) => { setMtmBookingDate(date); setMtmBookingSlot(null); setMtmBookingError(""); }}
+              onSelectSlot={(slot) => { setMtmBookingSlot(slot); setMtmBookingError(""); }}
+              onRefresh={refreshMtmAvailability}
+              onReserve={confirmMtmAvailability}
+            /> : null}
+            {mtmTab === "request" && mtmBookingStage === "payment" ? <MtmPaymentContinuation request={mtmLatestRequest} paymentDecision={mtmPaymentDecision} storeTimeZone={storeTimeZone} onBackToStatus={() => {
+              void mtmRequestsQuery.mutate();
+              openMtmHistoryRequest(mtmLatestRequest?.id);
+            }} /> : null}
+            {mtmTab === "request" && mtmBookingStage === "form" && !showMtmSuccessState ? <section className="customer-mtm-mobile-flow">
               <div className="customer-mobile-step-title">Step {mtmStep} of 6 - {MTM_STEP_TITLES[mtmStep]}</div>
               {mtmStep < 5 ? <p className="customer-mobile-step-copy">Please fill out the form</p> : null}
               <div className={`customer-mobile-step-panel ${mtmAnimatingOut ? "is-out" : "is-in"}`}>
@@ -9513,7 +9629,7 @@ function CustomerMobileDashboard({
                   <header className="customer-mtm-review-intro">
                     <small>Final check</small>
                     <h3>Review your MTM assessment</h3>
-                    <p>Please confirm these details are correct before submitting them to the pharmacist.</p>
+                    <p>Please confirm these details are correct before selecting your pharmacist availability.</p>
                   </header>
                   <section className="customer-mtm-review-card">
                     <div className="customer-mtm-review-card-head"><div><small>Step 1</small><h4>Patient details</h4></div><button type="button" onClick={() => transitionToMtmStep(1)}>Edit</button></div>
@@ -9556,17 +9672,21 @@ function CustomerMobileDashboard({
                     transitionToMtmStep(mtmStep + 1);
                     return;
                   }
+                  if (mtmLatestRequest?.id && mtmBookingContext) {
+                    setMtmBookingStage("availability");
+                    return;
+                  }
                   submitMtmRequest();
-                }}>{mtmSubmitting ? <BrandedSpinner label="Submitting MTM assessment" /> : (mtmStep < 6 ? "Continue" : "Submit MTM Assessment")}</button>
+                }}>{mtmSubmitting ? <BrandedSpinner label="Preparing availability" /> : (mtmStep < 6 ? "Continue" : "Select Availability")}</button>
                 {mtmStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToMtmStep(Math.max(1, mtmStep - 1))}>Go Back</button> : null}
               </div>
             </section> : null}
-            {mtmTab === "request" && showMtmSuccessState ? <div className="customer-confirmation-modal customer-mtm-success-modal" role="dialog" aria-modal="true" aria-labelledby="mtm-success-title">
+            {mtmTab === "request" && showMtmSuccessState && mtmBookingStage === "success" ? <div className="customer-confirmation-modal customer-mtm-success-modal" role="dialog" aria-modal="true" aria-labelledby="mtm-success-title">
               <section className="customer-flow-status-card customer-flow-status-card-mtm is-success customer-mobile-full-therapy-shell customer-mtm-success-shell">
                 <header className="customer-flow-status-head">
                   <CustomerStatusIcon tone="success" type="check" />
-                  <h2 id="mtm-success-title">{mtmLoadingState ? "Submitting MTM assessment..." : "MTM assessment submitted successfully"}</h2>
-                  {!mtmLoadingState ? <p>A NevariHealth pharmacist will review your submission and contact you within 24 hours.</p> : null}
+                  <h2 id="mtm-success-title">{mtmLoadingState ? "Reserving availability..." : "MTM availability selected successfully"}</h2>
+                  {!mtmLoadingState ? <p>Your 30-minute pharmacist slot is reserved pending clinical approval.</p> : null}
                 </header>
                 {!mtmLoadingState ? <section className="customer-flow-status-panel customer-flow-status-panel-accent" aria-label="MTM request summary">
                   
@@ -9574,6 +9694,7 @@ function CustomerMobileDashboard({
                     { label: "Request ID", value: activeMtm?.request_reference || `MTM-${String(activeMtm?.id || "").padStart(6, "0")}` },
                     { label: "Status", value: titleCase(activeMtmStatus || "submitted") },
                     { label: "Assigned Pharmacist", value: activeMtm?.assigned_pharmacist_name || (activeMtm?.assigned_pharmacist_user_id ? `Pharmacist #${activeMtm.assigned_pharmacist_user_id}` : "Pending assignment") },
+                    { label: "Selected Availability", value: activeMtm?.slot_reservation?.start_at ? formatAppointmentListDateTime(activeMtm.slot_reservation.start_at, storeTimeZone) : "Reserved" },
                     { label: "Response Time", value: "Within 24 hours" },
                   ]} />
                 </section> : null}
@@ -9581,8 +9702,6 @@ function CustomerMobileDashboard({
                   <p><strong>Next step:</strong> your pharmacist will review your medication details and follow up if extra information is needed.</p>
                 </div> : null}
                 {!mtmLoadingState ? <CustomerStatusActions>
-                  {mtmPaymentDecision?.payment_required && mtmPaymentDecision?.payment_url ? <a className="customer-mobile-primary-button" href={mtmPaymentDecision.payment_url} target="_blank" rel="noreferrer">Pay for MTM consultation</a> : null}
-                  {!mtmPaymentDecision?.payment_required && mtmPaymentDecision?.next_action === "select_slot" ? <p className="customer-flow-status-inline-message">Your Pro consultation credit is reserved. Select a consultation slot from request status.</p> : null}
                   <button className="customer-mobile-primary-button" type="button" onClick={() => {
                     void mtmRequestsQuery.mutate();
                     const nextHistoryRequestId = activeMtm?.id || mtmLatestRequest?.id;

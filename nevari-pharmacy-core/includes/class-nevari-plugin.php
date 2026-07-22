@@ -658,19 +658,24 @@ final class Nevari_Plugin {
             'mtm_payment_confirmed' => 'MTM payment confirmed',
             'mtm_quota_reserved' => 'MTM consultation credit reserved',
             'mtm_slot_reserved' => 'MTM slot reserved pending approval',
+            'mtm_slot_reserved_customer' => 'MTM availability reserved',
+            'mtm_slot_reserved_pharmacist' => 'New MTM availability reserved',
+            'mtm_slot_held_customer' => 'MTM availability held pending payment',
+            'mtm_slot_held_pharmacist' => 'MTM availability held pending payment',
             'mtm_declined' => 'MTM request declined',
             'mtm_refund_required' => 'MTM refund requires action',
             'mtm_refund_completed' => 'MTM refund recorded',
             'mtm_consultation_completed' => 'MTM consultation completed',
         ];
         foreach ($care_lifecycle_templates as $template_key => $label) {
+            $is_mtm_slot_hold = in_array($template_key, ['mtm_slot_held_customer','mtm_slot_held_pharmacist'], true);
             $templates[] = [
                 'template_key' => $template_key,
                 'name' => $label,
                 'subject' => $label . ': {{request_reference}}',
-                'body_html' => '<p>Hello {{recipient_name}},</p><p>' . esc_html($label) . '.</p><p>Reference: {{request_reference}}</p><p><a href="{{dashboard_link}}">Open dashboard</a></p>',
-                'body_text' => 'Hello {{recipient_name}}, ' . $label . '. Reference: {{request_reference}}. Dashboard: {{dashboard_link}}',
-                'variables' => ['recipient_name', 'request_reference', 'dashboard_link'],
+                'body_html' => '<p>Hello {{recipient_name}},</p><p>' . esc_html($label) . '.</p>' . ($is_mtm_slot_hold ? '<p>This availability is held until {{slot_hold_expires_at}} and will be released if payment is not completed.</p>' : '') . '<p>Reference: {{request_reference}}</p><p><a href="{{dashboard_link}}">Open dashboard</a></p>',
+                'body_text' => 'Hello {{recipient_name}}, ' . $label . '. ' . ($is_mtm_slot_hold ? 'This availability is held until {{slot_hold_expires_at}} and will be released if payment is not completed. ' : '') . 'Reference: {{request_reference}}. Dashboard: {{dashboard_link}}',
+                'variables' => array_values(array_filter(['recipient_name', 'request_reference', 'dashboard_link', $is_mtm_slot_hold ? 'slot_hold_expires_at' : null])),
             ];
         }
 

@@ -827,7 +827,7 @@ export async function scheduleMtmRequest(session, id, body = {}) {
 
 export async function reserveMtmSlot(session, id, body = {}) {
   const payload = await apiRequest(session, `/mtm-requests/${id}/reserve-slot`, { method: "POST", body });
-  return payload?.request || null;
+  return payload || null;
 }
 
 export async function fetchCareProviders(session, params = {}) {

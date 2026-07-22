@@ -526,6 +526,8 @@ Consider engaging professional security consultants for:
 - Care lifecycle events are append-only and accept only safe metadata keys; clinical payloads and tokens are excluded.
 - Provider writes reject unexpected fields and require store-administrator authorization.
 - MTM slot reservations lock the request row, verify ownership and paid/quota state, and re-check appointment and MTM conflicts before committing.
+- MTM unpaid availability holds are row-locked, expire at store-day end, and are excluded from conflict checks immediately after expiry even when cleanup cron is delayed. Payment activation re-locks the request and cannot revive an expired hold.
+- Pharmacist MTM approval now fails closed unless the request has verified payment or a reserved Pro credit and an unexpired reserved slot.
 - MTM payment amounts are derived from the server option; WooCommerce/Paystack order state is authoritative.
 - Manual refund completion is store-admin-only and stores an external reference, never gateway credentials.
 # User governance and Nurse Request assignment (2026-07-22)

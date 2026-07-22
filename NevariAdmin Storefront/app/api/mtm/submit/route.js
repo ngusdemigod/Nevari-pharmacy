@@ -36,6 +36,7 @@ export async function POST(request) {
       success: true,
       data: {
         request: createdRequest,
+        payment_decision: createPayload?.payment_decision || null,
         pdf_snapshot: {
           fingerprint: snapshot.fingerprint,
           token: snapshot.token,

@@ -163,6 +163,7 @@ final class Nevari_Care_Journeys {
             'slot_state' => "VARCHAR(24) NOT NULL DEFAULT 'unreserved'",
             'reserved_start_at' => 'DATETIME NULL',
             'reserved_end_at' => 'DATETIME NULL',
+            'slot_hold_expires_at' => 'DATETIME NULL',
             'clinical_decision' => 'VARCHAR(24) NULL',
             'rejection_reason' => 'VARCHAR(500) NULL',
             'refund_state' => "VARCHAR(24) NOT NULL DEFAULT 'not_required'",
@@ -173,6 +174,9 @@ final class Nevari_Care_Journeys {
             if (!$wpdb->get_var($wpdb->prepare("SHOW COLUMNS FROM {$table} LIKE %s", $name))) {
                 $wpdb->query("ALTER TABLE {$table} ADD {$name} {$definition}");
             }
+        }
+        if (!$wpdb->get_var("SHOW INDEX FROM {$table} WHERE Key_name='pharmacist_slot_hold'")) {
+            $wpdb->query("ALTER TABLE {$table} ADD KEY pharmacist_slot_hold (assigned_pharmacist_user_id,slot_state,slot_hold_expires_at,reserved_start_at)");
         }
     }
     public static function register_routes(): void {

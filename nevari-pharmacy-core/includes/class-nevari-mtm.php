@@ -17,6 +17,7 @@ final class Nevari_Mtm {
     private const MTM_DURATION_MINUTES = 30;
     private const PDF_MAX_BYTES = 41943040;
     private const PDF_VERSION = 'mtm-v1';
+    private const SLOT_HOLD_EXPIRY_HOOK = 'nevari_mtm_expire_slot_hold';
 
     public static function init(): void {
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
@@ -25,6 +26,7 @@ final class Nevari_Mtm {
         add_action('woocommerce_payment_complete', [__CLASS__, 'payment_completed'], 10, 1);
         add_action('woocommerce_order_status_processing', [__CLASS__, 'payment_completed'], 10, 1);
         add_action('woocommerce_order_status_completed', [__CLASS__, 'payment_completed'], 10, 1);
+        add_action(self::SLOT_HOLD_EXPIRY_HOOK, [__CLASS__, 'expire_slot_hold'], 10, 1);
     }
 
     public static function register_routes(): void {
@@ -77,7 +79,7 @@ final class Nevari_Mtm {
             [
                 'methods' => WP_REST_Server::READABLE,
                 'callback' => [__CLASS__, 'booking_context'],
-                'permission_callback' => [__CLASS__, 'customer_permission'],
+                'permission_callback' => [__CLASS__, 'customer_request_permission'],
             ],
         ]);
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/mtm-requests/(?P<id>\d+)/reserve-slot', [
@@ -648,6 +650,7 @@ final class Nevari_Mtm {
                 'state' => sanitize_key((string) ($row->slot_state ?? 'unreserved')),
                 'start_at' => !empty($row->reserved_start_at) ? (string) $row->reserved_start_at : null,
                 'end_at' => !empty($row->reserved_end_at) ? (string) $row->reserved_end_at : null,
+                'hold_expires_at' => !empty($row->slot_hold_expires_at) ? (string) $row->slot_hold_expires_at : null,
             ],
             'clinical_decision' => sanitize_key((string) ($row->clinical_decision ?? '')),
             'rejection_reason' => sanitize_text_field((string) ($row->rejection_reason ?? '')),
@@ -1075,12 +1078,7 @@ final class Nevari_Mtm {
         }
 
         $row = self::get_request($request_id);
-        $dispatch_key = self::submission_dispatch_option_key($request_id);
-        $notifications = 'already_dispatched';
-        if (add_option($dispatch_key, self::now(), '', false)) {
-            self::dispatch_request_submission_notifications($row);
-            $notifications = 'queued';
-        }
+        $notifications = 'deferred_until_slot_reserved';
         Nevari_Audit::log('consultation', 'mtm_request', 'mtm.document_finalized', 'success', [
             'object_type' => 'mtm_request',
             'object_id' => $request_id,
@@ -1223,10 +1221,55 @@ final class Nevari_Mtm {
         if (!$order || !$order->is_paid()) return;
         $request_id = absint($order->get_meta('_nevari_mtm_request_id', true));
         if (!$request_id) return;
-        $row = self::get_request($request_id);
-        if (!$row || (int) ($row->payment_order_id ?? 0) !== $order_id || ($row->payment_state ?? '') === 'paid') return;
-        self::update_request($request_id, ['payment_state'=>'paid','updated_by'=>(int)$row->customer_user_id]);
+        global $wpdb;
+        $wpdb->query('START TRANSACTION');
+        $row = $wpdb->get_row($wpdb->prepare('SELECT * FROM '.self::table().' WHERE id=%d FOR UPDATE',$request_id));
+        if (!$row || (int) ($row->payment_order_id ?? 0) !== $order_id) {$wpdb->query('ROLLBACK');return;}
+        if (($row->payment_state ?? '') === 'paid') {$wpdb->query('COMMIT');return;}
+        $updates = ['payment_state'=>'paid','updated_at'=>self::now(),'updated_by'=>(int)$row->customer_user_id];
+        if (($row->slot_state ?? '') === 'reserved_pending_payment') {
+            $hold_expiry = strtotime((string)($row->slot_hold_expires_at ?? '').' UTC');
+            if ($hold_expiry && $hold_expiry > time()) {
+                $updates['slot_state'] = 'reserved';
+                $updates['slot_hold_expires_at'] = null;
+            } else {
+                $updates['slot_state'] = 'expired';
+                $updates['reserved_start_at'] = null;
+                $updates['reserved_end_at'] = null;
+                $updates['slot_hold_expires_at'] = null;
+            }
+        }
+        $wpdb->update(self::table(),$updates,['id'=>$request_id]);
+        $wpdb->query('COMMIT');
         Nevari_Care_Journeys::event('mtm',$request_id,'payment_verified','MTM consultation payment verified.',(int)$row->customer_user_id,[], 'mtm-payment:'.$order_id);
+        $updated = self::get_request($request_id);
+        if ($updated) self::dispatch_payment_confirmation_notifications($updated);
+    }
+
+    private static function slot_hold_expiry(): array {
+        try {
+            $timezone = new DateTimeZone(self::store_timezone());
+            $end_of_day = (new DateTimeImmutable('now', $timezone))->setTime(23, 59, 59);
+        } catch (Exception $exception) {
+            $end_of_day = new DateTimeImmutable('today 23:59:59', new DateTimeZone('UTC'));
+        }
+        $utc = $end_of_day->setTimezone(new DateTimeZone('UTC'));
+        return ['mysql'=>$utc->format('Y-m-d H:i:s'),'timestamp'=>$utc->getTimestamp()];
+    }
+
+    public static function expire_slot_hold(int $request_id): void {
+        global $wpdb;
+        $wpdb->query('START TRANSACTION');
+        $row = $wpdb->get_row($wpdb->prepare('SELECT * FROM '.self::table().' WHERE id=%d FOR UPDATE',$request_id));
+        if (!$row || ($row->slot_state ?? '') !== 'reserved_pending_payment') {$wpdb->query('COMMIT');return;}
+        $expires_at = strtotime((string)($row->slot_hold_expires_at ?? '').' UTC');
+        if (!$expires_at || $expires_at > time()) {$wpdb->query('COMMIT');return;}
+        $wpdb->update(self::table(),[
+            'slot_state'=>'expired','reserved_start_at'=>null,'reserved_end_at'=>null,
+            'slot_hold_expires_at'=>null,'updated_at'=>self::now(),
+        ],['id'=>$request_id,'slot_state'=>'reserved_pending_payment']);
+        $wpdb->query('COMMIT');
+        Nevari_Care_Journeys::event('mtm',$request_id,'slot_hold_expired','Unpaid consultation slot hold expired.',0,[],'mtm-slot-expired:'.$request_id);
     }
 
     public static function customer_reserve_slot(WP_REST_Request $request): WP_REST_Response {
@@ -1241,16 +1284,31 @@ final class Nevari_Mtm {
         $wpdb->query('START TRANSACTION');
         $row = $wpdb->get_row($wpdb->prepare('SELECT * FROM '.self::table().' WHERE id=%d FOR UPDATE',$id));
         if (!$row || (int)$row->customer_user_id !== Nevari_Auth::api_session_user_id()) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('forbidden','You cannot reserve this slot.',403);}
-        if (!in_array((string)($row->payment_state??''),['paid','quota_reserved'],true)) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('payment_required','Payment or a Pro consultation credit is required.',409);}
-        if ((string)($row->slot_state??'') === 'reserved') {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('slot_already_reserved','A slot is already reserved for this request.',409);}
-        if (!self::slot_matches_availability((int)$row->assigned_pharmacist_user_id,$start,$end) || self::slot_has_conflict((int)$row->assigned_pharmacist_user_id,$start,$end,$id)) {
+        $pharmacist_id = (int)($row->assigned_pharmacist_user_id??0);
+        if ($pharmacist_id < 1) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('pharmacist_unavailable','A pharmacist has not been assigned yet.',409);}
+        $wpdb->get_var($wpdb->prepare('SELECT ID FROM '.$wpdb->users.' WHERE ID=%d FOR UPDATE',$pharmacist_id));
+        $payment_state = (string)($row->payment_state??'pending');
+        if (!in_array($payment_state,['pending','paid','quota_reserved'],true)) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('payment_unavailable','This request is not ready for availability selection.',409);}
+        if (in_array((string)($row->slot_state??''),['reserved_pending_payment','reserved','active'],true)) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('slot_already_reserved','A slot is already reserved for this request.',409);}
+        if (!self::slot_matches_availability($pharmacist_id,$start,$end) || self::slot_has_conflict($pharmacist_id,$start,$end,$id)) {
             $wpdb->query('ROLLBACK');return Nevari_Helpers::error('slot_unavailable','That slot is no longer available.',409);
         }
-        $wpdb->update(self::table(),['slot_state'=>'reserved','reserved_start_at'=>$start,'reserved_end_at'=>$end,'timezone'=>$timezone,'updated_at'=>self::now(),'updated_by'=>(int)$row->customer_user_id],['id'=>$id]);
-        Nevari_Care_Journeys::event('mtm',$id,'slot_reserved','Consultation slot reserved pending clinical approval.',(int)$row->customer_user_id,['scheduled_at'=>$start]);
+        $is_unpaid = $payment_state === 'pending';
+        $hold = $is_unpaid ? self::slot_hold_expiry() : null;
+        $slot_state = $is_unpaid ? 'reserved_pending_payment' : 'reserved';
+        $wpdb->update(self::table(),['slot_state'=>$slot_state,'reserved_start_at'=>$start,'reserved_end_at'=>$end,'slot_hold_expires_at'=>$hold['mysql']??null,'timezone'=>$timezone,'updated_at'=>self::now(),'updated_by'=>(int)$row->customer_user_id],['id'=>$id]);
+        Nevari_Care_Journeys::event('mtm',$id,'slot_reserved',$is_unpaid?'Availability held pending payment.':'Consultation slot reserved pending clinical approval.',(int)$row->customer_user_id,['scheduled_at'=>$start]);
         $wpdb->query('COMMIT');
-        $updated=self::get_request($id); self::dispatch_request_update_notifications($row,$updated);
-        return Nevari_Helpers::success(['request'=>self::payload_from_request($updated),'message'=>'Slot reserved pending clinical approval.']);
+        if ($is_unpaid && !wp_next_scheduled(self::SLOT_HOLD_EXPIRY_HOOK,[$id])) wp_schedule_single_event((int)$hold['timestamp']+1,self::SLOT_HOLD_EXPIRY_HOOK,[$id]);
+        $updated=self::get_request($id);
+        self::dispatch_slot_reservation_notifications($updated,$is_unpaid);
+        return Nevari_Helpers::success([
+            'request'=>self::payload_from_request($updated),
+            'payment_decision'=>self::payment_decision_from_request($updated),
+            'slot_hold_expires_at'=>!empty($updated->slot_hold_expires_at)?(string)$updated->slot_hold_expires_at:null,
+            'next_action'=>$is_unpaid?'pay':'success',
+            'message'=>$is_unpaid?'Availability held pending payment.':'Slot reserved pending clinical approval.',
+        ]);
     }
 
     private static function available_slots(object $row): array {
@@ -1280,7 +1338,7 @@ final class Nevari_Mtm {
 
     private static function slot_has_conflict(int $pharmacist_id,string $start,string $end,int $exclude_id=0): bool {
         global $wpdb;
-        $mtm=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM ".self::table()." WHERE assigned_pharmacist_user_id=%d AND id<>%d AND slot_state IN ('reserved','active') AND reserved_start_at<%s AND reserved_end_at>%s",$pharmacist_id,$exclude_id,$end,$start));
+        $mtm=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM ".self::table()." WHERE assigned_pharmacist_user_id=%d AND id<>%d AND (slot_state IN ('reserved','active') OR (slot_state='reserved_pending_payment' AND slot_hold_expires_at>%s)) AND reserved_start_at<%s AND reserved_end_at>%s",$pharmacist_id,$exclude_id,self::now(),$end,$start));
         $appointments=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM ".Nevari_Helpers::table('appointments')." WHERE doctor_user_id=%d AND status IN ('awaiting_payment','requested','confirmed','checked_in') AND start_at<%s AND end_at>%s",$pharmacist_id,$end,$start));
         return $mtm+$appointments>0;
     }
@@ -1288,6 +1346,19 @@ final class Nevari_Mtm {
         $order_id = (int) ($row->payment_order_id ?? 0);
         $order = $order_id ? wc_get_order($order_id) : null;
         return $order && $order->needs_payment() ? esc_url_raw($order->get_checkout_payment_url(false)) : null;
+    }
+    private static function payment_decision_from_request(object $row): array {
+        $order = !empty($row->payment_order_id) ? wc_get_order((int)$row->payment_order_id) : null;
+        $state = sanitize_key((string)($row->payment_state??'pending'));
+        return [
+            'payment_required'=>!in_array($state,['paid','quota_reserved'],true),
+            'payment_state'=>$state,
+            'currency'=>$order?(string)$order->get_currency():'NGN',
+            'fee'=>$order?(float)$order->get_total():0,
+            'order_id'=>(int)($row->payment_order_id??0),
+            'payment_url'=>self::mtm_payment_url($row),
+            'next_action'=>$state==='pending'?'pay':'select_slot',
+        ];
     }
     public static function booking_context(WP_REST_Request $request): WP_REST_Response {
         if (!self::table_ready()) {
@@ -1301,8 +1372,18 @@ final class Nevari_Mtm {
         if ((int) $row->customer_user_id !== $user_id) {
             return Nevari_Helpers::error('forbidden', 'You cannot access this booking context.', 403);
         }
+        if (($row->slot_state ?? '') === 'reserved_pending_payment' && strtotime((string)($row->slot_hold_expires_at ?? '').' UTC') <= time()) {
+            self::expire_slot_hold((int)$row->id);
+            $row = self::get_request((int)$row->id);
+        }
         $order = !empty($row->payment_order_id) ? wc_get_order((int) $row->payment_order_id) : null;
         $quota = Nevari_Subscriptions::consultation_quota_snapshot_for_user($user_id, true);
+        $slot_state = sanitize_key((string)($row->slot_state??'unreserved'));
+        $payment_state = sanitize_key((string)($row->payment_state??'pending'));
+        $can_select_slot = in_array($payment_state,['pending','paid','quota_reserved'],true)
+            && !in_array($slot_state,['reserved_pending_payment','reserved','active'],true);
+        $next_action = $slot_state === 'reserved_pending_payment' ? 'pay'
+            : ($slot_state === 'reserved' || $slot_state === 'active' ? 'success' : 'select_slot');
         return Nevari_Helpers::success([
             'mtm_request_id' => (int) $row->id,
             'request_reference' => self::ensure_request_reference((int) $row->id),
@@ -1311,16 +1392,18 @@ final class Nevari_Mtm {
             'pharmacist_name' => self::user_name((int) ($row->assigned_pharmacist_user_id ?? 0)),
             'duration_minutes' => self::MTM_DURATION_MINUTES,
             'payment_required' => !in_array((string) ($row->payment_state ?? ''), ['paid', 'quota_reserved'], true),
-            'payment_state' => sanitize_key((string) ($row->payment_state ?? 'pending')),
+            'payment_state' => $payment_state,
             'payment_order_id' => (int) ($row->payment_order_id ?? 0),
             'payment_url' => self::mtm_payment_url($row),
             'currency' => $order ? (string) $order->get_currency() : 'NGN',
             'fee' => $order ? (float) $order->get_total() : max(0, (float) get_option('nevari_mtm_consultation_fee', 25000)),
             'quota_remaining' => max(0, (int) ($quota['free_consultations_remaining'] ?? 0)),
             'quota_reservation_id' => (int) ($row->quota_reservation_id ?? 0),
-            'slot_state' => sanitize_key((string) ($row->slot_state ?? 'unreserved')),
+            'slot_state' => $slot_state,
             'reserved_start_at' => !empty($row->reserved_start_at) ? (string) $row->reserved_start_at : null,
-            'available_slots' => in_array((string) ($row->payment_state ?? ''), ['paid', 'quota_reserved'], true) && (string) ($row->slot_state ?? '') !== 'reserved' ? self::available_slots($row) : [],
+            'slot_hold_expires_at' => !empty($row->slot_hold_expires_at) ? (string)$row->slot_hold_expires_at : null,
+            'available_slots' => $can_select_slot ? self::available_slots($row) : [],
+            'next_action' => $next_action,
             'google_meet_link' => self::join_url($row, 'customer'),
         ]);
     }
@@ -1345,6 +1428,12 @@ final class Nevari_Mtm {
         $row = self::guard_pharmacist_request((int) $request['id']);
         if ($row instanceof WP_REST_Response) {
             return $row;
+        }
+        if (!in_array((string)($row->payment_state??''),['paid','quota_reserved'],true)) {
+            return Nevari_Helpers::error('payment_required','Payment or a Pro consultation credit must be confirmed before approval.',409);
+        }
+        if (($row->slot_state??'') !== 'reserved' || empty($row->reserved_start_at)) {
+            return Nevari_Helpers::error('slot_required','A valid consultation slot must be reserved before approval.',409);
         }
         $actor = Nevari_Auth::api_session_user_id();
         $approval = [
@@ -1958,6 +2047,30 @@ final class Nevari_Mtm {
 
         self::queue_mtm_email('mtm_request_submitted_customer', $patient instanceof WP_User ? $patient : null, $row, $variables, 'customer', $customer_attachments);
         self::queue_mtm_email('mtm_request_submitted_pharmacist', $pharmacist instanceof WP_User ? $pharmacist : null, $row, $variables, 'pharmacist', $pharmacist_attachments);
+    }
+
+    private static function dispatch_slot_reservation_notifications(object $row, bool $pending_payment): void {
+        $reservation_fingerprint = hash('sha256',(string)($row->reserved_start_at??'').'|'.(string)($row->slot_hold_expires_at??'').'|'.($pending_payment?'pending':'confirmed'));
+        $dispatch_key = '_nevari_mtm_slot_notification_' . (int)$row->id . '_' . substr($reservation_fingerprint,0,16);
+        if (!add_option($dispatch_key,self::now(),'no',false)) return;
+        $patient = get_userdata((int)$row->customer_user_id);
+        $pharmacist = get_userdata((int)($row->assigned_pharmacist_user_id??0));
+        $hold = self::email_datetime_parts($row->slot_hold_expires_at??null,(string)($row->timezone??self::store_timezone()));
+        $base_variables = self::mtm_email_variables($row,[
+            'slot_hold_expires_at'=>$hold['datetime'],
+            'payment_status'=>$pending_payment?'Pending payment':'Confirmed',
+        ]);
+        $customer_template = $pending_payment ? 'mtm_slot_held_customer' : 'mtm_slot_reserved_customer';
+        $pharmacist_template = $pending_payment ? 'mtm_slot_held_pharmacist' : 'mtm_slot_reserved_pharmacist';
+        self::queue_mtm_email($customer_template,$patient instanceof WP_User?$patient:null,$row,array_merge($base_variables,['recipient_name'=>$patient instanceof WP_User?$patient->display_name:'Customer','dashboard_link'=>self::customer_dashboard_link((int)$row->id)]),'customer');
+        self::queue_mtm_email($pharmacist_template,$pharmacist instanceof WP_User?$pharmacist:null,$row,array_merge($base_variables,['recipient_name'=>$pharmacist instanceof WP_User?$pharmacist->display_name:'Pharmacist','dashboard_link'=>self::pharmacist_dashboard_link((int)$row->id)]),'pharmacist');
+    }
+
+    private static function dispatch_payment_confirmation_notifications(object $row): void {
+        $dispatch_key = '_nevari_mtm_payment_notification_' . (int)$row->id;
+        if (!add_option($dispatch_key,self::now(),'no',false)) return;
+        $patient = get_userdata((int)$row->customer_user_id);
+        self::queue_mtm_email('mtm_payment_confirmed',$patient instanceof WP_User?$patient:null,$row,self::mtm_email_variables($row,['recipient_name'=>$patient instanceof WP_User?$patient->display_name:'Customer','dashboard_link'=>self::customer_dashboard_link((int)$row->id)]),'customer');
     }
 
     private static function dispatch_request_update_notifications(object $before, object $after, array $options = []): void {
