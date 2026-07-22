@@ -95,6 +95,21 @@ $env:SENTRY_RELEASE="<optional-release-name>"
 Notes:
 
 - Source map upload is enabled only when `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` are set.
+
+### PostHog analytics
+
+Set the public project key and the ingest host for your PostHog region:
+
+```powershell
+$env:NEXT_PUBLIC_POSTHOG_KEY="<project-key>"
+$env:NEXT_PUBLIC_POSTHOG_HOST="https://us.i.posthog.com"
+```
+
+The dashboard captures sanitized pathname-only pageviews. Autocapture, session replay,
+surveys, heatmaps, performance capture, query strings, and automatic user identification
+are disabled because the application handles patient and prescription data. Do not add
+patient details, medication information, email addresses, phone numbers, tokens, or payment
+data to custom analytics events.
 - Session Replay is intentionally not enabled.
 - Request bodies, cookies, auth headers, and common patient/customer fields are scrubbed before events are sent.
 

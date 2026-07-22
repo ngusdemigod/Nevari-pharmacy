@@ -1,7 +1,24 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
+import posthog from "posthog-js";
+import { PostHogProvider } from "posthog-js/react";
 import { SWRConfig } from "swr";
+
+function PostHogPageView() {
+  const pathname = usePathname();
+
+  useEffect(() => {
+    if (!process.env.NEXT_PUBLIC_POSTHOG_KEY || !pathname) return;
+    posthog.capture("$pageview", {
+      $pathname: pathname,
+      $current_url: `${window.location.origin}${pathname}`,
+    });
+  }, [pathname]);
+
+  return null;
+}
 
 export default function AppProviders({ children }) {
   const activeModalRef = useRef(null);
@@ -234,7 +251,9 @@ export default function AppProviders({ children }) {
     };
   }, []);
 
-  return <SWRConfig value={{
+  return <PostHogProvider client={posthog}>
+    <PostHogPageView />
+    <SWRConfig value={{
     revalidateOnFocus: false,
     revalidateOnReconnect: true,
     refreshWhenHidden: false,
@@ -242,7 +261,8 @@ export default function AppProviders({ children }) {
     keepPreviousData: true,
     dedupingInterval: 30_000,
     focusThrottleInterval: 60_000
-  }}>
-    {children}
-  </SWRConfig>;
+    }}>
+      {children}
+    </SWRConfig>
+  </PostHogProvider>;
 }

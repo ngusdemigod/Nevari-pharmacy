@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Nevari Patient Profile</title>
+  <style>
+    :root {
+      --navy: #062e68;
+      --navy-700: #0b3b79;
+      --text: #20314f;
+      --muted: #6d7890;
+      --line: #d9e1ed;
+      --line-soft: #e9edf4;
+      --surface: #ffffff;
+      --surface-soft: #f6f8fb;
+      --surface-tint: #f2f5f9;
+      --success: #0b9b4d;
+      --radius-lg: 20px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      background: #f4f6f9;
+      color-scheme: light;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: #f4f6f9;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input, select, textarea { font: inherit; }
+    button { -webkit-tap-highlight-color: transparent; }
+
+    .app-shell {
+      width: 100%;
+      max-width: 430px;
+      min-height: 100dvh;
+      margin: 0 auto;
+      background: var(--surface);
+      border-inline: 1px solid #eef1f5;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      padding: calc(14px + env(safe-area-inset-top)) 22px 12px;
+      background: rgba(255,255,255,.96);
+      backdrop-filter: blur(14px);
+    }
+
+    .search {
+      height: 43px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: #fff;
+    }
+
+    .search svg { flex: 0 0 auto; }
+
+    .search input {
+      width: 100%;
+      border: 0;
+      outline: 0;
+      color: var(--text);
+      background: transparent;
+      font-size: 12px;
+    }
+
+    .search input::placeholder { color: #76829a; }
+
+    .titlebar {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      margin-top: 13px;
+      min-height: 36px;
+    }
+
+    .icon-button {
+      width: 28px;
+      height: 28px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--navy);
+      cursor: pointer;
+      border-radius: 8px;
+    }
+
+    .icon-button:hover { background: var(--surface-tint); }
+
+    .icon-button:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible {
+      outline: 3px solid rgba(6,46,104,.18);
+      outline-offset: 2px;
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--navy);
+      font-size: 22px;
+      line-height: 1.1;
+      font-weight: 500;
+      letter-spacing: -.02em;
+    }
+
+    .tabs {
+      position: sticky;
+      top: 104px;
+      z-index: 15;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 10px 22px 12px;
+      background: rgba(255,255,255,.96);
+      backdrop-filter: blur(14px);
+    }
+
+    .tab {
+      min-height: 34px;
+      border: 0;
+      border-radius: 999px;
+      color: #6c7590;
+      background: transparent;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .tab[aria-selected="true"] {
+      color: white;
+      background: var(--navy);
+      font-weight: 600;
+    }
+
+    main { padding: 0 22px calc(30px + env(safe-area-inset-bottom)); }
+
+    .profile-hero {
+      display: grid;
+      place-items: center;
+      margin: 0 0 16px;
+      padding: 24px 16px 10px;
+    }
+
+    .avatar-wrap {
+      position: relative;
+      width: 86px;
+      height: 86px;
+    }
+
+    .avatar {
+      width: 86px;
+      height: 86px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      background:
+        radial-gradient(circle at 28% 24%, #f0a65b 0 8%, transparent 9%),
+        linear-gradient(135deg, #a98257 0 30%, #4c6d6a 30% 56%, #c0482f 56% 72%, #253b59 72%);
+      border: 3px solid #fff;
+      font-weight: 700;
+    }
+
+    .camera {
+      position: absolute;
+      right: -3px;
+      bottom: -3px;
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 3px solid white;
+      border-radius: 50%;
+      color: white;
+      background: var(--navy);
+      cursor: pointer;
+    }
+
+    .section {
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .section-head {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .section-kicker {
+      margin: 0 0 4px;
+      color: var(--navy);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .section-title {
+      margin: 0;
+      color: var(--navy);
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -.01em;
+    }
+
+    .section-copy {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .subscription {
+      padding: 18px;
+      background: var(--surface-soft);
+    }
+
+    .plan-card {
+      display: grid;
+      grid-template-columns: 44px 1fr auto;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .plan-mark {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      color: white;
+      background: var(--navy);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .plan-name {
+      margin: 0 0 4px;
+      color: var(--navy);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .plan-meta {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .plan-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      color: var(--success);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .plan-state::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .secondary-button,
+    .primary-button {
+      min-height: 38px;
+      padding: 0 18px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .secondary-button {
+      border: 1px solid var(--line);
+      color: var(--navy);
+      background: white;
+    }
+
+    .secondary-button:hover { background: var(--surface-tint); }
+
+    .primary-button {
+      border: 1px solid var(--navy);
+      color: white;
+      background: var(--navy);
+    }
+
+    .primary-button:hover { background: var(--navy-700); }
+
+    .primary-button:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+
+    .fields {
+      display: grid;
+      gap: 14px;
+      padding: 18px 20px 20px;
+    }
+
+    .field {
+      display: grid;
+      gap: 7px;
+    }
+
+    .field label,
+    .record-label {
+      color: #56647e;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .input-shell { position: relative; }
+
+    .field input,
+    .field select,
+    .field textarea,
+    .record-control {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: #1e2f4b;
+      background: var(--surface-soft);
+      padding: 0 39px 0 12px;
+      font-size: 12px;
+      transition: border-color .15s ease, background .15s ease;
+    }
+
+    .field input:hover,
+    .field select:hover,
+    .field textarea:hover,
+    .record-control:hover { border-color: #bcc8d9; }
+
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus,
+    .record-control:focus {
+      border-color: var(--navy);
+      background: #fff;
+      outline: 0;
+    }
+
+    .edit-indicator {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #8490a5;
+      pointer-events: none;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      padding-top: 2px;
+    }
+
+    .privacy-note {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      margin: 16px 20px 0;
+      padding: 13px 14px;
+      border-radius: 12px;
+      color: #53617b;
+      background: var(--surface-soft);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    .privacy-note svg {
+      flex: 0 0 auto;
+      color: var(--navy);
+      margin-top: 1px;
+    }
+
+    .records { padding: 8px 20px 20px; }
+
+    .record-row {
+      display: grid;
+      gap: 8px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .record-row:last-child { border-bottom: 0; }
+
+    .record-control {
+      padding-right: 12px;
+      font-weight: 600;
+    }
+
+    .record-control:placeholder-shown {
+      color: #8a94a8;
+      font-weight: 500;
+    }
+
+    select.record-control {
+      appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, #7c879a 50%),
+        linear-gradient(135deg, #7c879a 50%, transparent 50%);
+      background-position:
+        calc(100% - 17px) 18px,
+        calc(100% - 12px) 18px;
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+    }
+
+    .section-footer {
+      display: flex;
+      justify-content: flex-end;
+      padding: 0 20px 20px;
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: calc(18px + env(safe-area-inset-bottom));
+      z-index: 40;
+      transform: translate(-50%, 20px);
+      width: min(calc(100% - 40px), 360px);
+      padding: 12px 14px;
+      border-radius: 12px;
+      color: #fff;
+      background: #13284b;
+      font-size: 12px;
+      text-align: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
+    .notification-panel { display: none; padding: 24px 0 40px; }
+    .notification-panel.active { display: block; }
+    .profile-panel.hidden { display: none; }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .setting-row:last-child { border-bottom: 0; }
+
+    .setting-title {
+      margin: 0 0 3px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .setting-copy {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .switch {
+      position: relative;
+      width: 42px;
+      height: 24px;
+      flex: 0 0 auto;
+    }
+
+    .switch input { position: absolute; inset: 0; opacity: 0; }
+
+    .switch-track {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      background: #c9d1de;
+      transition: .2s ease;
+    }
+
+    .switch-track::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: white;
+      transition: .2s ease;
+    }
+
+    .switch input:checked + .switch-track { background: var(--navy); }
+    .switch input:checked + .switch-track::after { transform: translateX(18px); }
+
+    @media (max-width: 360px) {
+      .topbar, .tabs, main { padding-left: 16px; padding-right: 16px; }
+      .plan-card { grid-template-columns: 42px 1fr; }
+      .plan-card .secondary-button { grid-column: 1 / -1; width: 100%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <label class="search" aria-label="Search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.7"/>
+          <path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <input type="search" placeholder="Search here for orders, appointments etc" />
+      </label>
+
+      <div class="titlebar">
+        <button class="icon-button" type="button" aria-label="Open navigation">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <h1>Profile</h1>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="Profile navigation">
+      <button class="tab" type="button" data-tab="profile" aria-selected="true">User</button>
+      <button class="tab" type="button" data-tab="notifications" aria-selected="false">Notification Settings</button>
+    </nav>
+
+    <main>
+      <div class="profile-panel" id="profile-panel">
+        <section class="profile-hero" aria-label="Profile photo">
+          <div class="avatar-wrap">
+            <div class="avatar" aria-label="Profile photo">A</div>
+            <button class="camera" type="button" aria-label="Change profile photo">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M8.5 6 10 4h4l1.5 2H18a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3h2.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                <circle cx="12" cy="13" r="3.5" stroke="currentColor" stroke-width="1.7"/>
+              </svg>
+            </button>
+          </div>
+        </section>
+
+        <section class="section" aria-label="Patient subscription">
+          <div class="subscription">
+            <div class="plan-card">
+              <div class="plan-mark" aria-hidden="true">P</div>
+              <div>
+                <p class="plan-name">Nevari Access Pro</p>
+                <p class="plan-meta">NGN 1,000/month · renews 9 Jul 2026</p>
+                <span class="plan-state">Active</span>
+              </div>
+              <button class="secondary-button" type="button">Manage</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="personal-title">
+          <div class="section-head">
+            <p class="section-kicker">Personal details</p>
+            <h2 class="section-title" id="personal-title">Contact information</h2>
+            <p class="section-copy">Keep your main contact details up to date. Select any field and edit it directly.</p>
+          </div>
+
+          <form class="fields" id="personal-form">
+            <div class="field">
+              <label for="display-name">Display name</label>
+              <div class="input-shell">
+                <input id="display-name" name="displayName" value="angus" autocomplete="name" />
+                <svg class="edit-indicator" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 16-.7 4.7L8 20l11-11-4-4L4 16Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m13.5 6.5 4 4" stroke="currentColor" stroke-width="1.6"/></svg>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="email">Email</label>
+              <div class="input-shell">
+                <input id="email" name="email" type="email" value="projectonline.official@gmail.com" autocomplete="email" />
+                <svg class="edit-indicator" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 16-.7 4.7L8 20l11-11-4-4L4 16Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m13.5 6.5 4 4" stroke="currentColor" stroke-width="1.6"/></svg>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="phone">Phone number</label>
+              <div class="input-shell">
+                <input id="phone" name="phone" type="tel" value="+234 000 000 0000" autocomplete="tel" />
+                <svg class="edit-indicator" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 16-.7 4.7L8 20l11-11-4-4L4 16Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m13.5 6.5 4 4" stroke="currentColor" stroke-width="1.6"/></svg>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="address">Address</label>
+              <div class="input-shell">
+                <input id="address" name="address" value="No. 1, Example Street" autocomplete="street-address" />
+                <svg class="edit-indicator" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 16-.7 4.7L8 20l11-11-4-4L4 16Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m13.5 6.5 4 4" stroke="currentColor" stroke-width="1.6"/></svg>
+              </div>
+            </div>
+
+            <div class="actions">
+              <button class="secondary-button" type="reset">Cancel</button>
+              <button class="primary-button" type="submit" disabled>Save changes</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="section" aria-labelledby="records-title">
+          <div class="section-head">
+            <p class="section-kicker">Health records</p>
+            <h2 class="section-title" id="records-title">Key health information</h2>
+            <p class="section-copy">Update your clinical details directly below. This information helps your care team provide safer, more relevant support.</p>
+          </div>
+
+          <div class="privacy-note">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6V10Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+            <span> </span>
+          </div>
+
+          <form id="health-form">
+            <div class="records">
+              <div class="record-row">
+                <label class="record-label" for="blood-group">Blood group</label>
+                <select class="record-control" id="blood-group" name="bloodGroup">
+                  <option value="">Not added</option>
+                  <option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option>
+                </select>
+              </div>
+
+              <div class="record-row">
+                <label class="record-label" for="genotype">Genotype</label>
+                <select class="record-control" id="genotype" name="genotype">
+                  <option value="">Not added</option>
+                  <option>AA</option><option>AS</option><option>AC</option><option>SS</option><option>SC</option>
+                </select>
+              </div>
+
+              <div class="record-row">
+                <label class="record-label" for="allergies">Allergies</label>
+                <input class="record-control" id="allergies" name="allergies" placeholder="Not added" />
+              </div>
+
+              <div class="record-row">
+                <label class="record-label" for="medications">Current medications</label>
+                <input class="record-control" id="medications" name="medications" placeholder="Not added" />
+              </div>
+
+              <div class="record-row">
+                <label class="record-label" for="conditions">Existing conditions</label>
+                <input class="record-control" id="conditions" name="conditions" placeholder="Not added" />
+              </div>
+
+              <div class="record-row">
+                <label class="record-label" for="emergency-contact">Emergency contact</label>
+                <input class="record-control" id="emergency-contact" name="emergencyContact" placeholder="Not added" autocomplete="tel" />
+              </div>
+            </div>
+
+            <div class="section-footer">
+              <button class="primary-button" type="submit" disabled>Save health records</button>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <section class="notification-panel" id="notification-panel" aria-label="Notification settings">
+        <div class="section">
+          <div class="section-head">
+            <p class="section-kicker">Notification settings</p>
+            <h2 class="section-title">Choose what Nevari sends you</h2>
+            <p class="section-copy">Control appointment, prescription and account notifications.</p>
+          </div>
+
+          <div class="setting-row">
+            <div><p class="setting-title">Appointment reminders</p><p class="setting-copy">Receive reminders before scheduled visits.</p></div>
+            <label class="switch"><input type="checkbox" checked aria-label="Appointment reminders" /><span class="switch-track"></span></label>
+          </div>
+
+          <div class="setting-row">
+            <div><p class="setting-title">Prescription updates</p><p class="setting-copy">Get refill, processing and delivery updates.</p></div>
+            <label class="switch"><input type="checkbox" checked aria-label="Prescription updates" /><span class="switch-track"></span></label>
+          </div>
+
+          <div class="setting-row">
+            <div><p class="setting-title">Account and security</p><p class="setting-copy">Receive important account and security alerts.</p></div>
+            <label class="switch"><input type="checkbox" checked aria-label="Account and security alerts" /><span class="switch-track"></span></label>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const toast = document.getElementById('toast');
+    let toastTimer;
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    function wireEditableForm(formId, successMessage) {
+      const form = document.getElementById(formId);
+      const save = form.querySelector('.primary-button');
+      let initial = new URLSearchParams(new FormData(form)).toString();
+
+      function updateDirtyState() {
+        save.disabled = new URLSearchParams(new FormData(form)).toString() === initial;
+      }
+
+      form.addEventListener('input', updateDirtyState);
+      form.addEventListener('change', updateDirtyState);
+
+      form.addEventListener('reset', () => {
+        requestAnimationFrame(updateDirtyState);
+      });
+
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        initial = new URLSearchParams(new FormData(form)).toString();
+        updateDirtyState();
+        showToast(successMessage);
+      });
+    }
+
+    wireEditableForm('personal-form', 'Personal details saved.');
+    wireEditableForm('health-form', 'Health records saved securely.');
+
+    const tabs = document.querySelectorAll('.tab');
+    const profilePanel = document.getElementById('profile-panel');
+    const notificationPanel = document.getElementById('notification-panel');
+
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const target = tab.dataset.tab;
+        tabs.forEach(item => item.setAttribute('aria-selected', String(item === tab)));
+        profilePanel.classList.toggle('hidden', target !== 'profile');
+        notificationPanel.classList.toggle('active', target === 'notifications');
+      });
+    });
+  </script>
+</body>
+</html>

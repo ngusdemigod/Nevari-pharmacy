@@ -90,7 +90,8 @@ function normalizeCheckboxValue(value) {
 }
 
 function toMultiline(value, { max = 1200 } = {}) {
-  return String(value ?? "")
+  const source = Array.isArray(value) ? value.join("\\n") : String(value ?? "");
+  return source
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .replace(/[^\S\n]+/g, " ")
@@ -154,9 +155,16 @@ export function normalizeMtmPdfPayload(request) {
     : [];
   const patientFullName = cleanText(patient?.name, { max: 120 });
   const submittedDate = formatDateParts(request?.created_at, timeZone);
+  const attachments = Array.isArray(request?.attachments) ? request.attachments.map((item) => ({
+    name: cleanText(item?.name, { max: 180 }),
+    type: cleanText(item?.type, { max: 80 }),
+    size: Number(item?.size || 0),
+    category: cleanText(item?.category, { max: 40 }),
+    heading: cleanText(item?.heading, { max: 120 }),
+  })) : [];
   const relevantLabResults = joinValues([
     medical?.relevantLabResults,
-    ...(Array.isArray(request?.attachments) ? request.attachments.map((item) => item?.name) : []),
+    ...attachments.filter((item) => item.category === "lab_result").map((item) => item.name),
   ]);
 
   return {
@@ -210,6 +218,8 @@ export function normalizeMtmPdfPayload(request) {
     relevantLabResults,
     clinicalMonitoringParameters: toMultiline(medical?.clinicalMonitoringParameters || medical?.clinicalmonitoringparameters),
     medications,
+    attachments,
+    attachmentPageCount: attachments.length,
     recentMedicationChanges: toMultiline(additional?.recentMedicationChanges || additional?.recentmedicationchanges),
     previousMedicationsStopped: toMultiline(additional?.previousMedicationsStopped || additional?.previousmedicationsstopped),
     reasonForDiscontinuation: toMultiline(additional?.reasonForDiscontinuation || additional?.reasonfordiscontinuation),
@@ -352,7 +362,7 @@ export function fillTemplateFields(form, normalized) {
 export function expectedMtmPdfPageCount(requestOrNormalized) {
   const normalized = requestOrNormalized?.medications ? requestOrNormalized : normalizeMtmPdfPayload(requestOrNormalized);
   const overflowCount = Math.max(0, normalized.medications.length - MEDICATION_ROW_LIMIT);
-  return BASE_TEMPLATE_PAGE_COUNT + Math.ceil(overflowCount / CONTINUATION_ROWS_PER_PAGE);
+  return BASE_TEMPLATE_PAGE_COUNT + Math.ceil(overflowCount / CONTINUATION_ROWS_PER_PAGE) + Number(normalized.attachmentPageCount || 0);
 }
 
 export async function appendMedicationContinuationPages(pdfDoc, normalized) {

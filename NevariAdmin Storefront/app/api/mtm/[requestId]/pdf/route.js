@@ -1,5 +1,5 @@
-import { generateMtmTemplatePdf } from "../../../../lib/mtmPdf.js";
 import { isAllowedUrl, isValidId, sanitizeText } from "../../../../lib/inputValidation";
+import { proxyRawRequest } from "../../_server.js";
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -28,39 +28,6 @@ function assertFrontendRequest(request) {
   }
 }
 
-function proxyUrl(origin, baseUrl, path) {
-  const url = new URL("/api/nevari-proxy", origin);
-  url.searchParams.set("baseUrl", normalizeBaseUrl(baseUrl));
-  url.searchParams.set("path", path);
-  return url.toString();
-}
-
-async function proxyRequest(origin, session, path) {
-  const response = await fetch(proxyUrl(origin, session.baseUrl, path), {
-    headers: {
-      Accept: "application/json",
-      Authorization: session.accessToken ? `Bearer ${session.accessToken}` : "",
-      "X-Nevari-Frontend-Type": session.frontendType || "patient",
-      "X-Nevari-Frontend-Origin": session.frontendOrigin || origin,
-    },
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.success) {
-    const error = new Error(payload?.error?.message || "MTM data could not be loaded.");
-    error.status = response.status;
-    throw error;
-  }
-  return payload.data;
-}
-
-function requestPathForFrontend(frontendType, requestId) {
-  const type = String(frontendType || "").toLowerCase();
-  if (type.includes("admin") || type.includes("pharmacist")) {
-    return `/pharmacist/mtm-requests/${encodeURIComponent(requestId)}`;
-  }
-  return `/mtm-requests/${encodeURIComponent(requestId)}`;
-}
-
 export async function GET(request, { params }) {
   try {
     assertFrontendRequest(request);
@@ -86,20 +53,13 @@ export async function GET(request, { params }) {
       return Response.json({ success: false, error: { message: "Authenticated session is required." } }, { status: 401 });
     }
 
-    const payload = await proxyRequest(url.origin, session, requestPathForFrontend(frontendType, requestId));
-    const data = payload?.request || null;
-    if (!data) {
-      return Response.json({ success: false, error: { message: "MTM request could not be loaded." } }, { status: 404 });
-    }
-
-    const generated = await generateMtmTemplatePdf(data, { mode: "cached" });
-    return new Response(generated.pdf, {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename=\"${generated.filename}\"`,
-        "Cache-Control": "private, no-store",
-      },
+    const upstream = await proxyRawRequest(url.origin, session, `/mtm-requests/${encodeURIComponent(requestId)}/document`, {
+      headers: { Accept: "application/pdf" },
     });
+    const headers = new Headers(upstream.headers);
+    headers.set("Cache-Control", "private, no-store");
+    headers.set("X-Content-Type-Options", "nosniff");
+    return new Response(upstream.body, { status: upstream.status, headers });
   } catch (error) {
     return Response.json({ success: false, error: { message: error?.message || "PDF could not be generated." } }, { status: Number(error?.status || 500) });
   }

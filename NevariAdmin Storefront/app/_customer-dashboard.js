@@ -25,7 +25,7 @@ import SubscriptionGate from "./components/subscription/SubscriptionGate";
 import Paywall from "./components/subscription/Paywall";
 import { useSubscription } from "./hooks/use-subscription";
 import { RoleShell, SkeletonBox } from "./components/role-shell";
-import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, normalizeCustomerSettingsPayload, requestMtmReschedule, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest, updateCustomerSettings, uploadCustomerProfileImage } from "./lib/nevari-api";
+import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, fetchCustomerSearch, normalizeCustomerSettingsPayload, prepareCustomerMtmPdf, requestMtmReschedule, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest, updateCustomerSettings, uploadCustomerProfileImage } from "./lib/nevari-api";
 import { citiesForNigeriaState, NIGERIA_STATES } from "./lib/nigeria-locations";
 
 const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
@@ -41,7 +41,6 @@ const NURSE_REQUEST_YES_NO_FIELDS = ["liveInCareRequired", "wheelchairAssistance
 const NURSE_REQUEST_YES_NO_OPTIONS = ["Yes", "No"];
 const NURSE_REQUEST_CLINICAL_REQUIREMENTS = ["Medication Administration", "Catheter Care", "Blood Pressure Monitoring", "Diabetes Monitoring", "IV Therapy", "Feeding Tube Support"];
 const NURSE_REQUEST_UPLOAD_LABELS = ["Medical Prescription", "Doctor Notes", "Discharge Summaries", "Lab Reports", "Medication Lists"];
-const PAYWALL_PRO_MONTHLY_AMOUNT = 5_000;
 const IV_THERAPY_OPTIONS = [
   "Beauty & Radiance Drips",
   "Anti-Aging & Regenerative Drips",
@@ -91,9 +90,11 @@ const PROFILE_IMAGE_MAX_ZOOM = 3;
 const CUSTOMER_HEALTH_BLOOD_GROUP_OPTIONS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const CUSTOMER_HEALTH_GENOTYPE_OPTIONS = ["AA", "AS", "AC", "SS", "SC", "CC"];
 const CUSTOMER_NOTIFICATION_OPTIONS = [
+  ["emailReminders", "Email reminders"],
   ["appointmentReminders", "Appointment reminders"],
-  ["prescriptionAlerts", "Medication reminders"],
-  ["paymentReceipts", "Payment updates"]
+  ["prescriptionAlerts", "Prescription reminders"],
+  ["paymentReceipts", "Payment receipts"],
+  ["twoFactorEnabled", "Two-factor authentication"]
 ];
 const CUSTOMER_SEARCH_QUICK_OPTIONS = [
   ["appointment", "Appointments"],
@@ -114,7 +115,7 @@ function createIvTherapyFormState() {
       phoneNumber: ""
     },
     clinicalHistory: {
-      chronicConditions: "",
+      chronicConditions: [],
       chronicConditionsDetails: "",
       currentMedications: "",
       currentMedicationsDetails: "",
@@ -352,10 +353,8 @@ function formatSubscriptionPriceLabel(subscription) {
   const amount = resolveSubscriptionMonthlyAmount(subscription);
   const currency = String(subscription?.currency || "NGN").trim().toUpperCase();
   const recurringLabel = "/month";
-  const resolvedAmount = Number.isFinite(amount) && amount > 0 ? amount : PAYWALL_PRO_MONTHLY_AMOUNT;
-  if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) {
-    return `${currency}${PAYWALL_PRO_MONTHLY_AMOUNT.toLocaleString("en-NG")}${recurringLabel}`;
-  }
+  const resolvedAmount = Number(amount);
+  if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) return "";
   try {
     return `${new Intl.NumberFormat("en-NG", {
       style: "currency",
@@ -686,19 +685,14 @@ function createMtmFormState() {
       chronicConditions: "",
       pastMedicalHistory: "",
       pastSurgicalHistory: "",
-      drugAllergies: "",
-      drugIntolerances: "",
+      drugAllergies: [],
+      drugIntolerances: [],
       relevantLabResults: "",
       clinicalMonitoringParameters: "",
     },
     medicationProfile: {
-      medicationName: "",
-      dosage: "",
-      frequency: "",
-      route: "",
-      indication: "",
+      medicationFileName: "",
       prescribingDoctor: "",
-      startDate: "",
       notes: "",
     },
     adherenceAssessment: {
@@ -708,10 +702,10 @@ function createMtmFormState() {
     additionalInformation: {
       recentMedicationChanges: "",
       previousMedicationsStopped: "",
-      reasonForDiscontinuation: "",
-      otcMedications: "",
-      herbalProducts: "",
-      supplements: "",
+      reasonForDiscontinuation: [],
+      otcMedications: [],
+      herbalProducts: [],
+      supplements: [],
     }
   };
 }
@@ -778,7 +772,6 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
   const patient = mtmForm?.patient || {};
   const emergencyContact = mtmForm?.emergencyContact || {};
   const medicalHistory = mtmForm?.medicalHistory || {};
-  const medicationProfile = mtmForm?.medicationProfile || {};
   const adherenceAssessment = mtmForm?.adherenceAssessment || {};
   const additionalInformation = mtmForm?.additionalInformation || {};
   const fileList = Array.isArray(labResultsFiles) ? labResultsFiles : [];
@@ -788,7 +781,7 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
     1: ["name", "age", "dob", "gender", "address", "phoneNumber", "preferredContactMethod"],
     2: ["caregiverName", "relationship", "phoneNumber", "consentToDiscussCare"],
     3: ["primaryDiagnosis", "chronicConditions", "pastMedicalHistory", "drugAllergies"],
-    4: ["medicationName", "dosage", "frequency", "route", "indication", "prescribingDoctor", "startDate"],
+    4: [],
     5: [],
     6: [],
   };
@@ -797,7 +790,7 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
     1: patient,
     2: emergencyContact,
     3: medicalHistory,
-    4: medicationProfile,
+    4: mtmForm?.medicationProfile || {},
     5: adherenceAssessment,
   };
 
@@ -875,23 +868,10 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
     if (includeRequired && shouldValidateKey("pastMedicalHistory") && !String(medicalHistory.pastMedicalHistory || "").trim()) errors.pastMedicalHistory = "This field is required.";
     if (includeRequired && shouldValidateKey("drugAllergies") && !String(medicalHistory.drugAllergies || "").trim()) errors.drugAllergies = "This field is required.";
     if (shouldValidateKey("relevantLabResults") && fileList.some((file) => !isAllowedMedicalFile(file))) {
-      errors.relevantLabResults = "Upload PDF, image, or document files up to 20MB each.";
+      errors.relevantLabResults = "Upload PNG, JPG, JPEG, or WebP images up to 5MB each.";
     }
   }
 
-  if (step >= 4 && requireMedicationDraft) {
-    if (includeRequired && shouldValidateKey("medicationName") && !String(medicationProfile.medicationName || "").trim()) errors.medicationName = "This field is required.";
-    if (includeRequired && shouldValidateKey("dosage") && !String(medicationProfile.dosage || "").trim()) errors.dosage = "This field is required.";
-    if (shouldValidateKey("frequency") && String(medicationProfile.frequency || "").trim() && !MTM_FREQUENCY_OPTIONS.includes(String(medicationProfile.frequency || ""))) errors.frequency = "Select a valid frequency.";
-    if (shouldValidateKey("route") && String(medicationProfile.route || "").trim() && !MTM_ROUTE_OPTIONS.includes(String(medicationProfile.route || ""))) errors.route = "Select a valid route.";
-    if (includeRequired && shouldValidateKey("indication") && !String(medicationProfile.indication || "").trim()) errors.indication = "This field is required.";
-    if (includeRequired && shouldValidateKey("prescribingDoctor") && !String(medicationProfile.prescribingDoctor || "").trim()) errors.prescribingDoctor = "This field is required.";
-    if (shouldValidateKey("startDate") && !String(medicationProfile.startDate || "").trim() && includeRequired) {
-      errors.startDate = "This field is required.";
-    } else if (shouldValidateKey("startDate") && String(medicationProfile.startDate || "").trim() && isFutureDate(String(medicationProfile.startDate || "").trim())) {
-      errors.startDate = "Start date cannot be in the future.";
-    }
-  }
   if (step >= 4 && !requireMedicationDraft && includeRequired && shouldValidateKey("medications") && !medicationEntries.length) {
     errors.medications = "Add at least one medication before you continue.";
   }
@@ -911,9 +891,52 @@ function sanitizeCustomerHealthChip(value, max = 80) {
 }
 
 function normalizeCustomerHealthChipList(values) {
-  return Array.from(new Set((Array.isArray(values) ? values : [])
+  const source = Array.isArray(values) ? values : String(values || "").split(",");
+  return Array.from(new Set(source
     .map((item) => sanitizeCustomerHealthChip(item))
     .filter(Boolean)));
+}
+
+function MtmTokenInput({ id, value, onChange, onBlur, placeholder, hasError = false }) {
+  const [draft, setDraft] = useState("");
+  const tokens = normalizeCustomerHealthChipList(value);
+
+  function commitDraft(rawValue = draft) {
+    const additions = normalizeCustomerHealthChipList(String(rawValue || "").split(","));
+    if (additions.length) onChange(normalizeCustomerHealthChipList([...tokens, ...additions]));
+    setDraft("");
+  }
+
+  return <div className={`customer-mtm-token-input ${hasError ? "has-error" : ""}`}>
+    {tokens.map((token) => <span className="customer-mtm-token" key={token}>
+      <span>{token}</span>
+      <button type="button" aria-label={`Remove ${token}`} onClick={() => onChange(tokens.filter((item) => item !== token))}>&times;</button>
+    </span>)}
+    <input
+      id={id}
+      type="text"
+      value={draft}
+      placeholder={tokens.length ? "Add another" : placeholder}
+      enterKeyHint="next"
+      onChange={(event) => {
+        const nextValue = event.target.value;
+        if (nextValue.includes(",")) commitDraft(nextValue);
+        else setDraft(nextValue);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === ",") {
+          event.preventDefault();
+          commitDraft();
+        } else if (event.key === "Backspace" && !draft && tokens.length) {
+          onChange(tokens.slice(0, -1));
+        }
+      }}
+      onBlur={() => {
+        commitDraft();
+        onBlur?.();
+      }}
+    />
+  </div>;
 }
 
 function isValidCustomerPhoneNumber(value, { allowEmpty = true } = {}) {
@@ -1244,6 +1267,8 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const [desktopSearchQuery, setDesktopSearchQuery] = useState("");
   const [desktopSearchPreviousPage, setDesktopSearchPreviousPage] = useState("overview");
   const [desktopSearchOpen, setDesktopSearchOpen] = useState(false);
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [desktopSearchActiveIndex, setDesktopSearchActiveIndex] = useState(-1);
   const desktopSearchRef = useRef(null);
   const [dashboardToast, setDashboardToast] = useState({ type: "", message: "" });
   const [profileSaveBusy, setProfileSaveBusy] = useState(false);
@@ -1901,81 +1926,55 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       })
       .reduce((total, order) => total + Number(order.total || 0), 0);
   }, [state.orders]);
-  const desktopSearchResults = useMemo(() => {
-    const term = desktopSearchQuery.trim().toLowerCase();
-    if (term.length < 3) {
-      return [];
+  useEffect(() => {
+    const normalizedQuery = desktopSearchQuery.trim();
+    setDesktopSearchActiveIndex(-1);
+    if (normalizedQuery.length < 3) {
+      setDebouncedSearchQuery("");
+      return undefined;
     }
+    const timeoutId = window.setTimeout(() => setDebouncedSearchQuery(normalizedQuery.slice(0, 80)), 180);
+    return () => window.clearTimeout(timeoutId);
+  }, [desktopSearchQuery]);
 
-    const orderMatches = state.orders
-      .filter((order) => [
-        order.number,
-        order.id,
-        order.order_number,
-        order.reference
-      ].some((value) => String(value || "").toLowerCase().includes(term)))
-      .slice(0, 5)
-      .map((order) => ({
-        key: `desktop-order-${order.id}`,
-        area: "Orders",
-        label: `Order #${order.number || order.id}`,
-        meta: `${money(order.total, storeCurrency)} - ${titleCase(order.status)}`,
-        onSelect: () => {
-          setDesktopSearchQuery("");
+  const patientSearchKey = session && debouncedSearchQuery.length >= 3
+    ? swrKeys.proxy.path("/dashboard/patient/search", withSessionCacheScope(session, { q: debouncedSearchQuery, limit: 20 }))
+    : null;
+  const patientSearchQuery = useSWR(
+    patientSearchKey,
+    () => fetchCustomerSearch(session, debouncedSearchQuery, 20),
+    { revalidateOnFocus: false, keepPreviousData: true, dedupingInterval: 10_000 }
+  );
+  const desktopSearchResults = useMemo(() => (Array.isArray(patientSearchQuery.data) ? patientSearchQuery.data : []).map((item, index) => ({
+    key: `patient-search-${item.type || "result"}-${item.id || index}`,
+    area: item.area || "Dashboard",
+    label: item.title || "Result",
+    meta: item.meta || "",
+    onSelect: () => {
+      const destinationMap = { "nurse-request": "request", subscription: "subscription-management" };
+      const destination = destinationMap[item.destination] || item.destination || "overview";
+      setDesktopSearchQuery("");
+      setDesktopSearchOpen(false);
+      if (item.type === "order") {
+        const order = state.orders.find((entry) => String(entry.id) === String(item.id));
+        if (order) {
           setExpandedOrderId(order.id);
           setSelectedOrder(order);
-          setPage("orders");
         }
-      }));
-
-    const appointmentMatches = state.appointments
-      .filter((appointment) => {
-        const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
-        return [
-          appointment.id,
-          appointment.status,
-          doctor?.display_name,
-          doctor?.specialties?.join(" "),
-          shortDate(appointment.start_at, true, storeTimeZone)
-        ].some((value) => String(value || "").toLowerCase().includes(term));
-      })
-      .slice(0, 5)
-      .map((appointment) => {
-        const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
-        return {
-          key: `desktop-appointment-${appointment.id}`,
-          area: "Appointments",
-          label: `Appointment #${appointment.id}`,
-          meta: `${shortDate(appointment.start_at, true, storeTimeZone)} - ${doctor?.display_name || "Doctor"}`,
-          onSelect: () => {
-            setDesktopSearchQuery("");
-            setSelectedAppointment(appointment);
-            setPage("overview");
-          }
-        };
-      });
-
-    const doctorMatches = visibleDoctors
-      .filter((doctor) => [
-        doctor.display_name,
-        doctor.specialties?.join(" "),
-        doctor.email
-      ].some((value) => String(value || "").toLowerCase().includes(term)))
-      .slice(0, 5)
-      .map((doctor) => ({
-        key: `desktop-doctor-${doctor.user_id || doctor.id}`,
-        area: "Doctors",
-        label: doctor.display_name || "Doctor",
-        meta: doctor.specialties?.join(", ") || "Available doctor",
-        onSelect: () => {
-          setDesktopSearchQuery("");
+      } else if (item.type === "appointment") {
+        const appointment = state.appointments.find((entry) => String(entry.id) === String(item.id));
+        if (appointment) setSelectedAppointment(appointment);
+      } else if (item.type === "doctor") {
+        const doctor = visibleDoctors.find((entry) => String(entry.user_id || entry.id) === String(item.id));
+        if (doctor) {
           openDoctorAvailability(doctor);
+          return;
         }
-      }));
-
-    return [...orderMatches, ...appointmentMatches, ...doctorMatches].slice(0, 10);
-  }, [desktopSearchQuery, openDoctorAvailability, setExpandedOrderId, state.appointments, state.orders, storeCurrency, storeTimeZone, visibleDoctors]);
-  const now = Date.now();
+      }
+      if (pages.includes(destination) || destination === "search") setPage(destination);
+      else setPage("overview");
+    }
+  })), [openDoctorAvailability, patientSearchQuery.data, state.appointments, state.orders, visibleDoctors]);  const now = Date.now();
   const sortedAppointments = useMemo(() => sortByDateDesc(state.appointments, ["start_at", "created_at", "updated_at"]), [state.appointments]);
   const upcomingAppointments = sortedAppointments.filter((appointment) => appointmentBelongsToUpcomingList(appointment, now));
   const pastAppointments = sortedAppointments.filter((appointment) => appointmentBelongsToPastList(appointment, now));
@@ -2545,6 +2544,11 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
               }
             }}
             onChange={(event) => openDesktopSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown" && desktopSearchResults.length) { event.preventDefault(); setDesktopSearchActiveIndex((current) => Math.min(desktopSearchResults.length - 1, current + 1)); }
+              else if (event.key === "ArrowUp" && desktopSearchResults.length) { event.preventDefault(); setDesktopSearchActiveIndex((current) => Math.max(0, current - 1)); }
+              else if (event.key === "Enter" && desktopSearchActiveIndex >= 0) { event.preventDefault(); desktopSearchResults[desktopSearchActiveIndex]?.onSelect(); }
+            }}
           />
           {desktopSearchQuery ? <button type="button" className="customer-desktop-search-clear" aria-label="Clear search" onClick={() => {
             setDesktopSearchQuery("");
@@ -2557,13 +2561,16 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
                 setDesktopSearchQuery("");
                 setPage(nextPage);
               }}>{label}</button>)
-              : desktopSearchResults.length
-                ? desktopSearchResults.slice(0, 4).map((result) => <button key={result.key} type="button" onClick={() => {
-                  setDesktopSearchOpen(false);
-                  result.onSelect();
-                }}><span>{result.label}</span><small>{result.area}</small></button>)
-                : <div className="customer-desktop-search-empty">No results found</div>}
-          </div> : null}
+              : patientSearchQuery.isLoading
+                ? <div className="customer-desktop-search-empty" aria-live="polite">Searching...</div>
+                : patientSearchQuery.error
+                  ? <div className="customer-desktop-search-empty" role="alert">Search is unavailable. Try again.</div>
+                  : desktopSearchResults.length
+                    ? desktopSearchResults.slice(0, 4).map((result, index) => <button key={result.key} type="button" className={desktopSearchActiveIndex === index ? "is-active" : ""} onMouseEnter={() => setDesktopSearchActiveIndex(index)} onClick={() => {
+                      setDesktopSearchOpen(false);
+                      result.onSelect();
+                    }}><span>{result.label}</span><small>{result.area}</small></button>)
+                    : <div className="customer-desktop-search-empty">No results found</div>}          </div> : null}
         </label>
       </div>}
     >
@@ -2773,7 +2780,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         <div className="customer-mobile-search-results customer-desktop-search-results">
           {desktopSearchQuery.trim().length < 3 ? <div className="customer-mobile-search-empty">
             <strong className="customer-mobile-search-empty-hint">start typing to see results</strong>
-          </div> : desktopSearchResults.length ? desktopSearchResults.map((result) => <button className="customer-mobile-search-result" key={result.key} type="button" onClick={result.onSelect}>
+          </div> : patientSearchQuery.isLoading ? <div className="customer-mobile-search-empty" aria-live="polite"><BrandedSpinner label="Searching patient records" /></div> : patientSearchQuery.error ? <div className="customer-mobile-search-empty" role="alert"><strong>Search is unavailable</strong><small>Try again in a moment.</small></div> : desktopSearchResults.length ? desktopSearchResults.map((result) => <button className="customer-mobile-search-result" key={result.key} type="button" onClick={result.onSelect}>
             <div>
               <span className="customer-mobile-search-result-area">{result.area}</span>
               <strong>{result.label}</strong>
@@ -3153,7 +3160,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" focusable="false"><path d="M6 6 18 18M18 6 6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
         </button>
         <div className="customer-profile-reminder-body">
-          <div className="customer-profile-reminder-icon" aria-hidden="true"><svg viewBox="0 0 96 96" width="96" height="96" fill="none"><circle cx="48" cy="48" r="41" stroke="#e8eef6" strokeWidth="10" /><path d="M48 7a41 41 0 0 1 0 82" stroke="#0b3779" strokeWidth="10" strokeLinecap="round" /><circle cx="48" cy="48" r="29" fill="#0b3779" /><path d="M48 41a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm-10 15c1.7-7 5-10 10-10s8.3 3 10 10" stroke="white" strokeWidth="2.4" strokeLinecap="round" /></svg></div>
+
           <span className="customer-profile-reminder-kicker">Profile reminder</span>
           <h2 id="customer-profile-reminder-title">Keep your profile up to date</h2>
           <p id="customer-profile-reminder-description">Complete your details so we can personalise your care, contact you when needed, and make future appointments quicker.</p>
@@ -3646,7 +3653,8 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
   }, []);
 
   const requestId = String(request?.id || "");
-  const downloadHref = requestId
+  const documentAvailable = request?.document?.available === true;
+  const downloadHref = requestId && documentAvailable
     ? `/api/mtm/${encodeURIComponent(requestId)}/pdf?baseUrl=${encodeURIComponent(session?.baseUrl || "")}&frontendType=${encodeURIComponent(session?.frontendType || "patient")}`
     : "";
   if (typeof document === "undefined") {
@@ -3673,7 +3681,7 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
       </div>
       <div className="stacked-order-popup-actions">
         {request?.customer_join_url || request?.join_url ? <a className="button-primary" href={request.customer_join_url || request.join_url} target="_blank" rel="noreferrer">Join MTM Meeting</a> : null}
-        {downloadHref ? <a className="pill-button" href={downloadHref} target="_blank" rel="noreferrer">Download Request PDF</a> : null}
+        {downloadHref ? <a className="pill-button" href={downloadHref} target="_blank" rel="noreferrer">Download Request PDF</a> : <span className="customer-mobile-field-hint" role="status">Submitted PDF unavailable</span>}
         {request?.can_reschedule ? <button className="pill-button" type="button" disabled={busy} onClick={() => onRequestReschedule?.(request.id)}>{busy ? <BrandedSpinner label="Requesting reschedule" /> : "Request reschedule"}</button> : null}
       </div>
     </section>
@@ -4224,7 +4232,7 @@ function AppointmentPage({
       </section> : null}
     </div>
 
-    {showBookAppointmentPlus ? <button className="customer-mobile-appointment-booknow-btn" type="button" aria-label="Book appointment" onClick={handleNewAppointmentClick}>+</button> : null}
+    {showBookAppointmentPlus ? <AppointmentBookingButton className="customer-mobile-appointment-booknow-btn" onClick={handleNewAppointmentClick} /> : null}
   </div>;
 }
 
@@ -4252,7 +4260,9 @@ function OrderDetailsModal({ order, storeCurrency, onOpenOrderDocuments, onCance
           <span className="customer-section-kicker">Order details</span>
           <h2>Order #{order?.number || order?.id}</h2>
         </div>
-        <button className="icon-btn" type="button" aria-label="Close order details" onClick={onClose}>x</button>
+        <button className="icon-btn" type="button" aria-label="Close order details" onClick={onClose}>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+        </button>
       </div>
 
       <div className="customer-detail-summary-panel">
@@ -5319,12 +5329,6 @@ function formatSubscriptionPaymentMethodLabel(paymentMethod) {
   return "Visa Card";
 }
 
-function isActiveCustomerProSubscription(subscription = {}) {
-  const status = String(subscription?.status || "").trim().toLowerCase();
-  const planKey = String(subscription?.plan_key || subscription?.plan || "").trim().toLowerCase();
-  const tier = String(subscription?.tier || "").trim().toLowerCase();
-  return !["", "free", "none", "cancelled", "expired"].includes(status) && planKey !== "free" && tier !== "free";
-}
 
 function CustomerSubscriptionBenefit({ accentClass, description, icon, title }) {
   const iconSrc = icon?.src || icon;
@@ -5345,18 +5349,17 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
   const [dialogStep, setDialogStep] = useState("");
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
-  const [cancelledView, setCancelledView] = useState(() => ["cancelled", "expired"].includes(String(subscription?.status || "").trim().toLowerCase()));
   const primaryActionRef = useRef(null);
   const restoreFocusRef = useRef(null);
-  const monthlyAmount = Number(resolveSubscriptionMonthlyAmount(subscription) || PAYWALL_PRO_MONTHLY_AMOUNT || 0);
+  const monthlyAmount = Number(resolveSubscriptionMonthlyAmount(subscription) || 0);
   const currency = String(subscription?.currency || "NGN").trim().toUpperCase() || "NGN";
   const ctaAmountLabel = formatSubscriptionCtaAmount(monthlyAmount, currency);
   const memberSince = formatSubscriptionMemberSince(subscription?.startDate || subscription?.start_date);
-  const startDateLabel = shortDate(subscription?.startDate || subscription?.start_date || "") || "Jun 2, 2026";
-  const renewsOnLabel = shortDate(subscription?.nextPaymentDate || subscription?.next_payment_date || subscription?.renewal_date || "") || "Jul 2, 2026";
+  const startDateLabel = shortDate(subscription?.startDate || subscription?.start_date || "") || "Unavailable";
+  const renewsOnLabel = shortDate(subscription?.nextPaymentDate || subscription?.next_payment_date || subscription?.renewal_date || subscription?.accessEndsAt || subscription?.access_ends_at || "") || "Unavailable";
   const paymentMethodLabel = formatSubscriptionPaymentMethodLabel(subscription?.paymentMethod || subscription?.payment_method);
   const manageBillingUrl = String(subscription?.manage_billing_url || "").trim();
-  const isActiveSubscriber = isActiveCustomerProSubscription(subscription) && !cancelledView;
+  const isActiveSubscriber = Boolean(subscriptionState?.active);
   const dialogLabelId = "customer-subscription-dialog-title";
   const benefits = [
     {
@@ -5379,12 +5382,6 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
     }
   ];
 
-  useEffect(() => {
-    const status = String(subscription?.status || "").trim().toLowerCase();
-    if (["cancelled", "expired"].includes(status)) {
-      setCancelledView(true);
-    }
-  }, [subscription?.status]);
 
   useEffect(() => {
     if (!dialogStep || typeof window === "undefined") {
@@ -5457,7 +5454,6 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
     setDialogBusy(true);
     try {
       await subscriptionState?.cancelCurrentSubscription?.();
-      setCancelledView(true);
       setDialogStep("cancelled");
     } catch (error) {
       if (shouldFallbackToBillingPortal(error)) {
@@ -5587,7 +5583,7 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
                 <span>Nevari Access</span>
                 <img src={proBadgeImage.src || proBadgeImage} alt="Pro" className="customer-subscription-management-badge" draggable="false" />
               </div>
-              <div className="customer-subscription-dialog-price"><span>{currency}</span><strong>{formatSubscriptionAmountNumber(monthlyAmount)}</strong></div>
+              <div className="customer-subscription-dialog-price"><span>{monthlyAmount > 0 ? currency : ""}</span><strong>{monthlyAmount > 0 ? formatSubscriptionAmountNumber(monthlyAmount) : "Unavailable"}</strong></div>
             </div>
             <div className="customer-subscription-dialog-meta-grid">
               <div>
@@ -5675,6 +5671,10 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, display
   const [healthFieldErrors, setHealthFieldErrors] = useState({});
   const [chipDrafts, setChipDrafts] = useState({ allergies: "", currentMedications: "", existingConditions: "" });
   const firstEditableInputRef = useRef(null);
+  const normalizedProfileSource = normalizeCustomerSettingsPayload(settings);
+  const profileDirty = ["displayName", "email", "phone", "address"].some((key) => JSON.stringify(profileDraft[key]) !== JSON.stringify(normalizedProfileSource[key]));
+  const healthDirty = ["bloodGroup", "genotype", "allergies", "currentMedications", "existingConditions", "emergencyContactName", "emergencyContactPhoneNumber"]
+    .some((key) => JSON.stringify(healthDraft[key]) !== JSON.stringify(normalizedProfileSource[key]));
 
   useEffect(() => {
     if (!isEditingProfile) {
@@ -5850,14 +5850,14 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, display
           <label className="customer-profile-detail-grid-wide"><span>Address</span><textarea rows={3} value={profileDraft.address} readOnly={false} className={profileFieldErrors.address ? "has-error" : ""} onChange={(event) => updateProfileDraft("address", sanitizeClientText(event.target.value, { max: 200 }))} />{profileFieldErrors.address ? <small className="customer-mobile-field-error">{profileFieldErrors.address}</small> : null}</label>
         </div>
         {profileSaveError ? <small className="customer-mobile-field-error">{profileSaveError}</small> : null}
-        <div className="customer-profile-inline-actions"><button type="button" className="pill-button tertiary" onClick={() => { setProfileDraft(normalizeCustomerSettingsPayload(settings)); setProfileFieldErrors({}); }} disabled={profileSaveBusy}>Cancel</button><button type="button" className="pill-button" onClick={saveProfileChanges} disabled={profileSaveBusy}>{profileSaveBusy ? <span className="appointment-cta-spinner" aria-label="Saving profile" /> : "Save Changes"}</button></div>
+        {profileDirty ? <div className="customer-profile-inline-actions"><button type="button" className="pill-button tertiary" onClick={() => { setProfileDraft(normalizeCustomerSettingsPayload(settings)); setProfileFieldErrors({}); }} disabled={profileSaveBusy}>Cancel</button><button type="button" className="pill-button" onClick={saveProfileChanges} disabled={profileSaveBusy}>{profileSaveBusy ? <span className="appointment-cta-spinner" aria-label="Saving profile" /> : "Save Changes"}</button></div> : null}
       </article>
 
       <article className="customer-profile-card customer-profile-card-wide customer-profile-health-card">
         <div className="customer-profile-card-head">
           <div>
             <span>Key Health Records</span>
-            <small>Your health information is private and is used only to support your care experience.</small>
+            
           </div>
           
         </div>
@@ -5870,7 +5870,7 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, display
           <label className="customer-profile-health-field"><span>Emergency Contact Name</span><input value={healthDraft.emergencyContactName} onChange={(event) => updateHealthDraft("emergencyContactName", sanitizeClientText(event.target.value, { max: 120 }))} /></label>
           <label className="customer-profile-health-field"><span>Emergency Contact Phone Number</span><input type="tel" inputMode="tel" maxLength={11} value={healthDraft.emergencyContactPhoneNumber} onChange={(event) => updateHealthDraft("emergencyContactPhoneNumber", normalizeMtmPhoneNumber(event.target.value))} />{healthFieldErrors.emergencyContactPhoneNumber ? <small className="customer-mobile-field-error">{healthFieldErrors.emergencyContactPhoneNumber}</small> : null}</label>
         </div>
-        <div className="customer-profile-inline-actions"><button type="button" className="pill-button tertiary" onClick={() => { setHealthDraft(normalizeCustomerSettingsPayload(settings)); setHealthFieldErrors({}); setChipDrafts({ allergies: "", currentMedications: "", existingConditions: "" }); }} disabled={profileSaveBusy}>Cancel</button><button type="button" className="pill-button" onClick={saveHealthChanges} disabled={profileSaveBusy}>{profileSaveBusy ? <span className="appointment-cta-spinner" aria-label="Saving health records" /> : "Save health records"}</button></div>
+        {healthDirty ? <div className="customer-profile-inline-actions"><button type="button" className="pill-button tertiary" onClick={() => { setHealthDraft(normalizeCustomerSettingsPayload(settings)); setHealthFieldErrors({}); setChipDrafts({ allergies: "", currentMedications: "", existingConditions: "" }); }} disabled={profileSaveBusy}>Cancel</button><button type="button" className="pill-button" onClick={saveHealthChanges} disabled={profileSaveBusy}>{profileSaveBusy ? <span className="appointment-cta-spinner" aria-label="Saving health records" /> : "Save health records"}</button></div> : null}
       </article>
     </section>
 
@@ -6896,6 +6896,7 @@ function CustomerMobileDashboard({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [previousPage, setPreviousPage] = useState("overview");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedMobileSearchQuery, setDebouncedMobileSearchQuery] = useState("");
   const [appointmentTab, setAppointmentTab] = useState(initialPage === "request" ? "request" : "upcoming");
   const [appointmentComposerOpen, setAppointmentComposerOpen] = useState(false);
   const [appointmentComposerLoading, setAppointmentComposerLoading] = useState(false);
@@ -6992,11 +6993,33 @@ function CustomerMobileDashboard({
   const [mtmTouchedFields, setMtmTouchedFields] = useState({});
   const [mtmShowErrors, setMtmShowErrors] = useState(false);
   const [mtmLabResultsFiles, setMtmLabResultsFiles] = useState([]);
-  const [mtmMedicationEntries, setMtmMedicationEntries] = useState([]);
+  const [mtmMedicationEntries, setMtmMedicationEntries] = useState(() => [createEmptyMtmMedicationProfile()]);
+  const [mtmPreviousMedicationFile, setMtmPreviousMedicationFile] = useState(null);
   const [mtmSnackbar, setMtmSnackbar] = useState("");
   const [mtmRescheduleBusyId, setMtmRescheduleBusyId] = useState("");
   const mtmLabResultsInputRef = useRef(null);
+  const mtmMedicationInputRefs = useRef(new Map());
+  const mtmPreviousMedicationInputRef = useRef(null);
   const mtmHistoryRequestRefs = useRef(new Map());
+
+  useEffect(() => {
+    const root = document.querySelector(".customer-mobile-app");
+    if (!root) return undefined;
+    const controls = Array.from(root.querySelectorAll("input:not([type='hidden']):not([type='file']), select"));
+    controls.forEach((control) => control.setAttribute("enterkeyhint", "next"));
+    const handleEnter = (event) => {
+      if (event.defaultPrevented || event.key !== "Enter" || event.target?.tagName === "TEXTAREA") return;
+      const index = controls.indexOf(event.target);
+      if (index < 0) return;
+      const next = controls.slice(index + 1).find((control) => !control.disabled && control.offsetParent !== null);
+      if (next) {
+        event.preventDefault();
+        next.focus();
+      }
+    };
+    root.addEventListener("keydown", handleEnter);
+    return () => root.removeEventListener("keydown", handleEnter);
+  }, [page, mtmTab, mtmStep, mtmMedicationEntries.length]);
   const [requestSubmitted, setRequestSubmitted] = useState(false);
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestSubmitError, setRequestSubmitError] = useState("");
@@ -7090,6 +7113,10 @@ function CustomerMobileDashboard({
   const [mobileChipDrafts, setMobileChipDrafts] = useState({ allergies: "", currentMedications: "", existingConditions: "" });
   const [mobileProfileDraft, setMobileProfileDraft] = useState(() => normalizeCustomerSettingsPayload(settings));
   const [mobileProfileErrors, setMobileProfileErrors] = useState({});
+  const normalizedMobileProfileSource = normalizeCustomerSettingsPayload(settings);
+  const mobileProfileDirty = ["displayName", "email", "phone", "address"].some((key) => JSON.stringify(mobileProfileDraft[key]) !== JSON.stringify(normalizedMobileProfileSource[key]));
+  const mobileHealthDirty = ["bloodGroup", "genotype", "allergies", "currentMedications", "existingConditions", "emergencyContactName", "emergencyContactPhoneNumber"]
+    .some((key) => JSON.stringify(mobileHealthDraft[key]) !== JSON.stringify(normalizedMobileProfileSource[key]));
   const appointmentPageLoading = page === "appointment"
     && appointmentsLoading
     && !upcomingAppointments.length
@@ -7188,7 +7215,7 @@ function CustomerMobileDashboard({
       setMtmSelectedRequestId("");
       setMtmStepErrors({});
       setMtmLabResultsFiles([]);
-      setMtmMedicationEntries([]);
+      setMtmMedicationEntries([createEmptyMtmMedicationProfile()]);
       setMtmForm(createMtmFormState());
       setAppointmentComposerOpen(false);
       setAppointmentComposerLoading(false);
@@ -7430,76 +7457,45 @@ function CustomerMobileDashboard({
     [state.orders]
   );
   const showAppointmentPagePlus = appointmentTab !== "request" && visibleAppointments.length > 0;
-  const searchResults = useMemo(() => {
-    const term = searchQuery.trim().toLowerCase();
-    if (term.length < 3) {
-      return [];
+  useEffect(() => {
+    const normalizedQuery = searchQuery.trim();
+    if (normalizedQuery.length < 3) {
+      setDebouncedMobileSearchQuery("");
+      return undefined;
     }
-
-    const orderMatches = state.orders
-      .filter((order) => [
-        order.number,
-        order.id,
-        order.order_number,
-        order.reference
-      ].some((value) => String(value || "").toLowerCase().includes(term)))
-      .slice(0, 5)
-      .map((order) => ({
-        key: `order-${order.id}`,
-        area: "Orders",
-        label: `Order #${order.number || order.id}`,
-        meta: `${money(order.total, storeCurrency)} · ${titleCase(order.status)}`,
-        onSelect: () => {
-          setExpandedOrderId(order.id);
-          setSelectedOrder(order);
-          goToPage("orders");
-        }
-      }));
-
-    const appointmentMatches = state.appointments
-      .filter((appointment) => {
-        const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
-        return [
-          appointment.id,
-          appointment.status,
-          doctor?.display_name,
-          doctor?.specialties?.join(" "),
-          shortDate(appointment.start_at, true, storeTimeZone)
-        ].some((value) => String(value || "").toLowerCase().includes(term));
-      })
-      .slice(0, 5)
-      .map((appointment) => {
-        const doctor = visibleDoctors.find((item) => String(item.user_id || item.id) === String(appointment.doctor_user_id));
-        return {
-          key: `appointment-${appointment.id}`,
-          area: "Appointments",
-          label: `Appointment #${appointment.id}`,
-          meta: `${shortDate(appointment.start_at, true, storeTimeZone)} · ${doctor?.display_name || "Doctor"}`,
-          onSelect: () => {
-            setSelectedAppointment(appointment);
-            goToPage("overview");
-          }
-        };
-      });
-
-    const doctorMatches = visibleDoctors
-      .filter((doctor) => [
-        doctor.display_name,
-        doctor.specialties?.join(" "),
-        doctor.email
-      ].some((value) => String(value || "").toLowerCase().includes(term)))
-      .slice(0, 5)
-      .map((doctor) => ({
-        key: `doctor-${doctor.user_id || doctor.id}`,
-        area: "Doctors",
-        label: doctor.display_name || "Doctor",
-        meta: doctor.specialties?.join(", ") || "Available doctor",
-        onSelect: () => onOpenAvailability(doctor)
-      }));
-
-    return [...orderMatches, ...appointmentMatches, ...doctorMatches].slice(0, 10);
-  }, [goToPage, onOpenAvailability, searchQuery, setExpandedOrderId, setSelectedOrder, state.appointments, state.orders, storeTimeZone, storeCurrency, visibleDoctors]);
-
+    const timeoutId = window.setTimeout(() => setDebouncedMobileSearchQuery(normalizedQuery.slice(0, 80)), 180);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchQuery]);
+  const mobilePatientSearchKey = session && debouncedMobileSearchQuery.length >= 3
+    ? swrKeys.proxy.path("/dashboard/patient/search", withSessionCacheScope(session, { q: debouncedMobileSearchQuery, limit: 20 }))
+    : null;
+  const mobilePatientSearchQuery = useSWR(
+    mobilePatientSearchKey,
+    () => fetchCustomerSearch(session, debouncedMobileSearchQuery, 20),
+    { revalidateOnFocus: false, keepPreviousData: true, dedupingInterval: 10_000 }
+  );
+  const searchResults = useMemo(() => (Array.isArray(mobilePatientSearchQuery.data) ? mobilePatientSearchQuery.data : []).map((item, index) => ({
+    key: `mobile-patient-search-${item.type || "result"}-${item.id || index}`,
+    area: item.area || "Dashboard",
+    label: item.title || "Result",
+    meta: item.meta || "",
+    onSelect: () => {
+      const destinationMap = { "nurse-request": "request", subscription: "subscription-management" };
+      const destination = destinationMap[item.destination] || item.destination || "overview";
+      if (item.type === "order") {
+        const order = state.orders.find((entry) => String(entry.id) === String(item.id));
+        if (order) { setExpandedOrderId(order.id); setSelectedOrder(order); }
+      } else if (item.type === "appointment") {
+        const appointment = state.appointments.find((entry) => String(entry.id) === String(item.id));
+        if (appointment) onOpenAppointment(appointment);
+      } else if (item.type === "doctor") {
+        const doctor = visibleDoctors.find((entry) => String(entry.user_id || entry.id) === String(item.id));
+        if (doctor) { onOpenAvailability(doctor); return; }
+      }
+      setSearchQuery("");
+      goToPage(pages.includes(destination) ? destination : "overview");
+    }
+  })), [mobilePatientSearchQuery.data, onOpenAppointment, onOpenAvailability, setExpandedOrderId, setSelectedOrder, state.appointments, state.orders, visibleDoctors]);
   const orderStats = [
     { label: "Total Orders", value: orderCounts.total },
     { label: "Pending/In-Progress", value: orderCounts.pending + orderCounts.processing },
@@ -8051,7 +8047,9 @@ function CustomerMobileDashboard({
   }
 
   function updateMtmField(section, key, value) {
-    const normalizedValue = sanitizeMtmFieldValue(section, key, value);
+    const normalizedValue = Array.isArray(value)
+      ? normalizeCustomerHealthChipList(value)
+      : sanitizeMtmFieldValue(section, key, value);
     const nextForm = {
       ...mtmForm,
       [section]: {
@@ -8077,7 +8075,10 @@ function CustomerMobileDashboard({
   }
 
   function markMtmFieldBlurred(section, key) {
-    const normalizedValue = sanitizeMtmFieldValue(section, key, mtmForm?.[section]?.[key] || "");
+    const currentValue = mtmForm?.[section]?.[key] || "";
+    const normalizedValue = Array.isArray(currentValue)
+      ? normalizeCustomerHealthChipList(currentValue)
+      : sanitizeMtmFieldValue(section, key, currentValue);
     const nextForm = {
       ...mtmForm,
       [section]: {
@@ -8338,6 +8339,9 @@ function CustomerMobileDashboard({
       medicationEntries: mtmMedicationEntries,
       requireMedicationDraft: false,
     });
+    if (step === 4 && mtmMedicationEntries.some((entry) => !entry.file || !String(entry.prescribingDoctor || "").trim())) {
+      errors.medications = "Upload an image and enter the prescribing doctor for every medication.";
+    }
     setMtmStepErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -8357,15 +8361,27 @@ function CustomerMobileDashboard({
     setMtmSubmitting(true);
     setMtmLoadingState(true);
     setMtmSubmitError("");
-    const submittedMedications = [...mtmMedicationEntries];
-    if (!submittedMedications.length) {
-      setMtmStepErrors({ medications: "Add at least one medication before you submit." });
+    const submittedMedications = mtmMedicationEntries.map((entry) => ({
+      medicationFileName: entry.medicationFileName,
+      medicationName: entry.medicationFileName,
+      prescribingDoctor: entry.prescribingDoctor,
+      notes: entry.notes,
+    }));
+    const imageCount = mtmMedicationEntries.length + mtmLabResultsFiles.length + (mtmPreviousMedicationFile ? 1 : 0);
+    if (imageCount > 8) {
+      setMtmStepErrors({ medications: "Upload no more than 8 images across the MTM assessment." });
+      setMtmSubmitting(false);
+      setMtmLoadingState(false);
+      return;
+    }
+    if (!submittedMedications.length || mtmMedicationEntries.some((entry) => !entry.file || !String(entry.prescribingDoctor || "").trim())) {
+      setMtmStepErrors({ medications: "Upload an image and enter the prescribing doctor for every medication." });
       setMtmSubmitting(false);
       setMtmLoadingState(false);
       return;
     }
     try {
-      const request = await submitCustomerMtmRequest(session, {
+      const submission = await submitCustomerMtmRequest(session, {
         patient: mtmForm.patient,
         emergency_contact: mtmForm.emergencyContact,
         medical_history: mtmForm.medicalHistory,
@@ -8375,15 +8391,20 @@ function CustomerMobileDashboard({
         },
         adherence_assessment: mtmForm.adherenceAssessment,
         additional_information: mtmForm.additionalInformation,
-        attachments: mtmLabResultsFiles.map((file) => ({
-          name: file.name,
-          size: file.size,
-          type: file.type || "",
-        })),
+        attachments: [
+          ...mtmMedicationEntries.map((entry, index) => ({ name: entry.file.name, size: entry.file.size, type: entry.file.type, category: "medication", heading: `Medication ${index + 1}` })),
+          ...(mtmPreviousMedicationFile ? [{ name: mtmPreviousMedicationFile.name, size: mtmPreviousMedicationFile.size, type: mtmPreviousMedicationFile.type, category: "previous_medication", heading: "Previous Medication Stopped" }] : []),
+          ...mtmLabResultsFiles.map((file, index) => ({ name: file.name, size: file.size, type: file.type, category: "lab_result", heading: `Relevant Lab Result ${index + 1}` })),
+        ],
+        pdf_image_files: [
+          ...mtmMedicationEntries.map((entry, index) => ({ file: entry.file, category: "medication", heading: `Medication ${index + 1}` })),
+          ...(mtmPreviousMedicationFile ? [{ file: mtmPreviousMedicationFile, category: "previous_medication", heading: "Previous Medication Stopped" }] : []),
+          ...mtmLabResultsFiles.map((file, index) => ({ file, category: "lab_result", heading: `Relevant Lab Result ${index + 1}` })),
+        ],
         duration_minutes: 30,
         timezone: storeTimeZone,
       });
-      const nextRequest = request || null;
+      const nextRequest = submission?.request || null;
       setMtmLatestRequest(nextRequest);
       if (nextRequest?.id) {
         setMtmSelectedRequestId(String(nextRequest.id));
@@ -8391,6 +8412,17 @@ function CustomerMobileDashboard({
       setMtmSubmitted(true);
       await mtmRequestsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, nextRequest) : (nextRequest ? [nextRequest] : []), { revalidate: false });
       void mtmRequestsQuery.mutate();
+      void prepareCustomerMtmPdf(session, nextRequest, submission?.pdfSnapshot, submission?.pdfImageFiles)
+        .then(({ request: preparedRequest }) => {
+          if (preparedRequest) {
+            setMtmLatestRequest(preparedRequest);
+            void mtmRequestsQuery.mutate((current) => Array.isArray(current) ? upsertById(current, preparedRequest) : [preparedRequest], { revalidate: false });
+          }
+          setMtmSnackbar("MTM PDF is ready.");
+        })
+        .catch(() => {
+          setMtmSnackbar("Assessment submitted. PDF preparation can be retried from history.");
+        });
     } catch (error) {
       setMtmSubmitError(error?.message || "Unable to submit MTM request.");
     } finally {
@@ -8417,7 +8449,7 @@ function CustomerMobileDashboard({
       updateMtmField("medicalHistory", "relevantLabResults", "");
       setMtmStepErrors((current) => ({
         ...current,
-        relevantLabResults: "Upload PDF, image, or document files up to 20MB each.",
+        relevantLabResults: "Upload PNG, JPG, JPEG, or WebP images up to 5MB each.",
       }));
       event.target.value = "";
       return;
@@ -8432,38 +8464,34 @@ function CustomerMobileDashboard({
   }
 
   function addMtmMedicationEntry() {
-    const draft = mtmForm.medicationProfile;
-    const errors = buildMtmStepErrors(4, mtmForm, mtmLabResultsFiles, {
-      medicationEntries: mtmMedicationEntries,
-      requireMedicationDraft: true,
-    });
-    if (Object.keys(errors).length > 0) {
-      setMtmStepErrors(errors);
+    if (mtmMedicationEntries.length >= 8) {
+      setMtmStepErrors((current) => ({ ...current, medications: "A maximum of 8 medication images can be added." }));
       return;
     }
-    setMtmMedicationEntries((current) => [
-      ...current,
-      {
-        medicationName: draft.medicationName,
-        dosage: draft.dosage,
-        frequency: draft.frequency,
-        route: draft.route,
-        indication: draft.indication,
-        prescribingDoctor: draft.prescribingDoctor,
-        startDate: draft.startDate,
-        notes: draft.notes,
-      },
-    ]);
-    setMtmForm((current) => ({
-      ...current,
-      medicationProfile: createEmptyMtmMedicationProfile(),
-    }));
-    setMtmSnackbar("Medication added");
-    setMtmStepErrors({});
+    setMtmMedicationEntries((current) => [...current, createEmptyMtmMedicationProfile()]);
+    window.requestAnimationFrame(() => mtmMedicationInputRefs.current.get(mtmMedicationEntries.length)?.focus());
+  }
+
+  function updateMtmMedicationEntry(index, key, value) {
+    setMtmMedicationEntries((current) => current.map((entry, entryIndex) => entryIndex === index
+      ? { ...entry, [key]: key === "file" ? value : sanitizeClientText(value, { max: key === "notes" ? 1000 : 120 }) }
+      : entry));
+  }
+
+  function handleMtmMedicationUpload(index, file, input) {
+    if (!isAllowedMedicalFile(file)) {
+      setMtmStepErrors((current) => ({ ...current, medications: "Upload PNG, JPG, JPEG, or WebP images up to 5MB each." }));
+      if (input) input.value = "";
+      return;
+    }
+    setMtmMedicationEntries((current) => current.map((entry, entryIndex) => entryIndex === index
+      ? { ...entry, file, medicationFileName: sanitizeClientText(file.name, { max: 180 }) }
+      : entry));
+    setMtmStepErrors((current) => { const next = { ...current }; delete next.medications; return next; });
   }
 
   function removeMtmMedicationEntry(indexToRemove) {
-    setMtmMedicationEntries((current) => current.filter((_, index) => index !== indexToRemove));
+    setMtmMedicationEntries((current) => current.length === 1 ? current : current.filter((_, index) => index !== indexToRemove));
   }
 
   function renderHeader(title, showBack = false, onBack = onResetJourney, headerAction = null) {
@@ -8720,7 +8748,7 @@ function CustomerMobileDashboard({
         <section className="customer-mobile-search-results">
           {searchQuery.trim().length < 3 ? <div className="customer-mobile-search-empty">
             <strong className="customer-mobile-search-empty-hint">start typing to see results</strong>
-          </div> : searchResults.length ? searchResults.map((result) => <button className="customer-mobile-search-result" key={result.key} type="button" onClick={result.onSelect}>
+          </div> : mobilePatientSearchQuery.isLoading ? <div className="customer-mobile-search-empty" aria-live="polite"><BrandedSpinner label="Searching patient records" /></div> : mobilePatientSearchQuery.error ? <div className="customer-mobile-search-empty" role="alert"><strong>Search is unavailable</strong><small>Try again in a moment.</small></div> : searchResults.length ? searchResults.map((result) => <button className="customer-mobile-search-result" key={result.key} type="button" onClick={result.onSelect}>
             <div>
               <span className="customer-mobile-search-result-area">{result.area}</span>
               <strong>{result.label}</strong>
@@ -8952,12 +8980,16 @@ function CustomerMobileDashboard({
                     {[
                       ["Primary Diagnosis", "primaryDiagnosis"],
                       ["Secondary Diagnosis", "secondaryDiagnosis"],
-                      ["Chronic Conditions", "chronicConditions"],
                     ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
                       <span>{label}:</span>
                         <input type="text" value={mtmForm.medicalHistory[key]} className={showMtmFieldError(key) ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("medicalHistory", key)} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
                         {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                     </label>)}
+                    <label className="customer-mobile-field">
+                      <span>Chronic Conditions:</span>
+                      <MtmTokenInput id="mtm-chronic-conditions" value={mtmForm.medicalHistory.chronicConditions} placeholder="Enter a condition followed by a comma" hasError={showMtmFieldError("chronicConditions")} onBlur={() => markMtmFieldBlurred("medicalHistory", "chronicConditions")} onChange={(value) => updateMtmField("medicalHistory", "chronicConditions", value)} />
+                      {showMtmFieldError("chronicConditions") ? <small className="customer-mobile-field-error">{mtmStepErrors.chronicConditions}</small> : null}
+                    </label>
                   </section>
                   <section className="customer-mobile-form-group">
                     <p className="customer-mobile-form-group-title">Medical History</p>
@@ -8972,12 +9004,9 @@ function CustomerMobileDashboard({
                   </section>
                   <section className="customer-mobile-form-group">
                     <p className="customer-mobile-form-group-title">Allergies</p>
-                    {[
-                      ["Drug Allergies", "drugAllergies"],
-                      ["Drug Intolerances", "drugIntolerances"],
-                    ].map(([label, key]) => <label className="customer-mobile-field" key={label}>
+                    {[["Drug Allergies", "drugAllergies", "enter a drug allegy followed by a comma"], ["Drug Intolerances", "drugIntolerances", "Enter a drug intolerance followed by a comma"]].map(([label, key, placeholder]) => <label className="customer-mobile-field" key={label}>
                       <span>{label}:</span>
-                        <input type="text" value={mtmForm.medicalHistory[key]} className={showMtmFieldError(key) ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("medicalHistory", key)} onChange={(event) => updateMtmField("medicalHistory", key, event.target.value)} />
+                        <MtmTokenInput id={`mtm-${key}`} value={mtmForm.medicalHistory[key]} placeholder={placeholder} hasError={showMtmFieldError(key)} onBlur={() => markMtmFieldBlurred("medicalHistory", key)} onChange={(value) => updateMtmField("medicalHistory", key, value)} />
                         {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
                     </label>)}
                   </section>
@@ -8998,7 +9027,7 @@ function CustomerMobileDashboard({
                           ref={mtmLabResultsInputRef}
                           type="file"
                           multiple
-                          accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx"
+                          accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
                           className="customer-mobile-hidden-file"
                           onChange={handleLabResultsUpload}
                         />
@@ -9012,7 +9041,7 @@ function CustomerMobileDashboard({
                           }}>Remove</button>
                         </div> : null}
                       </div>
-                      <small className="customer-mobile-field-hint">Upload multiple files up to 20MB each.</small>
+                      <small className="customer-mobile-field-hint">PNG, JPG, JPEG or WebP. Maximum 5MB each.</small>
                       {mtmLabResultsFiles.length ? <div className="customer-mobile-file-list">
                         {mtmLabResultsFiles.map((file) => <div key={`${file.name}-${file.size}`} className="customer-mobile-file-chip">{file.name}</div>)}
                       </div> : null}
@@ -9026,6 +9055,67 @@ function CustomerMobileDashboard({
                   </section>
                 </div> : null}
                 {mtmStep === 4 ? <div className="customer-mobile-form-stack">
+                  {mtmMedicationEntries.map((entry, index) => <section className="customer-mtm-medication-group" key={`medication-${index}`}>
+                    <header className="customer-mtm-medication-group-head">
+                      <div><small>Medication profile</small><strong>Medication {index + 1}</strong></div>
+                      {mtmMedicationEntries.length > 1 ? <button type="button" onClick={() => removeMtmMedicationEntry(index)} aria-label={`Remove medication ${index + 1}`}>&times;</button> : null}
+                    </header>
+                    <label className="customer-mobile-field">
+                      <span>Medication image:</span>
+                      <div className="customer-mobile-upload-row-wrap">
+                        <button type="button" className={`customer-mobile-upload-row-button ${entry.file ? "uploaded" : ""}`} onClick={() => mtmMedicationInputRefs.current.get(index)?.click()}>
+                          <span>{entry.file ? entry.file.name : "Upload medication"}</span>
+                          {entry.file ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
+                        </button>
+                        <input ref={(node) => { if (node) mtmMedicationInputRefs.current.set(index, node); else mtmMedicationInputRefs.current.delete(index); }} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" className="customer-mobile-hidden-file" onChange={(event) => handleMtmMedicationUpload(index, event.target.files?.[0], event.target)} />
+                      </div>
+                      <small className="customer-mobile-field-hint">PNG, JPG, JPEG or WebP. Maximum 5MB.</small>
+                    </label>
+                    <label className="customer-mobile-field">
+                      <span>Prescribing Doctor:</span>
+                      <input type="text" value={entry.prescribingDoctor || ""} onChange={(event) => updateMtmMedicationEntry(index, "prescribingDoctor", event.target.value)} />
+                    </label>
+                    <label className="customer-mobile-field">
+                      <span>Notes:</span>
+                      <textarea rows={4} value={entry.notes || ""} onChange={(event) => updateMtmMedicationEntry(index, "notes", event.target.value)} />
+                    </label>
+                  </section>)}
+                  {showMtmFieldError("medications") ? <small className="customer-mobile-field-error">{mtmStepErrors.medications}</small> : null}
+                  <button className="customer-mtm-inline-add-medication" type="button" onClick={addMtmMedicationEntry}><span aria-hidden="true">+</span> Add Medication</button>
+                  <div className="customer-mobile-subsection-title">
+                    <strong>Additional Medication Information</strong>
+                    <small>Answer where relevant</small>
+                  </div>
+                  <label className="customer-mobile-field">
+                    <span>Recent Medication Changes</span>
+                    <textarea rows={4} value={mtmForm.additionalInformation.recentMedicationChanges} onBlur={() => markMtmFieldBlurred("additionalInformation", "recentMedicationChanges")} onChange={(event) => updateMtmField("additionalInformation", "recentMedicationChanges", event.target.value)} />
+                  </label>
+                  <label className="customer-mobile-field">
+                    <span>Previous Medications Stopped</span>
+                    <button type="button" className={`customer-mobile-upload-row-button ${mtmPreviousMedicationFile ? "uploaded" : ""}`} onClick={() => mtmPreviousMedicationInputRef.current?.click()}>
+                      <span>{mtmPreviousMedicationFile?.name || "Upload previous medication"}</span>
+                      {mtmPreviousMedicationFile ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
+                    </button>
+                    <input ref={mtmPreviousMedicationInputRef} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" className="customer-mobile-hidden-file" onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (!isAllowedMedicalFile(file)) {
+                        setMtmStepErrors((current) => ({ ...current, previousMedicationsStopped: "Upload PNG, JPG, JPEG, or WebP images up to 5MB." }));
+                        event.target.value = "";
+                        return;
+                      }
+                      setMtmPreviousMedicationFile(file);
+                      updateMtmField("additionalInformation", "previousMedicationsStopped", file.name);
+                    }} />
+                    <small className="customer-mobile-field-hint">PNG, JPG, JPEG or WebP. Maximum 5MB.</small>
+                    {showMtmFieldError("previousMedicationsStopped") ? <small className="customer-mobile-field-error">{mtmStepErrors.previousMedicationsStopped}</small> : null}
+                  </label>
+                  {[["Reason for Discontinuation", "reasonForDiscontinuation", "Enter a reason followed by a comma"], ["OTC Medications", "otcMedications", "Enter an OTC medication followed by a comma"], ["Herbal Products", "herbalProducts", "Enter a herbal product followed by a comma"], ["Supplements", "supplements", "Enter a supplement followed by a comma"]].map(([label, key, placeholder]) => <label className="customer-mobile-field" key={key}>
+                    <span>{label}</span>
+                    <MtmTokenInput id={`mtm-${key}`} value={mtmForm.additionalInformation[key]} placeholder={placeholder} hasError={showMtmFieldError(key)} onBlur={() => markMtmFieldBlurred("additionalInformation", key)} onChange={(value) => updateMtmField("additionalInformation", key, value)} />
+                    {showMtmFieldError(key) ? <small className="customer-mobile-field-error">{mtmStepErrors[key]}</small> : null}
+                  </label>)}
+                </div> : null}
+                {false && mtmStep === 4 ? <div className="customer-mobile-form-stack">
                   {mtmMedicationEntries.length ? <div className="customer-mobile-medication-accordion">
                     {mtmMedicationEntries.map((item, index) => <details key={`${item.medicationName}-${index}`} className="customer-mobile-medication-summary">
                       <summary>
@@ -9116,7 +9206,35 @@ function CustomerMobileDashboard({
                       <input type="text" value={mtmForm.adherenceAssessment.other} className={showMtmFieldError("other") ? "has-error" : ""} onBlur={() => markMtmFieldBlurred("adherenceAssessment", "other")} onChange={(event) => updateMtmField("adherenceAssessment", "other", event.target.value)} />
                   </label> : null}
                 </div> : null}
-                {mtmStep === 6 ? <div className="customer-mobile-form-stack">
+                {mtmStep === 6 ? <div className="customer-mobile-form-stack customer-mtm-review">
+                  <header className="customer-mtm-review-intro">
+                    <small>Final check</small>
+                    <h3>Review your MTM assessment</h3>
+                    <p>Please confirm these details are correct before submitting them to the pharmacist.</p>
+                  </header>
+                  <section className="customer-mtm-review-card">
+                    <div className="customer-mtm-review-card-head"><div><small>Step 1</small><h4>Patient details</h4></div><button type="button" onClick={() => transitionToMtmStep(1)}>Edit</button></div>
+                    <dl><div><dt>Full name</dt><dd>{mtmForm.patient.name || "Not provided"}</dd></div><div><dt>Phone</dt><dd>{mtmForm.patient.phoneNumber || "Not provided"}</dd></div><div><dt>Address</dt><dd>{mtmForm.patient.address || "Not provided"}</dd></div><div><dt>Preferred contact</dt><dd>{mtmForm.patient.preferredContactMethod || "Not provided"}</dd></div></dl>
+                  </section>
+                  <section className="customer-mtm-review-card">
+                    <div className="customer-mtm-review-card-head"><div><small>Step 2</small><h4>Caregiver or next of kin</h4></div><button type="button" onClick={() => transitionToMtmStep(2)}>Edit</button></div>
+                    <dl><div><dt>Name</dt><dd>{mtmForm.emergencyContact.caregiverName || "Not provided"}</dd></div><div><dt>Relationship</dt><dd>{mtmForm.emergencyContact.relationship || "Not provided"}</dd></div><div><dt>Phone</dt><dd>{mtmForm.emergencyContact.phoneNumber || "Not provided"}</dd></div></dl>
+                  </section>
+                  <section className="customer-mtm-review-card">
+                    <div className="customer-mtm-review-card-head"><div><small>Step 3</small><h4>Clinical history</h4></div><button type="button" onClick={() => transitionToMtmStep(3)}>Edit</button></div>
+                    <dl><div><dt>Primary diagnosis</dt><dd>{mtmForm.medicalHistory.primaryDiagnosis || "Not provided"}</dd></div></dl>
+                    {[...["chronicConditions", "drugAllergies", "drugIntolerances"]].map((key) => normalizeCustomerHealthChipList(mtmForm.medicalHistory[key]).length ? <div className="customer-mtm-review-token-row" key={key}><strong>{titleCase(key.replace(/([A-Z])/g, " $1"))}</strong><div>{normalizeCustomerHealthChipList(mtmForm.medicalHistory[key]).map((token) => <span className="customer-mtm-token" key={token}>{token}</span>)}</div></div> : null)}
+                  </section>
+                  <section className="customer-mtm-review-card">
+                    <div className="customer-mtm-review-card-head"><div><small>Step 4</small><h4>Medication documents</h4></div><button type="button" onClick={() => transitionToMtmStep(4)}>Edit</button></div>
+                    <ul className="customer-mtm-review-files">{mtmMedicationEntries.map((entry, index) => <li key={`review-med-${index}`}><MobileIcon name="upload-file" /><span><strong>Medication {index + 1}</strong><small>{entry.file?.name || "Image missing"} · {entry.prescribingDoctor || "Doctor not provided"}</small></span></li>)}{mtmPreviousMedicationFile ? <li><MobileIcon name="upload-file" /><span><strong>Previous Medication Stopped</strong><small>{mtmPreviousMedicationFile.name}</small></span></li> : null}{mtmLabResultsFiles.map((file, index) => <li key={`review-lab-${index}`}><MobileIcon name="upload-file" /><span><strong>Relevant Lab Result {index + 1}</strong><small>{file.name}</small></span></li>)}</ul>
+                  </section>
+                  <section className="customer-mtm-review-card">
+                    <div className="customer-mtm-review-card-head"><div><small>Step 5</small><h4>Adherence</h4></div><button type="button" onClick={() => transitionToMtmStep(5)}>Edit</button></div>
+                    <div className="customer-mtm-review-token-row"><strong>Selected barriers</strong><div>{mtmForm.adherenceAssessment.barriers.length ? mtmForm.adherenceAssessment.barriers.map((barrier) => <span className="customer-mtm-token" key={barrier}>{barrier}</span>) : <span>None selected</span>}</div></div>
+                  </section>
+                </div> : null}
+                {false && mtmStep === 6 ? <div className="customer-mobile-form-stack">
                   <div className="detail-card info-list">
                     <div className="info-row"><span className="info-label">Name</span><span className="info-value">{mtmForm.patient.name || "Not set"}</span></div>
                     <div className="info-row"><span className="info-label">Primary Diagnosis</span><span className="info-value">{mtmForm.medicalHistory.primaryDiagnosis || "Not set"}</span></div>
@@ -9145,19 +9263,10 @@ function CustomerMobileDashboard({
                 <header className="customer-flow-status-head">
                   <CustomerStatusIcon tone="success" type="check" />
                   <h2 id="mtm-success-title">{mtmLoadingState ? "Submitting MTM assessment..." : "MTM assessment submitted successfully"}</h2>
-                  {!mtmLoadingState ? <p>Thank you for completing the MTM Patient Assessment Form. A NevariHealth pharmacist will review your submission and contact you within 24 hours.</p> : null}
+                  {!mtmLoadingState ? <p>A NevariHealth pharmacist will review your submission and contact you within 24 hours.</p> : null}
                 </header>
                 {!mtmLoadingState ? <section className="customer-flow-status-panel customer-flow-status-panel-accent" aria-label="MTM request summary">
-                  <div className="customer-flow-status-panel-head customer-flow-status-panel-head-mtm">
-                    <div className="customer-flow-status-panel-icon is-success" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none"><path d="m7.5 12.2 3 3 6-7" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    </div>
-                    <div className="customer-flow-status-panel-copy">
-                      <span>Assessment received</span>
-                      <strong>Your request is now in the pharmacist review queue.</strong>
-                    </div>
-                    <CustomerStatusPill tone="success">Received</CustomerStatusPill>
-                  </div>
+                  
                   <CustomerStatusKeyValueList rows={[
                     { label: "Request ID", value: activeMtm?.request_reference || `MTM-${String(activeMtm?.id || "").padStart(6, "0")}` },
                     { label: "Status", value: titleCase(activeMtmStatus || "submitted") },
@@ -9181,9 +9290,7 @@ function CustomerMobileDashboard({
                   }}>View Request Status</button>
                   <button className="customer-mobile-secondary-button" type="button" onClick={() => goToPage("overview")}>Back to Dashboard</button>
                 </CustomerStatusActions> : null}
-                {!mtmLoadingState ? <CustomerStatusSecurityNote tone="success">
-                  Your submission is secure and only used to process your MTM request.
-                </CustomerStatusSecurityNote> : null}
+                
               </section>
             </div> : null}
             {mtmTab === "history" ? <section className="customer-mobile-list-section customer-mobile-appointment-pane">
@@ -9254,9 +9361,6 @@ function CustomerMobileDashboard({
           </section>
         </SubscriptionGate>
       </main>
-      {!embeddedDesktop && mtmTab === "request" && !showMtmSuccessState && mtmStep === 4 && typeof document !== "undefined" ? createPortal(<div className="customer-mtm-floating-add-dock">
-        <button className="customer-mobile-add-medication-button" type="button" onClick={addMtmMedicationEntry}><span aria-hidden="true">+</span> Add Medication</button>
-      </div>, document.body) : null}
     </div>;
   }
 
@@ -9318,7 +9422,7 @@ function CustomerMobileDashboard({
           <div className="customer-profile-card-head">
             <div>
               <span>Personal Details</span>
-              <small>Keep your main contact details up to date. Select any field and edit it directly.</small>
+              
             </div>
           </div>
           <label className="customer-mobile-field">
@@ -9345,13 +9449,13 @@ function CustomerMobileDashboard({
           {customerSettingsSaveStatus === "saving" ? <small className="customer-mobile-save-status">Saving profile...</small> : null}
           {customerSettingsSaveStatus === "saved" ? <small className="customer-mobile-save-success">Profile saved.</small> : null}
           {customerSettingsSaveStatus === "error" && customerSettingsSaveError ? <small className="customer-mobile-field-error">{customerSettingsSaveError}</small> : null}
-          <div className="customer-profile-inline-actions"><button type="button" className="pill-button tertiary" onClick={() => { setMobileProfileDraft(normalizeCustomerSettingsPayload(settings)); setMobileProfileErrors({}); }} disabled={customerSettingsSaveStatus === "saving"}>Cancel</button><button type="button" className="pill-button" onClick={() => { void saveMobileProfileChanges(); }} disabled={customerSettingsSaveStatus === "saving"}>{customerSettingsSaveStatus === "saving" ? <span className="appointment-cta-spinner" aria-label="Saving profile" /> : "Save Changes"}</button></div>
+          {mobileProfileDirty ? <div className="customer-profile-inline-actions"><button type="button" className="pill-button tertiary" onClick={() => { setMobileProfileDraft(normalizeCustomerSettingsPayload(settings)); setMobileProfileErrors({}); }} disabled={customerSettingsSaveStatus === "saving"}>Cancel</button><button type="button" className="pill-button" onClick={() => { void saveMobileProfileChanges(); }} disabled={customerSettingsSaveStatus === "saving"}>{customerSettingsSaveStatus === "saving" ? <span className="appointment-cta-spinner" aria-label="Saving profile" /> : "Save Changes"}</button></div> : null}
           </section>
           <article className="customer-profile-mobile-section customer-profile-card customer-mobile-health-card customer-profile-mobile-health-card">
             <div className="customer-profile-card-head">
               <div>
                 <span>Key Health Records</span>
-                <small>Your health information is private and is used only to support your care experience.</small>
+                <small> </small>
               </div>
             </div>
             
@@ -9365,7 +9469,7 @@ function CustomerMobileDashboard({
             {customerSettingsSaveStatus === "saving" ? <small className="customer-mobile-save-status">Saving health records...</small> : null}
             {customerSettingsSaveStatus === "saved" ? <small className="customer-mobile-save-success">Health records saved.</small> : null}
             {customerSettingsSaveStatus === "error" && customerSettingsSaveError ? <small className="customer-mobile-field-error">{customerSettingsSaveError}</small> : null}
-            <div className="customer-profile-mobile-health-actions"><button type="button" className="pill-button" onClick={() => { void saveMobileHealthRecords(); }} disabled={customerSettingsSaveStatus === "saving"}>{customerSettingsSaveStatus === "saving" ? <span className="appointment-cta-spinner" aria-label="Saving health records" /> : "Save health records"}</button></div>
+            {mobileHealthDirty ? <div className="customer-profile-mobile-health-actions"><button type="button" className="pill-button tertiary" onClick={() => { setMobileHealthDraft(normalizeCustomerSettingsPayload(settings)); setMobileHealthErrors({}); }} disabled={customerSettingsSaveStatus === "saving"}>Cancel</button><button type="button" className="pill-button" onClick={() => { void saveMobileHealthRecords(); }} disabled={customerSettingsSaveStatus === "saving"}>{customerSettingsSaveStatus === "saving" ? <span className="appointment-cta-spinner" aria-label="Saving health records" /> : "Save health records"}</button></div> : null}
           </article>
         </section> : <section className="customer-mobile-panel customer-mobile-toggle-panel customer-profile-mobile-notification-panel">
           {CUSTOMER_NOTIFICATION_OPTIONS.map(([key, label]) => (
@@ -10024,22 +10128,28 @@ function CustomerMobileBookCalendar({
   </section>;
 }
 
+function AppointmentBookingButton({ onClick, className = "", label = "Book an appointment" }) {
+  return <button className={`appointment-booking-cta ${className}`.trim()} type="button" onClick={onClick}>
+    <span className="appointment-booking-cta-label">{label}</span>
+    <span className="appointment-booking-cta-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M22 16.92V20A2 2 0 0 1 19.82 22C10.95 21.36 3.64 14.05 3 5.18A2 2 0 0 1 5 3H8.09A2 2 0 0 1 10.04 4.63L10.7 7.86A2 2 0 0 1 10.13 9.81L8.91 11.03A16 16 0 0 0 12.97 15.09L14.19 13.87A2 2 0 0 1 16.14 13.3L19.37 13.96A2 2 0 0 1 21 15.91V16.92Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+    </span>
+  </button>;
+}
+
 function CustomerMobileEmptyState({ message, ctaLabel, onCta, icon = "appointments", illustrationSrc = "", ctaStyle = "" }) {
   const isAppointmentCta = ctaStyle === "appointment";
   return <div className="customer-mobile-empty-state">
     {illustrationSrc ? <img className="customer-mobile-empty-illustration" src={illustrationSrc} alt="" aria-hidden="true" /> : <div className="customer-mobile-empty-icon"><MobileIcon name={icon} /></div>}
     <p>{message}</p>
-    {ctaLabel && onCta ? <button className={`${ctaStyle === "shop" ? "shop-medicine-btn" : `customer-mobile-empty-button ${ctaStyle ? `is-${ctaStyle}` : ""}`}`.trim()} type="button" onClick={onCta}>
-      <span>{ctaLabel}</span>
-      <span className={ctaStyle === "shop" ? "shop-medicine-icon" : "customer-mobile-empty-button-icon"}>
-        {isAppointmentCta ? <svg className="customer-mobile-empty-phone-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M22 16.92V20A2 2 0 0 1 19.82 22C10.95 21.36 3.64 14.05 3 5.18A2 2 0 0 1 5 3H8.09A2 2 0 0 1 10.04 4.63L10.7 7.86A2 2 0 0 1 10.13 9.81L8.91 11.03A16 16 0 0 0 12.97 15.09L14.19 13.87A2 2 0 0 1 16.14 13.3L19.37 13.96A2 2 0 0 1 21 15.91V16.92Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        </svg> : <MobileIcon name={ctaStyle === "shop" ? "arrow-up-right" : (icon === "orders" ? "arrow-right" : "phone")} />}
-      </span>
-    </button> : null}
+    {ctaLabel && onCta ? (isAppointmentCta
+      ? <AppointmentBookingButton onClick={onCta} label={ctaLabel} />
+      : <button className={ctaStyle === "shop" ? "shop-medicine-btn" : `customer-mobile-empty-button ${ctaStyle ? `is-${ctaStyle}` : ""}`.trim()} type="button" onClick={onCta}>
+        <span>{ctaLabel}</span>
+        <span className={ctaStyle === "shop" ? "shop-medicine-icon" : "customer-mobile-empty-button-icon"}><MobileIcon name={ctaStyle === "shop" ? "arrow-up-right" : (icon === "orders" ? "arrow-right" : "phone")} /></span>
+      </button>) : null}
   </div>;
 }
-
 function CustomerMobileSkeleton({ page }) {
   return <div className="customer-mobile-app">
     <main className="customer-mobile-frame">
@@ -10081,4 +10191,3 @@ function MobileIcon({ name }) {
   };
   return <HugeiconsIcon icon={iconMap[name] || UserIcon} size={20} strokeWidth={1.7} />;
 }
-

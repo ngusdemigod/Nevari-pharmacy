@@ -601,6 +601,19 @@ final class Nevari_Rest {
                 return $user_id > 0 && Nevari_Helpers::is_patient($user_id);
             },
         ]);
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/dashboard/patient/search', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'dashboard_patient_search'],
+            'permission_callback' => static function () {
+                $user_id = Nevari_Auth::api_session_user_id();
+                return $user_id > 0 && Nevari_Helpers::is_patient($user_id);
+            },
+            'args' => [
+                'q' => ['required' => true, 'sanitize_callback' => 'sanitize_text_field'],
+                'limit' => ['required' => false, 'default' => 20, 'sanitize_callback' => 'absint'],
+            ],
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/dashboard/doctor', [
             'methods' => WP_REST_Server::READABLE,
             'callback' => [__CLASS__, 'dashboard_doctor'],
@@ -6236,6 +6249,96 @@ final class Nevari_Rest {
             'created_at' => Nevari_Helpers::iso_datetime($row->created_at),
             'updated_at' => Nevari_Helpers::iso_datetime($row->updated_at),
         ];
+    }
+
+    public static function dashboard_patient_search(WP_REST_Request $request): WP_REST_Response {
+        global $wpdb;
+
+        $user_id = Nevari_Auth::api_session_user_id();
+        if ($response = Nevari_Helpers::rate_limit('rest_patient_search', 60, MINUTE_IN_SECONDS, ['user:' . $user_id])) {
+            return $response;
+        }
+        $query = trim(sanitize_text_field((string) $request->get_param('q')));
+        $query_length = function_exists('mb_strlen') ? mb_strlen($query) : strlen($query);
+        if ($query_length < 3 || $query_length > 80) {
+            return Nevari_Helpers::error('invalid_search_query', 'Enter between 3 and 80 characters.', 422);
+        }
+
+        $limit = min(30, max(1, absint($request->get_param('limit') ?: 20)));
+        $per_group = min(6, $limit);
+        $like = '%' . $wpdb->esc_like($query) . '%';
+        $items = [];
+        $append = static function (array $item) use (&$items, $limit): void {
+            if (count($items) >= $limit) return;
+            $summary = sanitize_text_field((string) ($item['summary'] ?? $item['meta'] ?? ''));
+            $items[] = [
+                'type' => sanitize_key((string) ($item['type'] ?? 'page')),
+                'id' => sanitize_text_field((string) ($item['id'] ?? '')),
+                'area' => sanitize_text_field((string) ($item['area'] ?? 'Dashboard')),
+                'title' => sanitize_text_field((string) ($item['title'] ?? 'Result')),
+                'summary' => $summary,
+                'meta' => $summary,
+                'status' => sanitize_key((string) ($item['status'] ?? '')),
+                'occurred_at' => sanitize_text_field((string) ($item['occurred_at'] ?? '')),
+                'destination' => sanitize_key((string) ($item['destination'] ?? 'overview')),
+            ];
+        };
+        $matches = static function (string $value) use ($query): bool { return stripos($value, $query) !== false; };
+
+        if (function_exists('wc_get_orders')) {
+            foreach (wc_get_orders(['customer_id' => $user_id, 'limit' => $per_group, 'search' => '*' . $query . '*', 'orderby' => 'date', 'order' => 'DESC']) as $order) {
+                if (!is_a($order, 'WC_Order')) continue;
+                $append(['type' => 'order', 'id' => (string) $order->get_id(), 'area' => 'Orders', 'title' => 'Order #' . $order->get_order_number(), 'meta' => $order->get_currency() . ' ' . wc_format_decimal($order->get_total(), 2) . ' · ' . wc_get_order_status_name($order->get_status()), 'destination' => 'orders']);
+            }
+        }
+
+        $definitions = [
+            ['appointments', 'patient_user_id', 'id, doctor_user_id, title, status, start_at', 'CAST(id AS CHAR) LIKE %s OR title LIKE %s OR status LIKE %s OR start_at LIKE %s', 'start_at', 'appointment', 'Appointments', 'appointment'],
+            ['prescriptions', 'patient_user_id', 'id, prescription_number, status, updated_at', 'prescription_number LIKE %s OR status LIKE %s OR updated_at LIKE %s', 'updated_at', 'prescription', 'Prescriptions', 'orders'],
+            ['mtm_requests', 'customer_user_id', 'id, request_reference, status, created_at', 'CAST(id AS CHAR) LIKE %s OR request_reference LIKE %s OR status LIKE %s OR created_at LIKE %s', 'created_at', 'mtm', 'MTM', 'therapy'],
+            ['subscription_payments', 'user_id', 'id, reference, status, amount_kobo, currency, created_at', 'reference LIKE %s OR status LIKE %s OR created_at LIKE %s', 'created_at', 'subscription_payment', 'Payments', 'subscription'],
+        ];
+        foreach ($definitions as [$table_key, $owner_column, $columns, $where, $order_column, $type, $area, $destination]) {
+            $like_count = substr_count($where, '%s');
+            $sql = "SELECT {$columns} FROM " . Nevari_Helpers::table($table_key) . " WHERE {$owner_column} = %d AND ({$where}) ORDER BY {$order_column} DESC LIMIT %d";
+            $args = array_merge([$user_id], array_fill(0, $like_count, $like), [$per_group]);
+            foreach ($wpdb->get_results($wpdb->prepare($sql, ...$args)) as $row) {
+                if ($type === 'appointment') {
+                    $doctor = get_userdata((int) $row->doctor_user_id);
+                    $title = $row->title ?: 'Appointment #' . $row->id;
+                    $meta = $row->start_at . ' · ' . ($doctor instanceof WP_User ? $doctor->display_name : 'Doctor') . ' · ' . $row->status;
+                } elseif ($type === 'prescription') {
+                    $title = 'Prescription ' . $row->prescription_number;
+                    $meta = $row->status . ' · ' . $row->updated_at;
+                } elseif ($type === 'mtm') {
+                    $title = 'MTM request ' . ($row->request_reference ?: '#' . $row->id);
+                    $meta = $row->status . ' · ' . $row->created_at;
+                } else {
+                    $title = 'Payment ' . $row->reference;
+                    $meta = $row->currency . ' ' . number_format(((int) $row->amount_kobo) / 100, 2) . ' · ' . $row->status;
+                }
+                $append(['type' => $type, 'id' => (string) $row->id, 'area' => $area, 'title' => $title, 'meta' => $meta, 'destination' => $destination]);
+            }
+        }
+
+        foreach ([['nevari_iv_therapy_requests', 'iv_therapy', 'IV Therapy', 'iv-therapy'], ['nevari_nurse_requests', 'nurse_request', 'Nurse Requests', 'nurse-request']] as [$meta_key, $type, $area, $destination]) {
+            $stored = get_user_meta($user_id, $meta_key, true);
+            if (!is_array($stored)) continue;
+            $matched = 0;
+            foreach (array_reverse($stored) as $stored_item) {
+                if (!is_array($stored_item) || $matched >= $per_group) continue;
+                $id = sanitize_text_field((string) ($stored_item['id'] ?? ''));
+                $title = sanitize_text_field((string) ($stored_item['title'] ?? $stored_item['careType'] ?? ($type === 'iv_therapy' ? 'IV Therapy Request' : 'Nurse Visit Request')));
+                $status = sanitize_key((string) ($stored_item['status'] ?? 'submitted'));
+                $date = sanitize_text_field((string) ($stored_item['submittedAt'] ?? $stored_item['createdAt'] ?? $stored_item['updatedAt'] ?? ''));
+                $reference = sanitize_text_field((string) ($stored_item['requestReference'] ?? ''));
+                if (!$matches($id . ' ' . $title . ' ' . $status . ' ' . $date . ' ' . $reference)) continue;
+                $append(['type' => $type, 'id' => $id, 'area' => $area, 'title' => $title . ($reference ? ' ' . $reference : ''), 'meta' => $status . ($date ? ' · ' . $date : ''), 'destination' => $destination]);
+                $matched++;
+            }
+        }
+
+        return Nevari_Helpers::success(['query' => $query, 'items' => $items, 'count' => count($items)]);
     }
 
     public static function dashboard_patient(WP_REST_Request $request): WP_REST_Response {

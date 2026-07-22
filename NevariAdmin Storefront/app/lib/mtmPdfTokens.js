@@ -22,15 +22,17 @@ function signingSecret() {
   const secret = String(
     process.env.NEVARI_MTM_PDF_SIGNING_SECRET
     || process.env.NEVARI_PROXY_SIGNING_SECRET
-    || process.env.NEVARI_JWT_SECRET
-    || process.env.JWT_SECRET
     || ""
   ).trim();
   return secret;
 }
 
 function signPayload(encodedPayload) {
-  return createHmac("sha256", signingSecret()).update(encodedPayload).digest();
+  const secret = signingSecret();
+  if (secret.length < 32) {
+    throw new Error("MTM PDF signing is not configured.");
+  }
+  return createHmac("sha256", secret).update(encodedPayload).digest();
 }
 
 function requestReferenceValue(requestData) {
@@ -60,8 +62,7 @@ export function createMtmPdfSnapshotToken(requestData, options = {}) {
     exp: expiresAt,
   };
   const encodedPayload = base64urlEncode(JSON.stringify(payload));
-  const secret = signingSecret();
-  const signature = secret ? base64urlEncode(createHmac("sha256", secret).update(encodedPayload).digest()) : "unsigned";
+  const signature = base64urlEncode(signPayload(encodedPayload));
   return {
     token: `${encodedPayload}.${signature}`,
     fingerprint,
@@ -76,12 +77,13 @@ export function verifyMtmPdfSnapshotToken(token) {
     throw new Error("Invalid MTM PDF snapshot token.");
   }
   const secret = signingSecret();
-  if (encodedSignature !== "unsigned" && secret) {
-    const expectedSignature = createHmac("sha256", secret).update(encodedPayload).digest();
-    const actualSignature = base64urlDecode(encodedSignature);
-    if (expectedSignature.length !== actualSignature.length || !timingSafeEqual(expectedSignature, actualSignature)) {
-      throw new Error("Invalid MTM PDF snapshot token signature.");
-    }
+  if (secret.length < 32 || encodedSignature === "unsigned") {
+    throw new Error("MTM PDF signing is not configured.");
+  }
+  const expectedSignature = signPayload(encodedPayload);
+  const actualSignature = base64urlDecode(encodedSignature);
+  if (expectedSignature.length !== actualSignature.length || !timingSafeEqual(expectedSignature, actualSignature)) {
+    throw new Error("Invalid MTM PDF snapshot token signature.");
   }
   const payload = JSON.parse(base64urlDecode(encodedPayload).toString("utf8"));
   if (!payload || payload.purpose !== MTM_PDF_TOKEN_PURPOSE) {

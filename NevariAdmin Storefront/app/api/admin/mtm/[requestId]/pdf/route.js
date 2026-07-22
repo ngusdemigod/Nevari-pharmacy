@@ -1,5 +1,6 @@
-import { auditMtmPdfEvent, generateMtmTemplatePdf } from "../../../../../lib/mtmPdf";
+import { auditMtmPdfEvent } from "../../../../../lib/mtmPdf";
 import { isAllowedUrl, isValidId, sanitizeText } from "../../../../../lib/inputValidation";
+import { proxyRawRequest } from "../../../../mtm/_server.js";
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -113,23 +114,20 @@ export async function GET(request, { params }) {
       return Response.json({ success: false, error: { message: "MTM request could not be loaded." } }, { status: 404 });
     }
 
-    const generated = await generateMtmTemplatePdf(data, { mode: "cached" });
+    const upstream = await proxyRawRequest(url.origin, session, `/mtm-requests/${encodeURIComponent(requestId)}/document`, {
+      headers: { Accept: "application/pdf" },
+    });
     await auditMtmPdfEvent(request, {
       requestId: Number(data?.id || requestId),
       actorUserId: viewerUserId(viewer),
       actorRole: viewerRole,
-      result: generated.cacheHit ? "cache_hit" : "generated",
+      result: upstream.ok ? "canonical_download" : "canonical_unavailable",
       requestReference: data?.request_reference || "",
-      storagePath: generated.storagePath || "",
     });
-
-    return new Response(generated.pdf, {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename=\"${generated.filename}\"`,
-        "Cache-Control": "private, no-store",
-      },
-    });
+    const headers = new Headers(upstream.headers);
+    headers.set("Cache-Control", "private, no-store");
+    headers.set("X-Content-Type-Options", "nosniff");
+    return new Response(upstream.body, { status: upstream.status, headers });
   } catch (error) {
     await auditMtmPdfEvent(request, {
       requestId,

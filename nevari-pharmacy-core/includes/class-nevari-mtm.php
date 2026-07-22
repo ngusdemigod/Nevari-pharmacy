@@ -14,9 +14,12 @@ final class Nevari_Mtm {
     private const STATUS_COMPLETED = 'completed';
     private const ACTIVE_STATUSES = ['submitted', 'under_review', 'approved', 'scheduled', 'treatment_completed', 'follow_up'];
     private const MTM_DURATION_MINUTES = 30;
+    private const PDF_MAX_BYTES = 41943040;
+    private const PDF_VERSION = 'mtm-v1';
 
     public static function init(): void {
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
+        add_filter('rest_pre_serve_request', [__CLASS__, 'serve_private_document'], 10, 4);
         add_action('nevari_mtm_end_meet_space', [__CLASS__, 'end_meet_space_for_request'], 10, 1);
     }
 
@@ -54,7 +57,15 @@ final class Nevari_Mtm {
             [
                 'methods' => WP_REST_Server::CREATABLE,
                 'callback' => [__CLASS__, 'customer_submission_pdf'],
-                'permission_callback' => [__CLASS__, 'customer_permission'],
+                'permission_callback' => [__CLASS__, 'submission_pdf_permission'],
+            ],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/mtm-requests/(?P<id>\d+)/document', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'document_download'],
+                'permission_callback' => [__CLASS__, 'document_permission'],
             ],
         ]);
 
@@ -134,6 +145,30 @@ final class Nevari_Mtm {
 
     public static function pharmacist_permission(): bool {
         return Nevari_Auth::api_session_required() && (Nevari_Helpers::is_pharmacist() || Nevari_Helpers::is_store_admin());
+    }
+
+    public static function submission_pdf_permission(WP_REST_Request $request): bool {
+        if (!Nevari_Auth::api_session_required()) {
+            return false;
+        }
+        $row = self::get_request(absint($request['id']));
+        return $row && (int) $row->customer_user_id === Nevari_Auth::api_session_user_id();
+    }
+
+    public static function document_permission(WP_REST_Request $request): bool {
+        if (!Nevari_Auth::api_session_required()) {
+            return false;
+        }
+        $row = self::get_request(absint($request['id']));
+        if (!$row) {
+            return false;
+        }
+        $user_id = Nevari_Auth::api_session_user_id();
+        if ((int) $row->customer_user_id === $user_id || Nevari_Helpers::is_store_admin($user_id)) {
+            return true;
+        }
+        return Nevari_Helpers::is_pharmacist($user_id)
+            && (int) ($row->assigned_pharmacist_user_id ?? 0) === $user_id;
     }
 
     private static function customer_has_access(): bool {
@@ -451,7 +486,7 @@ final class Nevari_Mtm {
         if (is_string($proxy_env) && trim($proxy_env) !== '') {
             return trim($proxy_env);
         }
-        return Nevari_Helpers::jwt_secret();
+        return '';
     }
 
     private static function normalize_email_attachments(array $attachments): array {
@@ -489,11 +524,13 @@ final class Nevari_Mtm {
             return ['valid' => false, 'code' => 'invalid_token'];
         }
         [$encoded, $signature] = $parts;
-        if ($signature !== 'unsigned') {
-            $expected = Nevari_Helpers::base64url_encode(hash_hmac('sha256', $encoded, self::pdf_signing_secret(), true));
-            if (!hash_equals($expected, $signature)) {
-                $signature = 'unsigned';
-            }
+        $secret = self::pdf_signing_secret();
+        if ($secret === '' || strlen($secret) < 32 || $signature === '' || $signature === 'unsigned') {
+            return ['valid' => false, 'code' => 'signing_unavailable'];
+        }
+        $expected = Nevari_Helpers::base64url_encode(hash_hmac('sha256', $encoded, $secret, true));
+        if (!hash_equals($expected, $signature)) {
+            return ['valid' => false, 'code' => 'invalid_signature'];
         }
         $payload = json_decode(Nevari_Helpers::base64url_decode($encoded), true);
         if (!is_array($payload) || ($payload['purpose'] ?? '') !== 'mtm_submission_pdf') {
@@ -561,6 +598,15 @@ final class Nevari_Mtm {
             'adherence_assessment' => self::decode_json($row->adherence_assessment_data ?? '[]'),
             'additional_information' => self::decode_json($row->additional_information_data ?? '[]'),
             'attachments' => self::decode_json($row->attachments_json ?? '[]'),
+            'document' => [
+                'status' => sanitize_key((string) ($row->submission_pdf_status ?? 'pending')) ?: 'pending',
+                'available' => (string) ($row->submission_pdf_status ?? '') === 'ready',
+                'download_path' => (string) ($row->submission_pdf_status ?? '') === 'ready'
+                    ? '/mtm-requests/' . (int) $row->id . '/document'
+                    : '',
+                'size' => (int) ($row->submission_pdf_size ?? 0),
+                'created_at' => (string) ($row->submission_pdf_created_at ?? ''),
+            ],
             'action_plan' => self::decode_json($row->action_plan_json ?? '[]'),
             'attached_products' => self::decode_json($row->attached_products_json ?? '[]'),
             'consultation_notes' => self::decode_json($row->consultation_notes_json ?? '[]'),
@@ -735,6 +781,33 @@ final class Nevari_Mtm {
         }
         $user_id = Nevari_Auth::api_session_user_id();
         $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];
+        $raw_attachments = is_array($body['attachments'] ?? null) ? array_values($body['attachments']) : [];
+        if (count($raw_attachments) > 8) {
+            return Nevari_Helpers::error('invalid_mtm_attachments', 'A maximum of 8 MTM images may be uploaded.', 422);
+        }
+        $attachments = [];
+        $allowed_attachment_types = ['image/png', 'image/jpeg', 'image/webp'];
+        $allowed_attachment_categories = ['medication', 'previous_medication', 'lab_result'];
+        foreach ($raw_attachments as $attachment) {
+            if (!is_array($attachment)) {
+                return Nevari_Helpers::error('invalid_mtm_attachment', 'Invalid MTM image metadata.', 422);
+            }
+            $name = sanitize_file_name((string) ($attachment['name'] ?? ''));
+            $type = sanitize_mime_type((string) ($attachment['type'] ?? ''));
+            $size = absint($attachment['size'] ?? 0);
+            $category = sanitize_key((string) ($attachment['category'] ?? ''));
+            $heading = sanitize_text_field((string) ($attachment['heading'] ?? ''));
+            if (!$name || !preg_match('/\\\\.(png|jpe?g|webp)$/i', $name) || !in_array($type, $allowed_attachment_types, true) || $size < 1 || $size > 5 * MB_IN_BYTES || !in_array($category, $allowed_attachment_categories, true) || !$heading) {
+                return Nevari_Helpers::error('invalid_mtm_attachment', 'MTM images must be PNG, JPG, JPEG, or WebP and no larger than 5MB.', 422);
+            }
+            $attachments[] = [
+                'name' => $name,
+                'type' => $type,
+                'size' => $size,
+                'category' => $category,
+                'heading' => substr($heading, 0, 120),
+            ];
+        }
         $defer_submission_notifications = !empty($body['defer_submission_notifications']);
         $assigned = self::select_pharmacist();
         $request_id = self::insert_request($user_id, [
@@ -747,7 +820,7 @@ final class Nevari_Mtm {
             'medication_profile' => self::sanitize_deep(is_array($body['medication_profile'] ?? null) ? $body['medication_profile'] : []),
             'adherence_assessment' => self::sanitize_deep(is_array($body['adherence_assessment'] ?? null) ? $body['adherence_assessment'] : []),
             'additional_information' => self::sanitize_deep(is_array($body['additional_information'] ?? null) ? $body['additional_information'] : []),
-            'attachments' => self::sanitize_deep(is_array($body['attachments'] ?? null) ? $body['attachments'] : []),
+            'attachments' => $attachments,
         ]);
         $row = self::get_request($request_id);
         if ($row && !$defer_submission_notifications) {
@@ -759,39 +832,75 @@ final class Nevari_Mtm {
         ]);
     }
 
+    private static function private_pdf_root(): string {
+        if (defined('NEVARI_MTM_PRIVATE_STORAGE_DIR') && is_string(NEVARI_MTM_PRIVATE_STORAGE_DIR) && trim(NEVARI_MTM_PRIVATE_STORAGE_DIR) !== '') {
+            return wp_normalize_path(rtrim(NEVARI_MTM_PRIVATE_STORAGE_DIR, '/\\'));
+        }
+        return wp_normalize_path(dirname(rtrim(ABSPATH, '/\\')) . '/nevari-private/mtm');
+    }
+
+    private static function ensure_private_pdf_root(): bool {
+        $root = self::private_pdf_root();
+        if (!is_dir($root) && !wp_mkdir_p($root)) {
+            return false;
+        }
+        $guards = [
+            '.htaccess' => "Require all denied\nDeny from all\n",
+            'web.config' => '<?xml version="1.0"?><configuration><system.webServer><authorization><deny users="*" /></authorization></system.webServer></configuration>',
+            'index.php' => "<?php\nhttp_response_code(404);\nexit;\n",
+        ];
+        foreach ($guards as $name => $contents) {
+            $path = $root . '/' . $name;
+            if (!file_exists($path)) {
+                @file_put_contents($path, $contents, LOCK_EX);
+            }
+        }
+        return is_dir($root) && is_writable($root);
+    }
+
+    private static function stored_pdf_path(object $row): string {
+        $name = sanitize_file_name((string) ($row->submission_pdf_path ?? ''));
+        if ($name === '' || !preg_match('/^[a-zA-Z0-9_-]+\.pdf$/', $name)) {
+            return '';
+        }
+        $root = self::private_pdf_root();
+        $path = wp_normalize_path($root . '/' . $name);
+        return strpos($path, $root . '/') === 0 ? $path : '';
+    }
+
+    private static function valid_stored_pdf(object $row): bool {
+        $path = self::stored_pdf_path($row);
+        $expected_hash = strtolower((string) ($row->submission_pdf_hash ?? ''));
+        $expected_size = (int) ($row->submission_pdf_size ?? 0);
+        if ((string) ($row->submission_pdf_status ?? '') !== 'ready' || $path === '' || !is_file($path)) {
+            return false;
+        }
+        $actual_size = filesize($path);
+        return $expected_size > 0
+            && $actual_size === $expected_size
+            && preg_match('/^[a-f0-9]{64}$/', $expected_hash)
+            && hash_equals($expected_hash, (string) hash_file('sha256', $path));
+    }
+
+    private static function mark_pdf_failed(int $request_id): void {
+        global $wpdb;
+        $wpdb->update(self::table(), [
+            'submission_pdf_status' => 'failed',
+            'updated_at' => self::now(),
+        ], ['id' => $request_id], ['%s', '%s'], ['%d']);
+    }
+
     public static function customer_submission_pdf(WP_REST_Request $request): WP_REST_Response {
+        global $wpdb;
         if (!self::table_ready()) {
             return Nevari_Helpers::error('mtm_unavailable', 'MTM requests are temporarily unavailable. Please contact support.', 503);
         }
-        $row = self::get_request((int) $request['id']);
+        $request_id = absint($request['id']);
+        $row = self::get_request($request_id);
         if (!$row) {
             return Nevari_Helpers::error('mtm_request_not_found', 'MTM request not found.', 404);
         }
-        $user_id = Nevari_Auth::api_session_user_id();
-        if ((int) $row->customer_user_id !== $user_id) {
-            return Nevari_Helpers::error('forbidden', 'You cannot manage this MTM request.', 403);
-        }
-        $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];
-        $snapshot_token = sanitize_text_field((string) ($body['snapshot_token'] ?? ''));
-        $snapshot_fingerprint = sanitize_text_field((string) ($body['snapshot_fingerprint'] ?? ''));
-        if ($snapshot_token === '' || $snapshot_fingerprint === '') {
-            return Nevari_Helpers::error('validation_error', 'Snapshot token and fingerprint are required.', 422);
-        }
-        if (!self::verify_submission_snapshot_token($row, $snapshot_token, $snapshot_fingerprint)) {
-            return Nevari_Helpers::error('invalid_snapshot_token', 'The MTM PDF snapshot token is invalid or expired.', 403);
-        }
-
-        $attachments = self::normalize_email_attachments(
-            isset($body['submission_email_attachments']) && is_array($body['submission_email_attachments'])
-                ? $body['submission_email_attachments']
-                : []
-        );
-        if (!$attachments) {
-            return Nevari_Helpers::error('validation_error', 'A verified PDF attachment is required.', 422);
-        }
-
-        $dispatch_key = self::submission_dispatch_option_key((int) $row->id);
-        if (!empty(get_option($dispatch_key))) {
+        if (self::valid_stored_pdf($row)) {
             return Nevari_Helpers::success([
                 'request' => self::payload_from_request($row),
                 'status' => (string) ($row->status ?? self::STATUS_SUBMITTED),
@@ -799,17 +908,161 @@ final class Nevari_Mtm {
             ]);
         }
 
-        self::dispatch_request_submission_notifications($row, [
-            'customer_attachments' => $attachments,
-            'pharmacist_attachments' => $attachments,
-        ]);
-        update_option($dispatch_key, self::now(), false);
+        $snapshot_token = sanitize_text_field((string) $request->get_header('x-nevari-mtm-snapshot-token'));
+        $snapshot_fingerprint = sanitize_text_field((string) $request->get_header('x-nevari-mtm-snapshot-fingerprint'));
+        $expected_hash = strtolower(sanitize_text_field((string) $request->get_header('x-nevari-content-sha256')));
+        $content_type = strtolower(trim((string) $request->get_header('content-type')));
+        if ($snapshot_token === '' || $snapshot_fingerprint === '' || !preg_match('/^[a-f0-9]{64}$/', $expected_hash)) {
+            return Nevari_Helpers::error('validation_error', 'Verified PDF metadata is required.', 422);
+        }
+        if (strpos($content_type, 'application/pdf') !== 0) {
+            return Nevari_Helpers::error('invalid_pdf', 'The submitted document must be a PDF.', 422);
+        }
+        if (!self::verify_submission_snapshot_token($row, $snapshot_token, $snapshot_fingerprint)) {
+            return Nevari_Helpers::error('invalid_snapshot_token', 'The MTM PDF snapshot token is invalid or expired.', 403);
+        }
 
+        $pdf = (string) $request->get_body();
+        $size = strlen($pdf);
+        if ($size < 8 || $size > self::PDF_MAX_BYTES || substr($pdf, 0, 5) !== '%PDF-' || strpos(substr($pdf, -2048), '%%EOF') === false) {
+            return Nevari_Helpers::error('invalid_pdf', 'The submitted MTM PDF is invalid or exceeds the size limit.', 422);
+        }
+        $actual_hash = hash('sha256', $pdf);
+        if (!hash_equals($expected_hash, $actual_hash)) {
+            return Nevari_Helpers::error('invalid_pdf_checksum', 'The submitted MTM PDF failed integrity validation.', 422);
+        }
+        if (!self::ensure_private_pdf_root()) {
+            self::mark_pdf_failed($request_id);
+            return Nevari_Helpers::error('document_storage_unavailable', 'The MTM document could not be stored securely.', 503);
+        }
+
+        $stale_before = gmdate('Y-m-d H:i:s', time() - 10 * MINUTE_IN_SECONDS);
+        $claimed = $wpdb->query($wpdb->prepare(
+            "UPDATE " . self::table() . " SET submission_pdf_status = 'processing', updated_at = %s WHERE id = %d AND (submission_pdf_status IN ('pending', 'failed') OR (submission_pdf_status = 'processing' AND updated_at < %s))",
+            self::now(),
+            $request_id,
+            $stale_before
+        ));
+        if ($claimed !== 1) {
+            $current = self::get_request($request_id);
+            if ($current && self::valid_stored_pdf($current)) {
+                return Nevari_Helpers::success(['request' => self::payload_from_request($current), 'notifications' => 'already_dispatched']);
+            }
+            return Nevari_Helpers::error('document_finalization_in_progress', 'The MTM document is already being finalized.', 409);
+        }
+
+        try {
+            $token = bin2hex(random_bytes(16));
+        } catch (Exception $exception) {
+            $token = wp_generate_password(32, false, false);
+        }
+        $filename = 'mtm-' . $request_id . '-' . preg_replace('/[^a-zA-Z0-9_-]/', '', $token) . '.pdf';
+        $root = self::private_pdf_root();
+        $temporary = $root . '/.' . $filename . '.tmp';
+        $destination = $root . '/' . $filename;
+        $written = @file_put_contents($temporary, $pdf, LOCK_EX);
+        unset($pdf);
+        if ($written !== $size || !@rename($temporary, $destination)) {
+            @unlink($temporary);
+            self::mark_pdf_failed($request_id);
+            return Nevari_Helpers::error('document_storage_failed', 'The MTM document could not be stored securely.', 500);
+        }
+
+        $updated = $wpdb->update(self::table(), [
+            'submission_pdf_status' => 'ready',
+            'submission_pdf_path' => $filename,
+            'submission_pdf_hash' => $actual_hash,
+            'submission_pdf_size' => $size,
+            'submission_pdf_mime' => 'application/pdf',
+            'submission_pdf_version' => self::PDF_VERSION,
+            'submission_pdf_created_at' => self::now(),
+            'updated_at' => self::now(),
+        ], ['id' => $request_id, 'submission_pdf_status' => 'processing'], ['%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s'], ['%d', '%s']);
+        if ($updated !== 1) {
+            @unlink($destination);
+            self::mark_pdf_failed($request_id);
+            return Nevari_Helpers::error('document_finalization_failed', 'The MTM document could not be finalized.', 500);
+        }
+
+        $row = self::get_request($request_id);
+        $dispatch_key = self::submission_dispatch_option_key($request_id);
+        $notifications = 'already_dispatched';
+        if (add_option($dispatch_key, self::now(), '', false)) {
+            self::dispatch_request_submission_notifications($row);
+            $notifications = 'queued';
+        }
+        Nevari_Audit::log('consultation', 'mtm_request', 'mtm.document_finalized', 'success', [
+            'object_type' => 'mtm_request',
+            'object_id' => $request_id,
+            'related_user_id' => Nevari_Auth::api_session_user_id(),
+            'document_size' => $size,
+            'document_hash' => $actual_hash,
+            'message' => 'MTM canonical document finalized.',
+        ]);
         return Nevari_Helpers::success([
             'request' => self::payload_from_request($row),
             'status' => (string) ($row->status ?? self::STATUS_SUBMITTED),
-            'notifications' => 'queued',
+            'notifications' => $notifications,
         ]);
+    }
+
+    public static function document_download(WP_REST_Request $request): WP_REST_Response {
+        $row = self::get_request(absint($request['id']));
+        if (!$row || !self::valid_stored_pdf($row)) {
+            return Nevari_Helpers::error('mtm_document_unavailable', 'The MTM document is not available.', 404);
+        }
+        Nevari_Audit::log('consultation', 'mtm_request', 'mtm.document_downloaded', 'success', [
+            'object_type' => 'mtm_request',
+            'object_id' => (int) $row->id,
+            'related_user_id' => Nevari_Auth::api_session_user_id(),
+            'document_size' => (int) ($row->submission_pdf_size ?? 0),
+            'message' => 'MTM canonical document downloaded.',
+        ]);
+        return new WP_REST_Response(['nevari_mtm_private_document' => true], 200);
+    }
+
+    public static function serve_private_document($served, $result, $request, $server): bool {
+        if ($served || !($result instanceof WP_REST_Response) || !($request instanceof WP_REST_Request)) {
+            return (bool) $served;
+        }
+        $data = $result->get_data();
+        if (!is_array($data) || empty($data['nevari_mtm_private_document'])) {
+            return (bool) $served;
+        }
+        $row = self::get_request(absint($request['id']));
+        if (!$row || !self::valid_stored_pdf($row)) {
+            status_header(404);
+            return true;
+        }
+        $path = self::stored_pdf_path($row);
+        $reference = sanitize_file_name(self::ensure_request_reference((int) $row->id));
+        $filename = ($reference !== '' ? strtolower($reference) : 'mtm-assessment') . '.pdf';
+        header('Content-Type: application/pdf');
+        header('Content-Length: ' . (string) filesize($path));
+        header('Content-Disposition: inline; filename="' . $filename . '"');
+        header('Cache-Control: private, no-store, max-age=0');
+        header('Pragma: no-cache');
+        header('X-Content-Type-Options: nosniff');
+        header('X-Frame-Options: SAMEORIGIN');
+        if (defined('NEVARI_MTM_X_ACCEL_PREFIX') && is_string(NEVARI_MTM_X_ACCEL_PREFIX) && NEVARI_MTM_X_ACCEL_PREFIX !== '') {
+            header('X-Accel-Redirect: ' . rtrim(NEVARI_MTM_X_ACCEL_PREFIX, '/') . '/' . rawurlencode(basename($path)));
+            return true;
+        }
+        if (defined('NEVARI_MTM_X_SENDFILE') && NEVARI_MTM_X_SENDFILE) {
+            header('X-Sendfile: ' . $path);
+            return true;
+        }
+        $handle = @fopen($path, 'rb');
+        if (!$handle) {
+            status_header(404);
+            return true;
+        }
+        while (!feof($handle)) {
+            echo fread($handle, 1048576); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+            flush();
+        }
+        fclose($handle);
+        return true;
     }
 
     public static function customer_show(WP_REST_Request $request): WP_REST_Response {
@@ -920,12 +1173,6 @@ final class Nevari_Mtm {
         if ($row instanceof WP_REST_Response) {
             return $row;
         }
-        $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];
-        $approvalAttachments = self::normalize_email_attachments(
-            isset($body['approval_email_attachments']) && is_array($body['approval_email_attachments'])
-                ? $body['approval_email_attachments']
-                : []
-        );
         $actor = Nevari_Auth::api_session_user_id();
         $updated = self::update_request((int) $row->id, [
             'status' => self::STATUS_APPROVED,
@@ -935,9 +1182,7 @@ final class Nevari_Mtm {
             'updated_by' => $actor,
         ]);
         if ($updated) {
-            self::dispatch_request_update_notifications($row, $updated, [
-                'approved_customer_attachments' => $approvalAttachments,
-            ]);
+            self::dispatch_request_update_notifications($row, $updated);
         }
         return Nevari_Helpers::success(['request' => self::payload_from_request($updated)]);
     }

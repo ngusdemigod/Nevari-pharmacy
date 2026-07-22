@@ -1,4 +1,3 @@
-import { generateMtmTemplatePdf } from "../../../../../lib/mtmPdf.js";
 import { isAllowedUrl, isValidId, sanitizeText } from "../../../../../lib/inputValidation";
 
 function normalizeBaseUrl(value) {
@@ -84,26 +83,9 @@ export async function POST(request, { params }) {
       return Response.json({ success: false, error: { message: "MTM request could not be loaded." } }, { status: 404 });
     }
 
-    const nowIso = new Date().toISOString();
-    const approvedPdfSnapshot = {
-      ...mtmRequest,
-      status: "approved",
-      status_label: "Approved",
-      reviewed_at: mtmRequest?.reviewed_at || nowIso,
-      approved_at: mtmRequest?.approved_at || nowIso,
-      updated_at: nowIso,
-    };
-    const generated = await generateMtmTemplatePdf(approvedPdfSnapshot, { mode: "cached" });
     const approvePayload = await proxyRequest(url.origin, session, `/pharmacist/mtm-requests/${encodeURIComponent(requestId)}/approve`, {
       method: "POST",
-      body: {
-        approval_email_attachments: [{
-          filename: generated.filename,
-          mime_type: "application/pdf",
-          content_type: "application/pdf",
-          base64: Buffer.from(generated.pdf).toString("base64"),
-        }],
-      },
+      body: {},
     });
 
     return Response.json({

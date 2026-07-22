@@ -177,7 +177,7 @@ function ButtonSpinner({ label }) {
   );
 }
 
-function ConfirmationModal({ action, busy, error, onClose, onConfirm }) {
+function ConfirmationModal({ action, busy, onClose, onConfirm }) {
   if (!action || typeof document === "undefined") {
     return null;
   }
@@ -200,9 +200,6 @@ function ConfirmationModal({ action, busy, error, onClose, onConfirm }) {
           <button type="button" className="nevari-subscription-close-button" aria-label="Close subscription confirmation" onClick={onClose} disabled={busy}>
             Close
           </button>
-        </div>
-        <div className="modal-body">
-          <SubscriptionFeedback message={error} />
         </div>
         <div className="modal-actions">
           <button className="btn btn-outline" type="button" onClick={onClose} disabled={busy}>
@@ -377,6 +374,7 @@ export default function ManageSubscription({ subscription, loading = false, busy
   const [actionBusy, setActionBusy] = useState("");
   const [localError, setLocalError] = useState("");
   const [toast, setToast] = useDelayClear("");
+  const [toastTone, setToastTone] = useState("success");
   const headingId = useId();
   const openTriggerRef = useRef(null);
 
@@ -385,6 +383,11 @@ export default function ManageSubscription({ subscription, loading = false, busy
       setSheetOpen(false);
     }
   }, [isMobile]);
+
+  function showToast(message, tone = "success") {
+    setToastTone(tone);
+    setToast(message);
+  }
 
   function closeSheet() {
     setSheetOpen(false);
@@ -425,7 +428,7 @@ export default function ManageSubscription({ subscription, loading = false, busy
 
       router.push("/subscription");
     } catch (actionError) {
-      setLocalError(String(actionError?.message || "The subscription action could not be completed."));
+      showToast(String(actionError?.message || "The subscription action could not be completed."), "error");
     } finally {
       setActionBusy("");
     }
@@ -441,14 +444,14 @@ export default function ManageSubscription({ subscription, loading = false, busy
         } else if (typeof onCancel === "function") {
           await onCancel();
         }
-        setToast("Subscription paused.");
+        showToast("Subscription paused.");
       } else if (typeof onCancel === "function") {
         await onCancel();
-        setToast("Subscription cancelled.");
+        showToast("Subscription cancelled.");
       }
       setConfirmAction("");
     } catch (actionError) {
-      setLocalError(String(actionError?.message || "The subscription could not be updated."));
+      showToast(String(actionError?.message || "The subscription could not be updated."), "error");
     } finally {
       setActionBusy("");
     }
@@ -496,7 +499,6 @@ export default function ManageSubscription({ subscription, loading = false, busy
       <ConfirmationModal
         action={confirmAction}
         busy={busy || actionBusy === "pause" || actionBusy === "cancel"}
-        error={combinedError}
         onClose={() => {
           if (!busy && actionBusy !== "pause" && actionBusy !== "cancel") {
             setConfirmAction("");
@@ -506,8 +508,8 @@ export default function ManageSubscription({ subscription, loading = false, busy
       />
 
       {toast ? (
-        <div className="snackbar success" role="status" aria-live="polite">
-          <strong className="snackbar-title">Success</strong>
+        <div className={"snackbar " + toastTone} role="status" aria-live="polite">
+          <strong className="snackbar-title">{toastTone === "error" ? "Error" : "Success"}</strong>
           <span className="snackbar-message">{toast}</span>
         </div>
       ) : null}

@@ -303,6 +303,19 @@ Stale display data can appear after account switching if cache keys or cleanup a
 
 ## Server-Side Decisions Checklist
 
+### [x] RES-004: MTM PDFs are immutable private documents with record-level authorization
+
+**Status:** Resolved locally; production signing secret and private web-server mapping must be configured.
+**Layer:** Plugin/server and signed Next.js proxy
+**Location:** `nevari-pharmacy-core/includes/class-nevari-mtm.php`; `NevariAdmin Storefront/app/api/mtm/[requestId]/submission-pdf/route.js`
+
+**Current enforcement**
+
+- MTM snapshot tokens reject unsigned, expired, tampered, wrong-patient, wrong-request, and fingerprint-mismatched submissions; missing signing configuration fails closed.
+- The canonical PDF is checksum-verified, stored outside the public media library, and streamed only to the owning patient, assigned pharmacist, or store admin.
+- Email workflows link recipients back to authenticated MTM details instead of persisting patient PDFs as email attachments.
+- Subsequent dashboard downloads stream the immutable submitted PDF, preserving its embedded medication and lab-result images.
+
 | Decision | Must be decided by | Status |
 | --- | --- | --- |
 | Customer order list scope | Plugin authenticated identity | Resolved locally |

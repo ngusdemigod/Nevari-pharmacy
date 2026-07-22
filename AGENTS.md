@@ -168,6 +168,12 @@ without approval.
 Use inline styles or CSS modules only for values that must be computed
 at runtime (dynamic positioning, chart colors, animation values from
 Motion). Everywhere else, use a class in the appropriate stylesheet.
+
+For every customer-facing file upload field:
+- Use the same corner radius as the surrounding form fields; upload controls are not pills.
+- Validate extension, MIME type, file size, and file count as soon as files are selected, and repeat validation server-side.
+- When a file is selected, provide inline Replace and Remove actions.
+- Constrain long filenames to the available row width with ellipsis; never allow filenames to wrap, overflow, or resize the layout.
 ---
 ## Data/API Rule
 All dashboard data comes from the WordPress REST API
@@ -339,6 +345,21 @@ pharmacist) and session-cookie handling depend on the current flow.
 ## Communication
 Be concise. Explain what changed, which component(s) it touched, and
 how to test it (including which role/session is needed).
+---
+## Git and Vercel Deployment
+- The development branch is `dev` and tracks `origin/dev`.
+- The stable Vercel development URL is
+  `https://dev-dash-nevarihealth.vercel.app`.
+- Push and deploy to the `dev` branch and Vercel development/preview
+  environment by default.
+- Never push or deploy to the production branch or production Vercel
+  environment unless the user explicitly authorizes production for that
+  specific deployment.
+- Before every push or deployment, ask the user whether the target should be
+  development or production. Do not infer the target from earlier deployments
+  or from the current Git branch.
+- State the selected branch and Vercel URL before executing the push or
+  deployment.
 ---
 ## Final Reminder
 Before every feature:

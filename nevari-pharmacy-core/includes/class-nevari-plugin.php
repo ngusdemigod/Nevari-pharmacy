@@ -205,6 +205,13 @@ final class Nevari_Plugin {
             'request_reference' => "ALTER TABLE {$table} ADD request_reference VARCHAR(32) NULL",
             'assigned_pharmacist_user_id' => "ALTER TABLE {$table} ADD assigned_pharmacist_user_id BIGINT UNSIGNED NOT NULL DEFAULT 0",
             'reviewed_by_pharmacist_user_id' => "ALTER TABLE {$table} ADD reviewed_by_pharmacist_user_id BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            'submission_pdf_status' => "ALTER TABLE {$table} ADD submission_pdf_status VARCHAR(20) NOT NULL DEFAULT 'pending'",
+            'submission_pdf_path' => "ALTER TABLE {$table} ADD submission_pdf_path VARCHAR(500) NULL",
+            'submission_pdf_hash' => "ALTER TABLE {$table} ADD submission_pdf_hash CHAR(64) NULL",
+            'submission_pdf_size' => "ALTER TABLE {$table} ADD submission_pdf_size BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            'submission_pdf_mime' => "ALTER TABLE {$table} ADD submission_pdf_mime VARCHAR(100) NULL",
+            'submission_pdf_version' => "ALTER TABLE {$table} ADD submission_pdf_version VARCHAR(32) NULL",
+            'submission_pdf_created_at' => "ALTER TABLE {$table} ADD submission_pdf_created_at DATETIME NULL",
             'attached_products_json' => "ALTER TABLE {$table} ADD attached_products_json LONGTEXT NULL",
             'consultation_notes_json' => "ALTER TABLE {$table} ADD consultation_notes_json LONGTEXT NULL",
             'follow_up_json' => "ALTER TABLE {$table} ADD follow_up_json LONGTEXT NULL",
@@ -240,6 +247,7 @@ final class Nevari_Plugin {
             'request_reference' => "ALTER TABLE {$table} ADD UNIQUE KEY request_reference (request_reference)",
             'customer_join_token_hash' => "ALTER TABLE {$table} ADD KEY customer_join_token_hash (customer_join_token_hash)",
             'pharmacist_join_token_hash' => "ALTER TABLE {$table} ADD KEY pharmacist_join_token_hash (pharmacist_join_token_hash)",
+            'submission_pdf_status' => "ALTER TABLE {$table} ADD KEY submission_pdf_status (submission_pdf_status)",
         ];
 
         foreach ($indexes as $index_name => $sql) {

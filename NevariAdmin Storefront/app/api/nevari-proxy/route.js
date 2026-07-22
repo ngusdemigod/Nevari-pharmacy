@@ -220,7 +220,13 @@ async function proxyRequest(request, { params } = {}) {
   assertCsrf(request, frontendType);
   const accessToken = requestCookie(request, cookieName("access", frontendType));
 
-  const forwardedHeaders = ["accept", "content-type"];
+  const forwardedHeaders = [
+    "accept",
+    "content-type",
+    "x-nevari-mtm-snapshot-token",
+    "x-nevari-mtm-snapshot-fingerprint",
+    "x-nevari-content-sha256",
+  ];
 
   forwardedHeaders.forEach((name) => {
     const value = request.headers.get(name);
@@ -243,7 +249,8 @@ async function proxyRequest(request, { params } = {}) {
   };
 
   if (request.method !== "GET" && request.method !== "HEAD") {
-    const bodyText = await request.text();
+    const binaryPdf = String(request.headers.get("content-type") || "").toLowerCase().startsWith("application/pdf");
+    const bodyText = binaryPdf ? "" : await request.text();
     if (targetUrl.pathname.endsWith("/auth/refresh") || targetUrl.pathname.endsWith("/auth/logout") || targetUrl.pathname.endsWith("/sso/logout")) {
       const body = JSON.parse(bodyText || "{}");
       const refreshToken = requestCookie(request, cookieName("refresh", frontendType));
@@ -252,7 +259,7 @@ async function proxyRequest(request, { params } = {}) {
       }
       init.body = JSON.stringify(body);
     } else {
-      init.body = bodyText;
+      init.body = binaryPdf ? await request.arrayBuffer() : bodyText;
     }
   }
 
@@ -269,7 +276,7 @@ async function proxyRequest(request, { params } = {}) {
   responseHeaders.set("Cache-Control", "no-store");
 
   const contentType = response.headers.get("content-type") || "";
-  if (contentType.toLowerCase().includes("text/calendar")) {
+  if (contentType.toLowerCase().includes("text/calendar") || contentType.toLowerCase().includes("application/pdf")) {
     return new Response(response.body, {
       status: withSoftFailStatus(response.status, softFail),
       statusText: response.statusText,

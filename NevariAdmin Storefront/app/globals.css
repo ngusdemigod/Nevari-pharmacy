@@ -14599,10 +14599,10 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   border: 1px solid #dde2ea;
   border-radius: 8px;
   background: #f4f6f8;
-  min-height: 39px;
+  min-height: 48px;
   padding: 0 12px;
   color: #101828;
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .customer-mobile-field select {
@@ -14610,10 +14610,11 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   border: 1px solid #dde2ea;
   border-radius: 8px;
   background: #f4f6f8;
-  min-height: 39px;
+  min-height: 48px;
   padding: 0 12px;
   color: #101828;
-  font-size: 13px;
+  font-size: 16px;
+  line-height: 1.25;
 }
 
 .customer-mobile-field input.has-error,
@@ -15426,11 +15427,47 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 
 .customer-mtm-sticky-actions {
   margin-top: 18px;
+  display: grid;
+  gap: 8px;
 }
+
+.customer-mtm-sticky-actions .customer-mobile-secondary-button { margin-top: 0; }
 
 .customer-mtm-mobile-flow {
   padding-bottom: 124px;
 }
+
+.customer-mtm-token-input { min-height: 48px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid #dde2ea; border-radius: 8px; background: #f4f6f8; transition: border-color .2s ease, box-shadow .2s ease; }
+.customer-mtm-token-input:focus-within { border-color: #0b326d; box-shadow: 0 0 0 3px rgba(11,50,109,.12); }
+.customer-mtm-token-input.has-error { border-color: #d92d20; background: #fff5f5; }
+.customer-mtm-token-input input { flex: 1 1 150px; min-width: 120px; min-height: 34px; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; }
+.customer-mtm-token { min-height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px 4px 10px; border: 1px solid rgba(11,50,109,.16); border-radius: 999px; background: #eaf0f8; color: #0b326d; font-size: 13px; font-weight: 500; }
+.customer-mtm-token button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: rgba(11,50,109,.1); color: #0b326d; cursor: pointer; }
+.customer-mtm-medication-group, .customer-mtm-review-card { display: grid; gap: 14px; padding: 16px; border: 1px solid #e0e6ef; border-radius: 14px; background: #fff; box-shadow: 0 6px 18px rgba(10,42,94,.05); }
+.customer-mtm-medication-group-head, .customer-mtm-review-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.customer-mtm-medication-group-head div, .customer-mtm-review-card-head div { display: grid; gap: 3px; }
+.customer-mtm-medication-group-head small, .customer-mtm-review-card-head small, .customer-mtm-review-intro > small { color: #7a879a; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.customer-mtm-medication-group-head strong, .customer-mtm-review-card-head h4 { margin: 0; color: #0b326d; font-size: 16px; }
+.customer-mtm-medication-group-head > button { width: 32px; height: 32px; border: 0; border-radius: 50%; background: #fff0f0; color: #b42318; font-size: 20px; cursor: pointer; }
+.customer-mtm-inline-add-medication { justify-self: start; min-height: 40px; display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; border: 1px solid #0b326d; border-radius: 999px; background: #fff; color: #0b326d; font-size: 14px; font-weight: 600; cursor: pointer; }
+.customer-mtm-review { gap: 14px; }
+.customer-mtm-review-intro { display: grid; gap: 7px; padding: 4px 2px 6px; }
+.customer-mtm-review-intro h3 { margin: 0; color: #0b326d; font-size: 22px; }
+.customer-mtm-review-intro p { margin: 0; color: #667085; font-size: 14px; line-height: 1.5; }
+.customer-mtm-review-card-head button { min-height: 36px; padding: 0 14px; border: 1px solid #ccd6e4; border-radius: 999px; background: #fff; color: #0b326d; font-weight: 600; cursor: pointer; }
+.customer-mtm-review-card dl { display: grid; gap: 10px; margin: 0; }
+.customer-mtm-review-card dl > div { display: grid; grid-template-columns: minmax(105px,.8fr) minmax(0,1.2fr); gap: 12px; padding-top: 10px; border-top: 1px solid #edf0f4; }
+.customer-mtm-review-card dt { color: #7a879a; font-size: 13px; }
+.customer-mtm-review-card dd { margin: 0; color: #1d2939; font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.customer-mtm-review-token-row { display: grid; gap: 8px; }
+.customer-mtm-review-token-row > strong { color: #667085; font-size: 13px; }
+.customer-mtm-review-token-row > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.customer-mtm-review-files { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.customer-mtm-review-files li { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 10px; background: #f5f7fa; }
+.customer-mtm-review-files svg { width: 22px; height: 22px; color: #0b326d; flex: 0 0 auto; }
+.customer-mtm-review-files span { min-width: 0; display: grid; gap: 3px; }
+.customer-mtm-review-files strong { color: #1d2939; font-size: 13px; }
+.customer-mtm-review-files small { color: #667085; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .customer-mtm-floating-add-dock {
   position: fixed;
@@ -32659,7 +32696,7 @@ body .customer-mobile-panel > .subscription-manage-card .subscription-feedback.e
 .customer-profile-mobile-health-card { padding: 0; }
 .customer-profile-mobile-health-card .customer-profile-card-head > div::before { content: "Health records"; margin-bottom: 4px; color: var(--profile-navy); font-size: 12px; font-weight: 600; }
 .customer-profile-mobile-health-card .customer-profile-card-head > div > span { color: var(--profile-navy); font-size: 16px; }
-.customer-profile-mobile-health-card::before { content: "Your health information is private and is used only to support your care experience."; display: block; margin: 16px 20px 0; padding: 13px 14px; border-radius: 12px; color: #53617b; background: var(--profile-soft); font-size: 11px; line-height: 1.55; }
+.customer-profile-mobile-health-card::before { content: " "; display: block; margin: 16px 20px 0; padding: 13px 14px; border-radius: 12px; color: #53617b; background: var(--profile-soft); font-size: 11px; line-height: 1.55; }
 .customer-profile-mobile-health-card .customer-profile-health-grid { display: grid; padding: 8px 20px 20px; }
 .customer-profile-mobile-health-card .customer-profile-health-row { display: grid; gap: 8px; padding: 16px 0; border-bottom: 1px solid var(--profile-line-soft); }
 .customer-profile-mobile-health-card .customer-profile-health-row:last-child { border-bottom: 0; }
@@ -32706,29 +32743,30 @@ body .customer-mobile-panel > .subscription-manage-card .subscription-feedback.e
 .customer-profile-mobile-health-field select:focus { border-color: var(--profile-navy); background: #fff; outline: 0; }
 .customer-profile-mobile-health-actions { display: flex; justify-content: flex-end; padding: 0 20px 20px; }
 /* Customer profile reminder and desktop prototype */
-.customer-profile-reminder-overlay { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 18px; background: rgba(81, 94, 112, .64); overflow-y: auto; }
-.customer-profile-reminder-modal { position: relative; width: min(590px, 100%); margin: auto; overflow: hidden; border-radius: 30px; background: #fff; color: #0b3779; box-shadow: 0 24px 64px rgba(18, 35, 60, .24); }
-.customer-profile-reminder-body { position: relative; padding: 46px 40px 28px; text-align: center; }
-.customer-profile-reminder-close { position: absolute; top: 28px; right: 27px; display: grid; width: 38px; height: 38px; place-items: center; border: 0; border-radius: 50%; color: #0b3779; background: transparent; cursor: pointer; }
+.customer-profile-reminder-overlay { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 18px; background: rgba(44, 57, 76, .5); overflow-y: auto; }
+.customer-profile-reminder-modal { position: relative; width: min(520px, 100%); margin: auto; overflow: hidden; border-radius: 24px; background: #fff; color: #0b3779; box-shadow: 0 18px 48px rgba(18, 35, 60, .18); }
+.customer-profile-reminder-body { position: relative; padding: 38px 34px 24px; text-align: center; }
+.customer-profile-reminder-close { position: absolute; top: 18px; right: 18px; z-index: 2; display: grid; width: 44px; height: 44px; place-items: center; border: 0; border-radius: 50%; color: #0b3779; background: transparent; cursor: pointer; transition: background-color .2s ease, color .2s ease; }
+.customer-profile-reminder-close:hover { background: #f3f6fa; }
 .customer-profile-reminder-close:focus-visible, .customer-profile-reminder-secondary:focus-visible, .customer-profile-reminder-primary:focus-visible { outline: 3px solid rgba(11, 55, 121, .25); outline-offset: 3px; }
-.customer-profile-reminder-icon { display: grid; place-items: center; margin: 0 auto 23px; }
-.customer-profile-reminder-kicker { display: block; margin-bottom: 11px; color: #0b3779; font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-.customer-profile-reminder-modal h2 { margin: 0; color: #0b3779; font-size: clamp(26px, 4vw, 30px); line-height: 1.2; letter-spacing: -.04em; }
-.customer-profile-reminder-modal p { margin: 14px auto 0; max-width: 480px; color: #73839f; font-size: 16px; line-height: 1.75; }
-.customer-profile-reminder-progress { margin-top: 26px; padding: 21px 20px 18px; border: 1px solid #d7e2ef; border-radius: 20px; background: #f5f8fb; text-align: left; }
-.customer-profile-reminder-progress-head { display: flex; justify-content: space-between; gap: 16px; color: #263b5e; font-size: 14px; line-height: 1.4; }
-.customer-profile-reminder-progress-head strong:last-child { color: #0b3779; }
-.customer-profile-reminder-progress-track { height: 9px; margin: 14px 0 14px; overflow: hidden; border-radius: 999px; background: #dce5ef; }
+.customer-profile-reminder-kicker { display: block; margin-bottom: 10px; color: #496585; font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; }
+.customer-profile-reminder-modal h2 { margin: 0; color: #0b3779; font-size: 28px; font-weight: 500; line-height: 1.25; letter-spacing: -.025em; }
+.customer-profile-reminder-modal p { margin: 12px auto 0; max-width: 440px; color: #66758d; font-size: 15px; font-weight: 400; line-height: 1.6; }
+.customer-profile-reminder-progress { margin-top: 22px; padding: 18px; border: 1px solid #dce5ef; border-radius: 16px; background: #f8fafc; text-align: left; }
+.customer-profile-reminder-progress-head { display: flex; justify-content: space-between; gap: 16px; color: #40536f; font-size: 14px; font-weight: 400; line-height: 1.4; }
+.customer-profile-reminder-progress-head strong { font-weight: 400; }
+.customer-profile-reminder-progress-head strong:last-child { color: #0b3779; font-weight: 500; }
+.customer-profile-reminder-progress-track { height: 6px; margin: 12px 0 14px; overflow: hidden; border-radius: 999px; background: #e1e8f0; }
 .customer-profile-reminder-progress-track span { display: block; height: 100%; border-radius: inherit; background: #0b3779; transition: width .2s ease; }
-.customer-profile-reminder-progress ul { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; color: #73839f; font-size: 15px; }
-.customer-profile-reminder-progress li { display: flex; align-items: center; gap: 11px; }
+.customer-profile-reminder-progress ul { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; color: #66758d; font-size: 14px; font-weight: 400; }
+.customer-profile-reminder-progress li { display: flex; align-items: center; gap: 10px; }
 .customer-profile-reminder-progress li svg { flex: 0 0 auto; color: #0b3779; }
-.customer-profile-reminder-privacy { display: flex; align-items: center; gap: 13px; max-width: none !important; margin: 22px 6px 0 !important; text-align: left; font-size: 13px !important; line-height: 1.45 !important; }
+.customer-profile-reminder-privacy { display: flex; align-items: center; gap: 10px; max-width: none !important; margin: 18px 2px 0 !important; text-align: left; font-size: 12px !important; font-weight: 400 !important; line-height: 1.5 !important; }
 .customer-profile-reminder-privacy svg { flex: 0 0 auto; color: #00a653; }
-.customer-profile-reminder-actions { display: grid; grid-template-columns: 1fr 1.35fr; gap: 12px; padding: 20px 26px 26px; border-top: 1px solid #e1e8f0; }
-.customer-profile-reminder-actions button { min-height: 52px; padding: 0 20px; border-radius: 999px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
-.customer-profile-reminder-secondary { border: 1px solid #d3e0ef; color: #0b3779; background: #fff; }
-.customer-profile-reminder-primary { border: 1px solid #0b3779; color: #fff; background: #0b3779; }
+.customer-profile-reminder-actions { display: grid; grid-template-columns: 1fr 1.25fr; gap: 10px; padding: 18px 24px 22px; border-top: 1px solid #e6ebf1; }
+.customer-profile-reminder-actions button { min-height: 48px; padding: 0 20px; border-radius: 999px; font: inherit; font-size: 14px; cursor: pointer; transition: background-color .2s ease, border-color .2s ease, color .2s ease; }
+.customer-profile-reminder-secondary { border: 1px solid #d3dde9; color: #40536f; background: #fff; font-weight: 400; }
+.customer-profile-reminder-primary { border: 1px solid #0b3779; color: #fff; background: #0b3779; font-weight: 500; }
 .customer-profile-reminder-primary span { margin-left: 10px; font-size: 20px; line-height: 0; vertical-align: -1px; }
 .nevari-subscription-profile-only { width: 100%; }
 .nevari-subscription-profile-only .nevari-subscription-compact-card { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 16px 20px; border: 1px solid #d7e2ef; border-radius: 22px; background: #f5f8fb; }
@@ -32745,9 +32783,10 @@ body .customer-mobile-panel > .subscription-manage-card .subscription-feedback.e
 
 @media (max-width: 620px) {
   .customer-profile-reminder-overlay { align-items: start; padding: 16px; }
-  .customer-profile-reminder-body { padding: 38px 22px 23px; }
-  .customer-profile-reminder-modal { border-radius: 24px; }
-  .customer-profile-reminder-actions { grid-template-columns: 1fr; padding: 17px 20px 20px; }
+  .customer-profile-reminder-body { padding: 34px 20px 22px; }
+  .customer-profile-reminder-modal { border-radius: 20px; }
+  .customer-profile-reminder-modal h2 { font-size: 24px; }
+  .customer-profile-reminder-actions { grid-template-columns: 1fr; padding: 16px 20px 20px; }
   .customer-profile-reminder-modal p { font-size: 14px; line-height: 1.6; }
   .customer-profile-reminder-progress { padding: 17px 15px; }
   .customer-profile-reminder-progress ul { font-size: 14px; }
@@ -32948,9 +32987,9 @@ body .customer-mobile-panel > .subscription-manage-card .subscription-feedback.e
 .customer-subscription-management-app .customer-mobile-frame { padding: 18px 16px 32px; background: #fff; }
 .customer-subscription-management-shell { display: grid; gap: 18px; width: min(100%, 340px); margin: 0 auto; color: #12356b; }
 .customer-subscription-management-shell.is-desktop { width: min(100%, 680px); padding: 12px 0 40px; }
-.customer-subscription-management-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid #e0e7f0; border-radius: 14px; background: #f4f7fb; }
-.customer-subscription-management-tabs button { min-height: 42px; border: 0; border-radius: 10px; background: transparent; color: #71809a; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: color .2s ease, background-color .2s ease, box-shadow .2s ease; }
-.customer-subscription-management-tabs button.active { background: #fff; color: #123b78; box-shadow: 0 3px 10px rgba(18, 53, 107, .1); }
+.customer-subscription-management-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.customer-subscription-management-tabs button { min-height: 34px; padding: 0 16px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: #667085; font: inherit; font-size: 12px; font-weight: 400; cursor: pointer; transition: color .2s ease, background-color .2s ease, border-color .2s ease; }
+.customer-subscription-management-tabs button.active { border-color: #e1e5ea; background: #f1f3f5; color: #667085; box-shadow: none; }
 .customer-subscription-management-tabs button:focus-visible,
 .customer-subscription-management-cta:focus-visible,
 .customer-subscription-dialog-button:focus-visible,
@@ -34748,3 +34787,299 @@ body:has(.modal-design-system-parity) .order-modal .order-detail-scroll {
 .app-modal-layer .product-editor-modal.modal-design-system-parity.product-editor-edit-mode,
 .app-modal-layer .order-modal.modal-design-system-parity { width:min(1168px,calc(100vw - 32px)) !important; height:min(760px,calc(100vh - 40px)) !important; max-height:calc(100vh - 40px) !important; }
 @media(max-width:820px){.app-modal-layer .modal-design-system-parity.creation-frame .creation-popup-layout,.app-modal-layer .product-editor-modal.product-editor-create-mode .product-editor-shell{grid-template-columns:1fr !important}.app-modal-layer .modal-design-system-parity.creation-frame{width:calc(100vw - 20px) !important}.app-modal-layer .modal-design-system-parity.creation-frame .creation-side{position:static !important}}
+
+/* Minimal customer order-details modal */
+.customer-appointment-modal:has(.customer-order-details-card) { place-items: center; padding: 20px; background: rgba(21, 38, 61, .5); backdrop-filter: blur(5px); }
+.customer-order-details-card { width: min(500px, 100%); max-height: min(760px, calc(100dvh - 40px)); gap: 18px; padding: 26px; border: 0; border-radius: 24px; box-shadow: 0 20px 55px rgba(13, 31, 55, .18); }
+.customer-order-details-card .customer-panel-head { min-height: 44px; align-items: start; }
+.customer-order-details-card .customer-section-kicker { color: #718096; font-size: 11px; font-weight: 500; letter-spacing: .06em; }
+.customer-order-details-card .customer-panel-head h2 { margin-top: 4px; color: #082d68; font-size: 24px; font-weight: 500; line-height: 1.25; letter-spacing: -.02em; }
+.customer-order-details-card .customer-panel-head .icon-btn { flex: 0 0 44px; width: 44px; min-width: 44px; height: 44px; min-height: 44px; margin: -10px -10px 0 0; border: 0; border-radius: 999px; color: #52657d; background: transparent; cursor: pointer; transition: background-color 180ms ease, color 180ms ease; }
+.customer-order-details-card .customer-panel-head .icon-btn:hover { color: #082d68; background: #f1f5f9; }
+.customer-order-details-card .customer-panel-head .icon-btn:focus-visible { outline: 3px solid rgba(8, 45, 104, .24); outline-offset: 2px; }
+.customer-order-details-card .customer-detail-summary-panel { padding: 14px; border-color: #e2e8f0; border-radius: 16px; background: #f8fafc; }
+.customer-order-details-card .customer-detail-summary-title { font-size: 15px; font-weight: 500; }
+.customer-order-details-card .status-badge { font-size: 12px; font-weight: 400; }
+.customer-order-details-card .detail-section { padding: 0; border: 0; background: transparent; }
+.customer-order-details-card .detail-section-title { margin-bottom: 8px; font-size: 16px; font-weight: 500; }
+.customer-order-details-card .detail-card { padding: 4px 14px; border-color: #e2e8f0; border-radius: 14px; }
+.customer-order-details-card .info-row { align-items: center; min-height: 42px; padding: 8px 0; border-color: #e7edf4; }
+.customer-order-details-card .info-label, .customer-order-details-card .info-value { font-size: 13px; font-weight: 400; line-height: 1.45; }
+.customer-order-details-card .info-label { color: #64748b; }
+.customer-order-details-card .info-value { color: #182235; }
+.customer-order-details-card .order-item-title, .customer-order-details-card .timeline-title { font-weight: 400; }
+.customer-order-details-card .action-stack { gap: 8px; margin-top: 0; }
+.customer-order-details-card .btn { font-weight: 500; }
+@media (max-width: 620px) {
+  .customer-appointment-modal:has(.customer-order-details-card) { align-items: end; padding: 12px; }
+  .customer-order-details-card { max-height: calc(100dvh - 24px); gap: 16px; padding: 22px 18px; border-radius: 20px; }
+  .customer-order-details-card .customer-panel-head h2 { font-size: 22px; }
+}
+/* Patient dashboard cohesive refresh */
+.customer-mobile-pill-tab,
+.customer-profile-desktop-tabs button,
+.customer-subscription-management-tabs button {
+  transition: color 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.customer-subscription-management-card[role="tabpanel"],
+.customer-subscription-management-paywall[role="tabpanel"],
+.customer-subscription-history-panel[role="tabpanel"],
+.customer-profile-desktop-notifications,
+.customer-profile-mobile-panel,
+.customer-request-visit-pane,
+.customer-mobile-flow {
+  animation: customerTabPanelIn 180ms ease both;
+}
+
+@keyframes customerTabPanelIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Shared appointment-booking entry point */
+.appointment-booking-cta,
+.customer-mobile-appointment-booknow-btn.appointment-booking-cta {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 68px;
+  align-items: center;
+  width: min(100%, 480px);
+  min-height: 68px;
+  margin: 18px auto 0;
+  padding: 5px 5px 5px 26px;
+  border: 2px solid #082d68;
+  border-radius: 999px;
+  color: #082d68;
+  background: #fff;
+  box-shadow: none;
+  font: inherit;
+  font-size: clamp(18px, 2.2vw, 24px);
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+  transition: color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.appointment-booking-cta:hover { background: #f8fafc; box-shadow: 0 5px 16px rgba(8, 45, 104, .1); }
+.appointment-booking-cta:focus-visible { outline: 3px solid rgba(8, 45, 104, .24); outline-offset: 3px; }
+.appointment-booking-cta-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.appointment-booking-cta-icon {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  justify-self: end;
+  flex: 0 0 58px;
+  border-radius: 50%;
+  color: #fff;
+  background: #082d68;
+}
+.appointment-booking-cta-icon svg { width: 30px; height: 30px; }
+.customer-mobile-appointment-booknow-btn.appointment-booking-cta { position: sticky; right: auto; bottom: 18px; z-index: 20; width: min(100%, 420px); }
+
+/* Appointment and nurse history rows */
+.customer-mobile-visit-row { grid-template-columns: 40px minmax(0, 1fr) max-content; }
+.customer-mobile-clock { flex: 0 0 40px; width: 40px; min-width: 40px; height: 40px; }
+.customer-mobile-clock svg { width: 18px; height: 18px; }
+.customer-mobile-visit-copy,
+.customer-mobile-visit-copy-shot { min-width: 0; overflow: hidden; }
+.customer-mobile-visit-copy > strong,
+.customer-mobile-visit-copy-shot > strong { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.customer-mobile-visit-copy > span,
+.customer-mobile-visit-copy > small { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.customer-mobile-appointment-status { flex: 0 0 auto; min-width: max-content; }
+.customer-request-tabs .customer-mobile-pill-tab,
+.customer-request-desktop .customer-request-tabs .customer-mobile-pill-tab { font-size: 14px !important; }
+
+/* Appointment-style subscription payment history */
+.customer-subscription-history-panel { max-width: 760px; padding: 0; border: 0; border-radius: 0; background: #fff; box-shadow: none; }
+.customer-subscription-history-header { align-items: end; padding: 0 0 18px; border-bottom: 1px solid #dce4ee; }
+.customer-subscription-history-header h2 { margin: 0; color: #082d68; font-size: 24px; font-weight: 500; line-height: 1.25; }
+.customer-subscription-history-header p { margin: 6px 0 0; color: #68778e; font-size: 14px; font-weight: 400; }
+.customer-subscription-history-header button { min-height: 44px; padding: 0 16px; border: 1px solid #d6e0eb; border-radius: 999px; color: #40536f; background: #fff; font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; }
+.customer-subscription-history-list { display: grid; gap: 0; }
+.customer-subscription-history-item { display: grid; grid-template-columns: 40px minmax(0, 1fr) max-content; gap: 12px; align-items: center; min-height: 88px; padding: 15px 0; border: 0; border-bottom: 1px solid #dce4ee; border-radius: 0; background: #fff; box-shadow: none; }
+.customer-subscription-history-icon { flex: 0 0 40px; width: 40px; min-width: 40px; height: 40px; border: 1px solid #dbe5ef; border-radius: 50%; background: #f5f8fb; }
+.customer-subscription-history-copy { min-width: 0; }
+.customer-subscription-history-copy > div { min-width: 0; }
+.customer-subscription-history-copy strong { display: block; min-width: 0; overflow: hidden; color: #112d59; font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.customer-subscription-history-copy p,
+.customer-subscription-history-copy small { overflow: hidden; color: #708098; font-size: 12px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.customer-subscription-history-badge { flex: 0 0 auto; font-size: 11px; font-weight: 400; }
+.customer-subscription-history-amount { color: #182b49; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.customer-subscription-history-state strong { font-weight: 500; }
+
+/* MTM-inspired desktop profile forms */
+.customer-profile-edit-card,
+.customer-profile-health-card { overflow: hidden; padding: 0; border: 1px solid #dce5ef; border-radius: 18px; background: #fff; box-shadow: none; }
+.customer-profile-edit-card .customer-profile-card-head,
+.customer-profile-health-card .customer-profile-card-head { padding: 22px 24px 17px; border-bottom: 1px solid #e5ebf2; }
+.customer-profile-card-head > div { display: grid; gap: 5px; }
+.customer-profile-card-head > div > span { color: #082d68; font-size: 20px; font-weight: 500; line-height: 1.3; }
+.customer-profile-card-head small { color: #6b7a91; font-size: 13px; font-weight: 400; line-height: 1.5; }
+.customer-profile-edit-card .customer-profile-detail-grid,
+.customer-profile-health-card .customer-profile-health-grid { gap: 18px; padding: 22px 24px 24px; }
+.customer-profile-edit-card label,
+.customer-profile-health-card label { display: grid; gap: 8px; color: #43546d; font-size: 13px; font-weight: 400; }
+.customer-profile-edit-card label > span,
+.customer-profile-health-card label > span { color: #43546d; font-size: 13px; font-weight: 400; }
+.customer-profile-edit-card input,
+.customer-profile-edit-card textarea,
+.customer-profile-health-card input,
+.customer-profile-health-card select { min-height: 48px; border: 1px solid #d8e2ed; border-radius: 12px; color: #182b49; background: #f8fafc; font: inherit; font-size: 14px; font-weight: 400; }
+.customer-profile-edit-card textarea { padding-top: 13px; }
+.customer-profile-edit-card .customer-profile-inline-actions,
+.customer-profile-health-card .customer-profile-inline-actions { justify-content: flex-end; gap: 10px; margin: 0; padding: 17px 24px 20px; border-top: 1px solid #e5ebf2; }
+.customer-profile-edit-card .customer-profile-inline-actions button,
+.customer-profile-health-card .customer-profile-inline-actions button { min-width: 150px; min-height: 46px; font-size: 14px; font-weight: 500; }
+.customer-profile-edit-card .customer-profile-inline-actions .tertiary,
+.customer-profile-health-card .customer-profile-inline-actions .tertiary { color: #40536f; border-color: #d6e0eb; background: #fff; font-weight: 400; }
+
+/* Reference-led profile notification settings */
+.customer-profile-desktop-tabs { grid-template-columns: repeat(2, minmax(0, 190px)); gap: 8px; width: fit-content; margin: 0 auto 34px; padding: 4px; border: 1px solid #e1e6ec; border-radius: 999px; background: #f7f8fa; }
+.customer-profile-desktop-tabs button,
+.customer-profile-desktop-tabs button.active,
+.customer-profile-desktop-tabs button.active:hover { min-height: 40px; padding: 0 22px; border: 0; color: #677286; background: transparent; font-size: 14px; font-weight: 400; }
+.customer-profile-desktop-tabs button.active,
+.customer-profile-desktop-tabs button.active:hover { background: #fff; box-shadow: 0 1px 4px rgba(15, 35, 60, .08); }
+.customer-profile-notifications-active .customer-profile-desktop-notifications { width: min(100%, 620px); margin: 0 auto; padding: 12px 22px 18px; border: 0; border-radius: 0; background: #fff; }
+.customer-profile-desktop-notifications label { min-height: 52px; padding: 0; border: 0; color: #5f697b; font-size: 15px; font-weight: 400; }
+.customer-profile-desktop-notifications input,
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row input { width: 56px; height: 32px; background: #e5e7eb; }
+.customer-profile-desktop-notifications input::after,
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row input::after { top: 2px; left: 2px; width: 28px; height: 28px; }
+.customer-profile-desktop-notifications input:checked::after,
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row input:checked::after { transform: translateX(24px); }
+.customer-profile-mobile-notification-panel { padding: 10px 0 20px; border: 0; background: #fff; }
+.customer-profile-mobile-notification-panel .customer-mobile-toggle-row { min-height: 52px; padding: 0; border: 0; color: #5f697b; font-size: 15px; font-weight: 400; }
+
+.customer-desktop-search-dropdown button.is-active { background: #eef4ff; outline: 2px solid rgba(8, 45, 104, .2); }
+
+@media (max-width: 620px) {
+  .appointment-booking-cta,
+  .customer-mobile-appointment-booknow-btn.appointment-booking-cta { grid-template-columns: minmax(0, 1fr) 56px; min-height: 58px; padding-left: 20px; font-size: 18px; }
+  .appointment-booking-cta-icon { width: 48px; height: 48px; }
+  .appointment-booking-cta-icon svg { width: 25px; height: 25px; }
+  .customer-subscription-history-header { align-items: start; }
+  .customer-subscription-history-header h2 { font-size: 22px; }
+  .customer-subscription-history-item { grid-template-columns: 40px minmax(0, 1fr); }
+  .customer-subscription-history-amount { grid-column: 2; }
+  .customer-profile-edit-card .customer-profile-detail-grid,
+  .customer-profile-health-card .customer-profile-health-grid { padding: 20px 18px; }
+  .customer-profile-edit-card .customer-profile-inline-actions,
+  .customer-profile-health-card .customer-profile-inline-actions { display: grid; grid-template-columns: 1fr; padding: 16px 18px 18px; }
+  .customer-profile-edit-card .customer-profile-inline-actions button,
+  .customer-profile-health-card .customer-profile-inline-actions button { width: 100%; min-width: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .customer-mobile-pill-tab,
+  .customer-profile-desktop-tabs button,
+  .customer-subscription-management-tabs button,
+  .appointment-booking-cta { transition: none !important; }
+  .customer-subscription-management-card[role="tabpanel"],
+  .customer-subscription-management-paywall[role="tabpanel"],
+  .customer-subscription-history-panel[role="tabpanel"],
+  .customer-profile-desktop-notifications,
+  .customer-profile-mobile-panel,
+  .customer-request-visit-pane,
+  .customer-mobile-flow { animation: none !important; }
+}
+
+/* Patient/doctor interaction consistency */
+:root {
+  --dashboard-cta-radius: 60px;
+  --dashboard-field-radius: 8px;
+  --dashboard-field-inset: 6px;
+  --dashboard-tag-radius: calc(var(--dashboard-field-radius) - var(--dashboard-field-inset));
+}
+
+.appointment-booking-cta,
+.customer-mobile-appointment-booknow-btn.appointment-booking-cta {
+  grid-template-columns: minmax(0, 1fr) 48px;
+  width: 230px;
+  min-height: 56px;
+  margin-inline: auto;
+  padding: 4px 4px 4px 24px;
+  gap: 12px;
+  border: 1px solid #0a2a5e;
+  border-radius: var(--dashboard-cta-radius);
+  color: #0a2a5e;
+  font-family: "Product Sans", Arial, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: -.02em;
+}
+.appointment-booking-cta-icon {
+  width: 48px;
+  height: 48px;
+  flex-basis: 48px;
+  border-radius: var(--dashboard-cta-radius);
+  background: #0a2a5e;
+}
+.appointment-booking-cta-icon svg { width: 24px; height: 24px; }
+
+.customer-subscription-history-item {
+  grid-template-columns: 12px minmax(0, 1fr) max-content;
+}
+.customer-subscription-history-icon {
+  width: 12px;
+  min-width: 12px;
+  max-width: 12px;
+  height: 12px;
+  margin-top: 5px;
+  border: 0;
+}
+
+.customer-mtm-token-input {
+  --dashboard-field-radius: 8px;
+  --dashboard-field-inset: 6px;
+  border-radius: var(--dashboard-field-radius);
+}
+.customer-mtm-token { border-radius: var(--dashboard-tag-radius); }
+.customer-mobile-field select,
+.customer-mtm-mobile-flow select {
+  min-height: 56px;
+  height: 56px;
+  padding-block: 0;
+}
+
+.customer-mobile-drawer-layer {
+  display: block;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: visibility 0s linear 260ms, opacity 220ms ease;
+}
+.customer-mobile-drawer-layer.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+.customer-mobile-drawer {
+  transform: translateX(-102%);
+  transition: transform 260ms cubic-bezier(.22, 1, .36, 1);
+}
+.customer-mobile-drawer-layer.open .customer-mobile-drawer { transform: translateX(0); }
+.customer-mobile-drawer-backdrop { opacity: 0; transition: opacity 220ms ease; }
+.customer-mobile-drawer-layer.open .customer-mobile-drawer-backdrop { opacity: 1; }
+
+@media (max-width: 620px) {
+  .appointment-booking-cta,
+  .customer-mobile-appointment-booknow-btn.appointment-booking-cta {
+    grid-template-columns: minmax(0, 1fr) 48px;
+    width: 230px;
+    min-height: 56px;
+    padding: 4px 4px 4px 24px;
+    font-size: 16px;
+  }
+  .customer-subscription-history-item { grid-template-columns: 12px minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .customer-mobile-drawer-layer,
+  .customer-mobile-drawer,
+  .customer-mobile-drawer-backdrop { transition: none !important; }
+}

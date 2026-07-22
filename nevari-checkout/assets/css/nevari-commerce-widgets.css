@@ -1,0 +1,1279 @@
+.nevari-commerce,
+.nevari-commerce * {
+    box-sizing: border-box;
+}
+
+.nevari-commerce {
+    --nevari-primary: #123f63;
+    --nevari-primary-deep: #062f5f;
+    --nevari-accent: #09a6e7;
+    --nevari-success: #19c43a;
+    --nevari-price: #ff8a00;
+    --nevari-text: #111827;
+    --nevari-muted: #8a9099;
+    --nevari-border: #e7e9ee;
+    --nevari-surface: #f7f8fa;
+    width: 100%;
+    max-width: 1440px;
+    margin-inline: auto;
+    padding: 40px 32px 56px;
+    color: var(--nevari-text);
+    background: #fff;
+    font-family: "Product Sans", "Google Sans", Arial, Helvetica, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+}
+
+.nevari-cart-widget {
+    max-width: 1536px;
+    padding: 28px 56px 60px;
+}
+
+.nevari-checkout-widget {
+    max-width: 1332px;
+    padding: 28px 0 40px;
+}
+
+.nevari-order-widget {
+    max-width: 1280px;
+    padding: 28px 0 40px;
+}
+
+.nevari-commerce button,
+.nevari-commerce input {
+    font: inherit;
+}
+
+.nevari-commerce button,
+.nevari-commerce a {
+    -webkit-tap-highlight-color: transparent;
+}
+
+.nevari-commerce button {
+    cursor: pointer;
+}
+
+.nevari-commerce svg {
+    display: block;
+    width: 1em;
+    height: 1em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.nevari-commerce :is(button, a, input):focus-visible {
+    outline: 3px solid rgba(9, 166, 231, .3);
+    outline-offset: 3px;
+}
+
+.nevari-commerce [hidden] {
+    display: none !important;
+}
+
+.nevari-page-header {
+    margin-bottom: 48px;
+}
+
+.nevari-back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 30px;
+    color: var(--nevari-muted);
+    font-size: 14px;
+    text-decoration: none;
+}
+
+.nevari-back-link svg {
+    width: 18px;
+    height: 18px;
+}
+
+.nevari-page-title {
+    margin: 0;
+    color: var(--nevari-primary);
+    font-size: clamp(28px, 3vw, 38px);
+    font-weight: 400;
+    line-height: 1.08;
+    letter-spacing: -.025em;
+}
+
+.nevari-preview-badge {
+    display: inline-flex;
+    margin-bottom: 14px;
+    padding: 5px 9px;
+    border-radius: 999px;
+    color: #075985;
+    background: #e0f2fe;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.nevari-live-message {
+    min-height: 0;
+    margin-bottom: 0;
+    color: #b42318;
+    font-size: 14px;
+}
+
+.nevari-live-message:not(:empty) {
+    min-height: 22px;
+    margin-bottom: 14px;
+}
+
+.nevari-cart-layout,
+.nevari-checkout-layout,
+.nevari-order-layout {
+    display: grid;
+    align-items: start;
+    gap: clamp(36px, 5vw, 78px);
+}
+
+.nevari-cart-layout {
+    grid-template-columns: minmax(0, 2.2fr) minmax(300px, 1fr);
+    column-gap: 88px;
+}
+
+.nevari-checkout-layout {
+    grid-template-columns: minmax(0, 2.17fr) minmax(300px, 1fr);
+    column-gap: 60px;
+}
+
+.nevari-order-layout {
+    grid-template-columns: minmax(0, 1.93fr) minmax(300px, 1fr);
+    column-gap: 62px;
+}
+
+.nevari-cart-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    min-height: 112px;
+    padding: 22px 0;
+    border-bottom: 1px solid var(--nevari-border);
+}
+
+.nevari-product-main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+}
+
+.nevari-product-image {
+    width: 64px;
+    height: 64px;
+    flex: 0 0 64px;
+    overflow: hidden;
+    border-radius: 12px;
+    background: var(--nevari-surface);
+}
+
+.nevari-product-image img,
+img.nevari-product-image {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+}
+
+.nevari-product-copy {
+    min-width: 0;
+}
+
+.nevari-product-name {
+    display: block;
+    overflow-wrap: anywhere;
+    color: var(--nevari-text);
+    font-size: 15px;
+    font-weight: 400;
+    text-decoration: none;
+}
+
+.nevari-product-prices {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 9px;
+    margin-top: 10px;
+    font-size: 13px;
+}
+
+.nevari-price-current {
+    color: var(--nevari-price);
+}
+
+.nevari-product-prices del {
+    color: #a5a9af;
+}
+
+.nevari-cart-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.nevari-remove-icon,
+.nevari-qty-button {
+    position: relative;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border-radius: 50%;
+    appearance: none;
+}
+
+.nevari-remove-icon {
+    border: 1px solid var(--nevari-border);
+    color: #3f454c;
+    background: #fff;
+}
+
+.nevari-remove-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.nevari-quantity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.nevari-qty-button {
+    overflow: hidden;
+    border: 0;
+    color: #fff;
+    background: var(--nevari-primary-deep);
+    box-shadow: none;
+}
+
+.nevari-qty-button::before,
+.nevari-qty-plus::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 12px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+    transform: translate(-50%, -50%);
+}
+
+.nevari-qty-plus::after {
+    width: 2px;
+    height: 12px;
+}
+
+.nevari-qty-minus {
+    border: 1px solid var(--nevari-border);
+    color: #717780;
+    background: #fff;
+}
+
+.nevari-qty-button:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+
+.nevari-commerce input.nevari-qty-value {
+    width: 24px;
+    min-height: 36px;
+    padding: 0;
+    border: 0 !important;
+    border-radius: 0;
+    color: #3e444b;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-align: center;
+    appearance: textfield;
+}
+
+.nevari-qty-value::-webkit-outer-spin-button,
+.nevari-qty-value::-webkit-inner-spin-button {
+    margin: 0;
+    appearance: none;
+}
+
+.nevari-commerce button.nevari-remove-text,
+.nevari-commerce a.nevari-remove-text {
+    padding: 8px 0;
+    border: 0 !important;
+    border-radius: 0;
+    color: var(--nevari-accent);
+    background: transparent !important;
+    box-shadow: none !important;
+    font-size: 13px;
+    line-height: 1.2;
+    text-decoration: none;
+}
+
+.nevari-commerce button.nevari-qty-button,
+.nevari-commerce button.nevari-remove-icon {
+    padding: 0;
+    box-shadow: none;
+    line-height: 1;
+}
+
+.nevari-manual-update,
+.nevari-primary-link {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 20px;
+    padding: 10px 18px;
+    border: 0;
+    border-radius: 999px;
+    color: #fff;
+    background: var(--nevari-primary);
+    text-decoration: none;
+}
+
+.nevari-cart-summary,
+.nevari-checkout-summary {
+    min-width: 0;
+}
+
+.nevari-cart-summary.is-sticky,
+.nevari-checkout-summary.is-sticky {
+    position: sticky;
+    top: var(--nevari-sticky-offset, 24px);
+}
+
+.nevari-delivery-progress {
+    margin: 16px 0 34px;
+}
+
+.nevari-progress-track {
+    height: 7px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #dff4fd;
+}
+
+.nevari-progress-track span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--nevari-accent);
+    transition: width .25s ease;
+}
+
+.nevari-delivery-progress p {
+    margin: 18px 0 0;
+    color: var(--nevari-text);
+    font-size: 13px;
+    text-align: center;
+}
+
+.nevari-cart-summary h2,
+.nevari-checkout-summary h2,
+.nevari-order-sidebar h2 {
+    margin: 0 0 24px;
+    font-size: 21px;
+    font-weight: 400;
+}
+
+.nevari-summary-list,
+.nevari-order-sidebar dl {
+    margin: 0;
+}
+
+.nevari-summary-list > div,
+.nevari-order-sidebar dl > div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 20px;
+    margin: 0 0 20px;
+}
+
+.nevari-summary-list dt,
+.nevari-summary-list dd,
+.nevari-order-sidebar dt,
+.nevari-order-sidebar dd {
+    margin: 0;
+    font-weight: 400;
+}
+
+.nevari-summary-total,
+.nevari-checkout-total {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 20px;
+    margin-top: 22px;
+    padding-top: 24px;
+    border-top: 1px solid var(--nevari-border);
+    font-size: 18px;
+}
+
+.nevari-checkout-button,
+.nevari-place-order {
+    width: 100%;
+    min-height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    margin-top: 24px;
+    padding: 0 24px;
+    border: 0;
+    border-radius: 999px;
+    color: #fff;
+    background: var(--nevari-primary);
+    text-decoration: none;
+}
+
+.nevari-checkout-button > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.nevari-checkout-button svg {
+    width: 20px;
+    height: 20px;
+}
+
+.nevari-empty-state,
+.nevari-state-card {
+    padding: 48px 24px;
+    border: 1px solid var(--nevari-border);
+    border-radius: 14px;
+    background: #fff;
+    text-align: center;
+}
+
+/* Checkout */
+.nevari-checkout-main {
+    display: grid;
+    gap: 22px;
+}
+
+.nevari-checkout-card {
+    padding: 28px;
+    border: 1px solid var(--nevari-border);
+    border-radius: 14px;
+    background: #fff;
+}
+
+.nevari-checkout-card > header h2 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 26px;
+    font-size: 19px;
+    font-weight: 400;
+}
+
+.nevari-checkout-card > header h2 svg {
+    width: 20px;
+    height: 20px;
+}
+
+.nevari-delivery-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+}
+
+.nevari-delivery-fields label,
+.nevari-custom-tip {
+    min-width: 0;
+    display: grid;
+    gap: 8px;
+    color: var(--nevari-muted);
+    font-size: 13px;
+}
+
+.nevari-address-field {
+    grid-column: 1 / -1;
+}
+
+.nevari-delivery-fields input,
+.nevari-custom-tip input,
+.nevari-coupon-panel input {
+    width: 100%;
+    min-height: 50px;
+    padding: 0 16px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    color: var(--nevari-text);
+    background: #f5f4f9;
+    outline: 0;
+}
+
+.nevari-commerce .nevari-delivery-fields input,
+.nevari-commerce .nevari-custom-tip input,
+.nevari-commerce .nevari-coupon-panel input {
+    margin: 0;
+    box-shadow: none;
+}
+
+.nevari-commerce button.nevari-place-order,
+.nevari-commerce button[data-nevari-tip],
+.nevari-commerce button[data-nevari-coupon-toggle],
+.nevari-commerce button[data-nevari-coupon-apply] {
+    box-shadow: none;
+    text-transform: none;
+}
+
+.nevari-delivery-fields input:focus-visible,
+.nevari-custom-tip input:focus-visible,
+.nevari-coupon-panel input:focus-visible {
+    border-color: var(--nevari-accent);
+    box-shadow: 0 0 0 3px rgba(9, 166, 231, .16);
+}
+
+.nevari-payment-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.nevari-payment-option {
+    min-width: 0;
+    cursor: pointer;
+}
+
+.nevari-payment-option > input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.nevari-payment-card {
+    position: relative;
+    min-height: 86px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 15px;
+    border: 1px solid var(--nevari-border);
+    border-radius: 12px;
+    background: #fafafd;
+    transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+}
+
+.nevari-payment-option:hover .nevari-payment-card {
+    background: #f4fbfe;
+}
+
+.nevari-payment-option input:focus-visible + .nevari-payment-card {
+    outline: 3px solid rgba(9, 166, 231, .25);
+    outline-offset: 2px;
+}
+
+.nevari-payment-option input:checked + .nevari-payment-card {
+    border-color: var(--nevari-accent);
+    background: #f4fbfe;
+    box-shadow: inset 0 0 0 1px rgba(9, 166, 231, .12);
+}
+
+.nevari-payment-logo {
+    width: 42px;
+    height: 42px;
+    flex: 0 0 42px;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border: 1px solid #eceef1;
+    border-radius: 10px;
+    color: var(--nevari-primary);
+    background: #fff;
+}
+
+.nevari-payment-logo svg,
+.nevari-payment-logo img {
+    max-width: 28px;
+    max-height: 28px;
+}
+
+.nevari-payment-logo svg {
+    stroke-width: 2;
+}
+
+.nevari-payment-card strong,
+.nevari-payment-card small {
+    display: block;
+    overflow-wrap: anywhere;
+}
+
+.nevari-payment-card strong {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.nevari-payment-card small {
+    margin-top: 4px;
+    color: var(--nevari-muted);
+    font-size: 11px;
+}
+
+.nevari-payment-check {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 18px;
+    height: 18px;
+    display: none;
+    place-items: center;
+    border-radius: 50%;
+    color: #fff;
+    background: var(--nevari-accent);
+}
+
+.nevari-payment-check svg {
+    width: 11px;
+    height: 11px;
+}
+
+.nevari-payment-option input:checked + .nevari-payment-card .nevari-payment-check {
+    display: grid;
+}
+
+.nevari-review-strip {
+    min-height: 94px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 14px;
+    border-radius: 18px;
+    color: var(--nevari-text);
+    background: #f5f4f9;
+    text-decoration: none;
+}
+
+.nevari-review-images {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    overflow: hidden;
+}
+
+.nevari-review-images img,
+.nevari-review-more {
+    width: 64px;
+    height: 64px;
+    flex: 0 0 64px;
+    border-radius: 12px;
+}
+
+.nevari-review-images img {
+    object-fit: cover;
+}
+
+.nevari-review-more {
+    display: grid;
+    place-items: center;
+    color: #717780;
+    background: #fff;
+}
+
+.nevari-review-strip > svg {
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+}
+
+.nevari-checkout-summary > h2 {
+    margin-top: 8px;
+}
+
+.nevari-tip-section,
+.nevari-coupon-section {
+    margin-top: 40px;
+}
+
+.nevari-tip-section h3,
+.nevari-coupon-section h3 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 400;
+}
+
+.nevari-tip-section > p {
+    margin: 8px 0 18px;
+    color: var(--nevari-muted);
+    font-size: 12px;
+}
+
+.nevari-tip-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.nevari-tip-options button {
+    min-width: 48px;
+    min-height: 38px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 999px;
+    color: var(--nevari-text);
+    background: #fafafa;
+}
+
+.nevari-tip-options button.is-selected {
+    color: #fff;
+    background: var(--nevari-primary);
+}
+
+.nevari-custom-tip {
+    margin-top: 12px;
+}
+
+.nevari-coupon-section > div:first-child {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.nevari-coupon-section [data-nevari-coupon-toggle] {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 0;
+    border: 0;
+    color: var(--nevari-accent);
+    background: transparent;
+    font-size: 13px;
+}
+
+.nevari-coupon-section [data-nevari-coupon-toggle] svg {
+    width: 18px;
+    height: 18px;
+}
+
+.nevari-coupon-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.nevari-coupon-panel > button {
+    min-height: 50px;
+    padding: 0 20px;
+    border: 0;
+    border-radius: 10px;
+    color: #fff;
+    background: var(--nevari-primary);
+}
+
+.nevari-coupon-panel [data-nevari-coupon-list] {
+    display: flex;
+    grid-column: 1 / -1;
+    gap: 6px;
+    flex-wrap: wrap;
+    color: var(--nevari-muted);
+    font-size: 12px;
+}
+
+.nevari-coupon-panel [data-nevari-coupon-remove] {
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--nevari-border);
+    border-radius: 999px;
+    color: var(--nevari-text);
+    background: var(--nevari-surface);
+}
+
+.nevari-terms-copy,
+.nevari-terms-checkbox {
+    color: var(--nevari-muted);
+    font-size: 12px;
+}
+
+.nevari-terms-copy {
+    margin: 28px 0 14px;
+}
+
+.nevari-terms-checkbox {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+}
+
+.nevari-terms-checkbox input {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+}
+
+.nevari-place-order {
+    justify-content: center;
+    font-size: 16px;
+}
+
+.nevari-commerce.is-processing :is(.nevari-checkout-button, .nevari-place-order, .nevari-cart-actions button) {
+    opacity: .6;
+    pointer-events: none;
+}
+
+/* Order progress */
+.nevari-confirmation {
+    min-height: 190px;
+    display: grid;
+    justify-items: center;
+    align-content: start;
+    text-align: center;
+}
+
+.nevari-success-icon {
+    position: relative;
+    width: 88px;
+    height: 88px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--nevari-success);
+    background: #dcfce5;
+}
+
+.nevari-success-icon::after {
+    content: "";
+    position: absolute;
+    inset: 6px;
+    border: 1px solid rgba(25, 196, 58, .35);
+    border-radius: inherit;
+}
+
+.nevari-success-icon span {
+    position: relative;
+    z-index: 1;
+    width: 48%;
+    height: 48%;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: #fff;
+    background: var(--nevari-success);
+}
+
+.nevari-success-icon svg {
+    width: 54%;
+    height: 54%;
+    stroke-width: 2.5;
+}
+
+.nevari-success-icon.is-animated span {
+    animation: nevari-success-pop .6s cubic-bezier(.22, 1.4, .42, 1) both;
+}
+
+.nevari-success-icon.is-animated svg path {
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+    animation: nevari-check-draw .5s ease-out .2s forwards;
+}
+
+.nevari-confirmation p {
+    margin: 20px 0 7px;
+    font-size: 20px;
+}
+
+.nevari-confirmation strong {
+    display: none;
+    color: var(--nevari-muted);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.nevari-timeline {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 20px;
+    margin: 0 0 28px;
+    padding: 0;
+    list-style: none;
+}
+
+.nevari-timeline li {
+    min-width: 0;
+}
+
+.nevari-timeline-bar {
+    height: 7px;
+    display: block;
+    margin-bottom: 16px;
+    border-radius: 999px;
+    background: #f1f2f4;
+}
+
+.nevari-timeline .is-complete .nevari-timeline-bar,
+.nevari-timeline .is-active .nevari-timeline-bar {
+    background: var(--nevari-accent);
+}
+
+.nevari-timeline li > div {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 9px;
+    color: var(--nevari-muted);
+    font-size: 12px;
+}
+
+.nevari-timeline-dot {
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--nevari-border);
+    border-radius: 50%;
+    background: #fff;
+}
+
+.nevari-timeline .is-complete .nevari-timeline-dot,
+.nevari-timeline .is-active .nevari-timeline-dot {
+    border-color: var(--nevari-accent);
+}
+
+.nevari-timeline .is-complete .nevari-timeline-dot {
+    color: #fff;
+    background: var(--nevari-accent);
+}
+
+.nevari-timeline-dot svg {
+    width: 11px;
+    height: 11px;
+}
+
+.nevari-timeline time {
+    grid-column: 2;
+    overflow-wrap: anywhere;
+    font-size: 11px;
+}
+
+.nevari-order-items {
+    border: 0;
+    border-bottom: 1px solid var(--nevari-border);
+}
+
+.nevari-order-items > header,
+.nevari-order-items > article {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    border-bottom: 1px solid var(--nevari-border);
+}
+
+.nevari-order-items > header {
+    min-height: 52px;
+    font-size: 13px;
+}
+
+.nevari-order-items > article {
+    min-height: 108px;
+    padding: 20px 0;
+}
+
+.nevari-item-count {
+    min-width: 42px;
+    min-height: 38px;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    background: #fafafa;
+    font-weight: 400;
+}
+
+.nevari-pagination {
+    min-height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.nevari-pagination a {
+    min-width: 40px;
+    min-height: 40px;
+    display: grid;
+    place-items: center;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--nevari-text);
+    text-decoration: none;
+}
+
+.nevari-pagination a[aria-current="page"] {
+    border-color: var(--nevari-accent);
+}
+
+.nevari-order-sidebar {
+    display: grid;
+    gap: 22px;
+}
+
+.nevari-order-sidebar > section {
+    padding: 26px;
+    border: 1px solid var(--nevari-border);
+    border-radius: 14px;
+    background: #fff;
+}
+
+.nevari-order-sidebar h2 {
+    margin-bottom: 22px;
+    font-size: 17px;
+}
+
+.nevari-order-number {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 30px;
+    color: var(--nevari-muted);
+    font-size: 12px;
+}
+
+.nevari-order-number strong,
+.nevari-sidebar-link {
+    color: var(--nevari-accent);
+    font-weight: 400;
+}
+
+.nevari-sidebar-total {
+    margin-top: 26px !important;
+    padding-top: 22px;
+    border-top: 1px solid var(--nevari-border);
+    font-size: 17px;
+}
+
+.nevari-sidebar-link {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.nevari-sidebar-link svg {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 20px;
+}
+
+.nevari-order-widget.stage-exception .nevari-success-icon {
+    color: #d92d20;
+    background: #fee4e2;
+}
+
+@keyframes nevari-success-pop {
+    0% { opacity: 0; transform: scale(.4); }
+    75% { opacity: 1; transform: scale(1.12); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes nevari-check-draw {
+    to { stroke-dashoffset: 0; }
+}
+
+@media (max-width: 1024px) {
+    .nevari-commerce {
+        padding-inline: 24px;
+    }
+
+    .nevari-cart-layout,
+    .nevari-checkout-layout,
+    .nevari-order-layout {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .nevari-cart-summary.is-sticky,
+    .nevari-checkout-summary.is-sticky {
+        position: static;
+    }
+
+    .nevari-cart-summary,
+    .nevari-checkout-summary {
+        padding-top: 8px;
+    }
+}
+
+@media (max-width: 767px) {
+    .nevari-commerce {
+        padding: 24px 16px 40px;
+        font-size: 14px;
+    }
+
+    .nevari-page-header {
+        margin-bottom: 32px;
+    }
+
+    .nevari-back-link {
+        min-height: 44px;
+        margin-bottom: 18px;
+    }
+
+    .nevari-page-title {
+        font-size: 28px;
+    }
+
+    .nevari-cart-row {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 18px;
+        padding: 20px 0;
+    }
+
+    .nevari-cart-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .nevari-remove-icon,
+    .nevari-qty-button,
+    .nevari-commerce input.nevari-qty-value {
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .nevari-remove-text {
+        min-height: 44px;
+        padding-inline: 6px;
+    }
+
+    .nevari-checkout-card {
+        padding: 20px 16px;
+    }
+
+    .nevari-delivery-fields,
+    .nevari-payment-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .nevari-payment-card {
+        min-height: 76px;
+    }
+
+    .nevari-review-strip {
+        min-height: 80px;
+        padding: 10px;
+    }
+
+    .nevari-review-images img,
+    .nevari-review-more {
+        width: 54px;
+        height: 54px;
+        flex-basis: 54px;
+    }
+
+    .nevari-tip-options button,
+    .nevari-coupon-section [data-nevari-coupon-toggle] {
+        min-height: 44px;
+    }
+
+    .nevari-coupon-panel {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .nevari-coupon-panel > button {
+        width: 100%;
+    }
+
+    .nevari-timeline {
+        gap: 8px;
+    }
+
+    .nevari-timeline li > div {
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 5px;
+        font-size: 10px;
+    }
+
+    .nevari-timeline time {
+        font-size: 9px;
+    }
+
+    .nevari-order-items > header {
+        font-size: 12px;
+    }
+
+    .nevari-order-items > article {
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 374px) {
+    .nevari-cart-actions {
+        flex-wrap: wrap;
+    }
+
+    .nevari-product-main {
+        align-items: flex-start;
+    }
+
+    .nevari-review-images img:nth-of-type(n+4) {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nevari-commerce *,
+    .nevari-commerce *::before,
+    .nevari-commerce *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+    }
+
+    .nevari-success-icon svg path {
+        stroke-dashoffset: 0 !important;
+    }
+}
+
+[dir="rtl"] .nevari-payment-check {
+    right: auto;
+    left: 8px;
+}
+
+/* Button widget */
+.nevari-button-widget-wrap {
+    display: flex;
+}
+
+.nevari-button-widget {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    border: 0;
+    text-decoration: none;
+    cursor: pointer;
+    box-sizing: border-box;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.nevari-button-widget svg {
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}

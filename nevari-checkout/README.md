@@ -1,74 +1,42 @@
 # Nevari Checkout
 
-Nevari Checkout is a WooCommerce customization plugin that replaces the default cart, checkout, and order-received screens with custom templates and behaviors tailored for the Nevari storefront.
+Nevari Checkout 1.3.2 provides secure, responsive WooCommerce cart, checkout, and order-progress interfaces. One canonical server-rendered implementation powers Elementor widgets, existing shortcodes, and automatic WooCommerce page replacement.
 
-## What it does
+## Requirements
 
-- Replaces the WooCommerce cart page content with a custom cart layout.
-- Replaces the WooCommerce checkout page content with a custom two-column checkout layout.
-- Replaces the WooCommerce order received / thank-you page with a custom order summary view.
-- Loads custom CSS and JavaScript only on product, cart, and checkout pages.
-- Supports AJAX cart quantity updates on the front end.
-- Makes default WooCommerce checkout fields optional where needed.
-- Validates and saves custom checkout fields during order creation.
-- Applies a configurable tip fee during checkout.
-- Stores tip selection in the checkout session while the order review updates.
-- Applies free shipping automatically when the cart reaches a configured threshold.
+- WordPress 6.2+
+- WooCommerce 7.0+
+- PHP 7.4+
+- Elementor 3.15+ for Elementor widgets
 
-## Product experience module
+## Commerce widgets
 
-The plugin also includes a product experience module that extends single product pages and review handling.
+Elementor registers a **Nevari Checkout** category containing:
 
-- Uses WooCommerce's native product comment/review system instead of a separate review table or custom post type.
-- Enforces logged-in verified-owner eligibility before showing or accepting a review form.
-- Renders a custom review layout with rating summaries, verified-owner badges, pagination, and a scroll-to-form action.
-- Provides custom single product templates for hero, details, reviews, and add-to-cart sections.
-- Exposes shortcodes for reviews and AJAX add-to-cart behavior.
-- Adds admin settings for review module behavior and add-to-cart button styling.
+- `nevari-cart`
+- `nevari-checkout`
+- `nevari-order-progress`
 
-## Admin settings
+Existing `[nevari_cart]`, `[nevari_cart_page]`, `[nevari_checkout]`, and `[nevari_checkout_page]` shortcodes and standard WooCommerce Cart/Checkout URLs remain supported. Pages that already render the matching Elementor widget are not replaced again.
 
-The main plugin adds a WooCommerce submenu page named **Nevari Checkout**.
+Cart totals, stock, coupons, shipping, taxes, fees, tips, gateways, checkout processing, and orders stay authoritative in WooCommerce. Payment cards are never collected by these widgets. Enabled fieldless gateway objects, including hosted and offline gateways, keep their existing native processing.
 
-Current settings include:
+Order access requires logged-in customer ownership or the matching guest order key. Status polling uses a short-lived signed token and never exposes the order key or gateway transaction reference.
 
-- Free shipping threshold
+## Product and reviews modules
 
-The product experience module also registers additional WooCommerce settings pages for:
+The existing product experience and WooCommerce-native verified-owner reviews integration remain unchanged. Version 1.3.2 scopes the new commerce CSS/JavaScript to commerce widget/page renders and retains the existing product-page asset path.
 
-- Reviews module options
-- Add-to-cart button options
+## Install or upgrade
 
-## Front-end behavior
+1. Back up the site.
+2. Replace the old `nevari-checkout` directory with the 1.3.2 package.
+3. Activate **Nevari Checkout** and clear site/CDN caches.
+4. Confirm the Cart and Checkout assignments under WooCommerce settings.
+5. Add the widgets through Elementor where desired.
 
-The plugin enqueues assets only when needed, using the following conditions:
+See `ELEMENTOR-COMMERCE.md` for the architecture, control inventory, AJAX and hook reference, security model, test commands, and success-page setup.
 
-- Checkout page
-- Cart page
-- Product page
+## Production packaging
 
-JavaScript behavior includes:
-
-- Updating cart quantities without a full page refresh
-- Rebinding custom UI after checkout updates
-- Handling custom cart control interactions
-
-## File structure
-
-- `Nevari-checkout.php` - plugin bootstrap file with the WordPress plugin header
-- `includes/class-nevari-checkout.php` - main implementation for checkout, cart, and order-received overrides
-- `includes/class-nevari-product-experience.php` - product page, review, shortcode, and admin module
-- `assets/` - CSS and JavaScript assets
-- `templates/` - WooCommerce template overrides used by the product experience module
-
-## Installation
-
-1. Upload the `Nevari-checkout` folder into `wp-content/plugins/`.
-2. Make sure WooCommerce is installed and active.
-3. Activate **Nevari Checkout** from the WordPress Plugins screen.
-
-## Notes
-
-- The plugin depends on WooCommerce functions and templates.
-- If WooCommerce is not active, the plugin will not provide its intended storefront behavior.
-- The root file must be `Nevari-checkout.php` for WordPress to recognize the package correctly.
+Development-only Composer dependencies, tests, reports, and `vendor/` are excluded from the production ZIP through `.distignore`.

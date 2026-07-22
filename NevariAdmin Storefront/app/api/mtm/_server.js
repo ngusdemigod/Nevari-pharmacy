@@ -51,6 +51,32 @@ export function validateFrontendSession(session) {
   return null;
 }
 
+export function assertCsrfRequest(request) {
+  const cookie = requestCookie(request, "nevari_csrf");
+  const header = String(request.headers.get("x-nevari-csrf") || "").trim();
+  if (!cookie || !header || cookie !== header) {
+    const error = new Error("CSRF validation failed.");
+    error.status = 403;
+    throw error;
+  }
+}
+
+export async function proxyRawRequest(origin, session, path, { method = "GET", body, headers = {} } = {}) {
+  return fetch(proxyUrl(origin, session.baseUrl, path), {
+    method,
+    headers: {
+      Accept: headers.Accept || "application/json",
+      Authorization: session.accessToken ? `Bearer ${session.accessToken}` : "",
+      "X-Nevari-Frontend-Type": session.frontendType || "patient",
+      "X-Nevari-Frontend-Origin": session.frontendOrigin || origin,
+      ...headers,
+    },
+    body,
+    cache: "no-store",
+    signal: AbortSignal.timeout(60000),
+  });
+}
+
 export async function proxyRequest(origin, session, path, { method = "GET", body } = {}) {
   const response = await fetch(proxyUrl(origin, session.baseUrl, path), {
     method,

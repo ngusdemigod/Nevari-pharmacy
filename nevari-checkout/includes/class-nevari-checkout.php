@@ -49,6 +49,7 @@ final class Nevari_Checkout {
     add_action('wp_ajax_nopriv_nevari_auth_widget_verify_code', array($this, 'ajax_auth_widget_verify_code'));
     add_action('wp_ajax_nevari_auth_widget_resend_code', array($this, 'ajax_auth_widget_resend_code'));
     add_action('wp_ajax_nopriv_nevari_auth_widget_resend_code', array($this, 'ajax_auth_widget_resend_code'));
+    $this->register_reviews_widget_ajax();
     add_action('admin_init', array($this, 'register_settings'));
     add_action('admin_menu', array($this, 'register_settings_page'));
     add_shortcode('nevari_cart_total', array($this, 'render_cart_total_shortcode'));
@@ -83,6 +84,41 @@ final class Nevari_Checkout {
 
     private function get_plugin_file() {
         return self::$plugin_file;
+    }
+
+    /**
+     * Register the product-reviews Elementor widget AJAX handlers. The widget
+     * class extends Elementor\Widget_Base, so the file must only be required once
+     * Elementor is loaded — we lazy-load it inside the AJAX callback (Elementor is
+     * fully bootstrapped by the time a wp_ajax_* action fires) rather than in the
+     * constructor, which runs on plugins_loaded for every request.
+     */
+    private function register_reviews_widget_ajax() {
+        foreach (array(
+            'nevari_fetch_product_reviews' => 'ajax_fetch_reviews',
+            'nevari_submit_product_review' => 'ajax_submit_review',
+        ) as $action => $method) {
+            $callback = function () use ($method) {
+                $this->dispatch_reviews_widget_ajax($method);
+            };
+            add_action('wp_ajax_' . $action, $callback);
+            add_action('wp_ajax_nopriv_' . $action, $callback);
+        }
+    }
+
+    private function dispatch_reviews_widget_ajax($method) {
+        if (!did_action('elementor/loaded') && !class_exists('\\Elementor\\Widget_Base')) {
+            wp_send_json_error(array('message' => __('Reviews are unavailable.', 'woocommerce')), 500);
+        }
+        $reviews_widget_file = plugin_dir_path($this->get_plugin_file()) . 'includes/class-nevari-reviews-widget.php';
+        if (file_exists($reviews_widget_file)) {
+            require_once $reviews_widget_file;
+        }
+        if (class_exists('Nevari_Reviews_Widget') && method_exists('Nevari_Reviews_Widget', $method)) {
+            call_user_func(array('Nevari_Reviews_Widget', $method));
+            return;
+        }
+        wp_send_json_error(array('message' => __('Reviews handler is unavailable.', 'woocommerce')), 500);
     }
 
     public function register_settings() {

@@ -29,7 +29,7 @@ export default function Paywall({
   busy = false,
   error = "",
   heading = "Access more on Nevari Access",
-  priceLabel = "NGN1,000/month",
+  priceLabel = "",
 }) {
   return (
     <section className="subscription-shell">
@@ -66,8 +66,8 @@ export default function Paywall({
       {error ? <p className="subscription-feedback error">{error}</p> : null}
 
       <div className="subscription-cta-bar">
-        <button className="subscription-cta-button" type="button" disabled={busy} onClick={onSubscribe}>
-          {busy ? "Redirecting..." : `Subscribe for ${priceLabel}`}
+        <button className="subscription-cta-button" type="button" disabled={busy || !priceLabel} onClick={onSubscribe}>
+          {busy ? "Redirecting..." : priceLabel ? `Subscribe for ${priceLabel}` : "Subscription price unavailable"}
         </button>
       </div>
     </section>

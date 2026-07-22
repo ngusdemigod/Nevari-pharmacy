@@ -193,6 +193,24 @@ const EMPTY_PRODUCT_FORM = {
   visibility: "visible"
 };
 
+const PRODUCT_ORGANIZATION_CATEGORIES = ["Allergy & Cold", "Pain Relief", "Vitamins", "Prescription"];
+const PRODUCT_PRESCRIPTION_RULE_OPTIONS = [
+  { value: "no_prescription_needed", label: "No prescription needed" },
+  { value: "prescription_required", label: "Prescription required" },
+  { value: "pharmacist_review_required", label: "Pharmacist review needed" }
+];
+const PRODUCT_SHIPPING_CLASS_OPTIONS = ["Standard pharmacy item", "Cold chain", "Fragile"];
+const PRODUCT_EDITOR_TAB_IDS = {
+  details: "product-editor-tab-details",
+  organization: "product-editor-tab-organization",
+  inventory: "product-editor-tab-inventory"
+};
+const PRODUCT_EDITOR_PANEL_IDS = {
+  details: "product-editor-panel-details",
+  organization: "product-editor-panel-organization",
+  inventory: "product-editor-panel-inventory"
+};
+
 const EMPTY_PRODUCT_DRAFT = {
   title: "",
   shortDescription: "",
@@ -208,7 +226,10 @@ const EMPTY_PRODUCT_DRAFT = {
   brands: [],
   shippingInfo: "",
   stockQuantity: "",
+  lowStockAlert: "",
   sku: "",
+  weight: "",
+  shippingClass: "Standard pharmacy item",
   linkedProducts: "",
   purchaseNotes: "",
   status: "draft"
@@ -1786,7 +1807,10 @@ function buildProductEditDraft(product) {
     brands: getProductBrands(product).split(",").map((item) => item.trim()).filter(Boolean),
     shippingInfo: product?.shipping_information || product?.shipping_class || product?.shipping_class_name || "",
     stockQuantity: String(getProductStockQuantity(product) ?? ""),
+    lowStockAlert: String(metaValue(product, ["low_stock_amount", "low_stock_alert", "low_stock_threshold"]) || ""),
     sku: product?.sku || "",
+    weight: String(product?.weight || metaValue(product, ["weight_kg", "shipping_weight"]) || ""),
+    shippingClass: product?.shipping_class_name || product?.shipping_class || metaValue(product, ["shipping_class", "shipping_class_name"]) || "Standard pharmacy item",
     linkedProducts: Array.isArray(product?.linked_products)
       ? product.linked_products.map((item) => item?.name || item?.label || item).filter(Boolean).join(", ")
       : product?.linked_products || product?.upsell_ids?.join(", ") || "",
@@ -2392,7 +2416,10 @@ export function AdminStorefrontDashboard({
   embeddedProductOnly = false,
   embeddedSession = null,
   embeddedInitialPage = "",
-  embeddedCreateActions = null
+  embeddedCreateActions = null,
+  embeddedData = null,
+  previewProductModal = "",
+  previewProduct = null
 } = {}) {
   const router = useRouter();
   const { mutate: globalMutate } = useSWRConfig();
@@ -2400,13 +2427,14 @@ export function AdminStorefrontDashboard({
     ? "products"
     : (embeddedInitialPage ? normalizePageId(embeddedInitialPage) : "");
   const isEmbeddedDashboard = embeddedProductOnly || Boolean(resolvedEmbeddedPage);
+  const embeddedInitialData = embeddedData ? { ...emptyData(), ...embeddedData } : null;
   const createMenuItems = Array.isArray(embeddedCreateActions) && embeddedCreateActions.length
     ? embeddedCreateActions
     : (embeddedProductOnly ? ["product"] : ["product", "order", "consultation", "doctor", "customer"]);
   const embeddedInitialSession = embeddedSession ? { ...defaultSession(), ...embeddedSession, paired: true } : null;
   const [session, setSession] = useState(() => embeddedInitialSession || defaultSession());
   const [currentPage, setCurrentPage] = useState(() => resolvedEmbeddedPage || "overview");
-  const [data, setData] = useState(emptyData);
+  const [data, setData] = useState(() => embeddedInitialData || emptyData());
   const [audit, setAudit] = useState({ category: "orders", status: "all", source: "all" });
   const [search, setSearch] = useState("");
   const [liveSnapshots, setLiveSnapshots] = useState([]);
@@ -2490,6 +2518,7 @@ export function AdminStorefrontDashboard({
   const [productEditMedia, setProductEditMedia] = useState([]);
   const [activeProductMediaId, setActiveProductMediaId] = useState("");
   const [productCreateStep, setProductCreateStep] = useState(0);
+  const [createMultiple, setCreateMultiple] = useState(false);
   const [productCreateValidationStep, setProductCreateValidationStep] = useState("");
   const [productEditTab, setProductEditTab] = useState("details");
   const [productEditSearch, setProductEditSearch] = useState({ categories: "", tags: "", brands: "" });
@@ -2583,6 +2612,10 @@ export function AdminStorefrontDashboard({
   const productMediaUploadModeRef = useRef({ type: "append", index: null });
   const productMediaDragIndexRef = useRef(null);
   const productDescriptionEditorRef = useRef(null);
+  const productEditorDialogRef = useRef(null);
+  const productEditorCloseButtonRef = useRef(null);
+  const productEditorTriggerRef = useRef(null);
+  const productEditorWasOpenRef = useRef(false);
   const DELETE_EXIT_DURATION = 220;
   const createProductMutation = useCreateProduct(session);
   const updateProductMutation = useUpdateProduct(session);
@@ -3060,6 +3093,37 @@ export function AdminStorefrontDashboard({
   }, [snackbar]);
 
   useEffect(() => {
+    if (!isEmbeddedDashboard || !embeddedInitialData) {
+      return;
+    }
+    setData({ ...emptyData(), ...embeddedInitialData });
+  }, [embeddedInitialData, isEmbeddedDashboard]);
+
+  useEffect(() => {
+    if (!isEmbeddedDashboard || !previewProductModal || !previewProduct) {
+      return;
+    }
+
+    const nextProduct = { ...previewProduct };
+    const nextMedia = extractProductMediaItems(nextProduct);
+
+    if (previewProductModal == "create") {
+      setProductEditorMode("create");
+      setSelectedProductEdit(null);
+      setProductEditForm(buildEmptyProductDraft());
+      setProductEditMedia(nextMedia);
+    } else {
+      setProductEditorMode("edit");
+      setSelectedProductEdit(nextProduct);
+      setProductEditForm(buildProductEditDraft(nextProduct));
+      setProductEditMedia(nextMedia);
+    }
+    setActiveProductMediaId(nextMedia[0]?.id || "");
+    setProductEditTab("details");
+    setProductEditFeedback("");
+  }, [isEmbeddedDashboard, previewProduct, previewProductModal]);
+
+  useEffect(() => {
     if (isEmbeddedDashboard) {
       setHydrated(true);
       setAccessResolved(true);
@@ -3110,14 +3174,72 @@ export function AdminStorefrontDashboard({
   }, [session, currentPage, hydrated, isEmbeddedDashboard]);
 
   useEffect(() => {
-    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || auditDetailModalOpen || customerPrivilegeEscalationOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(selectedCustomerId) || Boolean(mtmPreviewRequestId) || Boolean(ivTherapyPreviewRequestId);
+    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || auditDetailModalOpen || customerPrivilegeEscalationOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(productEditForm && productEditorMode === "create") || Boolean(selectedCustomerId) || Boolean(mtmPreviewRequestId) || Boolean(ivTherapyPreviewRequestId);
     document.body.classList.toggle("auth-locked", authGate.visible);
     document.body.classList.toggle("modal-open", hasPopupOpen);
     return () => {
       document.body.classList.remove("auth-locked");
       document.body.classList.remove("modal-open");
     };
-  }, [auditDetailModalOpen, authGate.visible, categoryCreateOpen, createModalType, customerPrivilegeEscalationOpen, doctorAssignmentModalOpen, orderControlsModalOpen, orderCreateModalOpen, orderModalOpen, paymentReceiptModalOpen, selectedConsultation, selectedCustomerId, selectedDoctorId, selectedProductEdit]);
+  }, [auditDetailModalOpen, authGate.visible, categoryCreateOpen, createModalType, customerPrivilegeEscalationOpen, doctorAssignmentModalOpen, orderControlsModalOpen, orderCreateModalOpen, orderModalOpen, paymentReceiptModalOpen, selectedConsultation, selectedCustomerId, selectedDoctorId, selectedProductEdit, productEditForm, productEditorMode]);
+
+  useEffect(() => {
+    const isOpen = Boolean(productEditForm && (selectedProductEdit || productEditorMode === "create"));
+    const wasOpen = productEditorWasOpenRef.current;
+    productEditorWasOpenRef.current = isOpen;
+    if (!isOpen) {
+      if (wasOpen && productEditorTriggerRef.current && typeof productEditorTriggerRef.current.focus === "function") {
+        productEditorTriggerRef.current.focus();
+      }
+      return undefined;
+    }
+
+    const dialog = productEditorDialogRef.current;
+    const closeButton = productEditorCloseButtonRef.current;
+    const focusTimer = wasOpen ? null : window.setTimeout(() => {
+      (closeButton || dialog)?.focus?.();
+    }, 0);
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeProductEditModal();
+        return;
+      }
+
+      if (event.key !== "Tab" || !dialog) {
+        return;
+      }
+
+      const focusable = [...dialog.querySelectorAll('button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+        .filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
+
+      if (!focusable.length) {
+        event.preventDefault();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+
+      if (event.shiftKey && activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      if (focusTimer) {
+        window.clearTimeout(focusTimer);
+      }
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeProductEditModal, productEditForm, productEditorMode, selectedProductEdit]);
 
   useEffect(() => {
     function handleStackedModalCtaClick(event) {
@@ -5023,6 +5145,9 @@ export function AdminStorefrontDashboard({
     if (!product) {
       return;
     }
+    if (typeof document !== "undefined") {
+      productEditorTriggerRef.current = document.activeElement;
+    }
     const nextMedia = extractProductMediaItems(product);
     setProductEditorMode("edit");
     setSelectedProductEdit(product);
@@ -5035,8 +5160,12 @@ export function AdminStorefrontDashboard({
   }
 
   function openProductCreateModal() {
+    if (typeof document !== "undefined") {
+      productEditorTriggerRef.current = document.activeElement;
+    }
     closeProductEditModal();
     setProductEditorMode("create");
+    setCreateMultiple(false);
     setSelectedProductEdit(null);
     setProductEditForm(buildEmptyProductDraft());
     setProductEditMedia([]);
@@ -5083,7 +5212,7 @@ export function AdminStorefrontDashboard({
       const firstError = Object.values(errors).find(Boolean);
       setProductCreateValidationStep(validationStepKey);
       if (firstError) {
-        setProductEditFeedback(firstError);
+        showSnackbar(firstError, "warning");
         return false;
       }
     }
@@ -5144,7 +5273,6 @@ export function AdminStorefrontDashboard({
       return;
     }
     setProductMediaUploading(true);
-    setProductEditFeedback("Uploading image...");
     try {
       const nextItems = await Promise.all(files.map(uploadProductMediaFile));
       const uploadMode = productMediaUploadModeRef.current;
@@ -5161,9 +5289,9 @@ export function AdminStorefrontDashboard({
         }
         return merged;
       });
-      setProductEditFeedback("Image uploaded.");
+      showSnackbar("Image uploaded.", "success");
     } catch (error) {
-      setProductEditFeedback(describeRequestError(error));
+      showSnackbar(describeRequestError(error), "error");
     } finally {
       setProductMediaUploading(false);
       event.target.value = "";
@@ -5321,8 +5449,16 @@ export function AdminStorefrontDashboard({
             ...prev,
             products: [nextProduct, ...(prev.products || [])]
           }));
-        setProductEditFeedback("Product created.");
-        closeProductEditModal();
+        if (createMultiple) {
+          setProductEditForm(buildEmptyProductDraft());
+          setProductEditMedia([]);
+          setActiveProductMediaId("");
+          setProductCreateStep(0);
+          showSnackbar("Product created. Ready to create another.", "success");
+        } else {
+          showSnackbar("Product created.", "success");
+          closeProductEditModal();
+        }
       } else {
         const optimisticProduct = {
           ...selectedProductEdit,
@@ -5338,10 +5474,10 @@ export function AdminStorefrontDashboard({
           products: (prev.products || []).map((product) => (product.id === nextProduct.id ? { ...product, ...nextProduct } : product))
         }));
         setSelectedProductEdit(nextProduct);
-        setProductEditFeedback("Product updated.");
+        showSnackbar("Product updated.", "success");
       }
     } catch (error) {
-      setProductEditFeedback(describeRequestError(error));
+      showSnackbar(describeRequestError(error), "error");
     } finally {
       setProductEditLoading(false);
     }
@@ -5376,7 +5512,7 @@ export function AdminStorefrontDashboard({
       }
     } catch (error) {
       if (wasSelected) {
-        setProductEditFeedback(describeRequestError(error));
+        showSnackbar(describeRequestError(error), "error");
         setProductEditLoading(false);
       }
       return;
@@ -6474,6 +6610,7 @@ export function AdminStorefrontDashboard({
       setSyncStatus({ text: "Sync error", mode: "error" });
     }
   }
+
 
   useEffect(() => {
     if (isEmbeddedDashboard) {
@@ -9037,11 +9174,11 @@ export function AdminStorefrontDashboard({
 
             <div className="topbar-actions">
               <div className="create-menu-wrap">
-                <button className="btn-add-icon" type="button" aria-label="Create new record" onClick={() => setCreateMenuOpen((prev) => !prev)}>
+                <button className="btn-add-icon" type="button" aria-label="Create new record" aria-expanded={createMenuOpen} aria-controls="dashboard-create-menu" onClick={() => setCreateMenuOpen((prev) => !prev)}>
                   +
                 </button>
                 {createMenuOpen ? (
-                  <div className="create-menu" role="menu">
+                  <div id="dashboard-create-menu" className="create-menu" role="menu">
                     {createMenuItems.map((type) => (
                       <button key={type} type="button" role="menuitem" onClick={() => openCreateModal(type)}>
                         {type === "product"
@@ -10738,7 +10875,7 @@ export function AdminStorefrontDashboard({
       <div className="app-modal-stack">
         <div className="app-modal-layer">
           <ModalScrim className="app-modal-backdrop" label="Close order creation" onDismiss={closeOrderCreateModal} />
-          <section className="detail-section stacked-order-popup order-create-popup admin-surface-modal modal-frame creation-frame" role="dialog" aria-modal="true" aria-label="Create order">
+          <section className="detail-section stacked-order-popup order-create-popup admin-surface-modal modal-frame creation-frame modal-design-system-parity" role="dialog" aria-modal="true" aria-label="Create order">
             <form className="order-create-form" onSubmit={createOrderFromForm}>
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
@@ -10987,7 +11124,7 @@ export function AdminStorefrontDashboard({
         <div className="app-modal-layer app-modal-layer-base">
           <ModalScrim className="app-modal-backdrop" label="Close order details" onDismiss={closeOrderModal} />
           <section
-            className={`panel order-detail-panel order-modal admin-surface-modal modal-frame detail-frame ${orderModalOpen ? "is-open" : "is-hidden"} ${selectedOrderDetail && deletingOrderIds.includes(selectedOrderDetail.id) ? "order-modal-deleting" : ""}`}
+            className={`panel order-detail-panel order-modal admin-surface-modal modal-frame detail-frame modal-design-system-parity ${orderModalOpen ? "is-open" : "is-hidden"} ${selectedOrderDetail && deletingOrderIds.includes(selectedOrderDetail.id) ? "order-modal-deleting" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label={selectedOrderDetail ? `Order #${selectedOrderDetail.number}` : "Order details"}
@@ -11312,14 +11449,14 @@ export function AdminStorefrontDashboard({
               </div>
               <div className="stacked-order-popup-actions modal-actions">
                 <button className="pill-button" type="button" onClick={() => setMtmPreviewRequestId(null)}>Close</button>
-                <a
+                {previewMtmRequest?.document?.available ? <a
                   className="button-primary"
                   href={`/api/admin/mtm/${previewMtmRequest.id}/pdf?baseUrl=${encodeURIComponent(session.baseUrl || "")}&frontendType=${encodeURIComponent(session.frontendType || "admin_dashboard")}`}
                   target="_blank"
                   rel="noreferrer"
                 >
                   Download Request PDF
-                </a>
+                </a> : <span className="admin-empty-copy" role="status">Submitted PDF unavailable</span>}
               </div>
             </section>
           </div>
@@ -11545,27 +11682,28 @@ export function AdminStorefrontDashboard({
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <ModalScrim className="app-modal-backdrop" label="Close product editor" onDismiss={closeProductEditModal} />
-              <section id={productEditorMode === "create" ? "popup-template-product" : undefined} data-popup={productEditorMode === "create" ? "product" : undefined} className={`detail-section product-editor-popup product-editor-modal admin-surface-modal modal-frame detail-frame ${productEditorMode === "create" ? "product-editor-create-mode" : "product-editor-edit-mode"} ${productEditorMode === "create" && !isEmbeddedDashboard ? "product-editor-admin-parity" : ""} ${selectedProductEdit && deletingProductIds.includes(selectedProductEdit.id) ? "product-editor-modal-deleting" : ""}`.trim()} role="dialog" aria-modal="true" aria-label={productEditorMode === "create" ? "Create product" : `Edit ${selectedProductEdit?.name || "product"}`}>
+              <section id={productEditorMode === "create" ? "popup-template-product" : undefined} data-popup={productEditorMode === "create" ? "product" : undefined} className={`detail-section product-editor-popup product-editor-modal admin-surface-modal modal-frame detail-frame modal-design-system-parity ${productEditorMode === "create" ? "product-editor-create-mode" : "product-editor-edit-mode"} ${productEditorMode === "create" && !isEmbeddedDashboard ? "product-editor-admin-parity" : ""} ${selectedProductEdit && deletingProductIds.includes(selectedProductEdit.id) ? "product-editor-modal-deleting" : ""}`.trim()} role="dialog" aria-modal="true" aria-labelledby="productEditorTitle" aria-describedby="productEditorDescription" ref={productEditorDialogRef} tabIndex={-1}>
               <form className="product-editor-form" onSubmit={saveProductEdits}>
                 <input ref={productMediaInputRef} type="file" accept="image/*" multiple hidden onChange={handleProductMediaUpload} />
                 <div className="panel-header stacked-order-popup-header product-editor-header modal-head">
                   <div>
                     {productEditorMode === "create" ? (
                       <>
-                        <h3>Create product</h3>
-                        <p className="popup-support-copy modal-intro-copy">Add a medicine or pharmacy product with image, stock, pricing and catalogue details.</p>
+                        <h3 id="productEditorTitle">Create product</h3>
+                        <p id="productEditorDescription" className="popup-support-copy modal-intro-copy">Add a medicine or pharmacy product with image, stock, pricing and catalogue details.</p>
                       </>
                     ) : (
                       <>
+                        <h3 id="productEditorTitle">{productEditForm.title || selectedProductEdit?.name || "Untitled product"}</h3>
                         <p className="section-kicker">Product editor</p>
-                        <h3>{productEditForm.title || selectedProductEdit?.name || "Untitled product"}</h3>
+                        <p id="productEditorDescription" className="product-editor-reference-copy">Edit product media, details, pricing, tags, inventory and publishing state without leaving the pharmacy dashboard.</p>
                       </>
                     )}
                   </div>
                   <div className="toolbar product-editor-top-actions">
                     {productEditorMode === "create" ? null : (
                       <button
-                        className={`product-status-toggle ${productEditForm.status === "publish" ? "active" : ""}`}
+                        className={`product-status-toggle toggle-pill ${productEditForm.status === "publish" ? "active" : "off"}`}
                         type="button"
                         role="switch"
                         aria-checked={productEditForm.status === "publish"}
@@ -11574,12 +11712,12 @@ export function AdminStorefrontDashboard({
                         onClick={() => setProductEditForm((prev) => ({ ...prev, status: prev.status === "publish" ? "draft" : "publish" }))}
                       >
                         <span className="product-status-toggle-track">
-                          <span className="product-status-toggle-thumb" />
+                          <span className="product-status-toggle-thumb toggle-knob" />
                         </span>
                         <span className="product-status-toggle-label">{productEditForm.status === "publish" ? "Published" : "Draft"}</span>
                       </button>
                     )}
-                    <button className="icon-button" type="button" data-popup-close={productEditorMode === "create" ? "product" : undefined} aria-label={productEditorMode === "create" ? "Close product creator" : "Close product editor"} disabled={productEditLoading} onClick={closeProductEditModal}><InlineIcon id="i-x" /></button>
+                    <button ref={productEditorCloseButtonRef} className="icon-button product-editor-close-button" type="button" data-popup-close={productEditorMode === "create" ? "product" : undefined} aria-label={productEditorMode === "create" ? "Close product creator" : "Close product editor"} disabled={productEditLoading} onClick={closeProductEditModal}><InlineIcon id="i-x" /></button>
                   </div>
                 </div>
 
@@ -11588,21 +11726,22 @@ export function AdminStorefrontDashboard({
                       <>
                         <div className="product-editor-form-column">
                           <div className="product-editor-form-card creation-main product-create-form-layout">
-                            <div className="product-create-stepper" role="tablist" aria-label="Create product steps">
+                            <div className="product-create-stepper" role="tablist" aria-label="Create product steps" aria-hidden="true">
                               {PRODUCT_CREATE_STEPS.map((step, index) => (
                                 <button
                                   key={step.key}
-                                  className={`product-create-step-pill ${productCreateStep === index ? "active" : ""}`}
+                                  className={`product-create-step-pill ${productCreateStep === index ? "active" : ""} ${index < productCreateStep ? "complete" : ""}`}
                                   type="button"
                                   role="tab"
                                   aria-selected={productCreateStep === index}
+                                  aria-current={productCreateStep === index ? "step" : undefined}
                                   onClick={() => {
                                     setProductEditFeedback("");
                                     setProductCreateValidationStep("");
                                     setProductCreateStep(index);
                                   }}
                                 >
-                                  <span>{step.eyebrow}</span>
+                                  <span>{step.eyebrow}{index < productCreateStep ? <b className="product-create-step-check" aria-label="Completed">{"\u2713"}</b> : null}</span>
                                   <strong>{step.label}</strong>
                                 </button>
                               ))}
@@ -11620,19 +11759,14 @@ export function AdminStorefrontDashboard({
                             </div>
 
                             <div className="product-create-step-scroll">
-                            {activeProductCreateStep.key === "identity" ? (
+                            {true ? (
                               <div className="product-create-step-panel">
                                 <div className="creation-field-grid product-create-field-grid">
-                                    <div className="creation-field-row creation-field-row-two full-width">
+                                    <div className="creation-field-row full-width product-create-name-row">
                                       <label className="creation-field">
                                         <span>Product name</span>
-                                        <input className="form-control" value={productEditForm.title} onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} required />
+                                        <input className="form-control" value={productEditForm.title} placeholder="e.g. Loratadine 10mg" onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} required />
                                         {productCreateStepErrors.title ? <small className="field-error">{productCreateStepErrors.title}</small> : null}
-                                      </label>
-                                      <label className="creation-field">
-                                        <span>SKU</span>
-                                        <input className="form-control" value={productEditForm.sku || "Generated securely by the server"} disabled readOnly />
-                                        <small className="field-hint">This is generated server-side after save or publish.</small>
                                       </label>
                                     </div>
                                     <div className="creation-field-row creation-field-row-two full-width">
@@ -11694,6 +11828,7 @@ export function AdminStorefrontDashboard({
                                                 key={tag}
                                                 className="product-create-chip"
                                                 type="button"
+                                                aria-label={`Remove tag ${tag}`}
                                                 onClick={() => setProductEditForm((prev) => ({ ...prev, tags: prev.tags.filter((item) => item !== tag) }))}
                                               >
                                                 <span>{tag}</span>
@@ -11708,7 +11843,7 @@ export function AdminStorefrontDashboard({
                                     </div>
                                     <label className="creation-field full-width">
                                       <span>Short description</span>
-                                      <textarea className="form-control" rows={4} maxLength={160} value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} />
+                                      <textarea className="form-control" rows={4} maxLength={160} placeholder="Add a short customer friendly description" value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} />
                                       <small className={productCreateStepErrors.shortDescription ? "field-error" : "field-hint"}>
                                         {productCreateStepErrors.shortDescription || `${productEditForm.shortDescription.length}/160`}
                                       </small>
@@ -11729,29 +11864,40 @@ export function AdminStorefrontDashboard({
                                         <input className="form-control" type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
                                       </label>
                                     </div>
+                                    <div className="creation-field-row creation-field-row-three full-width product-create-secondary-fields">
+                                      <label className="creation-field"><span>Expiry date</span><input className="form-control" type="date" value={productEditForm.expiryDate || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, expiryDate: event.target.value }))} /></label>
+                                      <label className="creation-field"><span>Weight</span><input className="form-control" value={productEditForm.weight || ""} placeholder="e.g. 0.08 kg" onChange={(event) => setProductEditForm((prev) => ({ ...prev, weight: event.target.value }))} /></label>
+                                      <label className="creation-field"><span>Shipping class</span><div className="select-wrap"><select className="form-control" value={productEditForm.shippingClass || PRODUCT_SHIPPING_CLASS_OPTIONS[0]} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shippingClass: event.target.value, shippingInfo: event.target.value }))}>{PRODUCT_SHIPPING_CLASS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></div></label>
+                                    </div>
                                   </div>
                                 </div>
                               ) : null}
 
-                              {activeProductCreateStep.key === "description" ? (
+                              {true ? (
                                 <div className="product-create-step-panel">
                                   <div className="creation-field-grid product-create-field-grid">
                                     <label className="creation-field full-width">
                                       <span>Long description</span>
-                                      <textarea className="form-control" rows={8} value={productEditForm.longDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, longDescription: event.target.value }))} />
+                                      <textarea className="form-control" rows={8} placeholder="Add complete product information, dosage context and customer guidance." value={productEditForm.longDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, longDescription: event.target.value }))} />
                                       <small className="field-hint">Optional. Use this for extended product details.</small>
                                     </label>
                                     <label className="creation-field full-width">
                                       <span>Prescription note</span>
-                                      <textarea className="form-control" rows={5} value={productEditForm.prescriptionNotes} onChange={(event) => setProductEditForm((prev) => ({ ...prev, prescriptionNotes: event.target.value }))} required />
+                                      <textarea className="form-control" rows={5} placeholder="Add pharmacy workflow or prescription guidance." value={productEditForm.prescriptionNotes} onChange={(event) => setProductEditForm((prev) => ({ ...prev, prescriptionNotes: event.target.value }))} required />
                                       <small className="field-hint">These notes are persisted by the server and can be used in downstream pharmacy workflows.</small>
                                       {productCreateStepErrors.prescriptionNotes ? <small className="field-error">{productCreateStepErrors.prescriptionNotes}</small> : null}
+                                    </label>
+                                    <label className="creation-field full-width">
+                                      <span>Prescription rule</span>
+                                      <div className="select-wrap"><select className="form-control" value={productEditForm.prescriptionRule || "no_prescription_needed"} onChange={(event) => setProductEditForm((prev) => ({ ...prev, prescriptionRule: event.target.value }))}>
+                                        <option value="no_prescription_needed">No prescription needed</option><option value="prescription_required">Prescription required</option><option value="pharmacist_review_required">Pharmacist review required</option>
+                                      </select></div>
                                     </label>
                                   </div>
                                 </div>
                               ) : null}
 
-                              {activeProductCreateStep.key === "media" ? (
+                              {true ? (
                                 <div className="product-create-step-panel">
                                   <div className="product-create-media-grid">
                                     <section className="product-create-media-card">
@@ -11793,7 +11939,7 @@ export function AdminStorefrontDashboard({
                                         <span>Upload the additional images patients will see inside the catalogue.</span>
                                       </div>
                                       <button className={`product-upload-dropzone upload-box product-create-upload-box ${galleryProductMedia.length ? "active" : ""}`} type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload("append")}>
-                                        <span className="product-upload-dropzone-icon"><InlineIcon id="i-upload" /></span>
+                                        <span className="product-upload-dropzone-icon">{productMediaUploading ? <span className="product-create-upload-spinner" aria-label="Uploading images" /> : <InlineIcon id="i-upload" />}</span>
                                         <span className="product-upload-dropzone-copy">
                                           <strong>{productMediaUploading ? "Uploading images..." : (galleryProductMedia.length ? "Add more gallery images" : "Upload gallery images")}</strong>
                                           <small>Images are uploaded to WordPress media and ordered server-side with the product.</small>
@@ -11865,7 +12011,6 @@ export function AdminStorefrontDashboard({
                               <strong id="product-name">{productEditForm.title || "Product name"}</strong>
                               <span id="product-category">{productEditForm.categories?.[0] || "Choose a category"}</span>
                               <div className="creation-summary-list">
-                                <div><span>SKU</span><strong>{productEditForm.sku || "Server generated"}</strong></div>
                                 <div><span>Price</span><strong id="product-price">{formatMoney(Number(productEditForm.regularPrice || 0), productEditorCurrency)}</strong></div>
                                 <div><span>Sale</span><strong>{Number(productEditForm.salePrice || 0) > 0 ? formatMoney(Number(productEditForm.salePrice || 0), productEditorCurrency) : "No sale price"}</strong></div>
                                 <div><span>Stock</span><strong id="product-stock">{formatNumber(Number(productEditForm.stockQuantity || 0))}</strong></div>
@@ -11922,11 +12067,8 @@ export function AdminStorefrontDashboard({
                               {productEditMedia.length ? `${productEditMedia.length} image${productEditMedia.length === 1 ? "" : "s"}` : "0 images"}
                             </span>
                           </div>
-                          <div className="product-photo-shell">
-                            <div className="product-media-subheader">
-                              <span>Featured image</span>
-                            </div>
-                            <div className={`product-photo-stage product-featured-photo-stage ${featuredProductMedia ? "has-media" : "is-empty"}`}>
+                          <div className="product-photo-shell product-editor-reference-photo-shell">
+                            <div className={`product-photo-stage product-featured-photo-stage product-editor-reference-photo ${featuredProductMedia ? "has-media" : "is-empty"}`}>
                               <button
                                 className={`product-photo product-featured-photo ${featuredProductMedia ? "has-image" : "is-empty"}`}
                                 type="button"
@@ -11943,9 +12085,9 @@ export function AdminStorefrontDashboard({
                                 )}
                               </button>
 
+                              <span className="product-photo-index">1</span>
                               {featuredProductMedia ? (
                                 <>
-                                  <span className="product-photo-index">1</span>
                                   <div className="product-photo-actions" aria-label="Active media actions">
                                     <button
                                       className="product-photo-action"
@@ -11968,7 +12110,7 @@ export function AdminStorefrontDashboard({
                               ) : null}
                             </div>
 
-                            <div className="product-gallery-section">
+                            <div className="product-gallery-section product-editor-reference-gallery">
                               <div className="product-media-subheader product-gallery-subheader">
                                 <span>Product gallery</span>
                                 <small>{galleryProductMedia.length ? `${galleryProductMedia.length} image${galleryProductMedia.length === 1 ? "" : "s"}` : "No gallery images"}</small>
@@ -12044,7 +12186,7 @@ export function AdminStorefrontDashboard({
                               )}
                             </div>
                           </div>
-                          <button className="product-upload-dropzone" type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload("append")}>
+                          <button className="product-upload-dropzone product-editor-upload-dropzone" type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload("append")}>
                             <span className="product-upload-dropzone-icon">+</span>
                             <span className="product-upload-dropzone-copy">
                               <strong>{productMediaUploading ? "Uploading images..." : "Upload images"}</strong>
@@ -12056,31 +12198,30 @@ export function AdminStorefrontDashboard({
 
                       <div className="product-editor-form-column">
                         <div className="product-editor-form-card">
-                          <div className="product-editor-tablist" aria-label="Product editor tabs">
+                          <div className="product-editor-tablist" role="tablist" aria-label="Product editor tabs">
                           {[
                             ["details", "Details"],
                             ["organization", "Tags & Organization"],
                             ["inventory", "Inventory & Shipping"]
                           ].map(([key, label]) => (
-                            <button className={`product-editor-tab ${productEditTab === key ? "active" : ""}`} type="button" key={key} disabled={productEditLoading} onClick={() => setProductEditTab(key)}>
+                            <button id={PRODUCT_EDITOR_TAB_IDS[key]} aria-controls={PRODUCT_EDITOR_PANEL_IDS[key]} aria-selected={productEditTab === key} role="tab" className={`product-editor-tab ${productEditTab === key ? "active" : ""}`} type="button" key={key} disabled={productEditLoading} onClick={() => setProductEditTab(key)}>
                               {label}
                             </button>
                           ))}
                           </div>
 
                           <div className="product-editor-form-scroll">
-                          {productEditTab === "details" ? (
-                            <div className="product-editor-tab-grid product-editor-tab-grid-details">
-                              <label className="detail-field detail-field-wide">
+                          <div id={PRODUCT_EDITOR_PANEL_IDS.details} role="tabpanel" aria-labelledby={PRODUCT_EDITOR_TAB_IDS.details} hidden={productEditTab !== "details"} className="product-editor-tab-panel">
+                            <div className="product-editor-details-stack">
+                              <label className="detail-field detail-field-wide product-editor-form-field">
                                 <span>Product Title *</span>
                                 <input value={productEditForm.title} onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} required />
                               </label>
-                              <label className="detail-field">
+                              <label className="detail-field detail-field-wide product-editor-form-field">
                                 <span>Short Description</span>
-                                <textarea rows={3} maxLength={160} value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} />
-                                <small className="product-field-note">{`${productEditForm.shortDescription.length}/160`}</small>
+                                <textarea rows={4} maxLength={160} value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} placeholder="Add a short customer friendly description" />
                               </label>
-                              <div className="detail-field detail-field-wide product-long-description-field">
+                              <div className="detail-field detail-field-wide product-long-description-field product-editor-form-field">
                                 <span>Long Description</span>
                                 <div className="product-rich-editor product-rich-editor-card">
                                   <div className="product-rich-toolbar product-rich-toolbar-reference">
@@ -12088,11 +12229,10 @@ export function AdminStorefrontDashboard({
                                     <button type="button" onClick={() => formatProductDescription("bold")}><strong>B</strong></button>
                                     <button type="button" onClick={() => formatProductDescription("italic")}><em>I</em></button>
                                     <button type="button" onClick={() => formatProductDescription("underline")}><span className="text-underline">U</span></button>
-                                    <button type="button" onClick={() => formatProductDescription("insertOrderedList")}>1.</button>
                                     <button type="button" onClick={() => formatProductBlock("blockquote")}>Quote</button>
                                     <button type="button" onClick={insertProductDescriptionLink}>Link</button>
                                     <button type="button" onClick={() => triggerProductMediaUpload("append")}>Image</button>
-                                    <button type="button" onClick={() => formatProductDescription("insertUnorderedList")}>• List</button>
+                                    <button type="button" onClick={() => formatProductDescription("insertUnorderedList")}>{"? List"}</button>
                                   </div>
                                   <div
                                     ref={productDescriptionEditorRef}
@@ -12103,58 +12243,94 @@ export function AdminStorefrontDashboard({
                                   />
                                 </div>
                               </div>
-                              <label className="detail-field">
+                            </div>
+                            <div className="product-editor-price-grid">
+                              <label className="detail-field product-editor-form-field">
                                 <span>Regular Price *</span>
-                                <div className="currency-input">
+                                <div className="currency-input product-editor-currency-input">
                                   <span>{productEditorCurrency}</span>
                                   <input type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} />
                                 </div>
                               </label>
-                              <label className="detail-field">
+                              <label className="detail-field product-editor-form-field">
                                 <span>Sale Price</span>
-                                <div className="currency-input">
+                                <div className="currency-input product-editor-currency-input">
                                   <span>{productEditorCurrency}</span>
-                                  <input type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} />
+                                  <input type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} placeholder="Leave empty" />
                                 </div>
-                                <small className="product-field-note">Leave empty if product is not on sale</small>
                               </label>
                             </div>
-                          ) : null}
+                          </div>
 
-                          {productEditTab === "organization" ? (
-                            <div className="product-editor-stack product-editor-stack-inline">
-                              {productEditorCategoriesQuery.isLoading || productEditorTagsQuery.isLoading ? <p className="muted popup-support-copy">Loading taxonomy options...</p> : null}
-                              {productEditorCategoriesQuery.error || productEditorTagsQuery.error ? <p className="muted popup-support-copy">Some taxonomy options could not be loaded.</p> : null}
-                              {renderProductTermField("categories", "Category", productCategoryOptions)}
-                              {renderProductTermField("tags", "Tags", productTagOptions)}
-                              {renderProductTermField("brands", "Brand", productBrandOptions)}
+                          <div id={PRODUCT_EDITOR_PANEL_IDS.organization} role="tabpanel" aria-labelledby={PRODUCT_EDITOR_TAB_IDS.organization} hidden={productEditTab !== "organization"} className="product-editor-tab-panel">
+                            <div className="product-editor-tab-grid product-editor-tab-grid-organization">
+                              <label className="detail-field product-editor-form-field">
+                                <span>Category</span>
+                                <div className="select-wrap product-editor-select-wrap">
+                                  <select value={productEditForm.categories?.[0] || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, categories: event.target.value ? [event.target.value] : [] }))}>
+                                    <option value="">Select category</option>
+                                    {Array.from(new Set([...PRODUCT_ORGANIZATION_CATEGORIES, ...productCategoryOptions])).map((option) => (
+                                      <option key={option} value={option}>{option}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </label>
+                              <label className="detail-field product-editor-form-field">
+                                <span>Brand</span>
+                                <input value={productEditForm.brands?.[0] || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, brands: event.target.value ? [event.target.value] : [] }))} />
+                              </label>
+                              <label className="detail-field product-editor-form-field">
+                                <span>Product Tags</span>
+                                <input value={(productEditForm.tags || []).join(", ")} onChange={(event) => setProductEditForm((prev) => ({ ...prev, tags: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) }))} />
+                              </label>
+                              <label className="detail-field product-editor-form-field">
+                                <span>Prescription Rule</span>
+                                <div className="select-wrap product-editor-select-wrap">
+                                  <select value={productEditForm.prescriptionRule || "no_prescription_needed"} onChange={(event) => setProductEditForm((prev) => ({ ...prev, prescriptionRule: event.target.value }))}>
+                                    {PRODUCT_PRESCRIPTION_RULE_OPTIONS.map((option) => (
+                                      <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </label>
                             </div>
-                          ) : null}
+                            <div className="product-editor-organization-note">Use organization fields to make storefront search cleaner and to reduce order errors when staff create manual orders.</div>
+                          </div>
 
-                          {productEditTab === "inventory" ? (
-                            <div className="product-editor-tab-grid product-editor-tab-grid-inventory">
-                              <label className="detail-field detail-field-wide">
-                                <span>Shipping Information</span>
-                                <textarea rows={3} value={productEditForm.shippingInfo} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shippingInfo: event.target.value }))} />
-                              </label>
-                              <label className="detail-field">
-                                <span>Inventory / Stock Quantity</span>
-                                <input type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
-                              </label>
-                              <label className="detail-field">
+                          <div id={PRODUCT_EDITOR_PANEL_IDS.inventory} role="tabpanel" aria-labelledby={PRODUCT_EDITOR_TAB_IDS.inventory} hidden={productEditTab !== "inventory"} className="product-editor-tab-panel">
+                            <div className="product-editor-tab-grid product-editor-tab-grid-inventory-reference">
+                              <label className="detail-field product-editor-form-field">
                                 <span>SKU</span>
                                 <input value={productEditForm.sku} onChange={(event) => setProductEditForm((prev) => ({ ...prev, sku: event.target.value }))} />
                               </label>
-                              <label className="detail-field detail-field-wide">
-                                <span>Linked Products</span>
-                                <input value={productEditForm.linkedProducts} onChange={(event) => setProductEditForm((prev) => ({ ...prev, linkedProducts: event.target.value }))} placeholder="Search or comma-separate related products" />
+                              <label className="detail-field product-editor-form-field">
+                                <span>Stock Quantity</span>
+                                <input type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
                               </label>
-                              <label className="detail-field detail-field-wide">
-                                <span>Purchase Notes</span>
-                                <textarea rows={3} value={productEditForm.purchaseNotes} onChange={(event) => setProductEditForm((prev) => ({ ...prev, purchaseNotes: event.target.value }))} />
+                              <label className="detail-field product-editor-form-field">
+                                <span>Low Stock Alert</span>
+                                <input type="number" min="0" value={productEditForm.lowStockAlert || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, lowStockAlert: event.target.value }))} />
+                              </label>
+                              <label className="detail-field product-editor-form-field">
+                                <span>Expiry Date</span>
+                                <input type="date" value={productEditForm.expiryDate || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, expiryDate: event.target.value }))} />
+                              </label>
+                              <label className="detail-field product-editor-form-field">
+                                <span>Weight</span>
+                                <input value={productEditForm.weight || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, weight: event.target.value }))} placeholder="0.08 kg" />
+                              </label>
+                              <label className="detail-field product-editor-form-field">
+                                <span>Shipping Class</span>
+                                <div className="select-wrap product-editor-select-wrap">
+                                  <select value={productEditForm.shippingClass || PRODUCT_SHIPPING_CLASS_OPTIONS[0]} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shippingClass: event.target.value, shippingInfo: event.target.value }))}>
+                                    {PRODUCT_SHIPPING_CLASS_OPTIONS.map((option) => (
+                                      <option key={option} value={option}>{option}</option>
+                                    ))}
+                                  </select>
+                                </div>
                               </label>
                             </div>
-                          ) : null}
+                          </div>
                         </div>
                         </div>
                       </div>
@@ -12163,9 +12339,8 @@ export function AdminStorefrontDashboard({
                 </div>
 
                 <div className="product-editor-footer modal-actions">
-                  {productEditorMode === "create" ? <div /> : <button className="pill-button danger product-delete-button" type="button" onClick={deleteSelectedProduct} disabled={productEditLoading}>Delete Product</button>}
+                  {productEditorMode === "create" ? <label className="product-create-multiple"><input type="checkbox" checked={createMultiple} disabled={productEditLoading} onChange={(event) => setCreateMultiple(event.target.checked)} /><span>Create Multiple</span><small>Stay on page after I create</small></label> : <button className="pill-button danger product-delete-button" type="button" onClick={deleteSelectedProduct} disabled={productEditLoading}>Delete Product</button>}
                   <div className="product-editor-footer-end">
-                    <div className="product-editor-feedback">{productEditFeedback ? <p className="muted popup-support-copy">{productEditFeedback}</p> : null}</div>
                       <div className="stacked-order-popup-actions product-editor-actions">
                         {productEditorMode === "create" ? (
                           <>
@@ -12200,7 +12375,7 @@ export function AdminStorefrontDashboard({
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <ModalScrim className="app-modal-backdrop" label="Close create form" onDismiss={closeCreateModal} />
-            <section className={`detail-section stacked-order-popup create-record-popup admin-surface-modal modal-frame creation-frame ${createModalType === "consultation" ? "consultation-create-popup consultation-design-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-label={`Create ${createModalType}`}>
+            <section className={`detail-section stacked-order-popup create-record-popup admin-surface-modal modal-frame creation-frame modal-design-system-parity ${createModalType === "consultation" ? "consultation-create-popup consultation-design-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-label={`Create ${createModalType}`}>
               <form className="create-record-form" onSubmit={submitGenericCreate}>
                 <div className="panel-header stacked-order-popup-header modal-head">
                   <div>
@@ -12508,8 +12683,6 @@ export function AdminStorefrontDashboard({
                     </div>
                   </div>
                 )}
-
-                {createFeedback ? <p className="muted popup-support-copy">{createFeedback}</p> : null}
                 <div className="stacked-order-popup-actions modal-actions">
                   <button className="pill-button" type="button" onClick={closeCreateModal}>Cancel</button>
                   <button className="button-primary" type="submit" disabled={createLoading || !consultationCanSubmit}>{createLoading ? (createModalType === "consultation" ? "Booking..." : "Submitting...") : (createModalType === "consultation" ? "Book appointment" : "Create")}</button>
@@ -13132,3 +13305,4 @@ const ORDER_CREATE_PAYMENT_STATUS_MAP = {
   "Payment slip uploaded": "on-hold",
   Refunded: "refunded"
 };
+

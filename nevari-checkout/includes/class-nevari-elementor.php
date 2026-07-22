@@ -62,6 +62,21 @@ final class Nevari_Elementor {
             '1.0.0',
             true
         );
+
+        wp_register_style(
+            'nevari-reviews-widget',
+            $this->plugin_url . 'assets/css/nevari-reviews-widget.css',
+            array(),
+            '1.0.0'
+        );
+
+        wp_register_script(
+            'nevari-reviews-widget',
+            $this->plugin_url . 'assets/js/nevari-reviews-widget.js',
+            array(),
+            '1.0.0',
+            true
+        );
     }
 
     public function register_category($elements_manager) {
@@ -82,6 +97,7 @@ final class Nevari_Elementor {
         $widget_file = $this->plugin_path . 'includes/class-nevari-products-widget.php';
         $list_widget_file = $this->plugin_path . 'includes/class-nevari-product-list-grid-widget.php';
         $auth_widget_file = $this->plugin_path . 'includes/class-nevari-auth-widget.php';
+        $reviews_widget_file = $this->plugin_path . 'includes/class-nevari-reviews-widget.php';
 
         if (file_exists($widget_file)) {
             require_once $widget_file;
@@ -93,6 +109,10 @@ final class Nevari_Elementor {
 
         if (file_exists($auth_widget_file)) {
             require_once $auth_widget_file;
+        }
+
+        if (file_exists($reviews_widget_file)) {
+            require_once $reviews_widget_file;
         }
 
         $widgets = array();
@@ -109,11 +129,13 @@ final class Nevari_Elementor {
             $widgets[] = new Nevari_Auth_Widget();
         }
 
+        if (class_exists('Nevari_Reviews_Widget')) {
+            $widgets[] = new Nevari_Reviews_Widget();
+        }
+
         foreach ($widgets as $widget) {
             if (method_exists($widgets_manager, 'register')) {
                 $widgets_manager->register($widget);
-            } elseif (method_exists($widgets_manager, 'register_widget_type')) {
-                $widgets_manager->register_widget_type($widget);
             }
         }
     }

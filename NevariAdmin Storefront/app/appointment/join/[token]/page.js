@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { BrandedSpinner } from "../../../components/BrandedSpinner";
@@ -99,6 +99,8 @@ export default function AppointmentJoinPage({ params }) {
   });
   const [actionBusy, setActionBusy] = useState("");
   const [cooldown, setCooldown] = useState(0);
+  const [joinCountdown, setJoinCountdown] = useState(10);
+  const autoJoinAttemptedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,8 +175,9 @@ export default function AppointmentJoinPage({ params }) {
     return () => window.clearTimeout(timer);
   }, [cooldown]);
 
-  async function goToMeeting() {
+  async function goToMeeting({ automatic = false } = {}) {
     if (!state.redirectUrl || actionBusy) return;
+    const preparedWindow = automatic ? null : window.open("about:blank", "_blank", "noopener,noreferrer");
     setActionBusy("join");
     try {
       const response = await fetch(`/api/appointment/join/${encodeURIComponent(token)}`, {
@@ -185,9 +188,18 @@ export default function AppointmentJoinPage({ params }) {
       const payload = await response.json().catch(() => ({}));
       const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
       if (response.ok && data?.redirect_url) {
-        window.location.assign(data.redirect_url);
+        const meetingWindow = preparedWindow || window.open(data.redirect_url, "_blank", "noopener,noreferrer");
+        if (preparedWindow) {
+          preparedWindow.location.replace(data.redirect_url);
+        }
+        setState((current) => ({
+          ...current,
+          message: meetingWindow ? "The appointment opened in a new tab." : "Your browser blocked the new tab. Select Open meeting to continue.",
+          redirectUrl: data.redirect_url,
+        }));
         return;
       }
+      preparedWindow?.close();
       setState((current) => ({
         ...current,
         view: response.status === 410 ? "ended" : "unavailable",
@@ -200,11 +212,15 @@ export default function AppointmentJoinPage({ params }) {
   }
 
   useEffect(() => {
-    if (state.view !== "active" || !state.redirectUrl || actionBusy) {
-      return;
+    if (state.view !== "active" || !state.redirectUrl || autoJoinAttemptedRef.current) return undefined;
+    if (joinCountdown <= 0) {
+      autoJoinAttemptedRef.current = true;
+      void goToMeeting({ automatic: true });
+      return undefined;
     }
-    goToMeeting();
-  }, [actionBusy, state.redirectUrl, state.view]);
+    const timer = window.setTimeout(() => setJoinCountdown((current) => Math.max(0, current - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [joinCountdown, state.redirectUrl, state.view]);
 
   async function notifyOthers() {
     if (state.notifyDisabled || cooldown > 0 || actionBusy) return;
@@ -251,8 +267,11 @@ export default function AppointmentJoinPage({ params }) {
         )}
         {state.view === "active" && !showBusyState ? (
           <div style={BRAND.actions}>
-            <button type="button" style={BRAND.button} onClick={goToMeeting} disabled={actionBusy === "join" || !state.redirectUrl}>
-              {actionBusy === "join" ? "Opening..." : "Go to meeting"}
+            <p style={BRAND.body} role="status" aria-live="polite">
+              {joinCountdown > 0 ? `Opening your appointment in a new tab in ${joinCountdown}s` : "Opening your appointment..."}
+            </p>
+            <button type="button" style={BRAND.button} onClick={() => goToMeeting()} disabled={actionBusy === "join" || !state.redirectUrl}>
+              {actionBusy === "join" ? "Opening..." : joinCountdown > 0 ? "Join now" : "Open meeting"}
             </button>
             <button
               type="button"

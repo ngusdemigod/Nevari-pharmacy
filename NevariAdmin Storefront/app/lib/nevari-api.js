@@ -7,10 +7,7 @@ import { apiRequest } from "../components/role-dashboard-utils";
 
 const STORAGE_PREFIX = "nevari_subscription_state";
 const SUBSCRIPTION_UI_CACHE_TTL_MS = 10 * 60 * 1000;
-const SUBSCRIPTION_PLAN_DEFAULTS = {
-  pro: { monthlyAmount: 10000 },
-  nevari_access_pro: { monthlyAmount: 10000 },
-};
+
 const CUSTOMER_SETTINGS_DEFAULTS = {
   displayName: "",
   email: "",
@@ -54,15 +51,16 @@ function readFirstFiniteAmount(candidates = []) {
   return null;
 }
 
-function resolveSubscriptionPlanDefault(subscription = {}) {
-  const planKey = String(subscription?.plan_key || subscription?.plan || "").trim().toLowerCase();
-  return SUBSCRIPTION_PLAN_DEFAULTS[planKey] || null;
+function resolveAvailablePaidPlan(subscription = {}) {
+  const plans = Array.isArray(subscription?.available_plans) ? subscription.available_plans : [];
+  const requestedKey = String(subscription?.requested_plan_key || "nevari_access_pro").trim().toLowerCase();
+  return plans.find((plan) => String(plan?.plan_key || "").trim().toLowerCase() === requestedKey && Number(plan?.price || 0) > 0)
+    || plans.find((plan) => String(plan?.tier || "").trim().toLowerCase() === "pro" && Number(plan?.price || 0) > 0)
+    || null;
 }
 
 function resolveSubscriptionBaseAmount(subscription = {}, { status = "" } = {}) {
-  if (String(status || subscription?.status || "").trim().toLowerCase() === "free") {
-    return 0;
-  }
+  const availablePaidPlan = resolveAvailablePaidPlan(subscription);
   const latestSubscription = subscription?.latest_subscription && typeof subscription.latest_subscription === "object"
     ? subscription.latest_subscription
     : null;
@@ -75,23 +73,21 @@ function resolveSubscriptionBaseAmount(subscription = {}, { status = "" } = {}) 
     { value: latestSubscription?.amount_ngn },
     { value: latestSubscription?.plan_amount },
     { value: latestSubscription?.planAmount },
-    { value: subscription?.amount_kobo, divideBy: 100 },
-    { value: subscription?.amountKobo, divideBy: 100 },
-    { value: latestSubscription?.amount_kobo, divideBy: 100 },
-    { value: latestSubscription?.amountKobo, divideBy: 100 },
+    { value: subscription?.amount_kobo },
+    { value: subscription?.amountKobo },
+    { value: latestSubscription?.amount_kobo },
+    { value: latestSubscription?.amountKobo },
   ]);
   if (resolved != null) {
-    return resolved;
+    if (resolved > 0) return resolved;
+    if (availablePaidPlan) return Number(availablePaidPlan.price);
   }
-  const planDefault = resolveSubscriptionPlanDefault(subscription);
-  return planDefault?.monthlyAmount ?? 0;
+  return availablePaidPlan ? Number(availablePaidPlan.price) : 0;
 }
 
 export function resolveSubscriptionMonthlyAmount(subscription = {}) {
   const status = String(subscription?.status || "free").trim().toLowerCase();
-  if (status === "free") {
-    return 0;
-  }
+
   const latestSubscription = subscription?.latest_subscription && typeof subscription.latest_subscription === "object"
     ? subscription.latest_subscription
     : null;
@@ -100,16 +96,16 @@ export function resolveSubscriptionMonthlyAmount(subscription = {}) {
     { value: subscription?.monthly_equivalent },
     { value: subscription?.monthly_equivalent_amount },
     { value: subscription?.monthlyEquivalentAmount },
-    { value: subscription?.monthly_equivalent_kobo, divideBy: 100 },
-    { value: subscription?.monthlyEquivalentKobo, divideBy: 100 },
+    { value: subscription?.monthly_equivalent_kobo },
+    { value: subscription?.monthlyEquivalentKobo },
     { value: latestSubscription?.monthlyEquivalent },
     { value: latestSubscription?.monthly_equivalent },
     { value: latestSubscription?.monthly_equivalent_amount },
     { value: latestSubscription?.monthlyEquivalentAmount },
-    { value: latestSubscription?.monthly_equivalent_kobo, divideBy: 100 },
-    { value: latestSubscription?.monthlyEquivalentKobo, divideBy: 100 },
+    { value: latestSubscription?.monthly_equivalent_kobo },
+    { value: latestSubscription?.monthlyEquivalentKobo },
   ]);
-  if (directMonthlyAmount != null) {
+  if (directMonthlyAmount != null && directMonthlyAmount > 0) {
     return directMonthlyAmount;
   }
   const frequency = String(subscription?.frequency || subscription?.interval || "monthly").trim().toLowerCase();
@@ -481,6 +477,18 @@ export async function fetchCustomerSettings(session) {
   return normalizeCustomerSettingsPayload(payload || {});
 }
 
+export async function fetchCustomerSearch(session, query, limit = 20) {
+  const normalizedQuery = String(query || "").trim().slice(0, 80);
+  if (normalizedQuery.length < 3) {
+    return [];
+  }
+  const payload = await apiRequest(session, "/dashboard/patient/search", {
+    params: { q: normalizedQuery, limit: Math.min(30, Math.max(1, Number(limit) || 20)) },
+    suppressHttpError: true,
+  });
+  return Array.isArray(payload?.items) ? payload.items : [];
+}
+
 export async function updateCustomerSettings(session, body = {}) {
   const normalizedBody = normalizeCustomerSettingsPayload(body);
   const payload = await apiRequest(session, "/customers/me/settings", {
@@ -585,6 +593,15 @@ export async function createMtmRequest(session, body) {
   return payload?.request || null;
 }
 
+function readBrowserCookie(name) {
+  if (typeof document === "undefined") return "";
+  const prefix = `${name}=`;
+  const cookie = String(document.cookie || "")
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix));
+  return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : "";
+}
 async function parseLocalMtmResponse(response, fallbackMessage) {
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload?.success) {
@@ -593,7 +610,39 @@ async function parseLocalMtmResponse(response, fallbackMessage) {
   return payload?.data || {};
 }
 
+async function generateMtmPdfInWorker(requestData, imageFiles) {
+  if (typeof Worker === "undefined") {
+    const { generateBrowserMtmPdf } = await import("./mtmPdfBrowser");
+    return generateBrowserMtmPdf(requestData, imageFiles);
+  }
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL("./mtmPdf.worker.js", import.meta.url), { type: "module" });
+    const timeout = window.setTimeout(() => {
+      worker.terminate();
+      reject(new Error("MTM PDF preparation timed out."));
+    }, 90_000);
+    worker.onmessage = (event) => {
+      window.clearTimeout(timeout);
+      worker.terminate();
+      if (!event.data?.ok || !event.data?.buffer) {
+        reject(new Error(event.data?.message || "Unable to prepare the MTM PDF."));
+        return;
+      }
+      resolve(new Uint8Array(event.data.buffer));
+    };
+    worker.onerror = () => {
+      window.clearTimeout(timeout);
+      worker.terminate();
+      reject(new Error("Unable to start MTM PDF preparation."));
+    };
+    worker.postMessage({ requestData, imageFiles });
+  });
+}
+
 export async function submitCustomerMtmRequest(session, body) {
+  const pdfImageFiles = Array.isArray(body?.pdf_image_files) ? body.pdf_image_files : [];
+  const submissionBody = { ...body };
+  delete submissionBody.pdf_image_files;
   const params = new URLSearchParams({
     baseUrl: String(session?.baseUrl || ""),
     frontendType: String(session?.frontendType || "patient"),
@@ -608,7 +657,7 @@ export async function submitCustomerMtmRequest(session, body) {
   const createResponse = await fetch(`/api/mtm/submit?${params.toString()}`, {
     method: "POST",
     headers: requestHeaders,
-    body: JSON.stringify(body),
+    body: JSON.stringify(submissionBody),
   });
   const createPayload = await parseLocalMtmResponse(createResponse, "Unable to submit the MTM request.");
   const createdRequest = createPayload?.request || null;
@@ -617,19 +666,33 @@ export async function submitCustomerMtmRequest(session, body) {
     throw new Error("MTM request snapshot could not be created.");
   }
 
-  const { bytesToBase64, generateBrowserMtmPdf } = await import("./mtmPdfBrowser");
-  const pdfBytes = await generateBrowserMtmPdf(createdRequest);
+  return { request: createdRequest, pdfSnapshot, pdfImageFiles };
+}
+
+export async function prepareCustomerMtmPdf(session, createdRequest, pdfSnapshot, pdfImageFiles = []) {
+  if (!createdRequest?.id || !pdfSnapshot?.token || !pdfSnapshot?.fingerprint) {
+    throw new Error("MTM request snapshot could not be prepared.");
+  }
+  const params = new URLSearchParams({
+    baseUrl: String(session?.baseUrl || ""),
+    frontendType: String(session?.frontendType || "patient"),
+  });
+  const pdfBytes = await generateMtmPdfInWorker(createdRequest, pdfImageFiles);
   const uploadResponse = await fetch(`/api/mtm/${encodeURIComponent(String(createdRequest.id))}/submission-pdf?${params.toString()}`, {
     method: "POST",
-    headers: requestHeaders,
-    body: JSON.stringify({
-      base64: bytesToBase64(pdfBytes),
-      fingerprint: pdfSnapshot.fingerprint,
-      snapshotToken: pdfSnapshot.token,
-    }),
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/pdf",
+      "X-Nevari-Frontend-Type": session?.frontendType || "patient",
+      "X-Nevari-Frontend-Origin": typeof window !== "undefined" ? window.location.origin : "",
+      "X-Nevari-MTM-Snapshot-Token": pdfSnapshot.token,
+      "X-Nevari-MTM-Snapshot-Fingerprint": pdfSnapshot.fingerprint,
+      "X-Nevari-CSRF": readBrowserCookie("nevari_csrf"),
+    },
+    body: pdfBytes,
   });
   const uploadPayload = await parseLocalMtmResponse(uploadResponse, "Unable to verify the MTM PDF upload.");
-  return uploadPayload?.request || createdRequest;
+  return { request: uploadPayload?.request || createdRequest, pdfBytes };
 }
 
 export async function requestMtmReschedule(session, id) {
@@ -768,22 +831,21 @@ export async function fetchMtmBookingContext(session, id) {
 }
 
 export function hasActiveSubscription(subscription) {
-  if (subscription?.is_paid || subscription?.isPaid) {
-    return true;
-  }
   const status = String(subscription?.status || "").toLowerCase();
-  if (status === "active" || status === "trialing" || status === "past_due") {
-    return true;
-  }
-  if (status !== "cancelled") {
-    return false;
-  }
+  const isPaid = Boolean(subscription?.is_paid || subscription?.isPaid);
   const accessEndsAt = subscription?.accessEndsAt || subscription?.access_ends_at || subscription?.ends_at;
-  if (!accessEndsAt) {
+  const accessEndDate = accessEndsAt ? new Date(accessEndsAt) : null;
+  const hasFutureAccessEnd = Boolean(accessEndDate && !Number.isNaN(accessEndDate.getTime()) && accessEndDate.getTime() > Date.now());
+  if (status === "expired") {
     return false;
   }
-  const date = new Date(accessEndsAt);
-  return !Number.isNaN(date.getTime()) && date.getTime() > Date.now();
+  if (status === "cancelled") {
+    return isPaid && hasFutureAccessEnd;
+  }
+  if (status === "active" || status === "trialing" || status === "past_due") {
+    return isPaid;
+  }
+  return false;
 }
 
 export function hasEntitlement(subscription, entitlement) {
@@ -794,5 +856,3 @@ export function hasEntitlement(subscription, entitlement) {
   const entitlements = Array.isArray(subscription?.entitlements) ? subscription.entitlements : [];
   return entitlements.includes(required);
 }
-
-

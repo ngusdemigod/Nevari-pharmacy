@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subscription Cards · Component Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     TOKENS — subset needed for the subscription card only.
+     Values match the parent design system exactly.
+     ============================================================ */
+  :root{
+    --navy-900:#0A2450;
+    --navy-800:#0F2A5C;
+    --navy-700:#1B3A6B;
+
+    --ink:#374151;
+    --muted:#6B7280;
+    --faint:#9CA3AF;
+    --line:#E6E8EE;
+    --line-soft:#EEF0F4;
+
+    --white:#FFFFFF;
+    --surface:#F4F5F7;
+    --surface-2:#FAFBFC;
+
+    --amber:#F5A623;
+    --amber-soft:#FEF3E0;
+    --danger:#D14343;
+    --danger-soft:#FBE4E4;
+    --success:#2E9E6B;
+    --success-soft:#E4F3EC;
+    --info:#3B6FD4;
+    --info-soft:#E7EEFB;
+
+    --r-pill:999px;
+    --r-card:16px;
+    --r-md:12px;
+    --r-sm:8px;
+
+    --shadow-sm:0 1px 2px rgba(16,42,92,.04);
+    --shadow-md:0 6px 20px rgba(16,42,92,.06);
+
+    --font:'Product Sans','Google Sans','Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:var(--font);
+    color:var(--ink);
+    background:var(--surface);
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    padding:40px 20px 80px;
+  }
+
+  .page{max-width:960px;margin:0 auto}
+  .page-head{margin-bottom:32px}
+  .page-head .eyebrow{
+    font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--navy-700);
+  }
+  .page-head h1{font-size:24px;font-weight:700;color:var(--navy-800);margin-top:6px;letter-spacing:-.01em}
+
+  .swatch-block{margin-bottom:40px}
+  .swatch-block .label{
+    font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--faint);margin-bottom:14px;
+  }
+  .swatch-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:28px;align-items:start}
+  .caption{font-size:12px;color:var(--faint);margin-top:10px}
+
+  /* ============================================================
+     BUTTONS — only the variants the subscription card uses
+     ============================================================ */
+  .btn{
+    font-family:var(--font);font-size:15px;font-weight:600;
+    border:0;cursor:pointer;border-radius:var(--r-pill);
+    padding:14px 30px;display:inline-flex;align-items:center;gap:9px;
+    transition:background .2s ease;
+  }
+  .btn:active{transform:translateY(1px)}
+  .btn:focus-visible{outline:3px solid var(--info-soft);outline-offset:2px}
+  .btn-primary{background:var(--navy-900);color:#fff}
+  .btn-primary:hover{background:#081b3d}
+  .btn-secondary{background:var(--white);color:var(--navy-800);border:1px solid var(--line)}
+  .btn-secondary:hover{background:var(--surface)}
+  .btn-ghost{background:transparent;color:var(--muted)}
+  .btn-ghost:hover{color:var(--navy-800);background:var(--surface)}
+  .btn-danger{background:var(--danger-soft);color:var(--danger)}
+  .btn-sm{padding:9px 18px;font-size:13px}
+
+  /* ============================================================
+     STATUS BADGE (generic, reused for the Free-plan chip)
+     ============================================================ */
+  .badge{
+    display:inline-flex;align-items:center;gap:7px;
+    font-size:13px;font-weight:600;border-radius:var(--r-pill);
+    padding:8px 16px;
+  }
+  .badge::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+  .badge-muted{background:var(--surface);color:var(--muted)}
+
+  /* ============================================================
+     SUBSCRIPTION CARD — flat, no gradients, no glow.
+     ============================================================ */
+  .sub-card{
+    background:var(--white);
+    border:1px solid var(--line);
+    border-radius:var(--r-card);
+    padding:24px 26px 0;
+    max-width:460px;
+    width:100%;
+  }
+
+  .sub-top{
+    display:flex;align-items:flex-start;justify-content:space-between;
+    gap:16px;padding-bottom:22px;flex-wrap:wrap;min-width:0;
+  }
+  .sub-label{
+    font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--faint);
+  }
+  .sub-value-row{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
+  .sub-value{font-size:34px;font-weight:700;letter-spacing:-.02em;color:var(--navy-800)}
+  .sub-value .cur{font-size:16px;font-weight:600;color:var(--muted);margin-right:3px}
+
+  /* Pro badge — real asset, base64-inlined so it paints in the
+     same frame as the rest of the card (no network round trip). */
+  .pro-badge-img{display:block;flex:none}
+
+  .sub-sub{font-size:13px;color:var(--muted);margin-top:8px;word-break:break-word}
+
+  .sub-cta{flex:none}
+  .sub-cta .btn{box-shadow:none}
+
+  .sub-divider{border-top:1px solid var(--line-soft);margin:0 -26px}
+
+  .sub-meta{display:flex;gap:28px;flex-wrap:wrap;padding:18px 0 22px}
+  .sub-meta-item{flex:1;min-width:120px}
+  .sub-meta-label{
+    font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--faint);margin-bottom:6px;
+  }
+  .sub-meta-value{font-size:14px;font-weight:600;color:var(--navy-800);overflow-wrap:anywhere}
+
+  .sub-foot{
+    display:flex;gap:10px;flex-wrap:wrap;
+    margin:0 -26px;padding:16px 26px;
+    border-top:1px solid var(--line-soft);
+    background:var(--surface-2);
+    border-radius:0 0 var(--r-card) var(--r-card);
+  }
+  .sub-foot .btn{box-shadow:none;flex:1}
+
+  .sub-status-inline{
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:12px;font-weight:600;color:var(--success);
+  }
+  .sub-status-inline::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+  .sub-status-inline.is-trial{color:#B9770E}
+  .sub-status-inline.is-pastdue{color:var(--danger)}
+
+  /* Compact variant */
+  .sub-card-compact{
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r-card);padding:20px 22px;
+    width:100%;
+  }
+  .sub-card-compact .plan-chip{
+    width:46px;height:46px;border-radius:12px;flex:none;
+    background:var(--navy-900);color:#fff;
+    display:grid;place-items:center;font-weight:700;font-size:14px;
+  }
+  .sub-card-compact .plan-chip.is-outline{
+    background:var(--white);color:var(--navy-800);
+    border:1.5px dashed var(--faint);
+  }
+  .sub-card-compact .info{flex:1;min-width:0}
+  .sub-card-compact .info .name{
+    font-weight:600;color:var(--navy-800);font-size:15px;
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  }
+  .sub-card-compact .info .meta{font-size:13px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
+  .sub-card-compact .cta{flex:none;display:flex;gap:8px}
+  .sub-card-compact .btn{box-shadow:none}
+
+  @media(max-width:480px){
+    .sub-card{max-width:none;padding:22px 20px 0}
+    .sub-divider,.sub-foot{margin-left:-20px;margin-right:-20px}
+    .sub-foot{padding-left:20px;padding-right:20px}
+    .sub-top{flex-direction:column;align-items:stretch}
+    .sub-cta .btn{width:100%;justify-content:center}
+    .sub-value{font-size:28px}
+    .sub-meta{gap:18px 24px}
+    .sub-card-compact{flex-direction:column;align-items:stretch;text-align:center}
+    .sub-card-compact .cta{justify-content:center}
+    .sub-card-compact .info .name{justify-content:center}
+    .swatch-grid{grid-template-columns:1fr}
+  }
+
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="page-head">
+    <div class="eyebrow">Component Reference</div>
+    <h1>Subscription Cards</h1>
+  </div>
+
+  <!-- ================= FULL CARD — active plan ================= -->
+  <div class="swatch-block">
+    <p class="label">Full card · active plan (desktop / mobile sheet)</p>
+    <div class="sub-card">
+      <div class="sub-top">
+        <div>
+          <div class="sub-label">Current subscription</div>
+          <div class="sub-value-row">
+            <div class="sub-value"><span class="cur">NGN</span>15,000</div>
+            <img class="pro-badge-img" width="40" height="24" alt="Pro plan"
+                 src="data:image/png;base64,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">
+          </div>
+          <div class="sub-sub">Pharmacy Pro · Billed monthly · <span class="sub-status-inline">Active</span></div>
+        </div>
+        <div class="sub-cta">
+          <button class="btn btn-primary">Upgrade Plan</button>
+        </div>
+      </div>
+
+      <div class="sub-divider"></div>
+
+      <div class="sub-meta">
+        <div class="sub-meta-item">
+          <div class="sub-meta-label">Start Date</div>
+          <div class="sub-meta-value">12 Jan 2026</div>
+        </div>
+        <div class="sub-meta-item">
+          <div class="sub-meta-label">Payment Method</div>
+          <div class="sub-meta-value">Visa Card</div>
+        </div>
+        <div class="sub-meta-item">
+          <div class="sub-meta-label">Renews On</div>
+          <div class="sub-meta-value">1 Aug 2026</div>
+        </div>
+      </div>
+
+      <div class="sub-foot">
+        <button class="btn btn-ghost btn-sm">Cancel Subscription</button>
+      </div>
+    </div>
+    <p class="caption">Payment Method reads a Paystack channel label (Debit Card / Bank Transfer / USSD) — never a card number.</p>
+  </div>
+
+  <!-- ================= FULL CARD — highest/only plan (Pause) ================= -->
+  <div class="swatch-block">
+    <p class="label">Full card · highest / only plan — primary CTA becomes Pause</p>
+    <div class="sub-card">
+      <div class="sub-top">
+        <div>
+          <div class="sub-label">Current subscription</div>
+          <div class="sub-value-row">
+            <div class="sub-value"><span class="cur">NGN</span>25,000</div>
+            <img class="pro-badge-img" width="40" height="24" alt="Pro plan"
+                 src="data:image/png;base64,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">
+          </div>
+          <div class="sub-sub">Pharmacy Enterprise · Billed monthly · <span class="sub-status-inline">Active</span></div>
+        </div>
+        <div class="sub-cta">
+          <button class="btn btn-primary">Pause Subscription</button>
+        </div>
+      </div>
+
+      <div class="sub-divider"></div>
+
+      <div class="sub-meta">
+        <div class="sub-meta-item">
+          <div class="sub-meta-label">Start Date</div>
+          <div class="sub-meta-value">3 Mar 2026</div>
+        </div>
+        <div class="sub-meta-item">
+          <div class="sub-meta-label">Payment Method</div>
+          <div class="sub-meta-value">Bank Transfer</div>
+        </div>
+        <div class="sub-meta-item">
+          <div class="sub-meta-label">Renews On</div>
+          <div class="sub-meta-value">3 Aug 2026</div>
+        </div>
+      </div>
+
+      <div class="sub-foot">
+        <button class="btn btn-ghost btn-sm">Cancel Subscription</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= FULL CARD — free / trial ================= -->
+  <div class="swatch-block">
+    <p class="label">Full card · free plan / trial</p>
+    <div class="sub-card">
+      <div class="sub-top">
+        <div>
+          <div class="sub-label">Current subscription</div>
+          <div class="sub-value-row">
+            <div class="sub-value"><span class="cur">NGN</span>0</div>
+            <span class="badge badge-muted">Free Plan</span>
+          </div>
+          <div class="sub-sub">Trial ends in <span class="sub-status-inline is-trial">4 days</span></div>
+        </div>
+        <div class="sub-cta">
+          <button class="btn btn-primary btn-sm">Upgrade to Pro</button>
+        </div>
+      </div>
+      <div class="sub-divider"></div>
+      <div class="sub-meta">
+        <div class="sub-meta-item">
+          <div class="sub-meta-label">Nurse Visits</div>
+          <div class="sub-meta-value">2 of 2 used</div>
+        </div>
+        <div class="sub-meta-item">
+          <div class="sub-meta-label">Trial Ends</div>
+          <div class="sub-meta-value">11 Jul 2026</div>
+        </div>
+      </div>
+    </div>
+    <p class="caption">No footer row — nothing to cancel on a free plan.</p>
+  </div>
+
+  <!-- ================= FULL CARD — payment failed ================= -->
+  <div class="swatch-block">
+    <p class="label">Full card · payment failed</p>
+    <div class="sub-card">
+      <div class="sub-top">
+        <div>
+          <div class="sub-label">Current subscription</div>
+          <div class="sub-value-row">
+            <div class="sub-value"><span class="cur">NGN</span>15,000</div>
+            <img class="pro-badge-img" width="40" height="24" alt="Pro plan"
+                 src="data:image/png;base64,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">
+          </div>
+          <div class="sub-sub"><span class="sub-status-inline is-pastdue">Payment failed</span> · update your card</div>
+        </div>
+        <div class="sub-cta">
+          <button class="btn btn-danger btn-sm">Update Card</button>
+        </div>
+      </div>
+    </div>
+    <p class="caption">Update Card takes priority over Upgrade/Pause regardless of plan tier.</p>
+  </div>
+
+  <!-- ================= COMPACT — paid plan ================= -->
+  <div class="swatch-block">
+    <p class="label">Compact · paid plan (mobile teaser row — tap opens the full card in a sheet)</p>
+    <div class="sub-card-compact">
+      <div class="plan-chip">P</div>
+      <div class="info">
+        <div class="name">Pharmacy Pro</div>
+        <div class="meta">NGN 15,000/mo · renews 1 Aug 2026</div>
+      </div>
+      <div class="cta">
+        <button class="btn btn-secondary btn-sm">Manage</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= COMPACT — free plan ================= -->
+  <div class="swatch-block">
+    <p class="label">Compact · free plan</p>
+    <div class="sub-card-compact">
+      <div class="plan-chip is-outline">F</div>
+      <div class="info">
+        <div class="name">Free Plan <span class="sub-status-inline is-trial">Trial · 4 days left</span></div>
+        <div class="meta">NGN 0/mo · upgrade for full access</div>
+      </div>
+      <div class="cta">
+        <button class="btn btn-primary btn-sm">Upgrade</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -8,8 +8,6 @@ import SubscriptionSuccess from "../components/subscription/SubscriptionSuccess"
 import { hydrateStoredSession } from "../components/role-dashboard-utils";
 import { useSubscription } from "../hooks/use-subscription";
 
-const PAYWALL_PRO_MONTHLY_AMOUNT = 5_000;
-
 function sanitizeReturnPath(value) {
   const path = String(value || "").trim();
   if (!path || !path.startsWith("/") || path.startsWith("//")) {
@@ -44,7 +42,7 @@ function formatSubscriptionPrice(subscription) {
   const frequency = String(subscription?.frequency || subscription?.interval || "monthly").trim().toLowerCase();
   const recurringLabel = frequency === "yearly" ? "/year" : frequency === "weekly" ? "/week" : "/month";
   if (!Number.isFinite(amount) || amount <= 0) {
-    return `${currency}${PAYWALL_PRO_MONTHLY_AMOUNT.toLocaleString("en-NG")}${recurringLabel}`;
+    return "";
   }
   try {
     return `${new Intl.NumberFormat("en-NG", {
