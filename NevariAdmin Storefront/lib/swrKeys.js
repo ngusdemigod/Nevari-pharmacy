@@ -45,7 +45,11 @@ export const swrKeys = {
     audit: (params = {}) => buildAdminListKey("audit", params)
   },
   proxy: {
-    path: (path, params = {}) => buildProxyMutationKey(path, params)
+    path: (path, params = {}) => buildProxyMutationKey(path, params),
+    careQueue: (service, params = {}) => buildProxyMutationKey(`/staff/care-requests/${service}`, params),
+    careRequest: (service, id, params = {}) => buildProxyMutationKey(`/staff/care-requests/${service}/${id}`, params),
+    careProviders: (params = {}) => buildProxyMutationKey("/admin/care-providers", params),
+    mtmBooking: (id, params = {}) => buildProxyMutationKey(`/mtm-requests/${id}/booking-context`, params)
   }
 };
 

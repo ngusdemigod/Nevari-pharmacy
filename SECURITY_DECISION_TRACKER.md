@@ -349,3 +349,23 @@ Stale display data can appear after account switching if cache keys or cleanup a
 - Browser account-switch tests to confirm no metrics, orders, or PHI from the prior account are rendered for a newly created account.
 - Payment tests for reused references, wrong order metadata, wrong amounts/currencies, and missing webhook signing secrets.
 - Authentication tests confirming bearer values are absent from local storage, document URLs, and frontend API response bodies.
+
+## 2026-07-22 — Patient care journey expansion
+
+- **Decision:** Store IV Therapy and Nurse Request lifecycles in indexed custom tables with bounded migration batches and temporary legacy fallback.
+- **Decision:** Use an append-only, non-clinical lifecycle event table for status, assignment, scheduling, payment, and notification events.
+- **Decision:** Nurses remain administrator-managed provider records and do not receive authentication accounts.
+- **Decision:** Share the five-consultation Pro allowance through an atomic reservation ledger counted together with paid doctor appointments.
+- **Decision:** Server-created WooCommerce orders carry the configured MTM fee; client prices are ignored.
+- **Decision:** Paid MTM declines enter an auditable manual-refund state. No automated refund or gateway secret exposure is introduced.
+- **Boundary:** Clinical notes remain in resource detail payloads and are excluded from queues, event summaries, email logs, URLs, and browser storage.
+# 2026-07-22 — Managed user governance and nurse identity
+
+- Decision: WordPress remains authoritative for user identity and role; indexed `user_governance` rows are authoritative for approval and ban state.
+- Decision: only approved, non-banned WordPress users whose current role is exactly `nurse` can be assigned to Nurse Requests.
+- Decision: nurses receive email notifications but no dashboard, care REST access, availability profile, service-area profile, or supported-care-type profile.
+- Decision: Nurse Request patient-safe files use a private indexed document registry and owner/admin authorization on every operation; internal clinical documentation remains separate and is never returned by list endpoints.
+- Decision: lifecycle notifications use an atomic unique dispatch claim keyed by service, record, event, recipient hash, and managed template so retries cannot duplicate queued mail.
+- Decision: pharmacist IV queues are assignment-scoped and clinical transitions require the assigned pharmacist; Store Admin retains operational assignment and scheduling authority only.
+- Decision: declining or banning preserves the user and historical assignments for auditability, revokes sessions, and flags active Nurse Requests for reassignment.
+- Decision: Store Admin and administrator accounts cannot be targeted by the dashboard ban control.

@@ -193,7 +193,7 @@ final class Nevari_Helpers {
                     'Content-Type' => 'application/json',
                     'Accept' => 'application/json',
                 ],
-                'body' => '{}',
+                'body' => wp_json_encode(['config' => ['accessType' => 'OPEN']]),
             ]
         );
         if (is_wp_error($response)) {

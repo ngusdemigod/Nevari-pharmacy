@@ -9,6 +9,16 @@ import { setDocumentMetadata } from "./components/page-metadata";
 import { hydrateStoredSession, isSessionUsable } from "./components/role-dashboard-utils";
 import { performGlobalLogout } from "./components/role-session";
 
+function initials(value) {
+  return String(value || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "N";
+}
+
 const PHARMACIST_NAV_GROUPS = [
   {
     label: "Nevari Pharmacy",
@@ -212,6 +222,28 @@ export default function PharmacistDashboard() {
         </div>
 
         <div className="pharmacist-dashboard-sidebar-footer">
+          <div
+            className="customer-desktop-sidebar-profile"
+            role="button"
+            tabIndex={0}
+            aria-label="Open profile settings"
+            onClick={() => handleViewChange("profile")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleViewChange("profile");
+              }
+            }}
+          >
+            <div className="customer-mobile-avatar customer-desktop-sidebar-avatar">
+              {session.user?.avatar_url ? <img src={session.user.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
+              <span style={{ display: session.user?.avatar_url ? "none" : "inline" }}>{initials(session.user?.display_name || "Pharmacist")}</span>
+            </div>
+            <div className="customer-desktop-sidebar-profile-copy">
+              <strong>{session.user?.display_name || "Pharmacist"}</strong>
+              <span>{session.user?.email || ""}</span>
+            </div>
+          </div>
           <button type="button" className="nav-item pharmacist-dashboard-logout-nav" onClick={logout}>
             <span className="nav-icon" aria-hidden="true"><InlineIcon id="i-logout" /></span>
             <span>Logout</span>
@@ -226,7 +258,7 @@ export default function PharmacistDashboard() {
           </button>
           <div className="pharmacist-dashboard-mobile-title">
             <strong>Nevari Pharmacy</strong>
-            <span>{PHARMACIST_NAV_GROUPS.flatMap((group) => group.items).find((item) => item.id === view)?.label || "Products"}</span>
+            <span>{view === "profile" ? "Profile" : (PHARMACIST_NAV_GROUPS.flatMap((group) => group.items).find((item) => item.id === view)?.label || "Products")}</span>
           </div>
         </header>
         <AdminStorefrontDashboard

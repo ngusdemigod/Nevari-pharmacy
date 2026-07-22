@@ -666,7 +666,7 @@ export async function submitCustomerMtmRequest(session, body) {
     throw new Error("MTM request snapshot could not be created.");
   }
 
-  return { request: createdRequest, pdfSnapshot, pdfImageFiles };
+  return { request: createdRequest, pdfSnapshot, pdfImageFiles, paymentDecision: createPayload?.payment_decision || null };
 }
 
 export async function prepareCustomerMtmPdf(session, createdRequest, pdfSnapshot, pdfImageFiles = []) {
@@ -825,6 +825,38 @@ export async function scheduleMtmRequest(session, id, body = {}) {
   return payload?.request || null;
 }
 
+export async function reserveMtmSlot(session, id, body = {}) {
+  const payload = await apiRequest(session, `/mtm-requests/${id}/reserve-slot`, { method: "POST", body });
+  return payload?.request || null;
+}
+
+export async function fetchCareProviders(session, params = {}) {
+  return apiRequest(session, "/admin/care-providers", { params, suppressHttpError: true });
+}
+
+export async function createCareProvider(session, body = {}) {
+  const payload = await apiRequest(session, "/admin/care-providers", { method: "POST", body });
+  return payload?.provider || null;
+}
+
+export async function updateCareProvider(session, id, body = {}) {
+  const payload = await apiRequest(session, `/admin/care-providers/${id}`, { method: "PUT", body });
+  return payload?.provider || null;
+}
+
+export async function fetchCareQueue(session, service, params = {}) {
+  return apiRequest(session, `/staff/care-requests/${service}`, { params, suppressHttpError: true });
+}
+
+export async function fetchCareRequest(session, service, id) {
+  const payload = await apiRequest(session, `/staff/care-requests/${service}/${id}`, { suppressHttpError: true });
+  return payload?.request || null;
+}
+
+export async function transitionCareRequest(session, service, id, body = {}) {
+  const payload = await apiRequest(session, `/staff/care-requests/${service}/${id}`, { method: "PUT", body });
+  return payload?.request || null;
+}
 export async function fetchMtmBookingContext(session, id) {
   const payload = await apiRequest(session, `/mtm-requests/${id}/booking-context`, { suppressHttpError: true });
   return payload || null;

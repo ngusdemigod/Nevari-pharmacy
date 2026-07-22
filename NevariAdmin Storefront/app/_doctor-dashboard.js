@@ -47,6 +47,215 @@ const emptyDoctorState = {
   availability: {}
 };
 
+const DOCTOR_PROFILE_IMAGE_MAX_SIZE_BYTES = 5 * 1024 * 1024;
+const DOCTOR_PROFILE_IMAGE_SERVER_MAX_BYTES = 2 * 1024 * 1024;
+const DOCTOR_PROFILE_IMAGE_EXPORT_SIZE = 640;
+const DOCTOR_PROFILE_IMAGE_MIN_ZOOM = 1;
+const DOCTOR_PROFILE_IMAGE_MAX_ZOOM = 3;
+
+function validateDoctorProfileImageFile(file) {
+  if (!file) {
+    return "Select an image to continue.";
+  }
+  if (!String(file.type || "").toLowerCase().startsWith("image/")) {
+    return "Please choose a valid image file.";
+  }
+  if (Number(file.size || 0) > DOCTOR_PROFILE_IMAGE_MAX_SIZE_BYTES) {
+    return "Image size must be 5MB or less.";
+  }
+  return "";
+}
+
+function clampDoctorProfileImageNumber(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getDoctorProfileImageBaseScale(naturalWidth, naturalHeight, cropSize = 1) {
+  if (!naturalWidth || !naturalHeight || !cropSize) {
+    return 1;
+  }
+  return Math.max(cropSize / naturalWidth, cropSize / naturalHeight);
+}
+
+function getDoctorProfileImageOffsetLimits(naturalWidth, naturalHeight, scale, cropSize = 1) {
+  const scaledWidth = naturalWidth * scale;
+  const scaledHeight = naturalHeight * scale;
+  return {
+    x: Math.max(0, (scaledWidth - cropSize) / 2),
+    y: Math.max(0, (scaledHeight - cropSize) / 2),
+  };
+}
+
+function clampDoctorProfileImageOffsets(offsetX, offsetY, naturalWidth, naturalHeight, scale, cropSize = 1) {
+  const limits = getDoctorProfileImageOffsetLimits(naturalWidth, naturalHeight, scale, cropSize);
+  return {
+    x: clampDoctorProfileImageNumber(offsetX, -limits.x, limits.x),
+    y: clampDoctorProfileImageNumber(offsetY, -limits.y, limits.y),
+  };
+}
+
+function createDoctorProfileImageCropState({ naturalWidth, naturalHeight, zoom = DOCTOR_PROFILE_IMAGE_MIN_ZOOM, offsetX = 0, offsetY = 0, cropSize = 1 }) {
+  const baseScale = getDoctorProfileImageBaseScale(naturalWidth, naturalHeight, cropSize);
+  const nextZoom = clampDoctorProfileImageNumber(Number(zoom) || DOCTOR_PROFILE_IMAGE_MIN_ZOOM, DOCTOR_PROFILE_IMAGE_MIN_ZOOM, DOCTOR_PROFILE_IMAGE_MAX_ZOOM);
+  const scale = baseScale * nextZoom;
+  const offset = clampDoctorProfileImageOffsets(offsetX, offsetY, naturalWidth, naturalHeight, scale, cropSize);
+  return {
+    naturalWidth,
+    naturalHeight,
+    cropSize,
+    baseScale,
+    zoom: nextZoom,
+    scale,
+    offsetX: offset.x,
+    offsetY: offset.y,
+  };
+}
+
+function loadDoctorProfileImageDimensions(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      resolve({
+        naturalWidth: image.naturalWidth || image.width || 0,
+        naturalHeight: image.naturalHeight || image.height || 0,
+      });
+      URL.revokeObjectURL(objectUrl);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Unable to read the selected image."));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function buildDoctorProfileImageUploadName(fileName = "", mimeType = "") {
+  const originalName = String(fileName || "").trim() || "profile-image";
+  const stem = originalName.replace(/\.[^.]+$/, "") || "profile-image";
+  if (mimeType === "image/png") {
+    return stem + ".png";
+  }
+  if (mimeType === "image/webp") {
+    return stem + ".webp";
+  }
+  return stem + ".jpg";
+}
+
+function readDoctorProfileImageFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",").pop() : result);
+    };
+    reader.onerror = () => reject(new Error("Unable to read the selected image."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function renderCroppedDoctorProfileImage(file, cropState) {
+  if (!file || !cropState?.naturalWidth || !cropState?.naturalHeight || !cropState?.scale) {
+    throw new Error("Select an image to continue.");
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const sourceImage = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Unable to prepare the selected image."));
+      image.src = objectUrl;
+    });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = DOCTOR_PROFILE_IMAGE_EXPORT_SIZE;
+    canvas.height = DOCTOR_PROFILE_IMAGE_EXPORT_SIZE;
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) {
+      throw new Error("Unable to prepare the selected image.");
+    }
+
+    const cropSize = cropState.cropSize || 1;
+    const sourceWidth = cropSize / cropState.scale;
+    const sourceHeight = cropSize / cropState.scale;
+    const sourceX = (cropState.naturalWidth / 2) - (sourceWidth / 2) - (cropState.offsetX / cropState.scale);
+    const sourceY = (cropState.naturalHeight / 2) - (sourceHeight / 2) - (cropState.offsetY / cropState.scale);
+
+    context.drawImage(
+      sourceImage,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      DOCTOR_PROFILE_IMAGE_EXPORT_SIZE,
+      DOCTOR_PROFILE_IMAGE_EXPORT_SIZE
+    );
+
+    const preferredMimeType = file.type === "image/png" || file.type === "image/webp" ? file.type : "image/jpeg";
+    const qualitySteps = preferredMimeType === "image/jpeg" ? [0.92, 0.82, 0.74, 0.64, 0.54] : [undefined];
+
+    for (const quality of qualitySteps) {
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) {
+            resolve(result);
+            return;
+          }
+          reject(new Error("Unable to prepare the selected image."));
+        }, preferredMimeType, quality);
+      });
+
+      if (blob.size <= DOCTOR_PROFILE_IMAGE_SERVER_MAX_BYTES) {
+        const dataBase64 = await readDoctorProfileImageFileAsBase64(blob);
+        return {
+          file,
+          filename: buildDoctorProfileImageUploadName(file.name, preferredMimeType),
+          mime_type: preferredMimeType,
+          data_base64: dataBase64,
+        };
+      }
+    }
+
+    throw new Error("Cropped image is too large to upload. Please zoom out or choose a smaller image.");
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function getDoctorProfileImageRateLimitRetrySeconds(error) {
+  const code = String(error?.code || error?.payload?.error?.code || "").trim().toLowerCase();
+  if (code !== "too_many_requests") {
+    return 0;
+  }
+  const details = error?.details || error?.payload?.error?.details || {};
+  const retryAfter = Number(error?.retryAfter || details?.retry_after || 0);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.ceil(retryAfter);
+  }
+  const resetAt = Date.parse(String(details?.reset_at || ""));
+  if (Number.isFinite(resetAt)) {
+    return Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+  }
+  return 0;
+}
+
+function formatDoctorProfileImageRateLimitMessage(seconds) {
+  const safeSeconds = Math.max(1, Math.ceil(Number(seconds || 0)));
+  const minutes = Math.max(1, Math.ceil(safeSeconds / 60));
+  return "Too many profile image updates. Please try again in " + minutes + " minute" + (minutes === 1 ? "" : "s") + ".";
+}
+
+function describeDoctorProfileImageUploadError(error) {
+  const retrySeconds = getDoctorProfileImageRateLimitRetrySeconds(error);
+  if (retrySeconds > 0) {
+    return formatDoctorProfileImageRateLimitMessage(retrySeconds);
+  }
+  return error?.message || "Unable to upload image. Please try again.";
+}
+
 async function fetchDoctorDashboardPayload(session, doctorId, fallbackState = emptyDoctorState) {
   const results = await Promise.allSettled([
     apiRequest(session, "/dashboard/doctor", { params: { doctor_id: doctorId }, suppressHttpError: true }),
@@ -173,6 +382,10 @@ export default function DoctorDashboard() {
   const [mobileSearchTerm, setMobileSearchTerm] = useState("");
   const appointmentNotificationSeenRef = useRef(new Set());
   const appointmentNotificationReadyRef = useRef(false);
+  const availabilityUserEditedRef = useRef(false);
+  const availabilityAutoSaveTimerRef = useRef(null);
+  const availabilitySavingRef = useRef(false);
+  const availabilityResavePendingRef = useRef(false);
 
   function showDoctorNotice(message, tone = "warning", options = {}) {
     if (!message) {
@@ -581,6 +794,46 @@ export default function DoctorDashboard() {
     }
   }
 
+  function handleAvailabilityChange(updater) {
+    availabilityUserEditedRef.current = true;
+    setAvailabilityDraft(updater);
+  }
+
+  async function runAvailabilityAutoSave() {
+    if (availabilitySavingRef.current) {
+      availabilityResavePendingRef.current = true;
+      return;
+    }
+    availabilitySavingRef.current = true;
+    try {
+      await saveAvailability();
+    } finally {
+      availabilitySavingRef.current = false;
+      if (availabilityResavePendingRef.current) {
+        availabilityResavePendingRef.current = false;
+        runAvailabilityAutoSave();
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!availabilityUserEditedRef.current) {
+      return;
+    }
+    availabilityUserEditedRef.current = false;
+    if (availabilityAutoSaveTimerRef.current) {
+      clearTimeout(availabilityAutoSaveTimerRef.current);
+    }
+    availabilityAutoSaveTimerRef.current = setTimeout(() => {
+      runAvailabilityAutoSave();
+    }, 700);
+    return () => {
+      if (availabilityAutoSaveTimerRef.current) {
+        clearTimeout(availabilityAutoSaveTimerRef.current);
+      }
+    };
+  }, [availabilityDraft]);
+
   async function saveDoctorDisplayName(nextValue) {
     const normalized = String(nextValue || "").trim();
     const currentDisplayName = String(state.doctor?.display_name || "").trim();
@@ -629,6 +882,37 @@ export default function DoctorDashboard() {
       setDoctorSettings((current) => ({ ...current, displayName: currentDisplayName || current.displayName }));
       showDoctorNotice(error?.message || "The display name update failed.", "error");
     }
+  }
+
+  async function handleDoctorAvatarUploaded(updatedDoctor) {
+    if (!updatedDoctor) {
+      return;
+    }
+    setSession((current) => current ? {
+      ...current,
+      user: current.user ? { ...current.user, avatar_url: updatedDoctor.avatar_url } : current.user
+    } : current);
+    await mutateSummary((current) => current ? { ...current, doctor: updatedDoctor } : current, { revalidate: false });
+
+    if (typeof window !== "undefined") {
+      try {
+        const stored = JSON.parse(window.localStorage.getItem(FRONTENDS.doctor.storageKey) || "{}");
+        window.localStorage.setItem(FRONTENDS.doctor.storageKey, JSON.stringify({
+          ...stored,
+          user: stored.user ? { ...stored.user, avatar_url: updatedDoctor.avatar_url } : stored.user
+        }));
+      } catch {
+        // Keep the live state as the source of truth even if the local session cache cannot be rewritten.
+      }
+    }
+
+    revalidateDoctorGroups(isProxyDashboardDoctorKey);
+    await autoRefreshDoctorLists(doctorSummaryKey);
+    showDoctorNotice("Profile photo updated.", "success");
+  }
+
+  function handleDoctorAvatarUploadError(message) {
+    showDoctorNotice(message || "Profile photo could not be updated.", "error");
   }
 
   async function handleLogout() {
@@ -730,20 +1014,18 @@ export default function DoctorDashboard() {
     {!showSkeleton && page === "availability" ? <AvailabilityPage
       availabilityDraft={availabilityDraft}
       bookingIntervalMinutes={bookingIntervalMinutes}
-      onChange={setAvailabilityDraft}
-      onSave={saveAvailability}
+      onChange={handleAvailabilityChange}
       saving={savingAvailability}
     /> : null}
     {!showSkeleton && page === "settings" ? <DoctorSettingsPage
       doctor={state.doctor}
-      appointments={state.appointments}
+      session={session}
+      doctorId={doctorId}
       settings={doctorSettings}
       onSettingsChange={setDoctorSettings}
       onSaveDisplayName={saveDoctorDisplayName}
-      availabilityDraft={availabilityDraft}
-      onOpenAvailability={() => setPage("availability")}
-      estimatedRevenue={estimatedRevenue}
-      storeCurrency={storeCurrency}
+      onAvatarUploaded={handleDoctorAvatarUploaded}
+      onAvatarUploadError={handleDoctorAvatarUploadError}
     /> : null}
     {completionModal.open ? <AppointmentCompletionModal
       appointment={state.appointments.find((item) => String(item.id) === String(completionModal.appointmentId)) || null}
@@ -785,19 +1067,18 @@ export default function DoctorDashboard() {
     {!showSkeleton && page === "availability" ? <DoctorMobileAvailabilityPage
       availabilityDraft={availabilityDraft}
       bookingIntervalMinutes={bookingIntervalMinutes}
-      onChange={setAvailabilityDraft}
-      onSave={saveAvailability}
+      onChange={handleAvailabilityChange}
       saving={savingAvailability}
     /> : null}
     {!showSkeleton && page === "settings" ? <DoctorMobileSettingsPage
       doctor={state.doctor}
+      session={session}
+      doctorId={doctorId}
       settings={doctorSettings}
       onSettingsChange={setDoctorSettings}
       onSaveDisplayName={saveDoctorDisplayName}
-      availabilityDraft={availabilityDraft}
-      onOpenAvailability={() => setPage("availability")}
-      estimatedRevenue={estimatedRevenue}
-      storeCurrency={storeCurrency}
+      onAvatarUploaded={handleDoctorAvatarUploaded}
+      onAvatarUploadError={handleDoctorAvatarUploadError}
     /> : null}
     {completionModal.open ? <AppointmentCompletionModal
       appointment={state.appointments.find((item) => String(item.id) === String(completionModal.appointmentId)) || null}
@@ -839,6 +1120,28 @@ export default function DoctorDashboard() {
     onLogout={handleLogout}
     logoutBusy={logoutBusy}
     showHeader={false}
+    sidebarFooter={<div
+      className="customer-desktop-sidebar-profile"
+      role="button"
+      tabIndex={0}
+      aria-label="Open profile settings"
+      onClick={() => setPage("settings")}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          setPage("settings");
+        }
+      }}
+    >
+      <div className="customer-mobile-avatar customer-desktop-sidebar-avatar">
+        {state.doctor?.avatar_url ? <img src={state.doctor.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
+        <span style={{ display: state.doctor?.avatar_url ? "none" : "inline" }}>{initials(state.doctor?.display_name || "Doctor")}</span>
+      </div>
+      <div className="customer-desktop-sidebar-profile-copy">
+        <strong>{state.doctor?.display_name || "Doctor"}</strong>
+        <span>{state.doctor?.email || ""}</span>
+      </div>
+    </div>}
   >
     {dashboardContent}
   </RoleShell>;
@@ -880,6 +1183,9 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
         return false;
       }
       if (timeFilter === "upcoming" && isPastAppointment) {
+        return false;
+      }
+      if (timeFilter === "upcoming" && paymentStatus === "failed") {
         return false;
       }
       if (timeFilter === "past" && !isPastAppointment) {
@@ -961,8 +1267,6 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
         page={pageNumber}
         pageCount={pageCount}
         onPageChange={setPageNumber}
-        onConfirm={onConfirm}
-        onComplete={onComplete}
         onOpenDetails={setDetailAppointment}
         filter={filter}
         onFilterChange={setFilter}
@@ -977,21 +1281,7 @@ function ConsultationsPage({ appointments, onConfirm, onComplete }) {
   </section>;
 }
 
-function DoctorAppointmentsTable({ appointments, totalAppointments, page, pageCount, onPageChange, onConfirm, onComplete, onOpenDetails, filter = "all", onFilterChange = null }) {
-  function renderActions(appointment) {
-    const joinUrl = doctorAppointmentIsUpcoming(appointment) ? resolveDoctorDashboardJoinUrl(appointment) : "";
-    const canComplete = canDoctorAppointmentComplete(appointment);
-    const stopRowClick = (event, action) => {
-      event.stopPropagation();
-      action();
-    };
-
-    return <div className="doctor-table-actions">
-      {joinUrl ? <a className="btn primary small" href={joinUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Join now</a> : null}
-      {canComplete ? <button className="btn primary small" type="button" onClick={(event) => stopRowClick(event, () => onComplete(appointment.id))}>Complete</button> : null}
-    </div>;
-  }
-
+function DoctorAppointmentsTable({ appointments, totalAppointments, page, pageCount, onPageChange, onOpenDetails, filter = "all", onFilterChange = null }) {
   return <section className="table-panel doctor-appointments-panel">
     <div className="appointment-panel-header">
       <div className="doctor-appointments-header-copy">
@@ -1022,12 +1312,10 @@ function DoctorAppointmentsTable({ appointments, totalAppointments, page, pageCo
           <col className="doctor-col-scheduled" />
           <col className="doctor-col-payment" />
           <col className="doctor-col-status" />
-          <col className="doctor-col-contact" />
-          <col className="doctor-col-actions" />
         </colgroup>
         <thead>
           <tr>
-            {["Patient", "Reason", "Scheduled", "Payment", "Status", "Contact", "Actions"].map((column) => <th key={column}>{column}</th>)}
+            {["Patient", "Reason", "Scheduled", "Payment", "Status"].map((column) => <th key={column}>{column}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -1047,52 +1335,15 @@ function DoctorAppointmentsTable({ appointments, totalAppointments, page, pageCo
                 }
               }}
             >
-              <td><div className="doctor-table-meta"><strong className="doctor-table-cell-name">{patientName}</strong><span>{appointment.timezone || "UTC"}</span></div></td>
+              <td><div className="doctor-table-meta"><strong className="doctor-table-cell-name">{patientName}</strong><span>{appointment.patient?.email || "Not available"}</span></div></td>
               <td><div className="doctor-table-meta"><strong className="doctor-table-cell-strong">{titleCase(appointment.type || "consultation")}</strong><span>{appointment.reason || "Consultation booking"}</span></div></td>
               <td><div className="doctor-table-meta"><strong className="doctor-table-cell-strong">{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</strong><span>{appointment.created_at ? `Booked ${formatDoctorDateTimeCompact(appointment.created_at)}` : "Booked time unavailable"}</span></div></td>
               <td><span className={`status-pill ${doctorAppointmentPaymentTone(appointment)}`}>{titleCase(appointment.payment_status || "pending")}</span></td>
               <td><span className={`status-pill ${doctorAppointmentDisplayStatusTone(appointment)}`}>{doctorAppointmentDisplayStatusLabel(appointment)}</span></td>
-              <td><div className="doctor-table-meta"><strong className="doctor-table-cell-strong">{appointment.patient?.email || "Not available"}</strong><span>{appointment.order_id ? `Order #${appointment.order_id}` : "Order not linked"}</span></div></td>
-              <td>{renderActions(appointment)}</td>
             </tr>;
-          }) : <tr><td colSpan={7} className="muted doctor-table-empty">No appointments match the active filters.</td></tr>}
+          }) : <tr><td colSpan={5} className="muted doctor-table-empty">No appointments match the active filters.</td></tr>}
         </tbody>
       </table>
-    </div>
-    <div className="doctor-mobile-appointment-list">
-      {appointments.length ? appointments.map((appointment) => {
-        const patientName = appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`;
-        return <article
-          className="doctor-mobile-appointment-card"
-          key={`mobile-${appointment.id}`}
-          role="button"
-          tabIndex={0}
-          aria-label={`Open appointment details for ${patientName}`}
-          onClick={() => onOpenDetails(appointment)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              onOpenDetails(appointment);
-            }
-          }}
-        >
-          <div className="doctor-mobile-appointment-top">
-            <div>
-              <strong>{patientName}</strong>
-              <span>{titleCase(appointment.type || "consultation")}</span>
-            </div>
-            <span className={`status-pill ${doctorAppointmentDisplayStatusTone(appointment)}`}>{doctorAppointmentDisplayStatusLabel(appointment)}</span>
-          </div>
-          <div className="doctor-mobile-appointment-grid">
-            <div><span>Scheduled</span><strong>{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</strong></div>
-            <div><span>Payment</span><strong>{titleCase(appointment.payment_status || "pending")}</strong></div>
-            <div><span>Contact</span><strong>{appointment.patient?.email || "Not available"}</strong></div>
-            <div><span>Order</span><strong>{appointment.order_id ? `#${appointment.order_id}` : "Not linked"}</strong></div>
-          </div>
-          {appointment.reason ? <p className="doctor-mobile-appointment-note">{appointment.reason}</p> : null}
-          {renderActions(appointment)}
-        </article>;
-      }) : <div className="doctor-flow-empty">No appointments match the active filters.</div>}
     </div>
     {pageCount > 1 ? <DoctorAppointmentsPagination page={page} pageCount={pageCount} onPageChange={onPageChange} /> : null}
   </section>;
@@ -1404,7 +1655,7 @@ function MtmQueuePage({ requests, selectedRequestId, onSelectRequest, onApprove,
   </section>;
 }
 
-function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange, onSave, saving }) {
+function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange, saving }) {
   const timeFrames = useMemo(() => buildAvailabilityTimeFrames(bookingIntervalMinutes), [bookingIntervalMinutes]);
   const selectedFramesByDay = useMemo(() => {
     return weekdays.reduce((accumulator, day) => ({
@@ -1431,42 +1682,6 @@ function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange,
     });
   }
 
-  function setWeekdaysPreset() {
-    onChange((current) => {
-      const next = normalizeAvailability(current);
-      weekdays.forEach((day) => {
-        next[day] = ["saturday", "sunday"].includes(day) ? [] : buildAvailabilityRangesFromFrames(afternoonFrames.length ? [...morningFrames, ...afternoonFrames] : timeFrames, bookingIntervalMinutes);
-      });
-      return next;
-    });
-  }
-
-  function clearWeekends() {
-    onChange((current) => {
-      const next = normalizeAvailability(current);
-      next.saturday = [];
-      next.sunday = [];
-      return next;
-    });
-  }
-
-  function clearAll() {
-    onChange(() => normalizeAvailability({}));
-  }
-
-  function copyMonday() {
-    onChange((current) => {
-      const next = normalizeAvailability(current);
-      const monday = [...selectedFramesByDay.monday];
-      weekdays.forEach((day) => {
-        if (!["saturday", "sunday"].includes(day)) {
-          next[day] = buildAvailabilityRangesFromFrames(monday, bookingIntervalMinutes);
-        }
-      });
-      return next;
-    });
-  }
-
   return <section className="page-view active" data-page-panel="availability">
     <div className="setup-bar" aria-label="Sticky availability setup controls">
       <div className="setup-meta">
@@ -1474,8 +1689,7 @@ function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange,
         <span className="meta-chip"><strong>{totalSlots}</strong> live slots</span>
         <span className="meta-chip"><strong>{bookingIntervalMinutes}</strong> min interval</span>
       </div>
-      <button className="btn primary" type="button" onClick={onSave} disabled={saving}>{saving ? <BrandedSpinner className="doctor-white-spinner" label="Saving availability" /> : "Save changes"}</button>
-      <span className="save-state">{saving ? "Saving doctor availability" : "Changes are stored when you save"}</span>
+      <span className="save-state">{saving ? "Saving changes…" : "All changes saved"}</span>
     </div>
     <div className="availability-layout">
       <aside className="summary-column">
@@ -1492,20 +1706,6 @@ function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange,
             <div className="stat"><span className="stat-label">Bookable slots</span><strong className="stat-value">{totalSlots}</strong></div>
             <div className="stat"><span className="stat-label">First slot</span><strong className="stat-value">{totalSlots ? formatAvailabilityLabel(timeFrames[0]) : "None"}</strong></div>
             <div className="stat"><span className="stat-label">Last slot</span><strong className="stat-value">{totalSlots ? formatAvailabilityLabel(timeFrames[timeFrames.length - 1]) : "None"}</strong></div>
-          </div>
-        </section>
-        <section className="section-card pad">
-          <div className="card-title-row">
-            <div>
-              <h3 className="card-title">Weekly actions</h3>
-              <p className="card-copy">Apply fast schedule patterns before adjusting individual days.</p>
-            </div>
-          </div>
-          <div className="action-list">
-            <button className="btn secondary" type="button" onClick={setWeekdaysPreset}>Select weekdays</button>
-            <button className="btn secondary" type="button" onClick={copyMonday}>Copy Monday to weekdays</button>
-            <button className="btn secondary" type="button" onClick={clearWeekends}>Clear weekends</button>
-            <button className="btn danger" type="button" onClick={clearAll}>Clear all</button>
           </div>
         </section>
       </aside>
@@ -1594,10 +1794,467 @@ function AvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange,
   </section>;
 }
 
-function DoctorSettingsPage({ doctor, appointments, settings, onSettingsChange, onSaveDisplayName, availabilityDraft, onOpenAvailability, estimatedRevenue, storeCurrency }) {
-  const activeDays = weekdays.filter((day) => availabilityDraft[day]?.length).length;
+function DoctorProfilePhotoWidget({ doctor, session, doctorId, onUploaded, onUploadError }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [pendingFile, setPendingFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [localError, setLocalError] = useState("");
+  const [cropError, setCropError] = useState("");
+  const [loadingCropImage, setLoadingCropImage] = useState(false);
+  const [cropState, setCropState] = useState(null);
+  const [pendingImageMeta, setPendingImageMeta] = useState(null);
+  const [cropViewportSize, setCropViewportSize] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [cooldownNow, setCooldownNow] = useState(() => Date.now());
+  const avatarUrl = String(doctor?.avatar_url || "").trim();
+  const displayName = doctor?.display_name || "Doctor";
+  const inputRef = useRef(null);
+  const triggerRef = useRef(null);
+  const viewerCloseRef = useRef(null);
+  const uploadCloseRef = useRef(null);
+  const cropSurfaceRef = useRef(null);
+  const dragStateRef = useRef(null);
+
+  useEffect(() => {
+    if (!pendingFile) {
+      setPreviewUrl("");
+      return undefined;
+    }
+    const nextUrl = URL.createObjectURL(pendingFile);
+    setPreviewUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [pendingFile]);
+
+  useEffect(() => {
+    if (!viewerOpen && !uploadOpen) {
+      return undefined;
+    }
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setViewerOpen(false);
+        setUploadOpen(false);
+        setMenuOpen(false);
+        setPendingFile(null);
+        setPendingImageMeta(null);
+        setCropState(null);
+        setCropError("");
+        setLocalError("");
+        if (inputRef.current) {
+          inputRef.current.value = "";
+        }
+        window.setTimeout(() => triggerRef.current?.focus(), 0);
+      }
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [uploadOpen, viewerOpen]);
+
+  useEffect(() => {
+    if (viewerOpen) {
+      viewerCloseRef.current?.focus();
+    }
+  }, [viewerOpen]);
+
+  useEffect(() => {
+    if (uploadOpen) {
+      uploadCloseRef.current?.focus();
+    }
+  }, [uploadOpen]);
+
+  useEffect(() => {
+    if (!uploadOpen) {
+      setCropViewportSize(0);
+      return undefined;
+    }
+
+    function measureCropViewport() {
+      const nextSize = Number(cropSurfaceRef.current?.clientWidth || 0);
+      setCropViewportSize((current) => (current !== nextSize ? nextSize : current));
+    }
+
+    measureCropViewport();
+
+    if (typeof ResizeObserver === "function" && cropSurfaceRef.current) {
+      const observer = new ResizeObserver(() => measureCropViewport());
+      observer.observe(cropSurfaceRef.current);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", measureCropViewport);
+    return () => window.removeEventListener("resize", measureCropViewport);
+  }, [uploadOpen]);
+
+  useEffect(() => {
+    if (!pendingImageMeta || !cropViewportSize) {
+      return;
+    }
+
+    setCropState((current) => createDoctorProfileImageCropState({
+      naturalWidth: pendingImageMeta.naturalWidth,
+      naturalHeight: pendingImageMeta.naturalHeight,
+      cropSize: cropViewportSize,
+      zoom: current?.zoom || DOCTOR_PROFILE_IMAGE_MIN_ZOOM,
+      offsetX: current?.offsetX || 0,
+      offsetY: current?.offsetY || 0,
+    }));
+  }, [cropViewportSize, pendingImageMeta]);
+
+  useEffect(() => {
+    function handlePointerMove(event) {
+      const dragState = dragStateRef.current;
+      if (!dragState) {
+        return;
+      }
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      const nextOffsetX = dragState.originX + (event.clientX - dragState.startX);
+      const nextOffsetY = dragState.originY + (event.clientY - dragState.startY);
+      setCropState((current) => {
+        if (!current) {
+          return current;
+        }
+        return createDoctorProfileImageCropState({
+          ...current,
+          offsetX: nextOffsetX,
+          offsetY: nextOffsetY,
+        });
+      });
+    }
+
+    function stopDragging() {
+      dragStateRef.current = null;
+    }
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", stopDragging);
+    window.addEventListener("pointercancel", stopDragging);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopDragging);
+      window.removeEventListener("pointercancel", stopDragging);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cooldownUntil) {
+      return undefined;
+    }
+    const timerId = window.setInterval(() => setCooldownNow(Date.now()), 1000);
+    return () => window.clearInterval(timerId);
+  }, [cooldownUntil]);
+
+  function restoreFocus() {
+    window.setTimeout(() => triggerRef.current?.focus(), 0);
+  }
+
+  function resetCropState(meta) {
+    if (!meta || !cropViewportSize) {
+      setCropState(null);
+      return;
+    }
+    setCropState(createDoctorProfileImageCropState({
+      naturalWidth: meta.naturalWidth,
+      naturalHeight: meta.naturalHeight,
+      cropSize: cropViewportSize,
+    }));
+  }
+
+  function closeMenu() {
+    setMenuOpen(false);
+  }
+
+  function closeViewer() {
+    setViewerOpen(false);
+    restoreFocus();
+  }
+
+  function closeUploadModal({ force = false } = {}) {
+    if (uploading && !force) {
+      return;
+    }
+    setUploadOpen(false);
+    setPendingFile(null);
+    setPendingImageMeta(null);
+    setCropState(null);
+    setCropError("");
+    setLocalError("");
+    setLoadingCropImage(false);
+    dragStateRef.current = null;
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
+    restoreFocus();
+  }
+
+  function handleAvatarClick() {
+    if (uploading) {
+      return;
+    }
+    setMenuOpen((open) => !open);
+  }
+
+  function handleViewPhoto() {
+    closeMenu();
+    if (avatarUrl) {
+      setViewerOpen(true);
+    }
+  }
+
+  function handleUploadPhoto() {
+    closeMenu();
+    setPendingFile(null);
+    setPendingImageMeta(null);
+    setCropState(null);
+    setCropError("");
+    setLocalError("");
+    setUploadOpen(false);
+    window.setTimeout(() => inputRef.current?.click(), 0);
+  }
+
+  async function handleNativeFileChange(event) {
+    const file = event.target.files?.[0] || null;
+    const validationMessage = validateDoctorProfileImageFile(file);
+    if (validationMessage) {
+      setPendingFile(null);
+      setPendingImageMeta(null);
+      setCropState(null);
+      setCropError("");
+      setLocalError(validationMessage);
+      return;
+    }
+
+    setLoadingCropImage(true);
+    setCropError("");
+    setLocalError("");
+    try {
+      const dimensions = await loadDoctorProfileImageDimensions(file);
+      const meta = {
+        naturalWidth: dimensions.naturalWidth,
+        naturalHeight: dimensions.naturalHeight,
+      };
+      setPendingFile(file);
+      setPendingImageMeta(meta);
+      setUploadOpen(true);
+      if (cropViewportSize) {
+        resetCropState(meta);
+      }
+    } catch (loadError) {
+      setPendingFile(null);
+      setPendingImageMeta(null);
+      setCropState(null);
+      setLocalError(loadError?.message || "Unable to read the selected image.");
+    } finally {
+      setLoadingCropImage(false);
+    }
+  }
+
+  function handleCropPointerDown(event) {
+    if (!cropState || loadingCropImage) {
+      return;
+    }
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    dragStateRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: cropState.offsetX,
+      originY: cropState.offsetY,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function handleZoomChange(event) {
+    const nextZoom = Number(event.target.value || DOCTOR_PROFILE_IMAGE_MIN_ZOOM);
+    setCropState((current) => current ? createDoctorProfileImageCropState({
+      ...current,
+      zoom: nextZoom,
+    }) : current);
+  }
+
+  async function handleSaveImage() {
+    if (profileImageCooldownActive) {
+      setCropError(formatDoctorProfileImageRateLimitMessage(profileImageCooldownSeconds));
+      return;
+    }
+    if (!pendingFile || !cropState || uploading || loadingCropImage || !doctorId || !session) {
+      setCropError("Select an image to continue.");
+      return;
+    }
+
+    setCropError("");
+    setUploading(true);
+    try {
+      const preparedUpload = await renderCroppedDoctorProfileImage(pendingFile, cropState);
+      const updatedDoctor = await apiRequest(session, `/doctors/${doctorId}/profile-image`, {
+        method: "PUT",
+        body: {
+          filename: preparedUpload.filename,
+          mime_type: preparedUpload.mime_type,
+          data_base64: preparedUpload.data_base64
+        }
+      });
+      closeUploadModal({ force: true });
+      onUploaded?.(updatedDoctor);
+    } catch (saveError) {
+      const retrySeconds = getDoctorProfileImageRateLimitRetrySeconds(saveError);
+      if (retrySeconds > 0) {
+        setCooldownUntil(Date.now() + (retrySeconds * 1000));
+      }
+      const message = describeDoctorProfileImageUploadError(saveError);
+      setCropError(message);
+      onUploadError?.(message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const profileImageCooldownSeconds = Math.max(0, Math.ceil((cooldownUntil - cooldownNow) / 1000));
+  const profileImageCooldownActive = profileImageCooldownSeconds > 0;
+  const saveDisabled = uploading || loadingCropImage || !pendingFile || !cropState || profileImageCooldownActive;
+
+  const cropImageStyle = cropState && cropViewportSize ? {
+    width: (cropState.naturalWidth * cropState.scale) + "px",
+    height: (cropState.naturalHeight * cropState.scale) + "px",
+    transform: "translate(" + (cropState.offsetX - ((cropState.naturalWidth * cropState.scale) / 2)) + "px, " + (cropState.offsetY - ((cropState.naturalHeight * cropState.scale) / 2)) + "px)",
+  } : undefined;
+
+  return (
+    <div className="customer-mobile-photo-widget">
+      <button
+        ref={triggerRef}
+        className="customer-mobile-photo-button"
+        type="button"
+        onClick={handleAvatarClick}
+        disabled={uploading}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label="Open profile image options"
+      >
+        <div className="customer-mobile-avatar large customer-mobile-photo-avatar">
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt=""
+              onError={(event) => {
+                event.currentTarget.style.display = "none";
+                event.currentTarget.nextElementSibling.style.display = "inline";
+              }}
+            />
+          ) : null}
+          <span style={{ display: avatarUrl ? "none" : "inline" }}>{initials(displayName)}</span>
+        </div>
+        <span className="customer-mobile-photo-camera" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" focusable="false">
+            <path d="M8.6 6.5 10 4.75h4l1.4 1.75H18a3 3 0 0 1 3 3v6.75a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V9.5a3 3 0 0 1 3-3h2.6Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+            <path d="M12 15.75a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Z" stroke="currentColor" strokeWidth="1.8" />
+          </svg>
+        </span>
+      </button>
+
+      {menuOpen ? (
+        <div className="customer-mobile-photo-menu" role="menu" aria-label="Profile photo options">
+          <button type="button" role="menuitem" onClick={handleViewPhoto} disabled={!avatarUrl}>
+            View Image
+          </button>
+          <button type="button" role="menuitem" onClick={handleUploadPhoto}>
+            Upload Image
+          </button>
+          <button type="button" role="menuitem" onClick={closeMenu}>
+            Close
+          </button>
+        </div>
+      ) : null}
+
+      {viewerOpen && avatarUrl ? (
+        <div className="customer-photo-viewer" role="dialog" aria-modal="true" aria-label="Profile image preview" onClick={closeViewer}>
+          <div className="customer-photo-viewer-card customer-profile-modal-card" onClick={(event) => event.stopPropagation()}>
+            <button ref={viewerCloseRef} className="customer-photo-viewer-close" type="button" onClick={closeViewer} aria-label="Close profile image preview">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" focusable="false">
+                <path d="M6 6 18 18M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+            <img src={avatarUrl} alt={displayName + " profile"} className="customer-photo-viewer-image" />
+          </div>
+        </div>
+      ) : null}
+
+      <input ref={inputRef} className="customer-mobile-photo-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={handleNativeFileChange} />
+
+      {uploadOpen ? (
+        <div className="customer-photo-viewer customer-profile-upload-modal" role="dialog" aria-modal="true" aria-label="Upload Profile Image" onClick={() => { if (!uploading) { closeUploadModal(); } }}>
+          <div className="customer-photo-viewer-card customer-profile-modal-card customer-profile-upload-card" onClick={(event) => event.stopPropagation()}>
+            <button ref={uploadCloseRef} className="customer-photo-viewer-close" type="button" onClick={closeUploadModal} aria-label="Close upload profile image modal" disabled={uploading}>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" focusable="false">
+                <path d="M6 6 18 18M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+            <div className="customer-profile-modal-head">
+              <span className="customer-section-kicker">Profile image</span>
+              <h3>Edit Image</h3>
+              <p>Drag to frame your photo, then save the square crop for your profile avatar.</p>
+            </div>
+            <div className="customer-profile-cropper-shell">
+              <div
+                ref={cropSurfaceRef}
+                className={"customer-profile-cropper-surface" + (loadingCropImage ? " is-loading" : "")}
+                onPointerDown={handleCropPointerDown}
+                role="presentation"
+              >
+                {previewUrl && cropState && cropViewportSize ? <img src={previewUrl} alt="Profile crop preview" className="customer-profile-cropper-image" style={cropImageStyle} draggable="false" /> : null}
+                <div className="customer-profile-cropper-overlay" aria-hidden="true">
+                  <div className="customer-profile-cropper-ring" />
+                </div>
+                <p className="customer-profile-cropper-hint">Drag to reposition image</p>
+                {loadingCropImage || (previewUrl && !cropViewportSize) ? <div className="customer-profile-cropper-loading"><span className="appointment-cta-spinner" aria-label="Loading image" /></div> : null}
+              </div>
+              <div className="customer-profile-cropper-toolbar">
+                <label className="customer-profile-cropper-control" htmlFor="doctor-profile-cropper-zoom">
+                  <span>Zoom</span>
+                  <input
+                    id="doctor-profile-cropper-zoom"
+                    type="range"
+                    min={DOCTOR_PROFILE_IMAGE_MIN_ZOOM}
+                    max={DOCTOR_PROFILE_IMAGE_MAX_ZOOM}
+                    step="0.01"
+                    value={cropState?.zoom || DOCTOR_PROFILE_IMAGE_MIN_ZOOM}
+                    onChange={handleZoomChange}
+                    disabled={!cropState || loadingCropImage || uploading}
+                  />
+                </label>
+              </div>
+            </div>
+            {localError ? <small className="customer-mobile-field-error">{localError}</small> : null}
+            {cropError ? <small className="customer-mobile-field-error">{cropError}</small> : null}
+            <div className="customer-profile-modal-actions">
+              <button type="button" className="pill-button tertiary" onClick={closeUploadModal} disabled={uploading}>Cancel</button>
+              <button type="button" className="pill-button primary" onClick={handleSaveImage} disabled={saveDisabled}>
+                {uploading ? <span className="appointment-cta-spinner" aria-label="Saving image" /> : (profileImageCooldownActive ? "Try again in " + Math.max(1, Math.ceil(profileImageCooldownSeconds / 60)) + "m" : "Save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DoctorSettingsPage({ doctor, session, doctorId, settings, onSettingsChange, onSaveDisplayName, onAvatarUploaded, onAvatarUploadError }) {
   return <section className="page-view active" data-page-panel="settings">
     <section className="doctor-settings-grid flow-settings-grid">
+      <article className="profile-details-card">
+        <div className="profile-card-header">
+          <div>
+            <p className="profile-helper">Profile photo</p>
+            <h2 className="profile-card-title">This photo appears on your dashboard and to patients booking with you.</h2>
+          </div>
+        </div>
+        <DoctorProfilePhotoWidget doctor={doctor} session={session} doctorId={doctorId} onUploaded={onAvatarUploaded} onUploadError={onAvatarUploadError} />
+      </article>
       <article className="profile-details-card">
         <div className="profile-card-header">
           <div>
@@ -1792,13 +2449,13 @@ function DoctorConsultationsSkeleton() {
       <div className="table-scroll doctor-appointments-table-wrap">
         <table className="doctor-appointments-table">
           <thead>
-            <tr>{Array.from({ length: 7 }, (_, index) => <th key={`doctor-head-skeleton-${index}`}><SkeletonBox className="skeleton-line skeleton-line-xs" /></th>)}</tr>
+            <tr>{Array.from({ length: 5 }, (_, index) => <th key={`doctor-head-skeleton-${index}`}><SkeletonBox className="skeleton-line skeleton-line-xs" /></th>)}</tr>
           </thead>
           <tbody>
             {Array.from({ length: 5 }, (_, rowIndex) => <tr key={`doctor-row-skeleton-${rowIndex}`}>
-              {Array.from({ length: 7 }, (_, columnIndex) => <td key={`doctor-cell-skeleton-${rowIndex}-${columnIndex}`}>
-                <SkeletonBox className={`skeleton-line ${columnIndex === 0 ? "doctor-skeleton-line-name" : columnIndex === 6 ? "skeleton-line-sm" : "skeleton-line-md"}`} />
-                {columnIndex < 6 ? <SkeletonBox className="skeleton-line skeleton-line-xs doctor-skeleton-subline" /> : null}
+              {Array.from({ length: 5 }, (_, columnIndex) => <td key={`doctor-cell-skeleton-${rowIndex}-${columnIndex}`}>
+                <SkeletonBox className={`skeleton-line ${columnIndex === 0 ? "doctor-skeleton-line-name" : columnIndex === 4 ? "skeleton-line-sm" : "skeleton-line-md"}`} />
+                {columnIndex < 4 ? <SkeletonBox className="skeleton-line skeleton-line-xs doctor-skeleton-subline" /> : null}
               </td>)}
             </tr>)}
           </tbody>
@@ -2364,8 +3021,27 @@ function DoctorMobileShell({
           </button> : null}
         </nav>
         <div className="doctor-mobile-drawer-footer customer-mobile-drawer-footer">
-          <div className="doctor-mobile-drawer-profile customer-mobile-drawer-profile">
-            <div className="customer-mobile-avatar">{initials(doctorName || "Doctor")}</div>
+          <div
+            className="doctor-mobile-drawer-profile customer-mobile-drawer-profile"
+            role="button"
+            tabIndex={0}
+            aria-label="Open profile settings"
+            onClick={() => {
+              onPageChange("settings");
+              setSideNavOpen(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onPageChange("settings");
+                setSideNavOpen(false);
+              }
+            }}
+          >
+            <div className="customer-mobile-avatar">
+              {doctor?.avatar_url ? <img src={doctor.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
+              <span style={{ display: doctor?.avatar_url ? "none" : "inline" }}>{initials(doctorName || "Doctor")}</span>
+            </div>
             <div>
               <strong>{doctorName || "Doctor"}</strong>
               <span>{doctor?.email || "Doctor account"}</span>
@@ -2579,12 +3255,13 @@ function DoctorMobileConsultationsPage({ appointments, searchTerm, onComplete })
         {paginatedAppointments.length ? paginatedAppointments.map((appointment) => {
           const joinUrl = doctorAppointmentIsUpcoming(appointment) ? resolveDoctorDashboardJoinUrl(appointment) : "";
           const canComplete = canDoctorAppointmentComplete(appointment);
+          const patientName = appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`;
           return <article
             className="doctor-mobile-consultation-card"
             key={appointment.id}
             role="button"
             tabIndex={0}
-            aria-label={`Open appointment details for ${appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`}`}
+            aria-label={`Open appointment details for ${patientName}`}
             onClick={() => setDetailAppointment(appointment)}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
@@ -2594,17 +3271,19 @@ function DoctorMobileConsultationsPage({ appointments, searchTerm, onComplete })
             }}
           >
             <div className="doctor-mobile-consultation-top">
-              <div>
-                <strong>{appointment.patient?.display_name || `Patient #${appointment.patient_user_id}`}</strong>
-                <span className="consultation-email">{appointment.patient?.email || "No email available"}</span>
-                
-                <span className="consultation-reason">{appointment.reason || titleCase(appointment.type || "consultation")}</span>
+              <div className="doctor-mobile-consultation-lead">
+                <div className="customer-mobile-clock"><HugeiconsIcon icon={Clock01Icon} size={20} strokeWidth={1.7} /></div>
+                <div className="customer-mobile-visit-copy">
+                  <strong>{patientName}</strong>
+                  <span>{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</span>
+                  <small>{appointment.patient?.email || "No email available"}</small>
+                </div>
               </div>
-              <span className={`doctor-mobile-status-pill ${mobileDoctorStatusTone(appointment)}`.trim()}>{mobileDoctorStatusLabel(appointment)}</span>
-            </div>
-            <div className="doctor-mobile-consultation-meta">
-              <span className="consultation-window">{formatDoctorAppointmentWindow(appointment.start_at, appointment.end_at)}</span>
-              <span className="consultation-timezone">{appointment.timezone || "UTC"}</span>
+              <div className="customer-mobile-appointment-status">
+                <div className="appointment-status-stack">
+                  <span className={`status-pill ${mobileDoctorStatusTone(appointment)}`}>{mobileDoctorStatusLabel(appointment)}</span>
+                </div>
+              </div>
             </div>
             <div className="doctor-mobile-card-actions">
               {joinUrl ? <a className="doctor-mobile-action-button primary" href={joinUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Join now</a> : null}
@@ -2627,7 +3306,7 @@ function DoctorMobileConsultationsPage({ appointments, searchTerm, onComplete })
   </div>;
 }
 
-function DoctorMobileAvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange, onSave, saving }) {
+function DoctorMobileAvailabilityPage({ availabilityDraft, bookingIntervalMinutes, onChange, saving }) {
   const timeFrames = useMemo(() => buildAvailabilityTimeFrames(bookingIntervalMinutes), [bookingIntervalMinutes]);
   const selectedFramesByDay = useMemo(() => weekdays.reduce((accumulator, day) => ({
     ...accumulator,
@@ -2652,64 +3331,16 @@ function DoctorMobileAvailabilityPage({ availabilityDraft, bookingIntervalMinute
     });
   }
 
-  function setWeekdaysPreset() {
-    onChange((current) => {
-      const next = normalizeAvailability(current);
-      weekdays.forEach((day) => {
-        next[day] = ["saturday", "sunday"].includes(day) ? [] : buildAvailabilityRangesFromFrames(afternoonFrames.length ? [...morningFrames, ...afternoonFrames] : timeFrames, bookingIntervalMinutes);
-      });
-      return next;
-    });
-  }
-
-  function clearWeekends() {
-    onChange((current) => {
-      const next = normalizeAvailability(current);
-      next.saturday = [];
-      next.sunday = [];
-      return next;
-    });
-  }
-
-  function clearAll() {
-    onChange(() => normalizeAvailability({}));
-  }
-
-  function copyMonday() {
-    onChange((current) => {
-      const next = normalizeAvailability(current);
-      const monday = [...selectedFramesByDay.monday];
-      weekdays.forEach((day) => {
-        if (!["saturday", "sunday"].includes(day)) {
-          next[day] = buildAvailabilityRangesFromFrames(monday, bookingIntervalMinutes);
-        }
-      });
-      return next;
-    });
-  }
-
   return <div className="doctor-mobile-page doctor-mobile-availability">
     <DoctorMobilePageSection
       title="Availability"
-      action={<button className="doctor-mobile-save-button" type="button" onClick={onSave} disabled={saving}>{saving ? <BrandedSpinner className="doctor-white-spinner" label="Saving availability" /> : "Save"}</button>}
+      action={<span className="save-state">{saving ? "Saving changes…" : "All changes saved"}</span>}
     >
       <div className="doctor-mobile-metric-grid compact">
         <article className="doctor-mobile-metric-card"><span className="doctor-mobile-metric-label">Active days</span><strong className="doctor-mobile-metric-value">{activeDays}</strong></article>
         <article className="doctor-mobile-metric-card"><span className="doctor-mobile-metric-label">Live slots</span><strong className="doctor-mobile-metric-value">{totalSlots}</strong></article>
       </div>
       <div className="doctor-mobile-card-stack">
-        <article className="doctor-mobile-surface-card">
-          <div className="doctor-mobile-surface-head">
-            <h2>Weekly actions</h2>
-            <p>Apply schedule presets, then fine-tune each day below.</p>
-          </div>
-          <div className="doctor-mobile-stacked-actions">
-            <button className="doctor-mobile-action-button secondary" type="button" onClick={setWeekdaysPreset}>Select weekdays</button>
-            <button className="doctor-mobile-action-button secondary" type="button" onClick={copyMonday}>Copy Monday to weekdays</button>
-            <button className="doctor-mobile-action-button secondary" type="button" onClick={clearWeekends}>Clear weekends</button>
-            <button className="doctor-mobile-action-button danger" type="button" onClick={clearAll}>Clear all</button>
-          </div>
-        </article>
         {weekdays.map((day) => {
           const enabled = Boolean(selectedFramesByDay[day].length);
           return <details className={`doctor-mobile-day-card ${enabled ? "" : "closed"}`.trim()} key={day}>
@@ -2766,12 +3397,17 @@ function DoctorMobileAvailabilityPage({ availabilityDraft, bookingIntervalMinute
   </div>;
 }
 
-function DoctorMobileSettingsPage({ doctor, settings, onSettingsChange, onSaveDisplayName, availabilityDraft, onOpenAvailability, estimatedRevenue, storeCurrency }) {
-  const activeDays = weekdays.filter((day) => availabilityDraft[day]?.length).length;
-
+function DoctorMobileSettingsPage({ doctor, session, doctorId, settings, onSettingsChange, onSaveDisplayName, onAvatarUploaded, onAvatarUploadError }) {
   return <div className="doctor-mobile-page doctor-mobile-settings">
     <DoctorMobilePageSection title="Settings">
       <div className="doctor-mobile-card-stack">
+        <article className="doctor-mobile-surface-card">
+          <div className="doctor-mobile-surface-head">
+            <h2>Profile photo</h2>
+            <p>This photo appears on your dashboard and to patients booking with you.</p>
+          </div>
+          <DoctorProfilePhotoWidget doctor={doctor} session={session} doctorId={doctorId} onUploaded={onAvatarUploaded} onUploadError={onAvatarUploadError} />
+        </article>
         <article className="doctor-mobile-surface-card">
           <div className="doctor-mobile-surface-head">
             <h2>Profile preferences</h2>
@@ -2783,17 +3419,6 @@ function DoctorMobileSettingsPage({ doctor, settings, onSettingsChange, onSaveDi
             <label className="doctor-mobile-form-field"><span>License number</span><input value={settings.licenseNumber} onChange={(event) => onSettingsChange((current) => ({ ...current, licenseNumber: event.target.value }))} /></label>
             <label className="doctor-mobile-form-field"><span>Bio</span><textarea rows={4} value={settings.bio} onChange={(event) => onSettingsChange((current) => ({ ...current, bio: event.target.value }))} /></label>
           </div>
-        </article>
-        <article className="doctor-mobile-surface-card">
-          <div className="doctor-mobile-surface-head">
-            <h2>Activity snapshot</h2>
-            <p>Use the current booking totals to keep your profile operational.</p>
-          </div>
-          <div className="doctor-mobile-metric-grid compact">
-            <article className="doctor-mobile-metric-card"><span className="doctor-mobile-metric-label">Revenue</span><strong className="doctor-mobile-metric-value">{money(estimatedRevenue, storeCurrency)}</strong></article>
-            <article className="doctor-mobile-metric-card"><span className="doctor-mobile-metric-label">Active days</span><strong className="doctor-mobile-metric-value">{activeDays}</strong></article>
-          </div>
-          <button className="doctor-mobile-action-button secondary wide" type="button" onClick={onOpenAvailability}>Open availability</button>
         </article>
       </div>
     </DoctorMobilePageSection>

@@ -991,6 +991,10 @@ final class Nevari_Auth {
             return false;
         }
 
+        if (class_exists('Nevari_User_Governance') && !Nevari_User_Governance::can_authenticate((int) $resolved_user->ID)) {
+            return false;
+        }
+
         if ($frontend_type === 'storefront') {
             return (bool) array_intersect(['administrator', 'shop_manager'], (array) $resolved_user->roles);
         }

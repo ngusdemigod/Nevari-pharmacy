@@ -25,7 +25,7 @@ import SubscriptionGate from "./components/subscription/SubscriptionGate";
 import Paywall from "./components/subscription/Paywall";
 import { useSubscription } from "./hooks/use-subscription";
 import { RoleShell, SkeletonBox } from "./components/role-shell";
-import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, fetchCustomerSearch, normalizeCustomerSettingsPayload, prepareCustomerMtmPdf, requestMtmReschedule, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest, updateCustomerSettings, uploadCustomerProfileImage } from "./lib/nevari-api";
+import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, fetchCustomerSearch, fetchMtmBookingContext, normalizeCustomerSettingsPayload, prepareCustomerMtmPdf, requestMtmReschedule, reserveMtmSlot, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest, updateCustomerSettings, uploadCustomerProfileImage } from "./lib/nevari-api";
 import { citiesForNigeriaState, NIGERIA_STATES } from "./lib/nigeria-locations";
 
 const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
@@ -776,10 +776,14 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
   const additionalInformation = mtmForm?.additionalInformation || {};
   const fileList = Array.isArray(labResultsFiles) ? labResultsFiles : [];
   const phonePattern = /^[0-9+\-()\s]{7,20}$/;
+  const consentToDiscussCare = String(emergencyContact.consentToDiscussCare || "").trim();
+  const emergencyContactRequired = consentToDiscussCare === "No"
+    ? ["consentToDiscussCare"]
+    : ["caregiverName", "relationship", "phoneNumber", "consentToDiscussCare"];
 
   const required = {
     1: ["name", "age", "dob", "gender", "address", "phoneNumber", "preferredContactMethod"],
-    2: ["caregiverName", "relationship", "phoneNumber", "consentToDiscussCare"],
+    2: emergencyContactRequired,
     3: ["primaryDiagnosis", "chronicConditions", "pastMedicalHistory", "drugAllergies"],
     4: [],
     5: [],
@@ -867,7 +871,7 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
     if (includeRequired && shouldValidateKey("chronicConditions") && !String(medicalHistory.chronicConditions || "").trim()) errors.chronicConditions = "This field is required.";
     if (includeRequired && shouldValidateKey("pastMedicalHistory") && !String(medicalHistory.pastMedicalHistory || "").trim()) errors.pastMedicalHistory = "This field is required.";
     if (includeRequired && shouldValidateKey("drugAllergies") && !String(medicalHistory.drugAllergies || "").trim()) errors.drugAllergies = "This field is required.";
-    if (shouldValidateKey("relevantLabResults") && fileList.some((file) => !isAllowedMedicalFile(file))) {
+    if (shouldValidateKey("relevantLabResults") && fileList.some((file) => !isAllowedMtmImageFile(file))) {
       errors.relevantLabResults = "Upload PNG, JPG, JPEG, or WebP images up to 5MB each.";
     }
   }
@@ -2519,7 +2523,19 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       renderNavIcon={renderCustomerNavIcon}
       onLogout={handleLogout}
       logoutBusy={logoutBusy}
-      sidebarFooter={<div className="customer-desktop-sidebar-profile">
+      sidebarFooter={<div
+        className="customer-desktop-sidebar-profile"
+        role="button"
+        tabIndex={0}
+        aria-label="Open profile settings"
+        onClick={() => setPage("profile")}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setPage("profile");
+          }
+        }}
+      >
         <div className="customer-mobile-avatar customer-desktop-sidebar-avatar">
           {profile.avatar_url ? <img src={profile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
           <span style={{ display: profile.avatar_url ? "none" : "inline" }}>{initials(customerFullName)}</span>
@@ -3163,7 +3179,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
 
           <span className="customer-profile-reminder-kicker">Profile reminder</span>
           <h2 id="customer-profile-reminder-title">Keep your profile up to date</h2>
-          <p id="customer-profile-reminder-description">Complete your details so we can personalise your care, contact you when needed, and make future appointments quicker.</p>
+          <p id="customer-profile-reminder-description">Complete your details so we can personalise your care.</p>
           <section className="customer-profile-reminder-progress" aria-label="Profile completion">
             <div className="customer-profile-reminder-progress-head"><strong>Your profile is almost complete</strong><strong>{customerProfileCompletion.percent}%</strong></div>
             <div className="customer-profile-reminder-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={customerProfileCompletion.percent}><span style={{ width: `${customerProfileCompletion.percent}%` }} /></div>
@@ -3637,6 +3653,20 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
 }
 
 function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false, onRequestReschedule, onClose }) {
+  const requestId = String(request?.id || "");
+  const [selectedSlot, setSelectedSlot] = useState("");
+  const [slotBusy, setSlotBusy] = useState(false);
+  const [slotError, setSlotError] = useState("");
+  const bookingQuery = useSWR(
+    requestId && session ? ["customer-mtm-booking", requestId, session?.baseUrl || ""] : null,
+    () => fetchMtmBookingContext(session, requestId),
+    {
+      revalidateOnFocus: true,
+      refreshInterval: (data) => String(data?.payment_state || "") === "pending" ? 10_000 : 0,
+    }
+  );
+  const booking = bookingQuery.data || null;
+
   useEffect(() => {
     if (typeof document === "undefined") {
       return undefined;
@@ -3652,7 +3682,6 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
     };
   }, []);
 
-  const requestId = String(request?.id || "");
   const documentAvailable = request?.document?.available === true;
   const downloadHref = requestId && documentAvailable
     ? `/api/mtm/${encodeURIComponent(requestId)}/pdf?baseUrl=${encodeURIComponent(session?.baseUrl || "")}&frontendType=${encodeURIComponent(session?.frontendType || "patient")}`
@@ -3660,6 +3689,27 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
   if (typeof document === "undefined") {
     return null;
   }
+
+  async function handleReserveSlot() {
+    if (!selectedSlot || slotBusy) return;
+    setSlotBusy(true);
+    setSlotError("");
+    try {
+      await reserveMtmSlot(session, requestId, { start_at: selectedSlot, timezone: storeTimeZone || "UTC" });
+      setSelectedSlot("");
+      await bookingQuery.mutate();
+    } catch (error) {
+      setSlotError(error?.message || "That slot could not be reserved. Refresh and choose another slot.");
+      await bookingQuery.mutate();
+    } finally {
+      setSlotBusy(false);
+    }
+  }
+
+  const paymentReady = ["paid", "quota_reserved"].includes(String(booking?.payment_state || request?.payment?.state || ""));
+  const slotState = String(booking?.slot_state || request?.slot_reservation?.state || "unreserved");
+  const reservedStart = booking?.reserved_start_at || request?.slot_reservation?.start_at || "";
+  const availableSlots = Array.isArray(booking?.available_slots) ? booking.available_slots : [];
 
   return createPortal(<div className="customer-appointment-modal" role="dialog" aria-modal="true" aria-label="MTM request details">
     <ModalScrim className="customer-modal-scrim customer-appointment-modal-backdrop" label="Close MTM request details" onDismiss={onClose} />
@@ -3679,6 +3729,34 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
         <div className="info-row"><span className="info-label">Attendance</span><strong className="info-value">{titleCase(request?.attendance_status || "pending")}</strong></div>
         <div className="info-row"><span className="info-label">Medication Count</span><strong className="info-value">{Array.isArray(request?.medication_profile?.medications) ? request.medication_profile.medications.length : 0}</strong></div>
       </div>
+      <section className="customer-mtm-booking-panel" aria-label="MTM payment and consultation slot">
+        <h3>Payment and consultation slot</h3>
+        {bookingQuery.isLoading ? <BrandedSpinner label="Loading booking status" /> : null}
+        {bookingQuery.error ? <div className="appointment-inline-alert" role="alert">Booking status could not be loaded. <button type="button" onClick={() => bookingQuery.mutate()}>Retry</button></div> : null}
+        {!bookingQuery.isLoading && !bookingQuery.error && booking ? <>
+          <div className="detail-card info-list">
+            <div className="info-row"><span className="info-label">Payment / credit</span><strong className="info-value">{booking.payment_state === "quota_reserved" ? "Pro consultation credit reserved" : titleCase(booking.payment_state || "pending")}</strong></div>
+            {booking.payment_state === "quota_reserved" ? <div className="info-row"><span className="info-label">Monthly credits remaining</span><strong className="info-value">{Number(booking.quota_remaining || 0)}</strong></div> : <div className="info-row"><span className="info-label">MTM consultation fee</span><strong className="info-value">{money(booking.fee || 0, booking.currency || "NGN")}</strong></div>}
+            <div className="info-row"><span className="info-label">Slot</span><strong className="info-value">{reservedStart ? formatAppointmentListDateTime(reservedStart, storeTimeZone) : "Not selected"}</strong></div>
+          </div>
+          {booking.payment_required && booking.payment_url ? <a className="customer-mobile-primary-button" href={booking.payment_url} target="_blank" rel="noreferrer" onClick={() => window.setTimeout(() => bookingQuery.mutate(), 1500)}>Pay for MTM consultation</a> : null}
+          {booking.payment_required && !booking.payment_url ? <div className="appointment-inline-alert" role="status">Payment could not be resumed. Please contact support with this request reference.</div> : null}
+          {paymentReady && slotState !== "reserved" && slotState !== "active" ? <div className="customer-mtm-slot-picker">
+            <label htmlFor={`mtm-slot-${requestId}`}>Choose a 30-minute consultation slot</label>
+            <select id={`mtm-slot-${requestId}`} value={selectedSlot} onChange={(event) => { setSelectedSlot(event.target.value); setSlotError(""); }}>
+              <option value="">Select an available slot</option>
+              {availableSlots.map((slot) => <option key={slot.start_at} value={slot.start_at}>{formatAppointmentListDateTime(slot.start_at, storeTimeZone)}</option>)}
+            </select>
+            {!availableSlots.length ? <p className="customer-mobile-field-hint">No pharmacist slots are currently available. Refresh to check again.</p> : null}
+            {slotError ? <p className="customer-mobile-field-error" role="alert">{slotError}</p> : null}
+            <div className="customer-mtm-slot-actions">
+              <button className="pill-button" type="button" onClick={() => bookingQuery.mutate()} disabled={slotBusy}>Refresh slots</button>
+              <button className="button-primary" type="button" onClick={handleReserveSlot} disabled={!selectedSlot || slotBusy}>{slotBusy ? <BrandedSpinner label="Reserving slot" /> : "Reserve slot"}</button>
+            </div>
+          </div> : null}
+          {reservedStart && ["reserved", "active"].includes(slotState) ? <p className="customer-flow-status-inline-message">{slotState === "active" ? "Your consultation slot is confirmed." : "Your slot is reserved pending clinical approval."}</p> : null}
+        </> : null}
+      </section>
       <div className="stacked-order-popup-actions">
         {request?.customer_join_url || request?.join_url ? <a className="button-primary" href={request.customer_join_url || request.join_url} target="_blank" rel="noreferrer">Join MTM Meeting</a> : null}
         {downloadHref ? <a className="pill-button" href={downloadHref} target="_blank" rel="noreferrer">Download Request PDF</a> : <span className="customer-mobile-field-hint" role="status">Submitted PDF unavailable</span>}
@@ -6161,6 +6239,48 @@ function sanitizeMtmFieldValue(section, key, value) {
   return sanitizeClientText(value, { max: 500 });
 }
 
+const MTM_ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const MTM_IMAGE_EXTENSION_PATTERN = /\.(png|jpe?g|webp)$/i;
+const MTM_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+function getMtmImageUploadError(file, { each = false } = {}) {
+  const sizeSuffix = each ? " each." : ".";
+  if (!file) return "Upload an image to continue.";
+  const name = String(file.name || "").trim();
+  const type = String(file.type || "").toLowerCase();
+  const size = Number(file.size || 0);
+  if (!name || !MTM_IMAGE_EXTENSION_PATTERN.test(name) || !MTM_ALLOWED_IMAGE_TYPES.has(type) || size < 1 || size > MTM_IMAGE_MAX_BYTES) {
+    return `Upload PNG, JPG, JPEG, or WebP images up to 5MB${sizeSuffix}`;
+  }
+  return "";
+}
+
+function isAllowedMtmImageFile(file) {
+  return !getMtmImageUploadError(file);
+}
+
+async function hasValidMtmImageSignature(file) {
+  if (!file || typeof file.slice !== "function") return false;
+  try {
+    const bytes = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+    const type = String(file.type || "").toLowerCase();
+    if (type === "image/png") {
+      return bytes.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((value, index) => bytes[index] === value);
+    }
+    if (type === "image/jpeg") {
+      return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    }
+    if (type === "image/webp") {
+      return bytes.length >= 12
+        && String.fromCharCode(...bytes.slice(0, 4)) === "RIFF"
+        && String.fromCharCode(...bytes.slice(8, 12)) === "WEBP";
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function isAllowedMedicalFile(file) {
   if (!file) return false;
   const allowedExtensions = /\.(pdf|png|jpe?g|webp|docx?)$/i;
@@ -6172,7 +6292,7 @@ function isAllowedMedicalFile(file) {
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   ]);
-  return file.size <= 20 * 1024 * 1024 && allowedExtensions.test(file.name || "") && (!file.type || allowedTypes.has(file.type));
+  return file.size > 0 && file.size <= 5 * 1024 * 1024 && allowedExtensions.test(file.name || "") && (!file.type || allowedTypes.has(file.type));
 }
 
 function normalizeBookingMinutes(value) {
@@ -6785,7 +6905,27 @@ function nurseRequestBelongsToPastList(request, timeZone = storedStoreTimeZone()
   return preferredTime < nurseRequestTimeKey(new Date(), timeZone);
 }
 
-function NurseRequestHistorySection({ title, items = [] }) {
+function NurseJourneyDocuments({ request, auth }) {
+  const recordId = Number(request?.record_id || 0);
+  const params = recordId && auth?.baseUrl ? new URLSearchParams({ baseUrl: auth.baseUrl, path: `/nurse-requests/${recordId}/documents` }) : null;
+  const key = params ? `/api/nevari-proxy?${params}` : null;
+  const query = useSWR(key, async (url) => {
+    const response = await fetch(url, { headers: { "x-nevari-frontend-origin": window.location.origin, "x-nevari-frontend-type": auth?.frontendType || "patient_dashboard" } });
+    const result = await response.json();
+    if (!response.ok || !result?.success) throw new Error(result?.error?.message || "Unable to load documents.");
+    return result?.data?.items || [];
+  });
+  async function download(item) {
+    const url = `/api/nevari-proxy?${new URLSearchParams({ baseUrl: auth.baseUrl, path: `/nurse-requests/${recordId}/documents/${item.id}/download` })}`;
+    const response = await fetch(url, { headers: { "x-nevari-frontend-origin": window.location.origin, "x-nevari-frontend-type": auth?.frontendType || "patient_dashboard" } });
+    if (!response.ok) return;
+    const blob = await response.blob(); const objectUrl = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = objectUrl; anchor.download = item.name; anchor.click(); URL.revokeObjectURL(objectUrl);
+  }
+  if (!recordId) return null;
+  return <div className="customer-care-documents"><strong>Documents</strong>{query.isLoading ? <span>Loading…</span> : query.data?.length ? query.data.map((item) => <button type="button" key={item.id} onClick={() => download(item)} title={item.name}><span>{item.name}</span><small>Download</small></button>) : <span>No documents available.</span>}</div>;
+}
+
+function NurseRequestHistorySection({ title, items = [], auth }) {
   return <section className="customer-request-visit-pane">
     <h2>{title}</h2>
     {items.length ? items.map((request, index) => {
@@ -6807,7 +6947,19 @@ function NurseRequestHistorySection({ title, items = [] }) {
             <span className={`chip ${statusTone}`}><span className="chip-dot" />{statusLabel}</span>
           </div>
         </div>
-      </article>;
+        {(request?.patient_safe_message || request?.assigned_nurse || request?.timeline?.length || request?.record_id) ? <details className="customer-care-journey-details">
+          <summary>View care journey</summary>
+          {request?.patient_safe_message ? <p>{request.patient_safe_message}</p> : null}
+          {request?.assigned_nurse?.name ? <p><strong>Assigned nurse:</strong> {request.assigned_nurse.name}</p> : null}
+          {request?.scheduled_at ? <p><strong>Scheduled:</strong> {shortDate(request.scheduled_at, true)}</p> : null}
+          {Array.isArray(request?.timeline) && request.timeline.length ? <ol className="customer-care-timeline">
+            {request.timeline.map((event, eventIndex) => <li key={`${event?.type || "event"}-${eventIndex}`}>
+              <strong>{event?.message || "Status updated"}</strong>
+              {event?.occurred_at ? <time>{shortDate(event.occurred_at, true)}</time> : null}
+            </li>)}
+          </ol> : null}
+          <NurseJourneyDocuments request={request} auth={auth} />
+        </details> : null}      </article>;
     }) : <CustomerMobileEmptyState
       message={`No ${title.toLowerCase()} yet`}
       illustrationSrc="/group-3.png"
@@ -6987,6 +7139,7 @@ function CustomerMobileDashboard({
   const [mtmSubmitError, setMtmSubmitError] = useState("");
   const [mtmLoadingState, setMtmLoadingState] = useState(false);
   const [mtmLatestRequest, setMtmLatestRequest] = useState(null);
+  const [mtmPaymentDecision, setMtmPaymentDecision] = useState(null);
   const [mtmSelectedRequestId, setMtmSelectedRequestId] = useState(String(initialMtmRequestId || ""));
   const [mtmHistoryModalRequestId, setMtmHistoryModalRequestId] = useState(String(initialMtmRequestId || ""));
   const [mtmStepErrors, setMtmStepErrors] = useState({});
@@ -8067,6 +8220,11 @@ function CustomerMobileDashboard({
     setMtmStepErrors((current) => {
       const next = { ...current };
       delete next[key];
+      if (section === "emergencyContact" && key === "consentToDiscussCare" && normalizedValue === "No") {
+        ["caregiverName", "relationship", "phoneNumber", "emailAddress", "address", "livesWithPatient"].forEach((fieldKey) => {
+          delete next[fieldKey];
+        });
+      }
       if ((mtmTouchedFields[key] || mtmShowErrors) && liveErrors[key]) {
         next[key] = liveErrors[key];
       }
@@ -8131,6 +8289,18 @@ function CustomerMobileDashboard({
     updateMobileHealthDraft(key, (mobileHealthDraft[key] || []).filter((entry) => entry !== item));
   }
 
+  function renderMobileHealthChipField(key, label) {
+    const chips = normalizeCustomerHealthChipList(mobileHealthDraft[key]);
+    return <label className="customer-profile-mobile-health-field customer-profile-mobile-chip-field" key={key}>
+      <span>{label}</span>
+      <div className="customer-profile-mobile-chip-control">
+        {chips.length ? <div className="customer-profile-mobile-chip-list" aria-label={`${label} entries`}>
+          {chips.map((item) => <span className="customer-profile-chip customer-profile-mobile-chip" key={item}>{item}<button type="button" onClick={() => removeMobileHealthChip(key, item)} aria-label={`Remove ${item}`}>x</button></span>)}
+        </div> : null}
+        <input value={mobileChipDrafts[key] || ""} placeholder={chips.length ? "Add another" : "Not added"} onChange={(event) => setMobileChipDrafts((current) => ({ ...current, [key]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter" || event.key === ",") { event.preventDefault(); addMobileHealthChip(key); } }} onBlur={() => addMobileHealthChip(key)} />
+      </div>
+    </label>;
+  }
   async function saveMobileHealthRecords() {
     const normalizedDraft = normalizeCustomerSettingsPayload({
       ...settings,
@@ -8339,8 +8509,15 @@ function CustomerMobileDashboard({
       medicationEntries: mtmMedicationEntries,
       requireMedicationDraft: false,
     });
-    if (step === 4 && mtmMedicationEntries.some((entry) => !entry.file || !String(entry.prescribingDoctor || "").trim())) {
-      errors.medications = "Upload an image and enter the prescribing doctor for every medication.";
+    if (step === 4) {
+      mtmMedicationEntries.forEach((entry, index) => {
+        if (!entry.file) {
+          errors[`medicationImage-${index}`] = "Upload an image to continue.";
+        }
+      });
+      if (mtmMedicationEntries.some((entry) => !String(entry.prescribingDoctor || "").trim())) {
+        errors.medications = "Enter the prescribing doctor for every medication.";
+      }
     }
     setMtmStepErrors(errors);
     return Object.keys(errors).length === 0;
@@ -8351,11 +8528,68 @@ function CustomerMobileDashboard({
   const showMtmFieldError = (key) => Boolean(mtmStepErrors[key]) && (mtmTouchedFields[key] || mtmShowErrors);
   const showCustomerSettingsFieldError = (key) => Boolean(customerSettingsErrors[key]) && customerSettingsTouched[key];
 
+  function buildMtmUploadFieldErrors() {
+    const errors = {};
+    mtmMedicationEntries.forEach((entry, index) => {
+      const message = getMtmImageUploadError(entry.file);
+      if (message) {
+        errors[`medicationImage-${index}`] = message;
+      }
+    });
+    if (mtmPreviousMedicationFile) {
+      const message = getMtmImageUploadError(mtmPreviousMedicationFile);
+      if (message) {
+        errors.previousMedicationsStopped = message;
+      }
+    }
+    const invalidLabResult = mtmLabResultsFiles.find((file) => getMtmImageUploadError(file));
+    if (invalidLabResult) {
+      errors.relevantLabResults = getMtmImageUploadError(invalidLabResult, { each: true });
+    }
+    return errors;
+  }
+
+  function focusFirstMtmUploadError(errors) {
+    const medicationErrorKey = Object.keys(errors).find((key) => key.startsWith("medicationImage-"));
+    if (medicationErrorKey || errors.previousMedicationsStopped) {
+      setMtmStep(4);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          if (medicationErrorKey) {
+            const medicationIndex = Number(medicationErrorKey.split("-").pop());
+            mtmMedicationInputRefs.current.get(medicationIndex)?.focus();
+            return;
+          }
+          mtmPreviousMedicationInputRef.current?.focus();
+        });
+      });
+      return;
+    }
+    if (errors.relevantLabResults) {
+      setMtmStep(3);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => mtmLabResultsInputRef.current?.focus());
+      });
+    }
+  }
+
   async function submitMtmRequest() {
     if (mtmSubmitting) return;
     if (!validateMtmStep(6)) return;
     if (!session) {
       setMtmSubmitError("Session is not available.");
+      return;
+    }
+    const uploadFieldErrors = buildMtmUploadFieldErrors();
+    if (Object.keys(uploadFieldErrors).length) {
+      setMtmShowErrors(true);
+      setMtmSubmitError("");
+      setMtmStepErrors((current) => ({ ...current, ...uploadFieldErrors }));
+      setMtmTouchedFields((current) => ({
+        ...current,
+        ...Object.fromEntries(Object.keys(uploadFieldErrors).map((key) => [key, true])),
+      }));
+      focusFirstMtmUploadError(uploadFieldErrors);
       return;
     }
     setMtmSubmitting(true);
@@ -8375,7 +8609,9 @@ function CustomerMobileDashboard({
       return;
     }
     if (!submittedMedications.length || mtmMedicationEntries.some((entry) => !entry.file || !String(entry.prescribingDoctor || "").trim())) {
-      setMtmStepErrors({ medications: "Upload an image and enter the prescribing doctor for every medication." });
+      setMtmStepErrors({ medications: "Enter the prescribing doctor for every medication." });
+      setMtmTouchedFields((current) => ({ ...current, medications: true }));
+      setMtmStep(4);
       setMtmSubmitting(false);
       setMtmLoadingState(false);
       return;
@@ -8406,6 +8642,7 @@ function CustomerMobileDashboard({
       });
       const nextRequest = submission?.request || null;
       setMtmLatestRequest(nextRequest);
+      setMtmPaymentDecision(submission?.paymentDecision || null);
       if (nextRequest?.id) {
         setMtmSelectedRequestId(String(nextRequest.id));
       }
@@ -8431,7 +8668,7 @@ function CustomerMobileDashboard({
     }
   }
 
-  function handleLabResultsUpload(event) {
+  async function handleLabResultsUpload(event) {
     const files = Array.from(event.target.files || []);
     if (!files.length) {
       setMtmLabResultsFiles([]);
@@ -8443,14 +8680,31 @@ function CustomerMobileDashboard({
       });
       return;
     }
-    const invalidFile = files.find((file) => !isAllowedMedicalFile(file));
+    const selectedImageCount = mtmMedicationEntries.filter((entry) => entry.file).length + (mtmPreviousMedicationFile ? 1 : 0) + files.length;
+    if (selectedImageCount > 8) {
+      setMtmTouchedFields((current) => ({ ...current, relevantLabResults: true }));
+      setMtmStepErrors((current) => ({ ...current, relevantLabResults: "Upload no more than 8 images across the MTM assessment." }));
+      event.target.value = "";
+      return;
+    }
+    const invalidFile = files.find((file) => !isAllowedMtmImageFile(file));
     if (invalidFile) {
       setMtmLabResultsFiles([]);
       updateMtmField("medicalHistory", "relevantLabResults", "");
+      setMtmTouchedFields((current) => ({ ...current, relevantLabResults: true }));
       setMtmStepErrors((current) => ({
         ...current,
         relevantLabResults: "Upload PNG, JPG, JPEG, or WebP images up to 5MB each.",
       }));
+      event.target.value = "";
+      return;
+    }
+    const hasInvalidSignature = (await Promise.all(files.map((file) => hasValidMtmImageSignature(file)))).some((isValid) => !isValid);
+    if (hasInvalidSignature) {
+      setMtmLabResultsFiles([]);
+      updateMtmField("medicalHistory", "relevantLabResults", "");
+      setMtmTouchedFields((current) => ({ ...current, relevantLabResults: true }));
+      setMtmStepErrors((current) => ({ ...current, relevantLabResults: "Upload valid PNG, JPG, JPEG, or WebP images up to 5MB each." }));
       event.target.value = "";
       return;
     }
@@ -8478,16 +8732,34 @@ function CustomerMobileDashboard({
       : entry));
   }
 
-  function handleMtmMedicationUpload(index, file, input) {
-    if (!isAllowedMedicalFile(file)) {
-      setMtmStepErrors((current) => ({ ...current, medications: "Upload PNG, JPG, JPEG, or WebP images up to 5MB each." }));
+  async function handleMtmMedicationUpload(index, file, input) {
+    const errorKey = `medicationImage-${index}`;
+    const selectedImageCount = mtmMedicationEntries.filter((entry, entryIndex) => entryIndex !== index && entry.file).length
+      + mtmLabResultsFiles.length
+      + (mtmPreviousMedicationFile ? 1 : 0)
+      + 1;
+    if (selectedImageCount > 8) {
+      setMtmStepErrors((current) => ({ ...current, [errorKey]: "Upload no more than 8 images across the MTM assessment." }));
+      setMtmTouchedFields((current) => ({ ...current, [errorKey]: true }));
+      if (input) input.value = "";
+      return;
+    }
+    if (!isAllowedMtmImageFile(file)) {
+      setMtmStepErrors((current) => ({ ...current, [errorKey]: "Upload PNG, JPG, JPEG, or WebP images up to 5MB." }));
+      setMtmTouchedFields((current) => ({ ...current, [errorKey]: true }));
+      if (input) input.value = "";
+      return;
+    }
+    if (!await hasValidMtmImageSignature(file)) {
+      setMtmStepErrors((current) => ({ ...current, [errorKey]: "Upload a valid PNG, JPG, JPEG, or WebP image up to 5MB." }));
+      setMtmTouchedFields((current) => ({ ...current, [errorKey]: true }));
       if (input) input.value = "";
       return;
     }
     setMtmMedicationEntries((current) => current.map((entry, entryIndex) => entryIndex === index
       ? { ...entry, file, medicationFileName: sanitizeClientText(file.name, { max: 180 }) }
       : entry));
-    setMtmStepErrors((current) => { const next = { ...current }; delete next.medications; return next; });
+    setMtmStepErrors((current) => { const next = { ...current }; delete next.medications; delete next[errorKey]; return next; });
   }
 
   function removeMtmMedicationEntry(indexToRemove) {
@@ -8590,7 +8862,23 @@ function CustomerMobileDashboard({
           </button>
         </nav>
         <div className="customer-mobile-drawer-footer">
-          <div className="customer-mobile-drawer-profile">
+          <div
+            className="customer-mobile-drawer-profile"
+            role="button"
+            tabIndex={0}
+            aria-label="Open profile settings"
+            onClick={() => {
+              goToPage("profile");
+              setDrawerOpen(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                goToPage("profile");
+                setDrawerOpen(false);
+              }
+            }}
+          >
             <div className="customer-mobile-avatar">
               {resolvedProfile.avatar_url ? <img src={resolvedProfile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
               <span style={{ display: resolvedProfile.avatar_url ? "none" : "inline" }}>{initials(customerDisplayName)}</span>
@@ -8599,7 +8887,7 @@ function CustomerMobileDashboard({
               <strong>{customerDisplayName}</strong>
               <span>{resolvedProfile.email || settings.email || "tee@example.com"}</span>
             </div>
-            <button className="customer-mobile-more" type="button" aria-label="More options">
+            <button className="customer-mobile-more" type="button" aria-label="More options" onClick={(event) => event.stopPropagation()}>
               <MobileIcon name="more" />
             </button>
           </div>
@@ -9070,6 +9358,7 @@ function CustomerMobileDashboard({
                         <input ref={(node) => { if (node) mtmMedicationInputRefs.current.set(index, node); else mtmMedicationInputRefs.current.delete(index); }} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" className="customer-mobile-hidden-file" onChange={(event) => handleMtmMedicationUpload(index, event.target.files?.[0], event.target)} />
                       </div>
                       <small className="customer-mobile-field-hint">PNG, JPG, JPEG or WebP. Maximum 5MB.</small>
+                      {showMtmFieldError(`medicationImage-${index}`) ? <small className="customer-mobile-field-error">{mtmStepErrors[`medicationImage-${index}`]}</small> : null}
                     </label>
                     <label className="customer-mobile-field">
                       <span>Prescribing Doctor:</span>
@@ -9096,10 +9385,24 @@ function CustomerMobileDashboard({
                       <span>{mtmPreviousMedicationFile?.name || "Upload previous medication"}</span>
                       {mtmPreviousMedicationFile ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
                     </button>
-                    <input ref={mtmPreviousMedicationInputRef} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" className="customer-mobile-hidden-file" onChange={(event) => {
+                    <input ref={mtmPreviousMedicationInputRef} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" className="customer-mobile-hidden-file" onChange={async (event) => {
                       const file = event.target.files?.[0];
-                      if (!isAllowedMedicalFile(file)) {
+                      if (!isAllowedMtmImageFile(file)) {
+                        setMtmTouchedFields((current) => ({ ...current, previousMedicationsStopped: true }));
                         setMtmStepErrors((current) => ({ ...current, previousMedicationsStopped: "Upload PNG, JPG, JPEG, or WebP images up to 5MB." }));
+                        event.target.value = "";
+                        return;
+                      }
+                      if (!await hasValidMtmImageSignature(file)) {
+                        setMtmTouchedFields((current) => ({ ...current, previousMedicationsStopped: true }));
+                        setMtmStepErrors((current) => ({ ...current, previousMedicationsStopped: "Upload a valid PNG, JPG, JPEG, or WebP image up to 5MB." }));
+                        event.target.value = "";
+                        return;
+                      }
+                      const selectedImageCount = mtmMedicationEntries.filter((entry) => entry.file).length + mtmLabResultsFiles.length + 1;
+                      if (selectedImageCount > 8) {
+                        setMtmTouchedFields((current) => ({ ...current, previousMedicationsStopped: true }));
+                        setMtmStepErrors((current) => ({ ...current, previousMedicationsStopped: "Upload no more than 8 images across the MTM assessment." }));
                         event.target.value = "";
                         return;
                       }
@@ -9278,6 +9581,8 @@ function CustomerMobileDashboard({
                   <p><strong>Next step:</strong> your pharmacist will review your medication details and follow up if extra information is needed.</p>
                 </div> : null}
                 {!mtmLoadingState ? <CustomerStatusActions>
+                  {mtmPaymentDecision?.payment_required && mtmPaymentDecision?.payment_url ? <a className="customer-mobile-primary-button" href={mtmPaymentDecision.payment_url} target="_blank" rel="noreferrer">Pay for MTM consultation</a> : null}
+                  {!mtmPaymentDecision?.payment_required && mtmPaymentDecision?.next_action === "select_slot" ? <p className="customer-flow-status-inline-message">Your Pro consultation credit is reserved. Select a consultation slot from request status.</p> : null}
                   <button className="customer-mobile-primary-button" type="button" onClick={() => {
                     void mtmRequestsQuery.mutate();
                     const nextHistoryRequestId = activeMtm?.id || mtmLatestRequest?.id;
@@ -9455,14 +9760,13 @@ function CustomerMobileDashboard({
             <div className="customer-profile-card-head">
               <div>
                 <span>Key Health Records</span>
-                <small> </small>
               </div>
             </div>
             
             <div className="customer-profile-mobile-health-form">
               <label className="customer-profile-mobile-health-field"><span>Blood group</span><select value={mobileHealthDraft.bloodGroup} onChange={(event) => updateMobileHealthDraft("bloodGroup", event.target.value)}><option value="">Not added</option>{CUSTOMER_HEALTH_BLOOD_GROUP_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{mobileHealthErrors.bloodGroup ? <small className="customer-mobile-field-error">{mobileHealthErrors.bloodGroup}</small> : null}</label>
               <label className="customer-profile-mobile-health-field"><span>Genotype</span><select value={mobileHealthDraft.genotype} onChange={(event) => updateMobileHealthDraft("genotype", event.target.value)}><option value="">Not added</option>{CUSTOMER_HEALTH_GENOTYPE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{mobileHealthErrors.genotype ? <small className="customer-mobile-field-error">{mobileHealthErrors.genotype}</small> : null}</label>
-              {[["allergies", "Allergies"], ["currentMedications", "Current medications"], ["existingConditions", "Existing conditions"]].map(([key, label]) => <label className="customer-profile-mobile-health-field" key={key}><span>{label}</span><input value={Array.isArray(mobileHealthDraft[key]) ? mobileHealthDraft[key].join(", ") : ""} placeholder="Not added" onChange={(event) => updateMobileHealthDraft(key, normalizeCustomerHealthChipList(event.target.value.split(",")))} /></label>)}
+              {[["allergies", "Allergies"], ["currentMedications", "Current medications"], ["existingConditions", "Existing conditions"]].map(([key, label]) => renderMobileHealthChipField(key, label))}
               <label className="customer-profile-mobile-health-field"><span>Emergency contact name</span><input value={mobileHealthDraft.emergencyContactName} placeholder="Not added" onChange={(event) => updateMobileHealthDraft("emergencyContactName", sanitizeClientText(event.target.value, { max: 120 }))} /></label>
               <label className="customer-profile-mobile-health-field"><span>Emergency contact phone number</span><input type="tel" inputMode="tel" maxLength={11} value={mobileHealthDraft.emergencyContactPhoneNumber} placeholder="Not added" onChange={(event) => updateMobileHealthDraft("emergencyContactPhoneNumber", normalizeMtmPhoneNumber(event.target.value))} />{mobileHealthErrors.emergencyContactPhoneNumber ? <small className="customer-mobile-field-error">{mobileHealthErrors.emergencyContactPhoneNumber}</small> : null}</label>
             </div>
@@ -9934,7 +10238,7 @@ function CustomerMobileDashboard({
                 <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
               </article>)}
             </section>
-            : <NurseRequestHistorySection title="Upcoming Visits" items={upcomingNurseRequests} />
+            : <NurseRequestHistorySection title="Upcoming Visits" items={upcomingNurseRequests} auth={nurseRequestAuth} />
         ) : null}
         {showNurseRequestFlow && appointmentTab === "previous" ? (
           nurseRequestsQuery.isLoading
@@ -9949,7 +10253,7 @@ function CustomerMobileDashboard({
                 <SkeletonBox className="skeleton-pill skeleton-pill-sm" />
               </article>)}
             </section>
-            : <NurseRequestHistorySection title="Previous Visits" items={pastNurseRequests} />
+            : <NurseRequestHistorySection title="Previous Visits" items={pastNurseRequests} auth={nurseRequestAuth} />
         ) : null}
 
 

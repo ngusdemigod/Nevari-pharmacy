@@ -12,6 +12,7 @@ final class Nevari_Mtm {
     private const STATUS_TREATMENT_COMPLETED = 'treatment_completed';
     private const STATUS_FOLLOW_UP = 'follow_up';
     private const STATUS_COMPLETED = 'completed';
+    private const STATUS_DECLINED = 'declined';
     private const ACTIVE_STATUSES = ['submitted', 'under_review', 'approved', 'scheduled', 'treatment_completed', 'follow_up'];
     private const MTM_DURATION_MINUTES = 30;
     private const PDF_MAX_BYTES = 41943040;
@@ -21,6 +22,9 @@ final class Nevari_Mtm {
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
         add_filter('rest_pre_serve_request', [__CLASS__, 'serve_private_document'], 10, 4);
         add_action('nevari_mtm_end_meet_space', [__CLASS__, 'end_meet_space_for_request'], 10, 1);
+        add_action('woocommerce_payment_complete', [__CLASS__, 'payment_completed'], 10, 1);
+        add_action('woocommerce_order_status_processing', [__CLASS__, 'payment_completed'], 10, 1);
+        add_action('woocommerce_order_status_completed', [__CLASS__, 'payment_completed'], 10, 1);
     }
 
     public static function register_routes(): void {
@@ -76,6 +80,13 @@ final class Nevari_Mtm {
                 'permission_callback' => [__CLASS__, 'customer_permission'],
             ],
         ]);
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/mtm-requests/(?P<id>\d+)/reserve-slot', [
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'customer_reserve_slot'],
+                'permission_callback' => [__CLASS__, 'customer_request_permission'],
+            ],
+        ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/mtm-requests/join/(?P<token>[A-Za-z0-9\-_\.]+)', [
             [
@@ -109,21 +120,21 @@ final class Nevari_Mtm {
             [
                 'methods' => WP_REST_Server::READABLE,
                 'callback' => [__CLASS__, 'pharmacist_show'],
-                'permission_callback' => [__CLASS__, $permission],
+                'permission_callback' => [__CLASS__, 'pharmacist_request_permission'],
             ],
         ]);
 
         $actions = [
             'approve' => 'approve_request',
+            'decline' => 'decline_request',
+            'refund-complete' => 'refund_complete',
             'schedule' => 'schedule',
             'consultation-complete' => 'consultation_complete',
             'action-plan' => 'save_action_plan',
-            'follow-up-schedule' => 'follow_up_schedule',
             'outcome-tracking' => 'save_outcome_tracking',
             'complete' => 'complete_request',
             'attach-products' => 'attach_products',
             'create-product-order' => 'create_product_order',
-            'follow-up' => 'follow_up_schedule',
             'products' => 'attach_products',
             'orders' => 'create_product_order',
         ];
@@ -133,7 +144,7 @@ final class Nevari_Mtm {
                 [
                     'methods' => WP_REST_Server::CREATABLE,
                     'callback' => [__CLASS__, $callback],
-                    'permission_callback' => [__CLASS__, $permission],
+                    'permission_callback' => [__CLASS__, 'pharmacist_request_permission'],
                 ],
             ]);
         }
@@ -143,10 +154,22 @@ final class Nevari_Mtm {
         return Nevari_Auth::api_session_required();
     }
 
+    public static function customer_request_permission(WP_REST_Request $request): bool {
+        if (!Nevari_Auth::api_session_required()) return false;
+        $row = self::get_request(absint($request['id']));
+        return $row && (int) $row->customer_user_id === Nevari_Auth::api_session_user_id();
+    }
     public static function pharmacist_permission(): bool {
         return Nevari_Auth::api_session_required() && (Nevari_Helpers::is_pharmacist() || Nevari_Helpers::is_store_admin());
     }
 
+    public static function pharmacist_request_permission(WP_REST_Request $request): bool {
+        if (!self::pharmacist_permission()) return false;
+        $row = self::get_request(absint($request['id']));
+        if (!$row) return false;
+        $user_id = Nevari_Auth::api_session_user_id();
+        return Nevari_Helpers::is_store_admin($user_id) || (int) $row->assigned_pharmacist_user_id === $user_id;
+    }
     public static function submission_pdf_permission(WP_REST_Request $request): bool {
         if (!Nevari_Auth::api_session_required()) {
             return false;
@@ -441,6 +464,7 @@ final class Nevari_Mtm {
             self::STATUS_TREATMENT_COMPLETED,
             self::STATUS_FOLLOW_UP,
             self::STATUS_COMPLETED,
+            self::STATUS_DECLINED,
         ], true) ? $status : self::STATUS_SUBMITTED);
     }
 
@@ -453,6 +477,7 @@ final class Nevari_Mtm {
             self::STATUS_TREATMENT_COMPLETED => 'Treatment Completed',
             self::STATUS_FOLLOW_UP => 'Follow-Up',
             self::STATUS_COMPLETED => 'Completed',
+            self::STATUS_DECLINED => 'Declined',
         ][self::normalize_status($status)] ?? 'Submitted';
     }
 
@@ -613,7 +638,24 @@ final class Nevari_Mtm {
             'follow_up' => self::decode_json($row->follow_up_json ?? '[]'),
             'outcome_tracking' => self::decode_json($row->outcome_tracking_json ?? '[]'),
             'order_id' => !empty($row->order_id) ? (int) $row->order_id : null,
-            'scheduled_at' => !empty($row->scheduled_at) ? (string) $row->scheduled_at : null,
+            'payment' => [
+                'state' => sanitize_key((string) ($row->payment_state ?? 'pending')),
+                'order_id' => (int) ($row->payment_order_id ?? 0),
+                'required' => !in_array((string) ($row->payment_state ?? ''), ['paid','quota_reserved'], true),
+            ],
+            'quota_reservation_id' => (int) ($row->quota_reservation_id ?? 0),
+            'slot_reservation' => [
+                'state' => sanitize_key((string) ($row->slot_state ?? 'unreserved')),
+                'start_at' => !empty($row->reserved_start_at) ? (string) $row->reserved_start_at : null,
+                'end_at' => !empty($row->reserved_end_at) ? (string) $row->reserved_end_at : null,
+            ],
+            'clinical_decision' => sanitize_key((string) ($row->clinical_decision ?? '')),
+            'rejection_reason' => sanitize_text_field((string) ($row->rejection_reason ?? '')),
+            'refund' => [
+                'state' => sanitize_key((string) ($row->refund_state ?? 'not_required')),
+                'reference' => sanitize_text_field((string) ($row->refund_reference ?? '')),
+                'completed_at' => !empty($row->refund_completed_at) ? (string) $row->refund_completed_at : null,
+            ],            'scheduled_at' => !empty($row->scheduled_at) ? (string) $row->scheduled_at : null,
             'duration_minutes' => self::MTM_DURATION_MINUTES,
             'timezone' => (string) ($row->timezone ?? 'UTC'),
             'consultation_method' => (string) ($row->consultation_method ?? 'Google Meet'),
@@ -797,7 +839,7 @@ final class Nevari_Mtm {
             $size = absint($attachment['size'] ?? 0);
             $category = sanitize_key((string) ($attachment['category'] ?? ''));
             $heading = sanitize_text_field((string) ($attachment['heading'] ?? ''));
-            if (!$name || !preg_match('/\\\\.(png|jpe?g|webp)$/i', $name) || !in_array($type, $allowed_attachment_types, true) || $size < 1 || $size > 5 * MB_IN_BYTES || !in_array($category, $allowed_attachment_categories, true) || !$heading) {
+            if (!$name || !preg_match('/\.(png|jpe?g|webp)$/i', $name) || !in_array($type, $allowed_attachment_types, true) || $size < 1 || $size > 5 * MB_IN_BYTES || !in_array($category, $allowed_attachment_categories, true) || !$heading) {
                 return Nevari_Helpers::error('invalid_mtm_attachment', 'MTM images must be PNG, JPG, JPEG, or WebP and no larger than 5MB.', 422);
             }
             $attachments[] = [
@@ -822,6 +864,7 @@ final class Nevari_Mtm {
             'additional_information' => self::sanitize_deep(is_array($body['additional_information'] ?? null) ? $body['additional_information'] : []),
             'attachments' => $attachments,
         ]);
+        $payment = self::prepare_submission_payment($request_id, $user_id);
         $row = self::get_request($request_id);
         if ($row && !$defer_submission_notifications) {
             self::dispatch_request_submission_notifications($row);
@@ -829,9 +872,56 @@ final class Nevari_Mtm {
         return Nevari_Helpers::success([
             'request' => self::payload_from_request($row),
             'status' => (string) ($row->status ?? self::STATUS_SUBMITTED),
+            'payment_decision' => $payment,
         ]);
     }
 
+    private static function prepare_submission_payment(int $request_id, int $user_id): array {
+        $quota = Nevari_Subscriptions::consultation_quota_snapshot_for_user($user_id, true);
+        if (!empty($quota['is_paid'])) {
+            $reservation = Nevari_Care_Journeys::reserve_quota($user_id, 'mtm', $request_id);
+            if (!is_wp_error($reservation)) {
+                self::update_request($request_id, [
+                    'payment_state' => 'quota_reserved',
+                    'quota_reservation_id' => (int) $reservation['id'],
+                    'updated_by' => $user_id,
+                ]);
+                return [
+                    'payment_required' => false, 'currency' => 'NGN', 'fee' => 0,
+                    'quota_remaining' => max(0, (int) ($quota['free_consultations_remaining'] ?? 1) - 1),
+                    'reservation_id' => (int) $reservation['id'], 'next_action' => 'select_slot',
+                ];
+            }
+        }
+        $fee = max(0, (float) get_option('nevari_mtm_consultation_fee', 25000));
+        $order = self::create_consultation_order($request_id, $user_id, $fee);
+        if (is_wp_error($order)) {
+            self::update_request($request_id, ['payment_state'=>'failed','updated_by'=>$user_id]);
+            return ['payment_required'=>true,'currency'=>'NGN','fee'=>$fee,'quota_remaining'=>0,'reservation_id'=>null,'next_action'=>'retry_payment'];
+        }
+        self::update_request($request_id, ['payment_state'=>'pending','payment_order_id'=>$order->get_id(),'updated_by'=>$user_id]);
+        return [
+            'payment_required'=>true,'currency'=>$order->get_currency() ?: 'NGN','fee'=>(float)$order->get_total(),
+            'quota_remaining'=>0,'reservation_id'=>null,'order_id'=>$order->get_id(),
+            'payment_url'=>esc_url_raw($order->get_checkout_payment_url(false)),'next_action'=>'pay',
+        ];
+    }
+
+    private static function create_consultation_order(int $request_id, int $user_id, float $fee) {
+        if (!function_exists('wc_create_order') || !class_exists('WC_Order_Item_Fee')) {
+            return new WP_Error('woocommerce_unavailable', 'WooCommerce is required.');
+        }
+        $order = wc_create_order(['customer_id'=>$user_id]);
+        if (is_wp_error($order)) return $order;
+        $item = new WC_Order_Item_Fee();
+        $item->set_name('Medication Therapy Management consultation');
+        $item->set_amount($fee); $item->set_total($fee); $order->add_item($item);
+        $order->update_meta_data('_nevari_order_source','MTM Consultation');
+        $order->update_meta_data('_nevari_mtm_request_id',$request_id);
+        $order->update_meta_data('_nevari_mtm_fee',$fee);
+        $order->set_status('pending'); $order->calculate_totals(); $order->save();
+        return $order;
+    }
     private static function private_pdf_root(): string {
         if (defined('NEVARI_MTM_PRIVATE_STORAGE_DIR') && is_string(NEVARI_MTM_PRIVATE_STORAGE_DIR) && trim(NEVARI_MTM_PRIVATE_STORAGE_DIR) !== '') {
             return wp_normalize_path(rtrim(NEVARI_MTM_PRIVATE_STORAGE_DIR, '/\\'));
@@ -1128,6 +1218,77 @@ final class Nevari_Mtm {
         ]);
     }
 
+    public static function payment_completed(int $order_id): void {
+        $order = wc_get_order($order_id);
+        if (!$order || !$order->is_paid()) return;
+        $request_id = absint($order->get_meta('_nevari_mtm_request_id', true));
+        if (!$request_id) return;
+        $row = self::get_request($request_id);
+        if (!$row || (int) ($row->payment_order_id ?? 0) !== $order_id || ($row->payment_state ?? '') === 'paid') return;
+        self::update_request($request_id, ['payment_state'=>'paid','updated_by'=>(int)$row->customer_user_id]);
+        Nevari_Care_Journeys::event('mtm',$request_id,'payment_verified','MTM consultation payment verified.',(int)$row->customer_user_id,[], 'mtm-payment:'.$order_id);
+    }
+
+    public static function customer_reserve_slot(WP_REST_Request $request): WP_REST_Response {
+        global $wpdb;
+        $id = absint($request['id']);
+        $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];
+        if (array_diff(array_keys($body), ['start_at','timezone'])) return Nevari_Helpers::error('unexpected_fields','Unexpected slot fields were supplied.',422);
+        $timezone = sanitize_text_field((string)($body['timezone']??self::store_timezone())) ?: self::store_timezone();
+        $start = self::site_datetime_to_utc_mysql(sanitize_text_field((string)($body['start_at']??'')),$timezone);
+        if (!$start || strtotime($start.' UTC') < time()+300) return Nevari_Helpers::error('invalid_slot','Select a valid future slot.',422);
+        $end = gmdate('Y-m-d H:i:s',strtotime($start.' UTC +'.self::MTM_DURATION_MINUTES.' minutes'));
+        $wpdb->query('START TRANSACTION');
+        $row = $wpdb->get_row($wpdb->prepare('SELECT * FROM '.self::table().' WHERE id=%d FOR UPDATE',$id));
+        if (!$row || (int)$row->customer_user_id !== Nevari_Auth::api_session_user_id()) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('forbidden','You cannot reserve this slot.',403);}
+        if (!in_array((string)($row->payment_state??''),['paid','quota_reserved'],true)) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('payment_required','Payment or a Pro consultation credit is required.',409);}
+        if ((string)($row->slot_state??'') === 'reserved') {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('slot_already_reserved','A slot is already reserved for this request.',409);}
+        if (!self::slot_matches_availability((int)$row->assigned_pharmacist_user_id,$start,$end) || self::slot_has_conflict((int)$row->assigned_pharmacist_user_id,$start,$end,$id)) {
+            $wpdb->query('ROLLBACK');return Nevari_Helpers::error('slot_unavailable','That slot is no longer available.',409);
+        }
+        $wpdb->update(self::table(),['slot_state'=>'reserved','reserved_start_at'=>$start,'reserved_end_at'=>$end,'timezone'=>$timezone,'updated_at'=>self::now(),'updated_by'=>(int)$row->customer_user_id],['id'=>$id]);
+        Nevari_Care_Journeys::event('mtm',$id,'slot_reserved','Consultation slot reserved pending clinical approval.',(int)$row->customer_user_id,['scheduled_at'=>$start]);
+        $wpdb->query('COMMIT');
+        $updated=self::get_request($id); self::dispatch_request_update_notifications($row,$updated);
+        return Nevari_Helpers::success(['request'=>self::payload_from_request($updated),'message'=>'Slot reserved pending clinical approval.']);
+    }
+
+    private static function available_slots(object $row): array {
+        $pharmacist_id=(int)($row->assigned_pharmacist_user_id??0); if(!$pharmacist_id)return[];
+        $availability=get_user_meta($pharmacist_id,'_nevari_availability',true); $availability=is_array($availability)?$availability:[];
+        $slots=[];
+        for($day=0;$day<14;$day++){
+            $date=gmdate('Y-m-d',strtotime('+'.$day.' days')); $weekday=strtolower(gmdate('l',strtotime($date)));
+            foreach((array)($availability[$weekday]??[]) as $range){
+                $from=strtotime($date.' '.sanitize_text_field((string)($range['start']??'09:00')).' UTC');
+                $to=strtotime($date.' '.sanitize_text_field((string)($range['end']??'17:00')).' UTC');
+                for($t=$from;$t+self::MTM_DURATION_MINUTES*60<=$to;$t+=self::MTM_DURATION_MINUTES*60){
+                    $start=gmdate('Y-m-d H:i:s',$t);$end=gmdate('Y-m-d H:i:s',$t+self::MTM_DURATION_MINUTES*60);
+                    if($t>time()+300&&!self::slot_has_conflict($pharmacist_id,$start,$end,(int)$row->id))$slots[]=['start_at'=>gmdate('c',$t),'end_at'=>gmdate('c',$t+self::MTM_DURATION_MINUTES*60)];
+                }
+            }
+        }
+        return array_slice($slots,0,200);
+    }
+
+    private static function slot_matches_availability(int $user_id,string $start,string $end): bool {
+        $availability=get_user_meta($user_id,'_nevari_availability',true); if(!is_array($availability))return false;
+        $weekday=strtolower(gmdate('l',strtotime($start.' UTC')));$start_ts=strtotime($start.' UTC');$end_ts=strtotime($end.' UTC');$date=gmdate('Y-m-d',$start_ts);
+        foreach((array)($availability[$weekday]??[]) as $range){$from=strtotime($date.' '.sanitize_text_field((string)($range['start']??'')).' UTC');$to=strtotime($date.' '.sanitize_text_field((string)($range['end']??'')).' UTC');if($from&&$to&&$start_ts>=$from&&$end_ts<=$to)return true;}
+        return false;
+    }
+
+    private static function slot_has_conflict(int $pharmacist_id,string $start,string $end,int $exclude_id=0): bool {
+        global $wpdb;
+        $mtm=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM ".self::table()." WHERE assigned_pharmacist_user_id=%d AND id<>%d AND slot_state IN ('reserved','active') AND reserved_start_at<%s AND reserved_end_at>%s",$pharmacist_id,$exclude_id,$end,$start));
+        $appointments=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM ".Nevari_Helpers::table('appointments')." WHERE doctor_user_id=%d AND status IN ('awaiting_payment','requested','confirmed','checked_in') AND start_at<%s AND end_at>%s",$pharmacist_id,$end,$start));
+        return $mtm+$appointments>0;
+    }
+    private static function mtm_payment_url(object $row): ?string {
+        $order_id = (int) ($row->payment_order_id ?? 0);
+        $order = $order_id ? wc_get_order($order_id) : null;
+        return $order && $order->needs_payment() ? esc_url_raw($order->get_checkout_payment_url(false)) : null;
+    }
     public static function booking_context(WP_REST_Request $request): WP_REST_Response {
         if (!self::table_ready()) {
             return Nevari_Helpers::error('mtm_unavailable', 'MTM requests are temporarily unavailable. Please contact support.', 503);
@@ -1140,6 +1301,8 @@ final class Nevari_Mtm {
         if ((int) $row->customer_user_id !== $user_id) {
             return Nevari_Helpers::error('forbidden', 'You cannot access this booking context.', 403);
         }
+        $order = !empty($row->payment_order_id) ? wc_get_order((int) $row->payment_order_id) : null;
+        $quota = Nevari_Subscriptions::consultation_quota_snapshot_for_user($user_id, true);
         return Nevari_Helpers::success([
             'mtm_request_id' => (int) $row->id,
             'request_reference' => self::ensure_request_reference((int) $row->id),
@@ -1147,7 +1310,17 @@ final class Nevari_Mtm {
             'pharmacist_id' => (int) ($row->assigned_pharmacist_user_id ?? 0),
             'pharmacist_name' => self::user_name((int) ($row->assigned_pharmacist_user_id ?? 0)),
             'duration_minutes' => self::MTM_DURATION_MINUTES,
-            'payment_required' => false,
+            'payment_required' => !in_array((string) ($row->payment_state ?? ''), ['paid', 'quota_reserved'], true),
+            'payment_state' => sanitize_key((string) ($row->payment_state ?? 'pending')),
+            'payment_order_id' => (int) ($row->payment_order_id ?? 0),
+            'payment_url' => self::mtm_payment_url($row),
+            'currency' => $order ? (string) $order->get_currency() : 'NGN',
+            'fee' => $order ? (float) $order->get_total() : max(0, (float) get_option('nevari_mtm_consultation_fee', 25000)),
+            'quota_remaining' => max(0, (int) ($quota['free_consultations_remaining'] ?? 0)),
+            'quota_reservation_id' => (int) ($row->quota_reservation_id ?? 0),
+            'slot_state' => sanitize_key((string) ($row->slot_state ?? 'unreserved')),
+            'reserved_start_at' => !empty($row->reserved_start_at) ? (string) $row->reserved_start_at : null,
+            'available_slots' => in_array((string) ($row->payment_state ?? ''), ['paid', 'quota_reserved'], true) && (string) ($row->slot_state ?? '') !== 'reserved' ? self::available_slots($row) : [],
             'google_meet_link' => self::join_url($row, 'customer'),
         ]);
     }
@@ -1174,19 +1347,62 @@ final class Nevari_Mtm {
             return $row;
         }
         $actor = Nevari_Auth::api_session_user_id();
-        $updated = self::update_request((int) $row->id, [
+        $approval = [
             'status' => self::STATUS_APPROVED,
+            'clinical_decision' => 'approved',
             'reviewed_by_pharmacist_user_id' => $actor,
             'reviewed_at' => self::now(),
             'approved_at' => self::now(),
             'updated_by' => $actor,
-        ]);
+        ];
+        if (($row->slot_state ?? '') === 'reserved' && !empty($row->reserved_start_at)) {
+            $start = (string) $row->reserved_start_at;
+            $end = (string) $row->reserved_end_at;
+            $meet = self::create_meet_space_for_request($row, $start, $end);
+            $approval['status'] = self::STATUS_SCHEDULED;
+            $approval['slot_state'] = 'active';
+            $approval['scheduled_at'] = $start;
+            $approval['join_valid_from_at'] = self::join_valid_from_at((object) ['scheduled_at'=>$start]);
+            $approval['join_expires_at'] = self::join_expires_at((object) ['scheduled_at'=>$start]);
+            if (!empty($meet['success'])) {
+                $approval['google_meet_space_name'] = (string) ($meet['space_name'] ?? $meet['event_id'] ?? '');
+                $approval['google_calendar_event_id'] = $approval['google_meet_space_name'];
+                $approval['google_meet_code'] = (string) ($meet['meeting_code'] ?? '');
+                $approval['google_meet_link'] = (string) ($meet['meet_link'] ?? '');
+                $approval['google_meet_created_at'] = self::now();
+            } else {
+                $approval['google_meet_error'] = sanitize_text_field((string) ($meet['message'] ?? 'Meeting creation is queued for retry.'));
+            }
+            if (($row->payment_state ?? '') === 'quota_reserved') Nevari_Care_Journeys::set_quota_state('mtm', (int)$row->id, 'consumed');
+        }
+        $updated = self::update_request((int) $row->id, $approval);
         if ($updated) {
             self::dispatch_request_update_notifications($row, $updated);
         }
         return Nevari_Helpers::success(['request' => self::payload_from_request($updated)]);
     }
 
+    public static function decline_request(WP_REST_Request $request): WP_REST_Response {
+        $row = self::guard_pharmacist_request((int)$request['id']); if($row instanceof WP_REST_Response)return $row;
+        $body=is_array($request->get_json_params())?$request->get_json_params():[];
+        if(array_diff(array_keys($body),['reason']))return Nevari_Helpers::error('unexpected_fields','Unexpected decline fields were supplied.',422);
+        $reason=substr(sanitize_textarea_field((string)($body['reason']??'')),0,500);if($reason==='')return Nevari_Helpers::error('missing_reason','A decline reason is required.',422);
+        $quota=($row->payment_state??'')==='quota_reserved';
+        if($quota)Nevari_Care_Journeys::set_quota_state('mtm',(int)$row->id,'released');
+        $refund=($row->payment_state??'')==='paid'?'required':'not_required';
+        $updated=self::update_request((int)$row->id,['status'=>'declined','clinical_decision'=>'declined','rejection_reason'=>$reason,'slot_state'=>'released','refund_state'=>$refund,'updated_by'=>Nevari_Auth::api_session_user_id()]);
+        Nevari_Care_Journeys::event('mtm',(int)$row->id,'declined','MTM request declined.',Nevari_Auth::api_session_user_id());
+        self::dispatch_request_update_notifications($row,$updated);return Nevari_Helpers::success(['request'=>self::payload_from_request($updated)]);
+    }
+
+    public static function refund_complete(WP_REST_Request $request): WP_REST_Response {
+        if(!Nevari_Helpers::is_store_admin(Nevari_Auth::api_session_user_id()))return Nevari_Helpers::error('forbidden','Only a store administrator can record refunds.',403);
+        $row=self::get_request((int)$request['id']);if(!$row||($row->refund_state??'')!=='required')return Nevari_Helpers::error('refund_unavailable','This request is not awaiting a refund.',409);
+        $body=is_array($request->get_json_params())?$request->get_json_params():[];if(array_diff(array_keys($body),['reference']))return Nevari_Helpers::error('unexpected_fields','Unexpected refund fields were supplied.',422);
+        $reference=substr(sanitize_text_field((string)($body['reference']??'')),0,100);if($reference==='')return Nevari_Helpers::error('missing_reference','A refund reference is required.',422);
+        $updated=self::update_request((int)$row->id,['refund_state'=>'completed','refund_reference'=>$reference,'refund_completed_at'=>self::now(),'updated_by'=>Nevari_Auth::api_session_user_id()]);
+        Nevari_Care_Journeys::event('mtm',(int)$row->id,'refund_completed','Manual refund recorded.',Nevari_Auth::api_session_user_id());return Nevari_Helpers::success(['request'=>self::payload_from_request($updated)]);
+    }
     public static function schedule(WP_REST_Request $request): WP_REST_Response {
         $row = self::guard_pharmacist_request((int) $request['id']);
         if ($row instanceof WP_REST_Response) {

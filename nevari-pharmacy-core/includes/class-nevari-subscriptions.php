@@ -3323,6 +3323,21 @@ final class Nevari_Subscriptions {
 
         $prepared = call_user_func_array([$wpdb, 'prepare'], array_merge([$sql], $params));
         $used = (int) $wpdb->get_var($prepared);
+
+        $ledger = Nevari_Helpers::table('consultation_quota_ledger');
+        if ((string) $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $ledger)) === (string) $ledger) {
+            $ledger_sql = "SELECT COUNT(1) FROM {$ledger} WHERE customer_user_id = %d AND state IN ('reserved','consumed')";
+            $ledger_params = [$user_id];
+            if ($cycle_start) {
+                $ledger_sql .= ' AND created_at >= %s';
+                $ledger_params[] = $cycle_start;
+            }
+            if ($reset_at) {
+                $ledger_sql .= ' AND created_at < %s';
+                $ledger_params[] = $reset_at;
+            }
+            $used += (int) $wpdb->get_var(call_user_func_array([$wpdb, 'prepare'], array_merge([$ledger_sql], $ledger_params)));
+        }
         return max(0, $used);
     }
 

@@ -18,6 +18,9 @@ import { buildTwoStepVerificationRequest, loadAuthSecuritySettings, persistAuthS
 import { getOrderTypeMeta } from "../../components/role-dashboard-utils";
 import { clearStoredSessions, createPairingRequiredError, isPairingRequiredError, isPairingRequiredPayload } from "../../components/role-session";
 import { buildSWRRevealSignature, useSWRReveal } from "../../components/useSWRReveal";
+import GovernedUsersPanel from "../../components/GovernedUsersPanel";
+import NurseRequestAdminPanel from "../../components/NurseRequestAdminPanel";
+import IvTherapyOperationsPanel from "../../components/IvTherapyOperationsPanel";
 
 const STORAGE_KEY = "nevari_admin_storefront_session";
 const STORE_CURRENCY_KEY = "nevari_store_currency";
@@ -133,7 +136,8 @@ const FRONTEND_PAGES = [
       ["doctors", "Staffs", "i-briefcase-medical"],
       ["consultations", "Consultations", "i-stethoscope"],
       ["mtm", "MTM", "i-clipboard"],
-      ["iv-therapy", "IV Therapy", "i-clipboard"]
+      ["iv-therapy", "IV Therapy", "i-clipboard"],
+      ["nurse-requests", "Nurse Requests", "i-users"]
     ]
   },
   {
@@ -153,6 +157,7 @@ const SEARCH_PLACEHOLDERS = {
   consultations: "Search appointments",
   mtm: "Search MTM requests",
   "iv-therapy": "Search IV therapy requests",
+  "nurse-requests": "Search Nurse Requests",
   products: "Search products",
   doctors: "Search staff",
   emails: "Search emails",
@@ -9866,6 +9871,7 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "iv-therapy" && (
               <section className="page-view active">
+                <IvTherapyOperationsPanel session={session} />
                 <section className="operations-grid mtm-summary-row">
                   <article className="panel compact mtm-summary-panel">
                     <div className="panel-header">
@@ -10366,6 +10372,7 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "doctors" && (
               <section className="page-view active">
+                <GovernedUsersPanel session={session} />
                 <section className="operations-grid staffs-hero-grid">
                   <article className="panel compact">
                     <div className="panel-header">
@@ -10429,6 +10436,8 @@ export function AdminStorefrontDashboard({
                 </section>
               </section>
             )}
+
+            {currentPage === "nurse-requests" && <NurseRequestAdminPanel session={session} />}
 
             {currentPage === "emails" && (
               <section className="page-view active">
@@ -13305,4 +13314,3 @@ const ORDER_CREATE_PAYMENT_STATUS_MAP = {
   "Payment slip uploaded": "on-hold",
   Refunded: "refunded"
 };
-

@@ -518,3 +518,24 @@ Consider engaging professional security consultants for:
 
 **Report Generated:** May 13, 2026  
 **Severity Rating:** 🔴 CRITICAL - Production Deployment NOT RECOMMENDED
+
+## 2026-07-22 Care Journey Storage and Authorization
+
+- IV Therapy and Nurse Request records now use indexed, bounded custom tables instead of unbounded user-meta scans.
+- Staff care detail and mutation routes resolve the resource in their permission callback and enforce store-admin or IV-pharmacist scope before handlers run.
+- Care lifecycle events are append-only and accept only safe metadata keys; clinical payloads and tokens are excluded.
+- Provider writes reject unexpected fields and require store-administrator authorization.
+- MTM slot reservations lock the request row, verify ownership and paid/quota state, and re-check appointment and MTM conflicts before committing.
+- MTM payment amounts are derived from the server option; WooCommerce/Paystack order state is authoritative.
+- Manual refund completion is store-admin-only and stores an external reference, never gateway credentials.
+# User governance and Nurse Request assignment (2026-07-22)
+
+- Nurse registration is public but rate-limited by IP and normalized email, rejects unexpected privilege fields, assigns the `nurse` role server-side, and creates a `pending_review` governance record without issuing a dashboard session.
+- Custom and WordPress authentication paths deny pending, declined, and banned governed users. Decline and ban revoke active session families and refresh tokens.
+- Store Admin governance mutations use target-aware permission callbacks and forbid self-targeting and Store Admin/administrator targets.
+- Nurse Request assignment revalidates the selected WordPress user role and approved governance state while the request row is transaction-locked.
+- Patient-safe Nurse Request documents are stored outside public media paths, validated by extension, declared/detected MIME, signature, size, count, request state, and record ownership. Only Store Admin may upload, replace, or remove; the owning patient and Store Admin may list or download.
+- IV clinical decisions require the assigned pharmacist; Store Admin may perform operational assignment and scheduling but cannot submit the pharmacist's clinical decision.
+- Care lifecycle email dispatches claim a unique service/record/event/recipient/template fingerprint before queueing, preventing duplicate delivery under concurrent transitions without storing recipient addresses in the dispatch registry.
+- Nurse accounts have no Nevari care capabilities or dashboard route. Direct wp-admin access is redirected and the admin bar is hidden.
+- The standalone care-provider assignment surface is no longer registered. Its table/legacy identifier remains temporarily for migration compatibility only.

@@ -45,7 +45,10 @@ final class Nevari_Iv_Therapy {
     }
 
     public static function customer_permission(): bool {
-        return Nevari_Auth::api_session_required();
+        if (!Nevari_Auth::api_session_required()) {
+            return false;
+        }
+        return Nevari_Helpers::is_patient(Nevari_Auth::api_session_user_id());
     }
 
     public static function staff_permission(): bool {
@@ -140,9 +143,20 @@ final class Nevari_Iv_Therapy {
             'updatedAt' => $created_at,
         ];
 
-        $items = self::list_requests($user_id);
-        array_unshift($items, $request_item);
-        update_user_meta($user_id, self::META_KEY, array_values($items));
+        global $wpdb;
+        $inserted = $wpdb->insert(Nevari_Care_Journeys::table('iv_therapy_requests'), [
+            'legacy_key' => $request_item['id'],
+            'reference' => $request_item['requestReference'],
+            'customer_user_id' => $user_id,
+            'status' => 'submitted',
+            'payload_json' => wp_json_encode($request_item),
+            'created_at' => $created_at,
+            'updated_at' => $created_at,
+        ]);
+        if (!$inserted) {
+            return Nevari_Helpers::error('request_create_failed', 'The IV therapy request could not be submitted.', 500);
+        }
+        Nevari_Care_Journeys::event('iv_therapy', (int) $wpdb->insert_id, 'submitted', 'Your IV therapy request was submitted.', $user_id);
 
         if (!wp_next_scheduled(self::NOTIFY_HOOK, [$user_id, $request_item['id']])) {
             wp_schedule_single_event(time() + 5, self::NOTIFY_HOOK, [$user_id, $request_item['id']]);
@@ -247,47 +261,23 @@ final class Nevari_Iv_Therapy {
     }
 
     private static function list_requests(int $user_id): array {
-        $stored = get_user_meta($user_id, self::META_KEY, true);
-        if (!is_array($stored)) {
-            return [];
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare('SELECT * FROM ' . Nevari_Care_Journeys::table('iv_therapy_requests') . ' WHERE customer_user_id=%d ORDER BY created_at DESC LIMIT 200', $user_id), ARRAY_A);
+        $items = array_values(array_filter(array_map([__CLASS__, 'normalize_row'], $rows ?: [])));
+        if (!get_option('nevari_care_legacy_migration_complete')) {
+            $seen = array_fill_keys(array_map(static function ($item) { return (string) ($item['id'] ?? ''); }, $items), true);
+            foreach ((array) get_user_meta($user_id, self::META_KEY, true) as $legacy) {
+                $item = self::normalize_request($legacy, $user_id);
+                if ($item && empty($seen[(string) $item['id']])) $items[] = $item;
+            }
         }
-
-        $items = array_values(array_filter(array_map(static function ($item) use ($user_id) {
-            return self::normalize_request($item, $user_id);
-        }, $stored)));
-
-        usort($items, static function (array $left, array $right): int {
-            return strcmp((string) ($right['submittedAt'] ?? ''), (string) ($left['submittedAt'] ?? ''));
-        });
-
         return $items;
     }
-
     private static function all_requests(): array {
-        $items = [];
-        $users = get_users([
-            'role__in' => ['customer', 'patient'],
-            'fields' => ['ID'],
-            'number' => -1,
-        ]);
-
-        foreach ($users as $user) {
-            $user_id = (int) ($user->ID ?? 0);
-            if ($user_id < 1) {
-                continue;
-            }
-            foreach (self::list_requests($user_id) as $request) {
-                $items[] = $request;
-            }
-        }
-
-        usort($items, static function (array $left, array $right): int {
-            return strcmp((string) ($right['submittedAt'] ?? ''), (string) ($left['submittedAt'] ?? ''));
-        });
-
-        return $items;
+        global $wpdb;
+        $rows = $wpdb->get_results('SELECT * FROM ' . Nevari_Care_Journeys::table('iv_therapy_requests') . ' ORDER BY created_at DESC LIMIT 200', ARRAY_A);
+        return array_values(array_filter(array_map([__CLASS__, 'normalize_row'], $rows ?: [])));
     }
-
     private static function find_request(int $user_id, string $request_id): ?array {
         foreach (self::list_requests($user_id) as $item) {
             if ((string) ($item['id'] ?? '') === $request_id) {
@@ -307,22 +297,36 @@ final class Nevari_Iv_Therapy {
     }
 
     private static function mark_notifications_dispatched(int $user_id, string $request_id): void {
-        $stored = get_user_meta($user_id, self::META_KEY, true);
-        if (!is_array($stored)) {
-            return;
-        }
-
-        foreach ($stored as $index => $item) {
-            if ((string) ($item['id'] ?? '') !== $request_id) {
-                continue;
-            }
-            $stored[$index]['notificationsDispatchedAt'] = gmdate('c');
-            $stored[$index]['updatedAt'] = current_time('mysql');
-            update_user_meta($user_id, self::META_KEY, array_values($stored));
-            return;
-        }
+        global $wpdb;
+        $table = Nevari_Care_Journeys::table('iv_therapy_requests');
+        $row = $wpdb->get_row($wpdb->prepare('SELECT id,payload_json FROM ' . $table . ' WHERE customer_user_id=%d AND legacy_key=%s', $user_id, $request_id), ARRAY_A);
+        if (!$row) return;
+        $payload = json_decode((string) $row['payload_json'], true) ?: [];
+        $payload['notificationsDispatchedAt'] = gmdate('c');
+        $payload['updatedAt'] = current_time('mysql');
+        $wpdb->update($table, ['payload_json' => wp_json_encode($payload), 'updated_at' => current_time('mysql')], ['id' => (int) $row['id']]);
     }
 
+    private static function normalize_row(array $row): ?array {
+        $payload = json_decode((string) ($row['payload_json'] ?? ''), true);
+        $item = self::normalize_request(is_array($payload) ? $payload : [], (int) $row['customer_user_id']);
+        if (!$item) return null;
+        $item['record_id'] = (int) $row['id'];
+        $item['id'] = (string) ($row['legacy_key'] ?: $row['id']);
+        $item['request_reference'] = sanitize_text_field((string) $row['reference']);
+        $item['service_type'] = 'iv_therapy';
+        $item['status'] = sanitize_key((string) $row['status']);
+        $item['status_label'] = ucwords(str_replace('_', ' ', $item['status']));
+        $item['patient_safe_message'] = sanitize_text_field((string) ($row['patient_safe_message'] ?? ''));
+        $item['scheduled_at'] = sanitize_text_field((string) ($row['scheduled_at'] ?? '')) ?: null;
+        $item['timeline'] = Nevari_Care_Journeys::timeline('iv_therapy', (int) $row['id']);
+        $clinician_id = (int) ($row['assigned_clinician_user_id'] ?? 0);
+        $clinician = $clinician_id ? get_user_by('id', $clinician_id) : null;
+        $item['assigned_clinician'] = $clinician ? ['id' => $clinician_id, 'name' => $clinician->display_name] : null;
+        $completion = json_decode((string) ($row['completion_json'] ?? ''), true);
+        $item['completion'] = is_array($completion) ? $completion : [];
+        return $item;
+    }
     private static function normalize_request($item, int $fallback_user_id = 0): ?array {
         if (!is_array($item) || empty($item['id'])) {
             return null;

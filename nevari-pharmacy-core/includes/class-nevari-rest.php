@@ -334,6 +334,14 @@ final class Nevari_Rest {
             ],
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/doctors/(?P<id>\d+)/profile-image', [
+            [
+                'methods' => WP_REST_Server::EDITABLE,
+                'callback' => [__CLASS__, 'doctors_profile_image_update'],
+                'permission_callback' => [__CLASS__, 'doctor_or_admin_required'],
+            ],
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/doctors/(?P<id>\d+)/availability', [
             [
                 'methods' => WP_REST_Server::READABLE,
@@ -4279,6 +4287,79 @@ final class Nevari_Rest {
         self::upsert_doctor_settings($doctor_id, $params);
         Nevari_Audit::log('consultation', 'nevari', 'doctor.updated', 'success', ['related_user_id' => $doctor_id, 'object_type' => 'user', 'object_id' => $doctor_id]);
         return Nevari_Helpers::success(self::format_doctor(get_user_by('id', $doctor_id), true));
+    }
+
+    public static function doctors_profile_image_update(WP_REST_Request $request): WP_REST_Response {
+        $doctor_id = (int) $request['id'];
+        if (!Nevari_Helpers::is_store_admin() && get_current_user_id() !== $doctor_id) {
+            return Nevari_Helpers::error('forbidden', 'You can update only your own doctor profile image.', 403);
+        }
+        if ($response = Nevari_Helpers::rate_limit('rest_doctor_profile_image_write', 12, HOUR_IN_SECONDS, ['user:' . $doctor_id])) {
+            return $response;
+        }
+        $user = get_user_by('id', $doctor_id);
+        if (!$user || !in_array('doctor', (array) $user->roles, true)) {
+            return Nevari_Helpers::error('doctor_not_found', 'Doctor not found.', 404);
+        }
+
+        $params = Nevari_Helpers::get_json_params($request);
+        $allowed_keys = ['filename', 'mime_type', 'data_base64'];
+        foreach (array_keys($params) as $key) {
+            if (!in_array((string) $key, $allowed_keys, true)) {
+                return Nevari_Helpers::error('validation_error', 'Unexpected profile image field supplied.', 422);
+            }
+        }
+
+        $filename = isset($params['filename']) ? sanitize_file_name((string) $params['filename']) : '';
+        $mime_type = isset($params['mime_type']) ? sanitize_text_field((string) $params['mime_type']) : '';
+        $data_base64 = isset($params['data_base64']) ? preg_replace('/\s+/', '', (string) $params['data_base64']) : '';
+        $allowed_mimes = [
+            'image/jpeg' => ['jpg', 'jpeg'],
+            'image/png' => ['png'],
+            'image/gif' => ['gif'],
+            'image/webp' => ['webp'],
+        ];
+        $extension = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+
+        if ($filename === '' || $data_base64 === '' || !isset($allowed_mimes[$mime_type]) || !in_array($extension, $allowed_mimes[$mime_type], true)) {
+            return Nevari_Helpers::error('validation_error', 'A valid JPG, PNG, GIF, or WebP image is required.', 422);
+        }
+
+        $bytes = base64_decode($data_base64, true);
+        if ($bytes === false || strlen($bytes) < 1 || strlen($bytes) > 2 * 1024 * 1024 || !@getimagesizefromstring($bytes)) {
+            return Nevari_Helpers::error('validation_error', 'Profile image data is invalid or larger than 2 MB.', 422);
+        }
+
+        $upload = wp_upload_bits($filename, null, $bytes);
+        if (!empty($upload['error'])) {
+            return Nevari_Helpers::error('media_upload_failed', 'The profile image could not be uploaded.', 500);
+        }
+
+        $attachment_id = wp_insert_attachment([
+            'post_mime_type' => $mime_type,
+            'post_title' => sanitize_text_field(pathinfo($filename, PATHINFO_FILENAME)),
+            'post_status' => 'inherit',
+            'post_author' => $doctor_id,
+        ], $upload['file']);
+        if (is_wp_error($attachment_id) || !$attachment_id) {
+            return Nevari_Helpers::error('media_upload_failed', 'The profile image attachment could not be created.', 500);
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        $metadata = wp_generate_attachment_metadata((int) $attachment_id, $upload['file']);
+        if ($metadata) {
+            wp_update_attachment_metadata((int) $attachment_id, $metadata);
+        }
+
+        $profile_id = self::ensure_doctor_profile($doctor_id, []);
+        set_post_thumbnail($profile_id, (int) $attachment_id);
+
+        $url = esc_url_raw((string) wp_get_attachment_url((int) $attachment_id));
+        update_user_meta($doctor_id, 'nevari_google_picture', $url);
+
+        Nevari_Audit::log('consultation', 'nevari', 'doctor.profile_image_updated', 'success', ['related_user_id' => $doctor_id, 'object_type' => 'user', 'object_id' => $doctor_id]);
+
+        return Nevari_Helpers::success(self::format_doctor(get_user_by('id', $doctor_id), true), [], 201);
     }
 
     public static function doctors_delete(WP_REST_Request $request): WP_REST_Response {

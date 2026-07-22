@@ -52,9 +52,11 @@ final class Nevari_Plugin {
         add_action('nevari_end_appointment_meet_conference', [$this, 'end_appointment_meet_conference'], 10, 1);
 
         Nevari_Audit::init();
+        Nevari_User_Governance::init();
         Nevari_Auth::init();
         Nevari_Connections::init();
         Nevari_SSO::init();
+        Nevari_Care_Journeys::init();
         Nevari_Mtm::init();
         Nevari_Iv_Therapy::init();
         Nevari_Nurse_Requests::init();
@@ -627,6 +629,50 @@ final class Nevari_Plugin {
                 'variables' => ['pharmacist_name', 'patient_name', 'request_reference', 'order_id', 'pharmacist_dashboard_link', 'pharmacist_dashboard_link_html'],
             ],
         ];
+
+        $care_lifecycle_templates = [
+            'nurse_registration_received' => 'Nurse registration received',
+            'nurse_admin_review' => 'Nurse registration requires review',
+            'nurse_approved' => 'Nurse registration approved',
+            'nurse_declined' => 'Nurse registration declined',
+            'nurse_ban' => 'Nurse account banned',
+            'nurse_unban' => 'Nurse account restored',
+            'nurse_reassignment_required' => 'Nurse Request requires reassignment',
+            'nurse_request_submitted' => 'Nurse Request submitted',
+            'nurse_request_under_review' => 'Nurse Request under review',
+            'nurse_request_nurse_assigned' => 'Nurse assigned',
+            'nurse_request_scheduled' => 'Nurse visit scheduled',
+            'nurse_request_in_progress' => 'Nurse service started',
+            'nurse_request_completed' => 'Nurse service completed',
+            'nurse_request_declined' => 'Nurse Request declined',
+            'nurse_request_cancelled' => 'Nurse Request cancelled',
+            'iv_therapy_submitted' => 'IV Therapy request submitted',
+            'iv_therapy_under_review' => 'IV Therapy operational review',
+            'iv_therapy_clinician_assigned' => 'IV Therapy clinician assigned',
+            'iv_therapy_approved' => 'IV Therapy request approved',
+            'iv_therapy_scheduled' => 'IV Therapy scheduled',
+            'iv_therapy_declined' => 'IV Therapy request declined',
+            'iv_therapy_treatment_completed' => 'IV treatment completed',
+            'iv_therapy_completed' => 'IV Therapy request completed',
+            'iv_therapy_cancelled' => 'IV Therapy request cancelled',
+            'mtm_payment_confirmed' => 'MTM payment confirmed',
+            'mtm_quota_reserved' => 'MTM consultation credit reserved',
+            'mtm_slot_reserved' => 'MTM slot reserved pending approval',
+            'mtm_declined' => 'MTM request declined',
+            'mtm_refund_required' => 'MTM refund requires action',
+            'mtm_refund_completed' => 'MTM refund recorded',
+            'mtm_consultation_completed' => 'MTM consultation completed',
+        ];
+        foreach ($care_lifecycle_templates as $template_key => $label) {
+            $templates[] = [
+                'template_key' => $template_key,
+                'name' => $label,
+                'subject' => $label . ': {{request_reference}}',
+                'body_html' => '<p>Hello {{recipient_name}},</p><p>' . esc_html($label) . '.</p><p>Reference: {{request_reference}}</p><p><a href="{{dashboard_link}}">Open dashboard</a></p>',
+                'body_text' => 'Hello {{recipient_name}}, ' . $label . '. Reference: {{request_reference}}. Dashboard: {{dashboard_link}}',
+                'variables' => ['recipient_name', 'request_reference', 'dashboard_link'],
+            ];
+        }
 
         foreach ($templates as $template) {
             $existing = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE template_key = %s ORDER BY version DESC LIMIT 1", $template['template_key']));

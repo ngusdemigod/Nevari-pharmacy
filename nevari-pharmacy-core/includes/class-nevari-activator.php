@@ -11,6 +11,12 @@ final class Nevari_Activator {
         if (class_exists('Nevari_Subscriptions')) {
             Nevari_Subscriptions::ensure_system_plans();
         }
+        if (class_exists('Nevari_User_Governance')) {
+            Nevari_User_Governance::ensure_schema();
+        }
+        if (class_exists('Nevari_Care_Journeys')) {
+            Nevari_Care_Journeys::ensure_schema();
+        }
         update_option('nevari_pharmacy_db_version', NEVARI_PHARMACY_VERSION, false);
         flush_rewrite_rules();
     }
@@ -30,6 +36,12 @@ final class Nevari_Activator {
         self::seed_defaults();
         if (class_exists('Nevari_Subscriptions')) {
             Nevari_Subscriptions::ensure_system_plans();
+        }
+        if (class_exists('Nevari_User_Governance')) {
+            Nevari_User_Governance::ensure_schema();
+        }
+        if (class_exists('Nevari_Care_Journeys')) {
+            Nevari_Care_Journeys::ensure_schema();
         }
         update_option('nevari_pharmacy_db_version', NEVARI_PHARMACY_VERSION, false);
     }
@@ -711,6 +723,10 @@ final class Nevari_Activator {
             'nevari_update_assigned_appointments' => true,
             'nevari_create_prescription' => true,
             'nevari_update_own_prescription' => true,
+        ]);
+
+        add_role('nurse', __('Nurse', 'nevari-pharmacy-core'), [
+            'read' => true,
         ]);
 
         $pharmacist_caps = [
