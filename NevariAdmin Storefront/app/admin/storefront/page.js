@@ -2485,6 +2485,7 @@ export function AdminStorefrontDashboard({
   const [orderQueueFilter, setOrderQueueFilter] = useState("all");
   const [orderDetailLoading, setOrderDetailLoading] = useState(false);
   const [orderMutationLoading, setOrderMutationLoading] = useState(false);
+  const [orderMutationAction, setOrderMutationAction] = useState("");
   const [orderEmailActionLoading, setOrderEmailActionLoading] = useState("");
   const [orderActionFeedback, setOrderActionFeedback] = useState("");
   const [deletingOrderIds, setDeletingOrderIds] = useState([]);
@@ -4435,6 +4436,7 @@ export function AdminStorefrontDashboard({
       return;
     }
     setOrderMutationLoading(true);
+    setOrderMutationAction("update");
     setOrderActionFeedback("");
     try {
       const payload = await updateOrderStatusMutation.updateOrderStatus(
@@ -4460,6 +4462,7 @@ export function AdminStorefrontDashboard({
       setOrderActionFeedback(describeRequestError(error));
     } finally {
       setOrderMutationLoading(false);
+      setOrderMutationAction("");
     }
   }
 
@@ -4694,6 +4697,7 @@ export function AdminStorefrontDashboard({
       return;
     }
     setOrderMutationLoading(true);
+    setOrderMutationAction("assign-doctor");
     setOrderActionFeedback("");
     try {
       const payload = await apiRequest(`/orders/${selectedOrderDetail.id}/assign-doctor`, {
@@ -4707,6 +4711,7 @@ export function AdminStorefrontDashboard({
       setOrderActionFeedback(describeRequestError(error));
     } finally {
       setOrderMutationLoading(false);
+      setOrderMutationAction("");
     }
   }
 
@@ -4894,6 +4899,7 @@ export function AdminStorefrontDashboard({
       return;
     }
     setOrderMutationLoading(true);
+    setOrderMutationAction("delete");
     setOrderActionFeedback("");
     try {
       await apiRequest(`/orders/${selectedOrderDetail.id}`, { method: "DELETE" });
@@ -4906,6 +4912,7 @@ export function AdminStorefrontDashboard({
       setOrderActionFeedback(describeRequestError(error));
     } finally {
       setOrderMutationLoading(false);
+      setOrderMutationAction("");
     }
   }
 
@@ -4914,6 +4921,7 @@ export function AdminStorefrontDashboard({
       return;
     }
     setOrderMutationLoading(true);
+    setOrderMutationAction("print");
     setOrderActionFeedback("");
     try {
       const documentType = getOrderDocumentType(selectedOrderDetail);
@@ -4923,6 +4931,7 @@ export function AdminStorefrontDashboard({
       setOrderActionFeedback(describeRequestError(error));
     } finally {
       setOrderMutationLoading(false);
+      setOrderMutationAction("");
     }
   }
 
@@ -4931,6 +4940,7 @@ export function AdminStorefrontDashboard({
       return;
     }
     setOrderMutationLoading(true);
+    setOrderMutationAction("refund");
     setOrderActionFeedback("");
     try {
       const payload = await apiRequest(`/orders/${selectedOrderDetail.id}`, {
@@ -4947,6 +4957,7 @@ export function AdminStorefrontDashboard({
       setOrderActionFeedback(describeRequestError(error));
     } finally {
       setOrderMutationLoading(false);
+      setOrderMutationAction("");
     }
   }
 
@@ -11388,34 +11399,29 @@ export function AdminStorefrontDashboard({
                     <h3>Order #{selectedOrderDetail.number}</h3>
                   </div>
                   <div className="toolbar order-modal-topbar-actions">
-                    <button className="icon-button" type="button" aria-label="Close order details" onClick={closeOrderModal}>
-                      <InlineIcon id="i-x" />
+                    <button className="pill-button order-header-action-button" type="button" onClick={printSelectedOrder} disabled={orderMutationLoading}>
+                      {orderMutationAction === "print" ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
+                      <span>Print</span>
                     </button>
-                    <button className="icon-button order-header-action-button" type="button" title={getOrderDocumentType(selectedOrderDetail) === "receipt" ? "Print Receipt" : "Print Invoice"} aria-label={getOrderDocumentType(selectedOrderDetail) === "receipt" ? "Print Receipt" : "Print Invoice"} onClick={printSelectedOrder} disabled={orderMutationLoading}>
-                      {orderMutationLoading ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-printer" />}
+                    <button className="pill-button order-header-action-button" type="button" onClick={refundSelectedOrder} disabled={orderMutationLoading}>
+                      {orderMutationAction === "refund" ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
+                      <span>Refund</span>
                     </button>
-                    <button
-                      className="icon-button order-header-action-button"
-                      type="button"
-                      title={orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") ? "Sending..." : "Email Patient"}
-                      aria-label={orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") ? "Sending patient email" : "Email Patient"}
-                      onClick={contactSelectedCustomer}
-                      disabled={orderMutationLoading || orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") || !customerEmail(selectedOrderDetail)}
-                    >
-                      {orderEmailActionLoading === String(selectedOrderDetail.id || selectedOrderDetail.number || "order") ? (
-                        <span className="category-saving-spinner" aria-hidden="true" />
-                      ) : (
-                        <InlineIcon id="i-paper-plane" />
-                      )}
-                    </button>
-                    <button className="icon-button order-header-action-button" type="button" title="Update Status" aria-label="Update Status" onClick={openOrderControlsPopup} disabled={orderMutationLoading}>
-                      <InlineIcon id="i-package" />
-                    </button>
-                    <button className="icon-button order-header-action-button" type="button" title="Refund" aria-label="Refund" onClick={refundSelectedOrder} disabled={orderMutationLoading}>
-                      <InlineIcon id="i-refresh-cw" />
-                    </button>
-                    <button className="pill-button danger" type="button" onClick={deleteSelectedOrder} disabled={orderMutationLoading}>
-                      Delete Order
+                    <label className="order-header-status-field">
+                      <span className="sr-only">Update order status</span>
+                      <select
+                        aria-label="Update order status"
+                        value={selectedOrderStatus}
+                        onChange={(event) => setSelectedOrderStatus(event.target.value)}
+                        disabled={orderMutationLoading}
+                      >
+                        {["pending", "awaiting-doctor", "awaiting-prescription", "processing", "in-delivery", "on-hold", "completed", "cancelled", "failed", "refunded"].map((status) => (
+                          <option key={status} value={status}>{formatStatusLabel(status)}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button className="pill-button order-header-close-button" type="button" aria-label="Close order details" onClick={closeOrderModal} disabled={orderMutationLoading}>
+                      Close
                     </button>
                   </div>
                 </div>
@@ -11593,17 +11599,18 @@ export function AdminStorefrontDashboard({
             </div>
             <div className="modal-actions order-detail-footer-actions">
               <button
-                className="pill-button"
+                className="pill-button danger"
                 type="button"
-                onClick={contactSelectedCustomer}
-                disabled={!selectedOrderDetail || orderMutationLoading || orderEmailActionLoading === String(selectedOrderDetail?.id || selectedOrderDetail?.number || "order") || !customerEmail(selectedOrderDetail)}
+                onClick={deleteSelectedOrder}
+                disabled={!selectedOrderDetail || orderMutationLoading}
               >
-                {orderEmailActionLoading === String(selectedOrderDetail?.id || selectedOrderDetail?.number || "order") ? "Sending..." : "Email Patient"}
+                {orderMutationAction === "delete" ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
+                <span>Delete Order</span>
               </button>
               <div className="order-detail-footer-end">
-                <button className="pill-button" type="button" onClick={closeOrderModal}>Close</button>
-                <button className="button-primary" type="button" onClick={openOrderControlsPopup} disabled={orderMutationLoading || !selectedOrderDetail}>
-                  Update Order
+                <button className="button-primary" type="button" onClick={saveSelectedOrder} disabled={orderMutationLoading || !selectedOrderDetail}>
+                  {orderMutationAction === "update" ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
+                  <span>Update Order</span>
                 </button>
               </div>
             </div>
@@ -13265,37 +13272,87 @@ export function AdminStorefrontDashboard({
           <div className="app-modal-layer app-modal-layer-top is-open">
             <ModalScrim className="app-modal-backdrop" label="Close patient details" onDismiss={closeCustomerDetails} />
             <section className="detail-section stacked-order-popup receipt-popup customer-detail-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`Patient details for ${selectedCustomerProfile.name}`}>
-              <div className="panel-header stacked-order-popup-header modal-head">
-                <div>
-                  <p className="section-kicker">Patient profile</p>
-                  <h3>{selectedCustomerProfile.name}</h3>
+              <div className="panel-header stacked-order-popup-header modal-head patient-profile-header">
+                <div className="patient-profile-identity">
+                  <span className="patient-profile-avatar">
+                    {selectedCustomerProfile.avatarUrl
+                      ? <img src={selectedCustomerProfile.avatarUrl} alt="" />
+                      : getNameInitials(selectedCustomerProfile.name || selectedCustomerProfile.email || "Patient", "PT")}
+                  </span>
+                  <div className="patient-profile-heading">
+                    <p className="section-kicker">Patient profile</p>
+                    <h3>{selectedCustomerProfile.name}</h3>
+                    <div className="patient-profile-heading-meta">
+                      <span>{selectedCustomerProfile.email}</span>
+                      <StatusPill value={selectedCustomerProfile.accountStatus || "approved"}>
+                        {formatStatusLabel(selectedCustomerProfile.accountStatus || "approved")}
+                      </StatusPill>
+                    </div>
+                  </div>
                 </div>
                 <button className="icon-button" type="button" aria-label="Close patient details" onClick={closeCustomerDetails}>
                   <InlineIcon id="i-x" />
                 </button>
               </div>
 
-              <div className="filter-bar tabs-bar">
-                <button className={`filter-btn ${customerDetailTab === "details" ? "active" : ""}`} type="button" onClick={() => setCustomerDetailTab("details")}>Details</button>
-                <button className={`filter-btn ${customerDetailTab === "orders" ? "active" : ""}`} type="button" onClick={() => setCustomerDetailTab("orders")}>Orders</button>
-                <button className={`filter-btn ${customerDetailTab === "products" ? "active" : ""}`} type="button" onClick={() => setCustomerDetailTab("products")}>Products</button>
+              <div className="segmented-mini nevari-storefront-tabs patient-profile-tabs" role="tablist" aria-label="Patient profile sections">
+                <button className={customerDetailTab === "details" ? "active" : ""} type="button" role="tab" aria-selected={customerDetailTab === "details"} onClick={() => setCustomerDetailTab("details")}>Details</button>
+                <button className={customerDetailTab === "orders" ? "active" : ""} type="button" role="tab" aria-selected={customerDetailTab === "orders"} onClick={() => setCustomerDetailTab("orders")}>Orders</button>
+                <button className={customerDetailTab === "products" ? "active" : ""} type="button" role="tab" aria-selected={customerDetailTab === "products"} onClick={() => setCustomerDetailTab("products")}>Products</button>
               </div>
               <div className="customer-detail-scroll modal-body">
                 {customerDetailTab === "details" ? (
-                  <div className="customer-detail-grid">
-                    <div className="detail-item-card"><strong>Patient</strong><span className="muted">{selectedCustomerProfile.label}</span></div>
-                    <div className="detail-item-card"><strong>Email</strong><span className="muted">{selectedCustomerProfile.email}</span></div>
-                    <div className="detail-item-card"><strong>Current role</strong><span className="muted">{selectedCustomerRoleLabel}</span></div>
-                    <div className="detail-item-card"><strong>Account status</strong><span className="muted">{formatStatusLabel(selectedCustomerProfile.accountStatus || "approved")}</span></div>
-                    <div className="detail-item-card"><strong>Total orders</strong><span className="muted">{formatNumber(selectedCustomerProfile.orders)}</span></div>
-                    <div className="detail-item-card"><strong>Total spend</strong><span className="muted">{formatMoney(selectedCustomerProfile.spend, storeCurrency)}</span></div>
-                    <div className="detail-item-card"><strong>Prescriptions</strong><span className="muted">{formatNumber(selectedCustomerProfile.prescriptions)}</span></div>
-                    <div className="detail-item-card"><strong>Appointments</strong><span className="muted">{formatNumber(selectedCustomerProfile.appointments)}</span></div>
-                    <div className="detail-item-card customer-detail-wide"><strong>Last activity</strong><span className="muted">{formatDate(selectedCustomerProfile.lastActivity, true)}</span></div>
+                  <div className="patient-profile-overview" role="tabpanel">
+                    <div className="patient-profile-metrics" aria-label="Patient activity summary">
+                      <article className="patient-profile-metric">
+                        <span>Orders</span>
+                        <strong>{formatNumber(selectedCustomerProfile.orders)}</strong>
+                        <small>completed and active orders</small>
+                      </article>
+                      <article className="patient-profile-metric">
+                        <span>Total spend</span>
+                        <strong>{formatMoney(selectedCustomerProfile.spend, storeCurrency)}</strong>
+                        <small>lifetime order value</small>
+                      </article>
+                      <article className="patient-profile-metric">
+                        <span>Appointments</span>
+                        <strong>{formatNumber(selectedCustomerProfile.appointments)}</strong>
+                        <small>booked care sessions</small>
+                      </article>
+                      <article className="patient-profile-metric">
+                        <span>Prescriptions</span>
+                        <strong>{formatNumber(selectedCustomerProfile.prescriptions)}</strong>
+                        <small>linked prescriptions</small>
+                      </article>
+                    </div>
+
+                    <section className="patient-profile-section" aria-labelledby="patientAccountInformation">
+                      <div className="patient-profile-section-heading">
+                        <div>
+                          <p className="section-kicker">Account</p>
+                          <h4 id="patientAccountInformation">Patient information</h4>
+                        </div>
+                        <span className="muted">Identity and access details</span>
+                      </div>
+                      <div className="patient-profile-info-grid">
+                        <div><span>Patient</span><strong>{selectedCustomerProfile.label}</strong></div>
+                        <div><span>Email address</span><strong>{selectedCustomerProfile.email}</strong></div>
+                        <div><span>Current role</span><strong>{selectedCustomerRoleLabel}</strong></div>
+                        <div><span>Account status</span><strong>{formatStatusLabel(selectedCustomerProfile.accountStatus || "approved")}</strong></div>
+                        <div className="patient-profile-info-wide"><span>Last activity</span><strong>{formatDate(selectedCustomerProfile.lastActivity, true)}</strong></div>
+                      </div>
+                    </section>
+
                     {canEscalateCustomerPrivileges ? (
-                      <div className="detail-item-card customer-detail-wide customer-privilege-card">
-                        <strong>Role management</strong>
-                        <span className="muted">Upgrade this patient account into a doctor or pharmacist after OTP verification.</span>
+                      <section className="patient-profile-section customer-privilege-card" aria-labelledby="patientRoleManagement">
+                        <div className="patient-profile-section-heading">
+                          <div>
+                            <p className="section-kicker">Access</p>
+                            <h4 id="patientRoleManagement">Role management</h4>
+                          </div>
+                          <span className="muted">OTP verification required</span>
+                        </div>
+                        <p className="patient-profile-section-copy">Upgrade this patient account into a doctor or pharmacist after OTP verification.</p>
                         {selectedCustomerCanEscalate ? (
                           <div className="customer-privilege-actions">
                             <label className="customer-privilege-field">
@@ -13313,26 +13370,13 @@ export function AdminStorefrontDashboard({
                         ) : (
                           <span className="muted">This record is not linked to a patient account that can be upgraded.</span>
                         )}
-                      </div>
+                      </section>
                     ) : null}
-                    <div className="detail-item-card customer-detail-wide patient-governance-card">
-                      <strong>Account actions</strong>
-                      <span className="muted">Manage this patient’s dashboard access or send a secure password reset link.</span>
-                      <div className="patient-governance-actions">
-                        {selectedCustomerProfile.accountStatus === "banned"
-                          ? patientDetailActionButton("unban", "Unban patient", "pill-button primary")
-                          : patientDetailActionButton("ban", "Ban patient", "pill-button danger")}
-                        {selectedCustomerProfile.accountStatus !== "suspended"
-                          ? patientDetailActionButton("suspend", "Suspend patient", "pill-button danger")
-                          : null}
-                        {patientDetailActionButton("reset-password", "Reset password", "pill-button")}
-                      </div>
-                    </div>
                   </div>
                 ) : null}
 
                 {customerDetailTab === "orders" ? (
-                  <div className="customer-history-section">
+                  <div className="customer-history-section" role="tabpanel">
                     {customerHistoryLoading ? <div className="muted">Loading full order history...</div> : null}
                     <div className="customer-history-scroll">
                       <div className="table-scroll">
@@ -13372,7 +13416,7 @@ export function AdminStorefrontDashboard({
                 ) : null}
 
                 {customerDetailTab === "products" ? (
-                  <div className="customer-history-section">
+                  <div className="customer-history-section" role="tabpanel">
                     {customerHistoryLoading ? <div className="muted">Loading full product history...</div> : null}
                     <div className="customer-history-scroll">
                       <div className="table-scroll">
@@ -13422,6 +13466,17 @@ export function AdminStorefrontDashboard({
                 ) : null}
                 {customerHistoryFeedback ? <p className="receipt-feedback">{customerHistoryFeedback}</p> : null}
               </div>
+              <footer className="patient-profile-footer modal-actions" aria-label="Patient account actions">
+                <div className="patient-governance-actions">
+                  {selectedCustomerProfile.accountStatus === "banned"
+                    ? patientDetailActionButton("unban", "Unban patient", "pill-button primary")
+                    : patientDetailActionButton("ban", "Ban patient", "pill-button danger")}
+                  {selectedCustomerProfile.accountStatus !== "suspended"
+                    ? patientDetailActionButton("suspend", "Suspend patient", "pill-button danger")
+                    : null}
+                  {patientDetailActionButton("reset-password", "Reset password", "pill-button")}
+                </div>
+              </footer>
             </section>
           </div>
           {customerPrivilegeEscalationOpen ? (

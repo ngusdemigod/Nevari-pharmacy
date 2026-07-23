@@ -7115,12 +7115,57 @@ body.auth-locked .page-shell {
 }
 
 .order-header-action-button {
-  width: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: auto;
+  padding-inline: 18px;
   min-height: 38px;
 }
 
-.order-modal-topbar-actions>.pill-button.danger {
-  min-width: 132px;
+.order-header-status-field {
+  flex: 0 0 auto;
+}
+
+.order-header-status-field select {
+  min-width: 164px;
+  min-height: 42px;
+  padding: 0 38px 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background-color: #fff;
+  color: var(--color-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.order-header-status-field select:focus-visible {
+  outline: 3px solid rgba(46, 112, 190, 0.22);
+  outline-offset: 2px;
+}
+
+.order-header-status-field select:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.order-modal-topbar-actions > .order-header-close-button {
+  margin-left: 18px;
+}
+
+.order-detail-footer-actions > .pill-button,
+.order-detail-footer-end > .button-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.order-detail-footer-end > .button-primary .category-saving-spinner {
+  border-color: rgba(255, 255, 255, 0.36);
+  border-top-color: #fff;
 }
 
 .order-detail-hero,
@@ -32384,10 +32429,6 @@ body .customer-mobile-panel>.subscription-manage-card .subscription-feedback.err
   height: 18px;
 }
 
-.patient-governance-card {
-  gap: 10px;
-}
-
 .patient-governance-actions {
   display: flex;
   flex-wrap: wrap;
@@ -32402,6 +32443,309 @@ body .customer-mobile-panel>.subscription-manage-card .subscription-feedback.err
   gap: 8px;
   min-height: 44px;
   padding-inline: 18px;
+}
+
+.nevari-admin-storefront .customer-detail-popup {
+  width: min(1120px, calc(100vw - 32px));
+  max-width: min(1120px, calc(100vw - 32px)) !important;
+  max-height: min(92vh, 900px);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #d8e2f0;
+  border-radius: 24px;
+  background: #fff !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+.nevari-admin-storefront .customer-detail-popup .patient-profile-header {
+  position: relative;
+  padding: 24px 28px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+.patient-profile-identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 16px;
+}
+
+.patient-profile-avatar {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #d8e2f0;
+  border-radius: 50%;
+  background: #eaf2fb;
+  color: #0c3470;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.patient-profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.patient-profile-heading {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.patient-profile-heading h3 {
+  margin: 0;
+  overflow: hidden;
+  color: #0a2f68;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.patient-profile-heading-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #61708a;
+  font-size: 14px;
+}
+
+.nevari-admin-storefront .customer-detail-popup .patient-profile-tabs {
+  width: fit-content;
+  max-width: calc(100% - 56px);
+  margin: 20px 28px 0;
+  flex: 0 0 auto;
+  overflow-x: auto;
+}
+
+.nevari-admin-storefront .customer-detail-popup .customer-detail-scroll {
+  padding: 24px 28px;
+  background: #fff !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.patient-profile-overview {
+  display: grid;
+  gap: 20px;
+}
+
+.patient-profile-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.patient-profile-metric {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding: 18px;
+  border: 1px solid #d8e2f0;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.patient-profile-metric span,
+.patient-profile-info-grid span {
+  color: #61708a;
+  font-size: 13px;
+}
+
+.patient-profile-metric strong {
+  overflow: hidden;
+  color: #092e67;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+}
+
+.patient-profile-metric small {
+  color: #748199;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.patient-profile-section {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid #d8e2f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.patient-profile-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.patient-profile-section-heading > div {
+  display: grid;
+  gap: 5px;
+}
+
+.patient-profile-section-heading h4 {
+  margin: 0;
+  color: #092e67;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.patient-profile-section-copy {
+  margin: -6px 0 0;
+  color: #61708a;
+  line-height: 1.55;
+}
+
+.patient-profile-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid #e2e8f0;
+}
+
+.patient-profile-info-grid > div {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding: 16px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.patient-profile-info-grid > div:nth-child(odd):not(.patient-profile-info-wide) {
+  padding-right: 20px;
+}
+
+.patient-profile-info-grid > div:nth-child(even) {
+  padding-left: 20px;
+  border-left: 1px solid #e2e8f0;
+}
+
+.patient-profile-info-grid strong {
+  overflow-wrap: anywhere;
+  color: #10233f;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.patient-profile-info-wide {
+  grid-column: 1 / -1;
+}
+
+.nevari-admin-storefront .customer-detail-popup .patient-profile-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  padding: 16px 28px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #fff !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+.patient-profile-footer .patient-governance-actions {
+  justify-content: flex-end;
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .patient-profile-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .nevari-admin-storefront .customer-detail-popup {
+    width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(100vh - 16px);
+    border-radius: 20px;
+  }
+
+  .nevari-admin-storefront .customer-detail-popup .patient-profile-header,
+  .nevari-admin-storefront .customer-detail-popup .customer-detail-scroll,
+  .nevari-admin-storefront .customer-detail-popup .patient-profile-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .patient-profile-avatar {
+    width: 52px;
+    height: 52px;
+    flex-basis: 52px;
+    font-size: 17px;
+  }
+
+  .patient-profile-heading h3 {
+    font-size: 21px;
+  }
+
+  .patient-profile-heading-meta > span:first-child {
+    max-width: 210px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .nevari-admin-storefront .customer-detail-popup .patient-profile-tabs {
+    max-width: calc(100% - 32px);
+    margin-right: 16px;
+    margin-left: 16px;
+  }
+
+  .patient-profile-metrics,
+  .patient-profile-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .patient-profile-info-grid > div:nth-child(odd):not(.patient-profile-info-wide),
+  .patient-profile-info-grid > div:nth-child(even) {
+    padding-right: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .patient-profile-info-wide {
+    grid-column: auto;
+  }
+
+  .patient-profile-section {
+    padding: 18px;
+  }
+
+  .patient-profile-section-heading {
+    display: grid;
+    gap: 8px;
+  }
+
+  .patient-profile-footer .patient-governance-actions {
+    width: 100%;
+  }
+
+  .patient-profile-footer .patient-governance-actions .pill-button {
+    flex: 1 1 150px;
+  }
 }
 
 .staff-snackbar {
@@ -39698,4 +40042,12 @@ body:has(.modal-design-system-parity) .order-modal .order-detail-scroll {
   .subscription-details-pill {
     width: 100%;
   }
+}
+
+.nevari-admin-storefront .customer-detail-popup .patient-profile-tabs button.active {
+  border-color: #0b326c !important;
+  background: #0b326c !important;
+  background-image: none !important;
+  color: #fff !important;
+  box-shadow: none !important;
 }
