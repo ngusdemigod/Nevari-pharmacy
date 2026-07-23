@@ -714,6 +714,10 @@ function createEmptyMtmMedicationProfile() {
   return createMtmFormState().medicationProfile;
 }
 
+function mtmSkipsClinicalSections(form) {
+  return String(form?.emergencyContact?.consentToDiscussCare || "").trim() === "No";
+}
+
 const MTM_GENDER_OPTIONS = ["Female", "Male"];
 const MTM_MARITAL_STATUS_OPTIONS = ["Single", "Married", "Separated", "Divorced", "Widowed", "Prefer not to say"];
 const MTM_CONTACT_METHOD_OPTIONS = ["Phone", "WhatsApp", "Email"];
@@ -777,6 +781,7 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
   const fileList = Array.isArray(labResultsFiles) ? labResultsFiles : [];
   const phonePattern = /^[0-9+\-()\s]{7,20}$/;
   const consentToDiscussCare = String(emergencyContact.consentToDiscussCare || "").trim();
+  const skipClinicalSections = consentToDiscussCare === "No";
   const emergencyContactRequired = consentToDiscussCare === "No"
     ? ["consentToDiscussCare"]
     : ["caregiverName", "relationship", "phoneNumber", "consentToDiscussCare"];
@@ -812,9 +817,9 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
   if (includeRequired) {
     if (step >= 1) validateRequiredSet(1);
     if (step >= 2) validateRequiredSet(2);
-    if (step >= 3) validateRequiredSet(3);
-    if (step >= 4 && requireMedicationDraft) validateRequiredSet(4);
-    if (step >= 5) validateRequiredSet(5);
+    if (!skipClinicalSections && step >= 3) validateRequiredSet(3);
+    if (!skipClinicalSections && step >= 4 && requireMedicationDraft) validateRequiredSet(4);
+    if (!skipClinicalSections && step >= 5) validateRequiredSet(5);
   }
 
   if (step >= 1) {
@@ -866,7 +871,7 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
     }
   }
 
-  if (step >= 3) {
+  if (!skipClinicalSections && step >= 3) {
     if (includeRequired && shouldValidateKey("primaryDiagnosis") && !String(medicalHistory.primaryDiagnosis || "").trim()) errors.primaryDiagnosis = "This field is required.";
     if (includeRequired && shouldValidateKey("chronicConditions") && !String(medicalHistory.chronicConditions || "").trim()) errors.chronicConditions = "This field is required.";
     if (includeRequired && shouldValidateKey("pastMedicalHistory") && !String(medicalHistory.pastMedicalHistory || "").trim()) errors.pastMedicalHistory = "This field is required.";
@@ -876,14 +881,14 @@ function buildMtmStepErrors(step, mtmForm, labResultsFiles = [], options = {}) {
     }
   }
 
-  if (step >= 4 && !requireMedicationDraft && includeRequired && shouldValidateKey("medications") && !medicationEntries.length) {
+  if (!skipClinicalSections && step >= 4 && !requireMedicationDraft && includeRequired && shouldValidateKey("medications") && !medicationEntries.length) {
     errors.medications = "Add at least one medication before you continue.";
   }
 
-  if (step >= 5 && includeRequired && shouldValidateKey("barriers") && !Array.isArray(adherenceAssessment.barriers)) {
+  if (!skipClinicalSections && step >= 5 && includeRequired && shouldValidateKey("barriers") && !Array.isArray(adherenceAssessment.barriers)) {
     errors.barriers = "Select at least one barrier.";
   }
-  if (step >= 5 && includeRequired && shouldValidateKey("barriers") && Array.isArray(adherenceAssessment.barriers) && !adherenceAssessment.barriers.length) {
+  if (!skipClinicalSections && step >= 5 && includeRequired && shouldValidateKey("barriers") && Array.isArray(adherenceAssessment.barriers) && !adherenceAssessment.barriers.length) {
     errors.barriers = "Select at least one barrier.";
   }
 
@@ -4477,7 +4482,7 @@ function MtmAvailabilityPage({ context, selectedDate, selectedSlot, loading, err
   const slots = Array.isArray(context?.available_slots) ? context.available_slots.filter((slot) => String(slot.start_at || "").slice(0, 10) === selectedDate) : [];
   return <section className="appointment-mobile-sheet customer-mtm-availability-screen">
     <div className="appointment-mobile-header"><button className="appointment-circle-button" type="button" aria-label="Back to review details" onClick={onBack}>←</button></div>
-    <AvailabilitySlotPicker providerName={context?.pharmacist_name || "Assigned pharmacist"} selectedDate={selectedDate} slots={slots} selectedSlot={selectedSlot} loading={loading} error={error} onUpdateDate={onUpdateDate} onSelectSlot={onSelectSlot} storeTimeZone={storeTimeZone} emptyLabel="Pharmacist not available" />
+    <AvailabilitySlotPicker providerName={context?.pharmacist_name || "Choose your preferred time"} selectedDate={selectedDate} slots={slots} selectedSlot={selectedSlot} loading={loading} error={error} onUpdateDate={onUpdateDate} onSelectSlot={onSelectSlot} storeTimeZone={storeTimeZone} emptyLabel="No pharmacist is available" />
     <div className="appointment-summary-card">
       <h3>Selected availability</h3>
       <div className="appointment-summary-row"><span>Date</span><strong>{friendlyDateFromDateKey(selectedDate, storeTimeZone)}</strong></div>
@@ -4485,7 +4490,9 @@ function MtmAvailabilityPage({ context, selectedDate, selectedSlot, loading, err
       <div className="appointment-summary-row"><span>Duration</span><strong>30 minutes</strong></div>
       <button className="pill-button" type="button" disabled={busy} onClick={onRefresh}>Refresh availability</button>
     </div>
-    <button className="appointment-primary-cta" type="button" disabled={!selectedSlot || loading || busy} onClick={onReserve}>{busy ? <BrandedSpinner label="Reserving availability" /> : "Confirm availability"}</button>
+    {busy ? <div className="customer-mtm-pharmacist-search" role="status" aria-live="polite"><BrandedSpinner label="Finding available Pharmacists" /><span>Finding available Pharmacists</span></div> : null}
+    <button className="appointment-primary-cta" type="button" disabled={!selectedSlot || loading || busy} onClick={onReserve}>Confirm Availability</button>
+    <button className="customer-mobile-secondary-button" type="button" disabled={busy} onClick={onBack}>Go Back</button>
   </section>;
 }
 
@@ -8247,13 +8254,31 @@ function CustomerMobileDashboard({
     const normalizedValue = Array.isArray(value)
       ? normalizeCustomerHealthChipList(value)
       : sanitizeMtmFieldValue(section, key, value);
-    const nextForm = {
+    let nextForm = {
       ...mtmForm,
       [section]: {
         ...mtmForm[section],
         [key]: normalizedValue,
       }
     };
+    if (section === "emergencyContact" && key === "consentToDiscussCare" && normalizedValue === "No") {
+      const emptyForm = createMtmFormState();
+      nextForm = {
+        ...nextForm,
+        emergencyContact: { ...emptyForm.emergencyContact, consentToDiscussCare: "No" },
+        medicalHistory: emptyForm.medicalHistory,
+        medicationProfile: emptyForm.medicationProfile,
+        adherenceAssessment: emptyForm.adherenceAssessment,
+        additionalInformation: emptyForm.additionalInformation,
+      };
+      setMtmMedicationEntries([createEmptyMtmMedicationProfile()]);
+      setMtmPreviousMedicationFile(null);
+      setMtmLabResultsFiles([]);
+      if (mtmPreviousMedicationInputRef.current) mtmPreviousMedicationInputRef.current.value = "";
+      if (mtmLabResultsInputRef.current) mtmLabResultsInputRef.current.value = "";
+      mtmMedicationInputRefs.current.forEach((input) => { if (input) input.value = ""; });
+      setMtmTouchedFields((current) => ({ consentToDiscussCare: current.consentToDiscussCare }));
+    }
     setMtmForm(nextForm);
     const liveErrors = buildMtmStepErrors(mtmStep, nextForm, mtmLabResultsFiles, {
       medicationEntries: mtmMedicationEntries,
@@ -8265,9 +8290,7 @@ function CustomerMobileDashboard({
       const next = { ...current };
       delete next[key];
       if (section === "emergencyContact" && key === "consentToDiscussCare" && normalizedValue === "No") {
-        ["caregiverName", "relationship", "phoneNumber", "emailAddress", "address", "livesWithPatient"].forEach((fieldKey) => {
-          delete next[fieldKey];
-        });
+        Object.keys(next).forEach((fieldKey) => { if (fieldKey !== "consentToDiscussCare") delete next[fieldKey]; });
       }
       if ((mtmTouchedFields[key] || mtmShowErrors) && liveErrors[key]) {
         next[key] = liveErrors[key];
@@ -8624,7 +8647,8 @@ function CustomerMobileDashboard({
       setMtmSubmitError("Session is not available.");
       return;
     }
-    const uploadFieldErrors = buildMtmUploadFieldErrors();
+    const skipClinicalSections = mtmSkipsClinicalSections(mtmForm);
+    const uploadFieldErrors = skipClinicalSections ? {} : buildMtmUploadFieldErrors();
     if (Object.keys(uploadFieldErrors).length) {
       setMtmShowErrors(true);
       setMtmSubmitError("");
@@ -8639,20 +8663,20 @@ function CustomerMobileDashboard({
     setMtmSubmitting(true);
     setMtmLoadingState(true);
     setMtmSubmitError("");
-    const submittedMedications = mtmMedicationEntries.map((entry) => ({
+    const submittedMedications = skipClinicalSections ? [] : mtmMedicationEntries.map((entry) => ({
       medicationFileName: entry.medicationFileName,
       medicationName: entry.medicationFileName,
       prescribingDoctor: entry.prescribingDoctor,
       notes: entry.notes,
     }));
-    const imageCount = mtmMedicationEntries.length + mtmLabResultsFiles.length + (mtmPreviousMedicationFile ? 1 : 0);
+    const imageCount = skipClinicalSections ? 0 : mtmMedicationEntries.length + mtmLabResultsFiles.length + (mtmPreviousMedicationFile ? 1 : 0);
     if (imageCount > 8) {
       setMtmStepErrors({ medications: "Upload no more than 8 images across the MTM assessment." });
       setMtmSubmitting(false);
       setMtmLoadingState(false);
       return;
     }
-    if (!submittedMedications.length || mtmMedicationEntries.some((entry) => !entry.file || !String(entry.prescribingDoctor || "").trim())) {
+    if (!skipClinicalSections && (!submittedMedications.length || mtmMedicationEntries.some((entry) => !entry.file || !String(entry.prescribingDoctor || "").trim()))) {
       setMtmStepErrors({ medications: "Enter the prescribing doctor for every medication." });
       setMtmTouchedFields((current) => ({ ...current, medications: true }));
       setMtmStep(4);
@@ -8664,19 +8688,19 @@ function CustomerMobileDashboard({
       const submission = await submitCustomerMtmRequest(session, {
         patient: mtmForm.patient,
         emergency_contact: mtmForm.emergencyContact,
-        medical_history: mtmForm.medicalHistory,
-        medication_profile: {
+        medical_history: skipClinicalSections ? {} : mtmForm.medicalHistory,
+        medication_profile: skipClinicalSections ? {} : {
           ...mtmForm.medicationProfile,
           medications: submittedMedications,
         },
-        adherence_assessment: mtmForm.adherenceAssessment,
-        additional_information: mtmForm.additionalInformation,
-        attachments: [
+        adherence_assessment: skipClinicalSections ? {} : mtmForm.adherenceAssessment,
+        additional_information: skipClinicalSections ? {} : mtmForm.additionalInformation,
+        attachments: skipClinicalSections ? [] : [
           ...mtmMedicationEntries.map((entry, index) => ({ name: entry.file.name, size: entry.file.size, type: entry.file.type, category: "medication", heading: `Medication ${index + 1}` })),
           ...(mtmPreviousMedicationFile ? [{ name: mtmPreviousMedicationFile.name, size: mtmPreviousMedicationFile.size, type: mtmPreviousMedicationFile.type, category: "previous_medication", heading: "Previous Medication Stopped" }] : []),
           ...mtmLabResultsFiles.map((file, index) => ({ name: file.name, size: file.size, type: file.type, category: "lab_result", heading: `Relevant Lab Result ${index + 1}` })),
         ],
-        pdf_image_files: [
+        pdf_image_files: skipClinicalSections ? [] : [
           ...mtmMedicationEntries.map((entry, index) => ({ file: entry.file, category: "medication", heading: `Medication ${index + 1}` })),
           ...(mtmPreviousMedicationFile ? [{ file: mtmPreviousMedicationFile, category: "previous_medication", heading: "Previous Medication Stopped" }] : []),
           ...mtmLabResultsFiles.map((file, index) => ({ file, category: "lab_result", heading: `Relevant Lab Result ${index + 1}` })),
@@ -9486,7 +9510,7 @@ function CustomerMobileDashboard({
                     </label>
                   </section>)}
                   {showMtmFieldError("medications") ? <small className="customer-mobile-field-error">{mtmStepErrors.medications}</small> : null}
-                  <button className="customer-mtm-inline-add-medication" type="button" onClick={addMtmMedicationEntry}><span aria-hidden="true">+</span> Add Medication</button>
+                  <button className="customer-mtm-inline-add-medication" type="button" onClick={addMtmMedicationEntry}><span aria-hidden="true">+</span> Add another medication</button>
                   <div className="customer-mobile-subsection-title">
                     <strong>Additional Medication Information</strong>
                     <small>Answer where relevant</small>
@@ -9637,21 +9661,21 @@ function CustomerMobileDashboard({
                   </section>
                   <section className="customer-mtm-review-card">
                     <div className="customer-mtm-review-card-head"><div><small>Step 2</small><h4>Caregiver or next of kin</h4></div><button type="button" onClick={() => transitionToMtmStep(2)}>Edit</button></div>
-                    <dl><div><dt>Name</dt><dd>{mtmForm.emergencyContact.caregiverName || "Not provided"}</dd></div><div><dt>Relationship</dt><dd>{mtmForm.emergencyContact.relationship || "Not provided"}</dd></div><div><dt>Phone</dt><dd>{mtmForm.emergencyContact.phoneNumber || "Not provided"}</dd></div></dl>
+                    {mtmSkipsClinicalSections(mtmForm) ? <><dl><div><dt>Consent to discuss care</dt><dd>No</dd></div></dl><p className="customer-mtm-review-skip-note">Clinical history, medication profile, monitoring, allergies, and adherence sections were skipped.</p></> : <dl><div><dt>Name</dt><dd>{mtmForm.emergencyContact.caregiverName || "Not provided"}</dd></div><div><dt>Relationship</dt><dd>{mtmForm.emergencyContact.relationship || "Not provided"}</dd></div><div><dt>Phone</dt><dd>{mtmForm.emergencyContact.phoneNumber || "Not provided"}</dd></div><div><dt>Consent to discuss care</dt><dd>{mtmForm.emergencyContact.consentToDiscussCare || "Not provided"}</dd></div></dl>}
                   </section>
-                  <section className="customer-mtm-review-card">
+                  {!mtmSkipsClinicalSections(mtmForm) ? <section className="customer-mtm-review-card">
                     <div className="customer-mtm-review-card-head"><div><small>Step 3</small><h4>Clinical history</h4></div><button type="button" onClick={() => transitionToMtmStep(3)}>Edit</button></div>
                     <dl><div><dt>Primary diagnosis</dt><dd>{mtmForm.medicalHistory.primaryDiagnosis || "Not provided"}</dd></div></dl>
                     {[...["chronicConditions", "drugAllergies", "drugIntolerances"]].map((key) => normalizeCustomerHealthChipList(mtmForm.medicalHistory[key]).length ? <div className="customer-mtm-review-token-row" key={key}><strong>{titleCase(key.replace(/([A-Z])/g, " $1"))}</strong><div>{normalizeCustomerHealthChipList(mtmForm.medicalHistory[key]).map((token) => <span className="customer-mtm-token" key={token}>{token}</span>)}</div></div> : null)}
-                  </section>
-                  <section className="customer-mtm-review-card">
+                  </section> : null}
+                  {!mtmSkipsClinicalSections(mtmForm) ? <section className="customer-mtm-review-card">
                     <div className="customer-mtm-review-card-head"><div><small>Step 4</small><h4>Medication documents</h4></div><button type="button" onClick={() => transitionToMtmStep(4)}>Edit</button></div>
                     <ul className="customer-mtm-review-files">{mtmMedicationEntries.map((entry, index) => <li key={`review-med-${index}`}><MobileIcon name="upload-file" /><span><strong>Medication {index + 1}</strong><small>{entry.file?.name || "Image missing"} · {entry.prescribingDoctor || "Doctor not provided"}</small></span></li>)}{mtmPreviousMedicationFile ? <li><MobileIcon name="upload-file" /><span><strong>Previous Medication Stopped</strong><small>{mtmPreviousMedicationFile.name}</small></span></li> : null}{mtmLabResultsFiles.map((file, index) => <li key={`review-lab-${index}`}><MobileIcon name="upload-file" /><span><strong>Relevant Lab Result {index + 1}</strong><small>{file.name}</small></span></li>)}</ul>
-                  </section>
-                  <section className="customer-mtm-review-card">
+                  </section> : null}
+                  {!mtmSkipsClinicalSections(mtmForm) ? <section className="customer-mtm-review-card">
                     <div className="customer-mtm-review-card-head"><div><small>Step 5</small><h4>Adherence</h4></div><button type="button" onClick={() => transitionToMtmStep(5)}>Edit</button></div>
                     <div className="customer-mtm-review-token-row"><strong>Selected barriers</strong><div>{mtmForm.adherenceAssessment.barriers.length ? mtmForm.adherenceAssessment.barriers.map((barrier) => <span className="customer-mtm-token" key={barrier}>{barrier}</span>) : <span>None selected</span>}</div></div>
-                  </section>
+                  </section> : null}
                 </div> : null}
                 {false && mtmStep === 6 ? <div className="customer-mobile-form-stack">
                   <div className="detail-card info-list">
@@ -9669,7 +9693,7 @@ function CustomerMobileDashboard({
                 <button className="customer-mobile-primary-button" type="button" disabled={mtmSubmitting} onClick={() => {
                   if (mtmStep < 6) {
                     if (!validateMtmStep(mtmStep)) return;
-                    transitionToMtmStep(mtmStep + 1);
+                    transitionToMtmStep(mtmStep === 2 && mtmSkipsClinicalSections(mtmForm) ? 6 : mtmStep + 1);
                     return;
                   }
                   if (mtmLatestRequest?.id && mtmBookingContext) {
@@ -9678,7 +9702,7 @@ function CustomerMobileDashboard({
                   }
                   submitMtmRequest();
                 }}>{mtmSubmitting ? <BrandedSpinner label="Preparing availability" /> : (mtmStep < 6 ? "Continue" : "Select Availability")}</button>
-                {mtmStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToMtmStep(Math.max(1, mtmStep - 1))}>Go Back</button> : null}
+                {mtmStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToMtmStep(mtmStep === 6 && mtmSkipsClinicalSections(mtmForm) ? 2 : Math.max(1, mtmStep - 1))}>Go Back</button> : null}
               </div>
             </section> : null}
             {mtmTab === "request" && showMtmSuccessState && mtmBookingStage === "success" ? <div className="customer-confirmation-modal customer-mtm-success-modal" role="dialog" aria-modal="true" aria-labelledby="mtm-success-title">

@@ -356,6 +356,9 @@ Stale display data can appear after account switching if cache keys or cleanup a
 - **Decision:** Use an append-only, non-clinical lifecycle event table for status, assignment, scheduling, payment, and notification events.
 - **Decision:** Non-Pro MTM availability may be held before payment only until 23:59:59 in the configured store timezone. Expired holds never block availability, payment cannot silently restore them, and approval requires a paid/credit-backed reservation.
 - **Decision:** MTM submission and slot notifications are decoupled from browser PDF completion; availability notifications are claimed idempotently only after the slot transaction commits.
+- **Decision:** MTM booking exposes only deduplicated provider-neutral availability. Pharmacist identity is selected on confirmation through least-recently-assigned ordering and is revalidated under database locks; the browser cannot nominate a pharmacist.
+- **Decision:** Pharmacists manage only their own availability through a role-restricted endpoint with no client-controlled user ID; payload fields and time ranges are allowlisted server-side.
+- **Decision:** An MTM consent value of `No` is authoritative for omitting all later clinical sections and attachments from storage, review, and PDF inputs.
 - **Decision:** Nurses remain administrator-managed provider records and do not receive authentication accounts.
 - **Decision:** Share the five-consultation Pro allowance through an atomic reservation ledger counted together with paid doctor appointments.
 - **Decision:** Server-created WooCommerce orders carry the configured MTM fee; client prices are ignored.
@@ -371,3 +374,25 @@ Stale display data can appear after account switching if cache keys or cleanup a
 - Decision: pharmacist IV queues are assignment-scoped and clinical transitions require the assigned pharmacist; Store Admin retains operational assignment and scheduling authority only.
 - Decision: declining or banning preserves the user and historical assignments for auditability, revokes sessions, and flags active Nurse Requests for reassignment.
 - Decision: Store Admin and administrator accounts cannot be targeted by the dashboard ban control.
+# 2026-07-23 — Store-admin staff, MTM, and subscription listings
+
+- Unified staff governance remains restricted to store-admin sessions; target mutations reject privileged/self targets and now require same-origin CSRF validation in the Next.js route.
+- MTM store-admin listing applies bounded pagination and sanitized search while pharmacist users remain restricted to assigned requests.
+- Subscription administration keeps its store-admin permission callback and exposes bounded, filtered pagination without returning payment secrets.
+
+# 2026-07-23 — Per-user storefront permissions and admin notifications
+
+- Decision: JWTs identify the session, while current WordPress capabilities remain authoritative for storefront-area authorization so permission revocation takes effect server-side without waiting for token expiry.
+- Decision: only administrators can change staff roles or per-user storefront permission grants; self-demotion and protected administrator targeting are rejected.
+- Decision: role/access changes revoke active sessions, create append-only audit records with safe before/after values, and notify the affected user and acting administrator through the existing email queue.
+- Decision: notification failure is logged and surfaced as a warning but never rolls back a successfully committed authorization change.
+- Decision: newly discovered nurse accounts, including nurses created manually in wp-admin, enter `pending_review`; frontend nurse registration already uses the same state. Existing approved nurses are not downgraded during insert-only synchronization.
+
+# 2026-07-23 — Patient governance actions and dashboard password reset
+
+- Decision: the WordPress role and indexed governance `managed_role` must change atomically; directory reads also reconcile wp-admin role changes so stale governance rows cannot retain obsolete access.
+- Decision: patient-target actions require Patients permission, while staff-target actions require Staff Management permission. Administrators retain all required permissions; self-targets and protected administrator/store-manager targets remain blocked.
+- Decision: ban and suspension revoke active session families and refresh tokens. Password reset does not restore login access while either state remains active.
+- Decision: administrator-triggered password-reset links use the shared trusted dashboard origin and an allowlisted role-specific `frontend_type`; WordPress reset pages are not used.
+- Decision: approved nurses use the permission-restricted storefront frontend for their Nurse Requests access. This supersedes the earlier “no dashboard” decision; pending, declined, banned, and suspended nurses remain unable to authenticate.
+- Decision: role, status, and reset mutations remain authoritative when a notification fails. The failure is audited and shown to the acting administrator without exposing reset keys or links.

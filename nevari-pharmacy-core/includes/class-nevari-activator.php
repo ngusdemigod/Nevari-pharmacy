@@ -696,6 +696,7 @@ final class Nevari_Activator {
             UNIQUE KEY request_reference (request_reference),
             KEY customer_status (customer_user_id, status),
             KEY pharmacist_status (assigned_pharmacist_user_id, status),
+            KEY pharmacist_round_robin (assigned_pharmacist_user_id, assigned_at),
             KEY submission_pdf_status (submission_pdf_status),
             KEY doctor_status (assigned_doctor_user_id, status),
             KEY scheduled_at (scheduled_at),
@@ -795,6 +796,17 @@ final class Nevari_Activator {
             'nevari_schedule_follow_up',
             'nevari_track_mtm_outcomes',
             'nevari_complete_mtm_case',
+            'nevari_storefront_products',
+            'nevari_storefront_orders',
+            'nevari_storefront_payments',
+            'nevari_storefront_patients',
+            'nevari_storefront_consultations',
+            'nevari_storefront_mtm',
+            'nevari_storefront_iv_therapy',
+            'nevari_storefront_nurse_requests',
+            'nevari_storefront_logs',
+            'nevari_storefront_staff',
+            'nevari_storefront_subscriptions',
         ];
 
         foreach (['administrator', 'shop_manager'] as $role_name) {
@@ -804,6 +816,24 @@ final class Nevari_Activator {
             }
             foreach ($caps as $cap) {
                 $role->add_cap($cap);
+            }
+        }
+
+        $storefront_defaults = [
+            'administrator' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv_therapy', 'nurse_requests', 'logs', 'staff', 'subscriptions'],
+            'store_admin' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv_therapy', 'nurse_requests', 'logs', 'subscriptions'],
+            'shop_manager' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv_therapy', 'nurse_requests', 'logs', 'subscriptions'],
+            'pharmacist' => ['products', 'orders', 'payments', 'patients', 'mtm'],
+            'doctor' => ['patients', 'consultations'],
+            'nurse' => ['nurse_requests'],
+        ];
+        foreach ($storefront_defaults as $role_name => $areas) {
+            $role = get_role($role_name);
+            if (!$role) {
+                continue;
+            }
+            foreach ($areas as $area) {
+                $role->add_cap('nevari_storefront_' . $area);
             }
         }
     }

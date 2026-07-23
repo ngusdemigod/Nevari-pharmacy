@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { BrandedSpinner } from "../components/BrandedSpinner";
-import { FRONTENDS } from "../components/frontend-config";
+import { FRONTEND_BY_TYPE, FRONTENDS } from "../components/frontend-config";
 import { buildUrl, defaultSession, frontendContext, loadSession } from "../components/role-session";
 
 function passwordError(value) {
@@ -27,6 +27,8 @@ export default function ResetPasswordPageClient() {
   const searchParams = useSearchParams();
   const login = String(searchParams.get("login") || "").trim();
   const key = String(searchParams.get("key") || "").trim();
+  const requestedFrontendType = String(searchParams.get("frontend_type") || FRONTENDS.patient.type).trim();
+  const config = FRONTEND_BY_TYPE[requestedFrontendType] || null;
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [fieldError, setFieldError] = useState("");
@@ -34,21 +36,21 @@ export default function ResetPasswordPageClient() {
   const [completed, setCompleted] = useState(false);
   const [notice, setNotice] = useState({ message: "Set a new password to continue.", tone: "warning" });
   const session = useMemo(() => {
-    const config = FRONTENDS.patient;
-    const stored = loadSession(config);
+    const resolvedConfig = config || FRONTENDS.patient;
+    const stored = loadSession(resolvedConfig);
     return {
-      ...defaultSession(config),
+      ...defaultSession(resolvedConfig),
       ...stored,
-      frontendType: config.type,
+      frontendType: resolvedConfig.type,
       frontendOrigin: typeof window !== "undefined" ? window.location.origin : stored.frontendOrigin || "",
       frontendUrl: typeof window !== "undefined" ? window.location.href : stored.frontendUrl || "",
       paired: true,
     };
-  }, []);
+  }, [config]);
 
   async function handleSubmit(event) {
     event.preventDefault();
-    if (!login || !key || submitting) {
+    if (!login || !key || !config || submitting) {
       return;
     }
 
@@ -66,7 +68,7 @@ export default function ResetPasswordPageClient() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Nevari-Frontend-Type": FRONTENDS.patient.type,
+          "X-Nevari-Frontend-Type": config.type,
           "X-Nevari-Frontend-Origin": typeof window !== "undefined" ? window.location.origin : "",
         },
         body: JSON.stringify({
@@ -109,17 +111,17 @@ export default function ResetPasswordPageClient() {
 
         <div className={`auth-notice ${notice.tone}`}>{notice.message}</div>
 
-        {!login || !key ? (
+        {!login || !key || !config ? (
           <div className="auth-form">
             <div className="auth-helper-copy">This password reset link is invalid or incomplete.</div>
-            <button className="auth-primary-button" type="button" onClick={() => router.push("/login")}>
+            <button className="auth-primary-button" type="button" onClick={() => router.push(config?.loginPath || FRONTENDS.patient.loginPath)}>
               Back to login
             </button>
           </div>
         ) : completed ? (
           <div className="auth-form">
             <div className="auth-helper-copy">Your password has been updated successfully.</div>
-            <button className="auth-primary-button" type="button" onClick={() => router.push("/login")}>
+            <button className="auth-primary-button" type="button" onClick={() => router.push(config.loginPath)}>
               Go to login
             </button>
           </div>
@@ -142,7 +144,7 @@ export default function ResetPasswordPageClient() {
               {submitting ? <BrandedSpinner label="Resetting password" /> : "Reset password"}
             </button>
             <div className="auth-footer-links">
-              <Link href="/login" className="auth-text-link">Back to login</Link>
+              <Link href={config.loginPath} className="auth-text-link">Back to login</Link>
             </div>
           </form>
         )}

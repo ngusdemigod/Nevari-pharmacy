@@ -439,7 +439,7 @@ final class Nevari_Auth {
         if (is_wp_error($user) || !($user instanceof WP_User)) {
             return Nevari_Helpers::error('invalid_reset_link', 'This password reset link is invalid or has expired.', 400);
         }
-        if (!self::user_can_access_frontend($user, (string) $frontend['frontend_type'])) {
+        if (!self::user_role_can_access_frontend($user, (string) $frontend['frontend_type'])) {
             return Nevari_Helpers::error('forbidden', 'Unauthorized user', 403);
         }
 
@@ -995,8 +995,17 @@ final class Nevari_Auth {
             return false;
         }
 
+        return self::user_role_can_access_frontend($resolved_user, $frontend_type);
+    }
+
+    private static function user_role_can_access_frontend($user, string $frontend_type): bool {
+        $resolved_user = $user instanceof WP_User ? $user : get_user_by('id', (int) $user);
+        if (!$resolved_user) {
+            return false;
+        }
+
         if ($frontend_type === 'storefront') {
-            return (bool) array_intersect(['administrator', 'shop_manager'], (array) $resolved_user->roles);
+            return (bool) array_intersect(['administrator', 'shop_manager', 'store_admin', 'nurse'], (array) $resolved_user->roles);
         }
 
         if ($frontend_type === 'doctors_dashboard') {
@@ -1007,7 +1016,7 @@ final class Nevari_Auth {
         }
 
         if ($frontend_type === 'patient_dashboard') {
-            return (bool) array_intersect(['patient', 'customer'], (array) $resolved_user->roles);
+            return (bool) array_intersect(['patient', 'customer', 'subscriber'], (array) $resolved_user->roles);
         }
 
         return false;
@@ -1036,22 +1045,73 @@ final class Nevari_Auth {
         return sanitize_text_field((string) preg_replace('/[._-]+/', ' ', $local));
     }
 
+    public static function request_dashboard_password_reset_for_user(WP_User $user) {
+        $frontend_type = self::frontend_type_for_user($user);
+        $frontend = $frontend_type ? Nevari_Connections::trusted_frontend_for_type($frontend_type) : null;
+        if (!$frontend || !self::user_role_can_access_frontend($user, $frontend_type)) {
+            return new WP_Error('reset_frontend_unavailable', 'A dashboard reset destination is not available for this user.');
+        }
+
+        $reset_key = get_password_reset_key($user);
+        if (is_wp_error($reset_key)) {
+            return $reset_key;
+        }
+
+        $reset_url = self::dashboard_password_reset_url($frontend, $user, (string) $reset_key);
+        $result = self::send_dashboard_password_reset_email($user, $reset_url);
+        if (is_wp_error($result)) {
+            return $result;
+        }
+        $delivery_status = '';
+        if (is_numeric($result)) {
+            global $wpdb;
+            $delivery_status = (string) $wpdb->get_var($wpdb->prepare(
+                'SELECT status FROM ' . Nevari_Helpers::table('email_logs') . ' WHERE id = %d',
+                (int) $result
+            ));
+        }
+
+        return [
+            'frontend_type' => $frontend_type,
+            'queued' => $delivery_status !== 'failed',
+            'warning' => $delivery_status === 'failed' ? 'The reset request was recorded, but the email could not be delivered.' : '',
+        ];
+    }
+
+    private static function frontend_type_for_user(WP_User $user): string {
+        $roles = (array) $user->roles;
+        if (in_array('doctor', $roles, true)) {
+            return 'doctors_dashboard';
+        }
+        if (in_array('pharmacist', $roles, true)) {
+            return 'pharmacist_dashboard';
+        }
+        if (array_intersect(['administrator', 'shop_manager', 'store_admin', 'nurse'], $roles)) {
+            return 'storefront';
+        }
+        if (array_intersect(['patient', 'customer', 'subscriber'], $roles)) {
+            return 'patient_dashboard';
+        }
+        return '';
+    }
+
     private static function dashboard_password_reset_url(array $frontend, WP_User $user, string $reset_key): string {
         $origin = untrailingslashit((string) ($frontend['frontend_origin'] ?? ''));
         return $origin . '/reset-password?' . http_build_query([
             'login' => $user->user_login,
             'key' => $reset_key,
+            'frontend_type' => sanitize_key((string) ($frontend['frontend_type'] ?? 'patient_dashboard')),
         ]);
     }
 
-    private static function send_dashboard_password_reset_email(WP_User $user, string $reset_url): void {
+    private static function send_dashboard_password_reset_email(WP_User $user, string $reset_url) {
         $display_name = self::preferred_customer_display_name(
             (string) get_user_meta((int) $user->ID, 'first_name', true),
             (string) get_user_meta((int) $user->ID, 'last_name', true),
             (string) $user->user_email
         ) ?: $user->user_login;
 
-        Nevari_Emails::queue_or_send([
+        return Nevari_Emails::queue_or_send([
             'recipient_user_id' => (int) $user->ID,
             'recipient_email' => $user->user_email,
             'subject' => 'Reset your Nevari dashboard password',
@@ -1097,6 +1157,9 @@ final class Nevari_Auth {
             'capabilities' => array_values(array_filter($all_caps, static function ($cap) {
                 return strpos($cap, 'nevari_') === 0 || in_array($cap, ['manage_woocommerce', 'edit_products', 'edit_shop_orders'], true);
             })),
+            'storefront_permissions' => class_exists('Nevari_User_Governance')
+                ? Nevari_User_Governance::permission_keys_for_user((int) $user->ID)
+                : [],
         ];
     }
 

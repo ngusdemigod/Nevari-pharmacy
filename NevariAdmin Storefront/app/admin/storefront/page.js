@@ -8,7 +8,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import useSWR, { useSWRConfig } from "swr";
 import { DEFAULT_NEVARI_BASE_URL } from "../../components/frontend-config";
 import { removeById, replaceById, updateListPayload, upsertById } from "../../../lib/fetcher";
-import { isAdminSummaryKey, isAppointmentListKey, isCustomerListKey, isDoctorListKey, isOrderListKey, isProductCategoryListKey, isProductListKey, isProductTagListKey, swrKeys, withBaseUrl } from "../../../lib/swrKeys";
+import { isAdminSummaryKey, isAppointmentListKey, isCustomerListKey, isDoctorListKey, isGovernedUsersKey, isOrderListKey, isProductCategoryListKey, isProductListKey, isProductTagListKey, swrKeys, withBaseUrl } from "../../../lib/swrKeys";
 import { useCreateProduct, useDeleteProduct, useUpdateProduct } from "../../../hooks/products";
 import { useUpdateOrderStatus } from "../../../hooks/orders/useUpdateOrderStatus";
 import { setDocumentMetadata } from "../../components/page-metadata";
@@ -18,9 +18,8 @@ import { buildTwoStepVerificationRequest, loadAuthSecuritySettings, persistAuthS
 import { getOrderTypeMeta } from "../../components/role-dashboard-utils";
 import { clearStoredSessions, createPairingRequiredError, isPairingRequiredError, isPairingRequiredPayload } from "../../components/role-session";
 import { buildSWRRevealSignature, useSWRReveal } from "../../components/useSWRReveal";
-import GovernedUsersPanel from "../../components/GovernedUsersPanel";
+import StaffDirectory from "../../components/StaffDirectory";
 import NurseRequestAdminPanel from "../../components/NurseRequestAdminPanel";
-import IvTherapyOperationsPanel from "../../components/IvTherapyOperationsPanel";
 
 const STORAGE_KEY = "nevari_admin_storefront_session";
 const STORE_CURRENCY_KEY = "nevari_store_currency";
@@ -148,6 +147,12 @@ const FRONTEND_PAGES = [
     ]
   }
 ];
+const STOREFRONT_PAGE_PERMISSIONS = {
+  products: "products", orders: "orders", payments: "payments", customers: "patients",
+  consultations: "consultations", mtm: "mtm", "iv-therapy": "iv-therapy",
+  "nurse-requests": "nurse-requests", audit: "logs", emails: "logs",
+  doctors: "staff", subscriptions: "subscriptions"
+};
 
 const SEARCH_PLACEHOLDERS = {
   overview: "Search bookings, MTM requests, products, orders or customers",
@@ -1247,7 +1252,7 @@ function primaryRoleValue(roles = []) {
   if (clinicalRole) {
     return clinicalRole;
   }
-  const customerRole = roles.find((role) => role.includes("customer") || role.includes("patient"));
+  const customerRole = roles.find((role) => role.includes("customer") || role.includes("patient") || role.includes("subscriber"));
   if (customerRole) {
     return customerRole;
   }
@@ -1447,15 +1452,6 @@ function itemQuantityTotal(order) {
     return Number(order.totals.items_quantity);
   }
   return (order?.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-}
-
-function formatTopbarDate(timeZone = storedStoreTimeZone()) {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: normalizeTimeZone(timeZone) || SSR_SAFE_STORE_TIMEZONE,
-    month: "long",
-    day: "numeric",
-    year: "numeric"
-  }).format(new Date());
 }
 
 function formatLiveLabel(value = new Date(), timeZone = storedStoreTimeZone()) {
@@ -2465,6 +2461,9 @@ export function AdminStorefrontDashboard({
   const [selectedSubscriptionPlanKey, setSelectedSubscriptionPlanKey] = useState("");
   const [selectedSubscriptionPlanId, setSelectedSubscriptionPlanId] = useState("");
   const [subscriptionTablePage, setSubscriptionTablePage] = useState(1);
+  const [subscriptionUserPage, setSubscriptionUserPage] = useState(1);
+  const [subscriptionDetailsOpen, setSubscriptionDetailsOpen] = useState(false);
+  const [subscriptionDetailsActionLoading, setSubscriptionDetailsActionLoading] = useState("");
   const [subscriptionModalPlan, setSubscriptionModalPlan] = useState(null);
   const [subscriptionCreateLoading, setSubscriptionCreateLoading] = useState(false);
   const [subscriptionDeleteLoading, setSubscriptionDeleteLoading] = useState(false);
@@ -2577,7 +2576,6 @@ export function AdminStorefrontDashboard({
   const [adminSettingsTab, setAdminSettingsTab] = useState("automation");
   const [consultationDetailForm, setConsultationDetailForm] = useState({ startAt: "", endAt: "", doctorNotes: "", cancellationReason: "" });
   const [consultationActionLoading, setConsultationActionLoading] = useState("");
-  const [consultationActionFeedback, setConsultationActionFeedback] = useState("");
   const [selectedDoctorId, setSelectedDoctorId] = useState(null);
   const [emailTemplates, setEmailTemplates] = useState(DEFAULT_EMAIL_TEMPLATES);
   const [selectedEmailTemplateId, setSelectedEmailTemplateId] = useState(DEFAULT_EMAIL_TEMPLATES[0].id);
@@ -2836,6 +2834,43 @@ export function AdminStorefrontDashboard({
     setSubscriptionTablePage((current) => Math.min(current, subscriptionTablePageCount));
   }, [subscriptionTablePageCount]);
 
+  function openSubscriptionDetails(plan) {
+    if (!plan || typeof plan !== "object") {
+      return;
+    }
+    setSelectedSubscriptionPlanKey(String(plan.plan_key || plan.slug || plan.planKey || "").trim());
+    setSelectedSubscriptionPlanId(String(plan.id ?? plan.plan_id ?? plan.plan_key ?? plan.slug ?? "").trim());
+    setSubscriptionDetailsActionLoading("");
+    setSubscriptionDetailsOpen(true);
+  }
+
+  function closeSubscriptionDetails() {
+    if (subscriptionDetailsActionLoading) {
+      return;
+    }
+    setSubscriptionDetailsOpen(false);
+  }
+
+  async function refreshSubscriptionDetails() {
+    setSubscriptionDetailsActionLoading("refresh");
+    const refreshed = await refreshSubscriptionStatus();
+    if (refreshed) {
+      showSnackbar("Subscription details refreshed.", "success");
+    } else {
+      showSnackbar("Subscription details could not be refreshed.", "error");
+    }
+    setSubscriptionDetailsActionLoading("");
+  }
+
+  function editSelectedSubscriptionPlan() {
+    if (!selectedSubscriptionPlan) {
+      showSnackbar("Select a subscription plan first.", "warning");
+      return;
+    }
+    setSubscriptionDetailsOpen(false);
+    openSubscriptionModal("edit", selectedSubscriptionPlan);
+  }
+
   function openSubscriptionModal(mode = "create", planData = "") {
     setSubscriptionModalMode(mode);
     setSubscriptionProtectionOpen(false);
@@ -2989,20 +3024,22 @@ export function AdminStorefrontDashboard({
     }
   }
 
-  async function deleteSubscriptionPlan() {
-    const planId = String(subscriptionModalPlan?.id ?? subscriptionModalPlan?.plan_id ?? selectedSubscriptionPlanId ?? selectedSubscriptionPlanKey ?? "").trim();
+  async function deleteSubscriptionPlan(planOverride = null) {
+    const activePlan = planOverride || subscriptionModalPlan || selectedSubscriptionPlan;
+    const planId = String(activePlan?.id ?? activePlan?.plan_id ?? selectedSubscriptionPlanId ?? selectedSubscriptionPlanKey ?? "").trim();
     if (!planId) {
       showSnackbar("Select a subscription plan first.", "warning");
       return;
     }
     if (typeof window !== "undefined") {
-      const confirmed = window.confirm(`Delete ${subscriptionModalPlan?.name || selectedSubscriptionPlan?.name || "this subscription plan"}? This action cannot be undone.`);
+      const confirmed = window.confirm(`Delete ${activePlan?.name || "this subscription plan"}? This action cannot be undone.`);
       if (!confirmed) {
         return;
       }
     }
 
     setSubscriptionDeleteLoading(true);
+    setSubscriptionDetailsActionLoading("delete");
     try {
       await apiRequest(`/subscriptions/admin/${encodeURIComponent(planId)}`, {
         method: "DELETE",
@@ -3023,9 +3060,10 @@ export function AdminStorefrontDashboard({
       if (String(selectedSubscriptionPlanId) === planId) {
         setSelectedSubscriptionPlanId("");
       }
-      if (String(selectedSubscriptionPlanKey) === String(subscriptionModalPlan?.plan_key || subscriptionModalPlan?.slug || "")) {
+      if (String(selectedSubscriptionPlanKey) === String(activePlan?.plan_key || activePlan?.slug || "")) {
         setSelectedSubscriptionPlanKey("");
       }
+      setSubscriptionDetailsOpen(false);
       closeSubscriptionModal();
       await refreshSubscriptionStatus();
       showSnackbar("Subscription plan deleted.", "success");
@@ -3034,20 +3072,23 @@ export function AdminStorefrontDashboard({
       await refreshSubscriptionStatus();
     } finally {
       setSubscriptionDeleteLoading(false);
+      setSubscriptionDetailsActionLoading("");
     }
   }
 
   async function refreshSubscriptionStatus() {
     if (!session.accessToken) {
-      return;
+      return false;
     }
 
     setSubscriptionState((current) => ({ ...current, loading: true, error: "" }));
     try {
-      const payload = await apiRequest("/subscriptions/admin");
+      const payload = await apiRequest("/subscriptions/admin", { params: { page: subscriptionUserPage, per_page: 20 } });
       setSubscriptionState({ loading: false, error: "", data: payload?.data || payload || null });
+      return true;
     } catch (error) {
       setSubscriptionState({ loading: false, error: String(error?.message || "Could not load subscription data."), data: null });
+      return false;
     }
   }
 
@@ -3077,6 +3118,12 @@ export function AdminStorefrontDashboard({
       eventSource.close();
     };
   }, [currentPage, session.accessToken]);
+
+  useEffect(() => {
+    if (currentPage === "subscriptions" && session.accessToken) {
+      refreshSubscriptionStatus().catch(() => {});
+    }
+  }, [subscriptionUserPage]);
 
   useEffect(() => {
     setEmailTemplates(loadEmailTemplates());
@@ -3179,14 +3226,27 @@ export function AdminStorefrontDashboard({
   }, [session, currentPage, hydrated, isEmbeddedDashboard]);
 
   useEffect(() => {
-    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || auditDetailModalOpen || customerPrivilegeEscalationOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(productEditForm && productEditorMode === "create") || Boolean(selectedCustomerId) || Boolean(mtmPreviewRequestId) || Boolean(ivTherapyPreviewRequestId);
+    const hasPopupOpen = orderModalOpen || orderControlsModalOpen || doctorAssignmentModalOpen || orderCreateModalOpen || paymentReceiptModalOpen || categoryCreateOpen || auditDetailModalOpen || customerPrivilegeEscalationOpen || subscriptionDetailsOpen || Boolean(createModalType) || Boolean(selectedConsultation) || Boolean(selectedDoctorId) || Boolean(selectedProductEdit) || Boolean(productEditForm && productEditorMode === "create") || Boolean(selectedCustomerId) || Boolean(mtmPreviewRequestId) || Boolean(ivTherapyPreviewRequestId);
     document.body.classList.toggle("auth-locked", authGate.visible);
     document.body.classList.toggle("modal-open", hasPopupOpen);
     return () => {
       document.body.classList.remove("auth-locked");
       document.body.classList.remove("modal-open");
     };
-  }, [auditDetailModalOpen, authGate.visible, categoryCreateOpen, createModalType, customerPrivilegeEscalationOpen, doctorAssignmentModalOpen, orderControlsModalOpen, orderCreateModalOpen, orderModalOpen, paymentReceiptModalOpen, selectedConsultation, selectedCustomerId, selectedDoctorId, selectedProductEdit, productEditForm, productEditorMode]);
+  }, [auditDetailModalOpen, authGate.visible, categoryCreateOpen, createModalType, customerPrivilegeEscalationOpen, doctorAssignmentModalOpen, orderControlsModalOpen, orderCreateModalOpen, orderModalOpen, paymentReceiptModalOpen, selectedConsultation, selectedCustomerId, selectedDoctorId, selectedProductEdit, productEditForm, productEditorMode, subscriptionDetailsOpen]);
+
+  useEffect(() => {
+    if (!subscriptionDetailsOpen) {
+      return undefined;
+    }
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape" && !subscriptionDetailsActionLoading) {
+        setSubscriptionDetailsOpen(false);
+      }
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [subscriptionDetailsActionLoading, subscriptionDetailsOpen]);
 
   useEffect(() => {
     const isOpen = Boolean(productEditForm && (selectedProductEdit || productEditorMode === "create"));
@@ -3361,9 +3421,11 @@ export function AdminStorefrontDashboard({
         email: customerEmail(customer) || "No email on file",
         orders: Number(customer.orders || customer.order_count || 0),
         spend: safeNumber(customer.spend || customer.total_spend || 0),
-        lastActivity: customer.updated_at || customer.created_at || null,
+        lastActivity: customer.last_activity || customer.updated_at || customer.created_at || null,
         prescriptions: Number(customer.prescriptions || 0),
         appointments: Number(customer.appointments || 0),
+        avatarUrl: customer.avatar_url || customer.profile_image || "",
+        accountStatus: customer.account_status || "approved",
         roles,
         primaryRole: primaryRoleValue(roles),
         hasAccountRecord: true
@@ -3451,6 +3513,7 @@ export function AdminStorefrontDashboard({
     });
 
     return [...customerMap.values()]
+      .filter((row) => row.hasAccountRecord && (row.roles || []).some((role) => ["patient", "customer", "subscriber"].includes(String(role).toLowerCase())))
       .filter((row) => matchesSearch(`${row.label} ${row.name} ${row.email} ${row.id}`, currentPage === "customers"))
       .sort((a, b) => safeNumber(b.spend) - safeNumber(a.spend));
   })();
@@ -3503,7 +3566,7 @@ export function AdminStorefrontDashboard({
 
   useEffect(() => {
     setMtmPage(1);
-  }, [deferredSearch, data.mtmRequests]);
+  }, [deferredSearch]);
 
   useEffect(() => {
     setStaffPage(1);
@@ -4158,9 +4221,108 @@ export function AdminStorefrontDashboard({
 
   function switchPage(pageId) {
     const nextPage = normalizePageId(pageId);
+    const sessionRoles = session.user?.roles || [];
+    const permissions = session.user?.storefront_permissions || [];
+    const requiredPermission = STOREFRONT_PAGE_PERMISSIONS[nextPage];
+    if (!sessionRoles.includes("administrator") && requiredPermission && !permissions.includes(requiredPermission)) {
+      return;
+    }
     setCurrentPage(nextPage);
     setSidebarOpen(false);
     persistSessionSnapshot(latestSessionRef.current || session, nextPage);
+  }
+
+  async function runPatientAccountAction(row, action) {
+    const userId = row?.id || row?.user_id;
+    if (!userId) return;
+    const busyKey = `patient-${userId}-${action}`;
+    setTableActionLoading(busyKey);
+    try {
+      const csrf = decodeURIComponent(document.cookie.match(/(?:^|;\s*)nevari_csrf=([^;]+)/)?.[1] || "");
+      const response = await fetch(`/api/admin/users/${encodeURIComponent(String(userId))}/${action}`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-nevari-frontend-origin": window.location.origin,
+          "x-nevari-frontend-type": session.frontendType,
+          "x-nevari-csrf": csrf
+        },
+        body: JSON.stringify({ baseUrl: session.baseUrl, reason: "Patient account action from admin storefront" })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.success) throw new Error(payload?.error?.message || "Unable to update this patient.");
+      const nextStatus = payload.data?.status || payload.data?.user?.account_status || row.accountStatus || "approved";
+      const updatedUser = payload.data?.user || {};
+      await customersQuery.mutate((current) => {
+        if (!Array.isArray(current?.data?.items)) return current;
+        return {
+          ...current,
+          data: {
+            ...current.data,
+            items: current.data.items.map((item) => Number(item.user_id || item.id) === Number(userId)
+              ? { ...item, ...updatedUser, account_status: nextStatus }
+              : item)
+          }
+        };
+      }, false);
+      setData((current) => ({
+        ...current,
+        customers: (current.customers || []).map((item) => Number(item.user_id || item.id) === Number(userId)
+          ? { ...item, ...updatedUser, account_status: nextStatus }
+          : item)
+      }));
+      await Promise.all([
+        customersQuery.mutate(),
+        globalMutate(isGovernedUsersKey, undefined, { revalidate: true })
+      ]);
+      setSnackbar({
+        tone: payload.data?.notification?.warning ? "warning" : "success",
+        message: payload.data?.notification?.warning || (action === "reset-password" ? "Dashboard password reset email sent." : "Patient account updated.")
+      });
+    } catch (error) {
+      setSnackbar({ tone: "error", message: error?.message || "Unable to update this patient." });
+    } finally {
+      setTableActionLoading("");
+    }
+  }
+
+  function patientTableActionButton(row, action, label, path) {
+    const userId = row?.id || row?.user_id;
+    const loading = tableActionLoading === `patient-${userId}-${action}`;
+    return (
+      <button
+        className="staff-action-icon"
+        type="button"
+        aria-label={`${label} ${row.name || "patient"}`}
+        data-tooltip={loading ? `${label} in progress` : label}
+        disabled={Boolean(tableActionLoading)}
+        onClick={(event) => {
+          event.stopPropagation();
+          runPatientAccountAction(row, action);
+        }}
+      >
+        {loading
+          ? <span className="nevari-branded-spinner staff-icon-spinner" aria-hidden="true" />
+          : <svg viewBox="0 0 24 24" aria-hidden="true"><path d={path} /></svg>}
+      </button>
+    );
+  }
+
+  function patientDetailActionButton(action, label, className = "pill-button") {
+    if (!selectedCustomerProfile) return null;
+    const userId = selectedCustomerProfile.id || selectedCustomerProfile.user_id;
+    const loading = tableActionLoading === `patient-${userId}-${action}`;
+    return (
+      <button
+        className={className}
+        type="button"
+        disabled={Boolean(tableActionLoading)}
+        onClick={() => runPatientAccountAction(selectedCustomerProfile, action)}
+      >
+        {loading ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
+        <span>{label}</span>
+      </button>
+    );
   }
 
   function patchCacheList(predicate, updater, { revalidate = false } = {}) {
@@ -4972,7 +5134,7 @@ export function AdminStorefrontDashboard({
     setCustomerPrivilegeSubject(subject);
     setCustomerPrivilegeTargetRole(subject.targetRole);
     setCustomerPrivilegeEscalationOpen(true);
-    setCustomerPrivilegeEscalationLoading(false);
+    setCustomerPrivilegeEscalationLoading(true);
     setCustomerPrivilegeOtp({ code: "", status: "Sending OTP to your email...", challengeId: "", maskedEmail: "" });
 
     try {
@@ -4990,6 +5152,8 @@ export function AdminStorefrontDashboard({
       });
     } catch (error) {
       setCustomerPrivilegeOtp({ code: "", challengeId: "", maskedEmail: "", status: describeRequestError(error) });
+    } finally {
+      setCustomerPrivilegeEscalationLoading(false);
     }
   }
 
@@ -5043,7 +5207,8 @@ export function AdminStorefrontDashboard({
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
-          "X-Nevari-Frontend-Origin": window.location.origin
+          "X-Nevari-Frontend-Origin": window.location.origin,
+          "X-Nevari-Csrf": decodeURIComponent(document.cookie.match(/(?:^|;\s*)nevari_csrf=([^;]+)/)?.[1] || "")
         },
         body: JSON.stringify({
           target_role: customerPrivilegeTargetRole,
@@ -5056,13 +5221,33 @@ export function AdminStorefrontDashboard({
         throw new Error(payload?.error?.message || "User role change failed.");
       }
 
-      revalidateCacheGroups(isCustomerListKey, isDoctorListKey);
-      if (customersQuery?.mutate) {
-        customersQuery.mutate();
-      }
-      if (doctorsQuery?.mutate) {
-        doctorsQuery.mutate();
-      }
+      const upgradedUserId = String(customerPrivilegeSubject.userId);
+      await customersQuery.mutate((current) => {
+        if (!Array.isArray(current?.data?.items)) return current;
+        const items = current.data.items.filter((item) => String(item.user_id || item.id) !== upgradedUserId);
+        return {
+          ...current,
+          data: {
+            ...current.data,
+            items,
+            pagination: current.data.pagination ? {
+              ...current.data.pagination,
+              total: Math.max(0, Number(current.data.pagination.total || items.length) - 1)
+            } : current.data.pagination
+          }
+        };
+      }, false);
+      setData((current) => ({
+        ...current,
+        customers: (current.customers || []).filter((item) => String(item.user_id || item.id) !== upgradedUserId)
+      }));
+      await Promise.all([
+        globalMutate(isGovernedUsersKey, undefined, { revalidate: true }),
+        globalMutate(isCustomerListKey, undefined, { revalidate: true }),
+        globalMutate(isDoctorListKey, undefined, { revalidate: true }),
+        customersQuery?.mutate ? customersQuery.mutate() : Promise.resolve(),
+        doctorsQuery?.mutate ? doctorsQuery.mutate() : Promise.resolve()
+      ]);
 
       closeCustomerPrivilegeEscalationModal();
       if (customerPrivilegeSubject.mode === "downgrade") {
@@ -5070,9 +5255,10 @@ export function AdminStorefrontDashboard({
       } else {
         closeCustomerDetails();
       }
+      const notificationWarning = payload?.data?.notification?.warning || "";
       showSnackbar(
-        payload?.data?.message || `${customerPrivilegeSubject.name} updated to ${formatRoleLabel(customerPrivilegeTargetRole)}.`,
-        "success"
+        notificationWarning || payload?.data?.message || `${customerPrivilegeSubject.name} updated to ${formatRoleLabel(customerPrivilegeTargetRole)}.`,
+        notificationWarning ? "warning" : "success"
       );
     } catch (error) {
       const message = describeRequestError(error);
@@ -5952,7 +6138,6 @@ export function AdminStorefrontDashboard({
       doctorNotes: appointment.doctor_notes || "",
       cancellationReason: appointment.cancellation_reason || ""
     });
-    setConsultationActionFeedback("");
   }
 
   function syncAppointmentState(nextAppointment) {
@@ -5972,10 +6157,9 @@ export function AdminStorefrontDashboard({
       return;
     }
     setConsultationActionLoading(action);
-    setConsultationActionFeedback("");
     try {
       if (action === "reschedule" && (!isFutureLocalDateTimeValue(body.start_at) || !isFutureLocalDateTimeValue(body.end_at))) {
-        setConsultationActionFeedback("Choose a future date and time before rescheduling.");
+        showSnackbar("Choose a future start and end time before rescheduling.", "warning");
         return;
       }
       const payload = await apiRequest(`/appointments/${selectedConsultation.id}/${action}`, {
@@ -5990,9 +6174,9 @@ export function AdminStorefrontDashboard({
         reschedule: "Appointment rescheduled.",
         notes: "Appointment notes updated."
       };
-      setConsultationActionFeedback(feedbackByAction[action] || "Appointment updated.");
+      showSnackbar(feedbackByAction[action] || "Appointment updated.", "success");
     } catch (error) {
-      setConsultationActionFeedback(describeRequestError(error));
+      showSnackbar(describeRequestError(error), "error");
     } finally {
       setConsultationActionLoading("");
     }
@@ -6805,13 +6989,13 @@ export function AdminStorefrontDashboard({
     ? swrKeys.admin.doctors(withBaseUrl(session, { per_page: 100, page: 1 }))
     : null;
   const customersListKey = canLoadSections && currentPage === "customers"
-    ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 24, page: 1, search: deferredSearch }))
+    ? swrKeys.proxy.path("/admin/users", withBaseUrl(session, { scope: "patients", per_page: 10, page: customerPage, search: deferredSearch }))
     : null;
   const consultationsListKey = canLoadSections && ["overview", "consultations"].includes(currentPage)
     ? swrKeys.admin.appointments(withBaseUrl(session, { per_page: 50, page: 1, search: deferredSearch }))
     : null;
   const mtmListKey = canLoadSections && ["overview", "mtm"].includes(currentPage)
-    ? swrKeys.admin.prescriptions(withBaseUrl(session, { per_page: 30, page: 1, search: deferredSearch, mtm: "1" }))
+    ? swrKeys.admin.prescriptions(withBaseUrl(session, { per_page: 10, page: mtmPage, search: deferredSearch, mtm: "1" }))
     : null;
   const ivTherapyListKey = canLoadSections && currentPage === "iv-therapy"
     ? swrKeys.proxy.path("/iv-therapy-requests", withBaseUrl(session, { per_page: 30, page: 1, search: deferredSearch }))
@@ -6859,7 +7043,7 @@ export function AdminStorefrontDashboard({
   );
   const customersQuery = useSWR(
     customersListKey,
-    () => adminApiRequest("customers", { params: { per_page: 24, page: 1, search: deferredSearch } }, session),
+    () => adminApiRequest("patients", { params: { scope: "patients", per_page: 10, page: customerPage, search: deferredSearch } }, session),
     { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 120_000 }
   );
   const consultationsQuery = useSWR(
@@ -6869,7 +7053,7 @@ export function AdminStorefrontDashboard({
   );
   const mtmQuery = useSWR(
     mtmListKey,
-    () => adminApiRequest("mtm", { params: { per_page: 30, page: 1, search: deferredSearch } }, session),
+    () => adminApiRequest("mtm", { params: { per_page: 10, page: mtmPage, search: deferredSearch } }, session),
     { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 60_000 }
   );
   const ivTherapyQuery = useSWR(
@@ -7020,6 +7204,14 @@ export function AdminStorefrontDashboard({
   }
 
   useEffect(() => {
+    if (!session.accessToken) return;
+    refreshDashboardData(latestSessionRef.current || session).catch((error) => {
+      console.error(error);
+      setSyncStatus({ text: "Sync error", mode: "error" });
+    });
+  }, [currentPage]);
+
+  useEffect(() => {
     if (!ordersQuery.data?.data) return;
     let cancelled = false;
     const orders = ordersQuery.data.data || [];
@@ -7071,7 +7263,7 @@ export function AdminStorefrontDashboard({
 
   useEffect(() => {
     if (!customersQuery.data?.data) return;
-    setData((prev) => ({ ...prev, customers: customersQuery.data.data }));
+    setData((prev) => ({ ...prev, customers: Array.isArray(customersQuery.data.data.items) ? customersQuery.data.data.items : customersQuery.data.data }));
   }, [customersQuery.data]);
 
   useEffect(() => {
@@ -7120,11 +7312,11 @@ export function AdminStorefrontDashboard({
 
   useEffect(() => {
     if (!mtmQuery.data?.data) return;
-    setData((prev) => ({ ...prev, mtmRequests: Array.isArray(mtmQuery.data.data) ? mtmQuery.data.data : [] }));
+    setData((prev) => ({ ...prev, mtmRequests: Array.isArray(mtmQuery.data.data.items) ? mtmQuery.data.data.items : [] }));
   }, [mtmQuery.data]);
   useEffect(() => {
     if (!ivTherapyQuery.data?.data) return;
-    setData((prev) => ({ ...prev, ivTherapyRequests: Array.isArray(ivTherapyQuery.data.data) ? ivTherapyQuery.data.data : [] }));
+    setData((prev) => ({ ...prev, ivTherapyRequests: Array.isArray(ivTherapyQuery.data.data.items) ? ivTherapyQuery.data.data.items : [] }));
   }, [ivTherapyQuery.data]);
 
 
@@ -7141,11 +7333,44 @@ export function AdminStorefrontDashboard({
   const dashboard = data.dashboard || {};
   const sales = dashboard.sales || {};
   const storeCurrency = dashboard.store_currency || sales.currency || (hydrated ? storedStoreCurrency() : SSR_SAFE_STORE_CURRENCY);
-  const renderStoreTimeZone = dashboard.store_timezone || (hydrated ? storedStoreTimeZone() : SSR_SAFE_STORE_TIMEZONE);
   const consultations = dashboard.consultations || {};
   const prescriptionsSummary = dashboard.prescriptions || {};
   const emailsSummary = dashboard.emails || {};
   const doctorMap = new Map((data.doctors || []).map((doctor) => [doctor.user_id || doctor.id, doctor.display_name]));
+  const selectedConsultationDoctor = selectedConsultation
+    ? (data.doctors || []).find((doctor) => Number(doctor.user_id || doctor.id) === Number(selectedConsultation.doctor_user_id))
+    : null;
+  const selectedConsultationPatient = selectedConsultation
+    ? (data.customers || []).find((customer) => Number(customer.id || customer.user_id || customer.customer_id) === Number(selectedConsultation.patient_user_id))
+    : null;
+  const selectedConsultationDoctorName = selectedConsultation
+    ? firstNonEmpty(
+      selectedConsultationDoctor?.display_name,
+      selectedConsultationDoctor?.name,
+      doctorMap.get(selectedConsultation.doctor_user_id),
+      `Doctor #${selectedConsultation.doctor_user_id}`
+    )
+    : "";
+  const selectedConsultationDoctorAvatar = firstNonEmpty(
+    selectedConsultationDoctor?.avatar_url,
+    selectedConsultationDoctor?.profile_image,
+    selectedConsultationDoctor?.image_url,
+    selectedConsultationDoctor?.photo_url
+  );
+  const selectedConsultationPatientName = selectedConsultation
+    ? firstNonEmpty(
+      customerNameFromRecord(selectedConsultationPatient),
+      selectedConsultation.patient_name,
+      patientLabel(selectedConsultation.patient_user_id)
+    )
+    : "";
+  const selectedConsultationPatientEmail = firstNonEmpty(
+    customerEmail(selectedConsultationPatient),
+    selectedConsultation?.patient_email
+  );
+  const selectedConsultationPrescriptions = selectedConsultation
+    ? (data.prescriptionDetails || []).filter((item) => Number(item.patient_user_id) === Number(selectedConsultation.patient_user_id))
+    : [];
   const showPageSearch = true;
   const searchPlaceholder = SEARCH_PLACEHOLDERS[currentPage] || "Search this page";
   const siteName = session.siteName || DEFAULT_SITE_NAME;
@@ -8052,17 +8277,19 @@ export function AdminStorefrontDashboard({
   const activeOrderPage = Math.min(orderPage, orderPageCount);
   const paginatedOrders = filteredOrders.slice((activeOrderPage - 1) * ordersPerPage, activeOrderPage * ordersPerPage);
   const customersPerPage = 10;
-  const customerPageCount = Math.max(1, Math.ceil(customerRows.length / customersPerPage));
+  const customerServerPagination = customersQuery.data?.data?.pagination || {};
+  const customerPageCount = Math.max(1, Number(customerServerPagination.pages || Math.ceil(customerRows.length / customersPerPage)));
   const activeCustomerPage = Math.min(customerPage, customerPageCount);
-  const paginatedCustomerRows = customerRows.slice((activeCustomerPage - 1) * customersPerPage, activeCustomerPage * customersPerPage);
+  const paginatedCustomerRows = customerRows;
   const consultationsPerPage = 10;
   const consultationPageCount = Math.max(1, Math.ceil(consultationList.length / consultationsPerPage));
   const activeConsultationPage = Math.min(consultationPage, consultationPageCount);
   const paginatedConsultationRows = consultationList.slice((activeConsultationPage - 1) * consultationsPerPage, activeConsultationPage * consultationsPerPage);
   const mtmPerPage = 10;
-  const mtmPageCount = Math.max(1, Math.ceil(filteredMtmRequests.length / mtmPerPage));
+  const mtmServerPagination = mtmQuery.data?.data?.pagination || {};
+  const mtmPageCount = Math.max(1, Number(mtmServerPagination.pages || Math.ceil(filteredMtmRequests.length / mtmPerPage)));
   const activeMtmPage = Math.min(mtmPage, mtmPageCount);
-  const paginatedMtmRequests = filteredMtmRequests.slice((activeMtmPage - 1) * mtmPerPage, activeMtmPage * mtmPerPage);
+  const paginatedMtmRequests = filteredMtmRequests;
   const ivTherapyPerPage = 10;
   const ivTherapyPageCount = Math.max(1, Math.ceil(filteredIvTherapyRequests.length / ivTherapyPerPage));
   const activeIvTherapyPage = Math.min(ivTherapyPage, ivTherapyPageCount);
@@ -8571,7 +8798,7 @@ export function AdminStorefrontDashboard({
 
     if (currentPage === "subscriptions") {
       return (
-        <section className="page-view active">
+        <section className="page-view active subscriptions-page">
           <section className="subscription-surface">
             
 
@@ -8593,7 +8820,7 @@ export function AdminStorefrontDashboard({
               {subscriptionState.error ? <section className="panel subscription-alert"><p className="muted">{subscriptionState.error}</p></section> : null}
 
               <section className="subscription-layout">
-                <article className="subscription-plans-panel">
+                <article className="subscription-plans-panel admin-flat-table-section" aria-label="Subscription plans">
                   <div className="panel-header">
                     <div>
                       <h2>Subscription plans</h2>
@@ -8615,7 +8842,7 @@ export function AdminStorefrontDashboard({
                         </tr>
                       </thead>
                       <tbody>
-                        {subscriptionTablePlans.map((plan) => {
+                        {subscriptionState.loading ? renderTableRowSkeletons(6, 7) : subscriptionTablePlans.map((plan) => {
                           const planId = String(plan?.id ?? plan?.plan_key ?? plan?.slug ?? "").trim();
                           const planKey = String(plan?.plan_key || plan?.slug || plan?.planKey || generateSlug(plan?.name || "") || "free").trim();
                           const isSelected = Boolean(String(selectedSubscriptionPlanId || selectedSubscriptionPlan?.id || selectedSubscriptionPlan?.plan_key || "") === planId);
@@ -8628,16 +8855,12 @@ export function AdminStorefrontDashboard({
                               role="button"
                               tabIndex={0}
                               onClick={() => {
-                                setSelectedSubscriptionPlanKey(planKey);
-                                setSelectedSubscriptionPlanId(planId);
-                                openSubscriptionModal("edit", plan);
+                                openSubscriptionDetails(plan);
                               }}
                               onKeyDown={(event) => {
                                 if (event.key === "Enter" || event.key === " ") {
                                   event.preventDefault();
-                                  setSelectedSubscriptionPlanKey(planKey);
-                                  setSelectedSubscriptionPlanId(planId);
-                                  openSubscriptionModal("edit", plan);
+                                  openSubscriptionDetails(plan);
                                 }
                               }}
                             >
@@ -8657,7 +8880,7 @@ export function AdminStorefrontDashboard({
                               <td><span className={`chip ${planSource === "Paystack" ? "processing" : "draft"}`}>{planSource}</span></td>
                               <td>
                                 <div className="user-actions">
-                                  <button className="btn btn-soft" type="button" onClick={(event) => { event.stopPropagation(); setSelectedSubscriptionPlanKey(planKey); setSelectedSubscriptionPlanId(planId); openSubscriptionModal("edit", plan); }}>View</button>
+                                  <button className="btn btn-soft" type="button" onClick={(event) => { event.stopPropagation(); openSubscriptionDetails(plan); }}>View details</button>
                                   <button className="btn btn-outline" type="button" onClick={(event) => { event.stopPropagation(); setSelectedSubscriptionPlanKey(planKey); setSelectedSubscriptionPlanId(planId); openSubscriptionModal("edit", plan); }}>Edit</button>
                                 </div>
                               </td>
@@ -8690,7 +8913,7 @@ export function AdminStorefrontDashboard({
                   ) : null}
                 </article>
 
-                {false && (<article className="panel users-panel">
+                {false && <article className="panel users-panel">
                   <div className="panel-header">
                     <div>
                       <h2>List of users</h2>
@@ -8765,19 +8988,102 @@ export function AdminStorefrontDashboard({
                   <div className="users-pagination" aria-label="Users pagination">
                     <div className="pagination-copy">{visibleSubscriptionUsers.length ? `Showing ${visibleSubscriptionUsers.length} subscribed users for ${selectedSubscriptionPlan?.name || "the selected plan"}` : "No subscribed users loaded."}</div>
                     <div className="pagination-controls">
-                      <button className="page-btn disabled" type="button">Previous</button>
-                      <button className="page-btn active" type="button" aria-current="page">1</button>
-                      <button className="page-btn" type="button">2</button>
-                      <button className="page-btn" type="button">3</button>
-                      <span className="page-ellipsis">...</span>
-                      <button className="page-btn" type="button">{subscriptionState.data?.total_pages ? formatNumber(subscriptionState.data.total_pages) : "…"}</button>
-                      <button className="page-btn" type="button">Next</button>
+                      <button className={`page-btn ${subscriptionUserPage <= 1 ? "disabled" : ""}`} disabled={subscriptionUserPage <= 1} type="button" onClick={() => setSubscriptionUserPage((page) => Math.max(1, page - 1))}>Previous</button>
+                      <button className="page-btn active" type="button" aria-current="page">{subscriptionState.data?.pagination?.page || subscriptionUserPage}</button>
+                      <span className="page-ellipsis">of {subscriptionState.data?.pagination?.pages || 1}</span>
+                      <button className={`page-btn ${subscriptionUserPage >= (subscriptionState.data?.pagination?.pages || 1) ? "disabled" : ""}`} disabled={subscriptionUserPage >= (subscriptionState.data?.pagination?.pages || 1)} type="button" onClick={() => setSubscriptionUserPage((page) => page + 1)}>Next</button>
                     </div>
                   </div>
-                  </article>)}
+                  </article>}
               </section>
             </div>
           </section>
+
+          {subscriptionDetailsOpen && selectedSubscriptionPlan ? (
+            <div className="app-modal-stack">
+              <div className="app-modal-layer app-modal-layer-top is-open">
+                <ModalScrim className="app-modal-backdrop" label="Close subscription details" onDismiss={closeSubscriptionDetails} />
+                <article className="subscription-plan-details-modal" role="dialog" aria-modal="true" aria-labelledby="subscription-plan-details-title">
+                  <header className="subscription-plan-details-header">
+                    <div className="subscription-plan-details-identity">
+                      <span className="subscription-plan-details-avatar" aria-hidden="true">
+                        {generateInitials(selectedSubscriptionPlan.name || "Subscription")}
+                      </span>
+                      <div>
+                        <p>Subscription plan</p>
+                        <h2 id="subscription-plan-details-title">{selectedSubscriptionPlan.name || "Subscription details"}</h2>
+                        <span>{selectedSubscriptionPlan.description || selectedSubscriptionPlan.note || "Managed Nevari subscription plan."}</span>
+                      </div>
+                    </div>
+                    <div className="subscription-plan-details-header-actions">
+                      <span className={`chip ${formatPlanStatusTone(selectedSubscriptionPlan.status)}`}>
+                        {formatStatusLabel(selectedSubscriptionPlan.status || "active")}
+                      </span>
+                      <button className="subscription-details-pill subscription-details-pill-secondary" type="button" autoFocus disabled={Boolean(subscriptionDetailsActionLoading)} onClick={closeSubscriptionDetails}>
+                        Close details
+                      </button>
+                    </div>
+                  </header>
+
+                  <div className="subscription-plan-details-body">
+                    <section className="subscription-plan-details-section" aria-labelledby="subscription-plan-overview-title">
+                      <div className="subscription-plan-details-section-head">
+                        <div>
+                          <p>Plan overview</p>
+                          <h3 id="subscription-plan-overview-title">Commercial configuration</h3>
+                        </div>
+                        <span>Review the pricing, billing schedule, usage, and gateway source.</span>
+                      </div>
+                      <dl className="subscription-plan-details-grid">
+                        <div><dt>Price</dt><dd>{selectedSubscriptionPlan.price || (selectedSubscriptionPlan.amount != null ? formatMoney(selectedSubscriptionPlan.amount, selectedSubscriptionPlan.currency || "NGN") : "NGN 0")}</dd></div>
+                        <div><dt>Billing cycle</dt><dd>{formatStatusLabel(selectedSubscriptionPlan.billing || selectedSubscriptionPlan.interval || "manual")}</dd></div>
+                        <div><dt>Subscribed users</dt><dd>{formatNumber(selectedSubscriptionPlan.users || 0)}</dd></div>
+                        <div><dt>Gateway/source</dt><dd>{isSystemSubscriptionPlan(selectedSubscriptionPlan) ? "System" : (selectedSubscriptionPlan.checkout_type === "manual" ? "Manual" : "Paystack")}</dd></div>
+                        <div><dt>Plan key</dt><dd>{selectedSubscriptionPlan.plan_key || selectedSubscriptionPlan.slug || "Not assigned"}</dd></div>
+                        <div><dt>Checkout type</dt><dd>{formatStatusLabel(selectedSubscriptionPlan.checkout_type || "auto generated")}</dd></div>
+                      </dl>
+                    </section>
+
+                    <section className="subscription-plan-details-section" aria-labelledby="subscription-plan-features-title">
+                      <div className="subscription-plan-details-section-head">
+                        <div>
+                          <p>Plan access</p>
+                          <h3 id="subscription-plan-features-title">Included features</h3>
+                        </div>
+                        <span>Benefits made available to subscribers on this plan.</span>
+                      </div>
+                      {splitFeatureList(selectedSubscriptionPlan.features || "").length ? (
+                        <div className="subscription-plan-feature-list">
+                          {splitFeatureList(selectedSubscriptionPlan.features || "").map((feature) => (
+                            <span className="subscription-plan-feature" key={feature}>{feature}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="subscription-plan-details-empty">
+                          <strong>No features configured</strong>
+                          <p>Edit this plan to add subscriber benefits.</p>
+                        </div>
+                      )}
+                    </section>
+                  </div>
+
+                  <footer className="subscription-plan-details-actions" aria-label="Subscription plan actions">
+                    <button className="subscription-details-pill subscription-details-pill-secondary" type="button" disabled={Boolean(subscriptionDetailsActionLoading)} onClick={refreshSubscriptionDetails}>
+                      {subscriptionDetailsActionLoading === "refresh" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
+                      <span>{subscriptionDetailsActionLoading === "refresh" ? "Refreshing..." : "Refresh details"}</span>
+                    </button>
+                    <button className="subscription-details-pill subscription-details-pill-primary" type="button" disabled={Boolean(subscriptionDetailsActionLoading)} onClick={editSelectedSubscriptionPlan}>
+                      <span>Edit subscription plan</span>
+                    </button>
+                    <button className="subscription-details-pill subscription-details-pill-danger" type="button" disabled={Boolean(subscriptionDetailsActionLoading) || isSystemSubscriptionPlan(selectedSubscriptionPlan)} onClick={() => deleteSubscriptionPlan(selectedSubscriptionPlan)}>
+                      {subscriptionDetailsActionLoading === "delete" || subscriptionDeleteLoading ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
+                      <span>{subscriptionDetailsActionLoading === "delete" || subscriptionDeleteLoading ? "Deleting..." : "Delete subscription plan"}</span>
+                    </button>
+                  </footer>
+                </article>
+              </div>
+            </div>
+          ) : null}
 
           <div className={`subscription-modal-backdrop rx-live-modal ${subscriptionModalOpen ? "open visible" : ""}`} aria-hidden={!subscriptionModalOpen} onClick={closeSubscriptionModal}>
             <article className="modal-frame creation-frame subscription-create-frame" role="dialog" aria-modal="true" aria-labelledby="subscriptionModalTitle" aria-describedby="subscriptionModalText" onClick={(event) => event.stopPropagation()}>
@@ -9138,7 +9444,10 @@ export function AdminStorefrontDashboard({
               {FRONTEND_PAGES.map((group) => (
                 <div className="nav-group" key={group.label}>
                   <p className="nav-label">{group.label}</p>
-                  {group.items.map(([pageId, label, icon]) => (
+                  {group.items.filter(([pageId]) => {
+                    const requiredPermission = STOREFRONT_PAGE_PERMISSIONS[pageId];
+                    return (session.user?.roles || []).includes("administrator") || !requiredPermission || (session.user?.storefront_permissions || []).includes(requiredPermission);
+                  }).map(([pageId, label, icon]) => (
                     <button
                       key={pageId}
                       className={`nav-item ${currentPage === pageId ? "active" : ""}`}
@@ -9200,11 +9509,6 @@ export function AdminStorefrontDashboard({
                   </div>
                 ) : null}
               </div>
-              {!isEmbeddedDashboard ? <button className="pill-button" type="button" onClick={() => switchPage("consultations")}>
-                <InlineIcon id="i-calendar" />
-                <span>{formatTopbarDate(renderStoreTimeZone)}</span>
-              </button> : null}
-              {!isEmbeddedDashboard ? <button className="icon-button" type="button" onClick={() => switchPage("settings")}><InlineIcon id="i-settings" /></button> : null}
               {!isEmbeddedDashboard ? <button className="user-chip user-chip-button" type="button" onClick={() => switchPage("profile")}>
                 <div className="user-avatar">
                   {session.user?.avatar_url ? <img src={session.user.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.nextElementSibling.style.display = "inline"; }} /> : null}
@@ -9633,7 +9937,7 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "customers" && (
               <section className="page-view active">
-                <section className="panel table-panel">
+                <section className="panel table-panel patient-directory-panel admin-flat-table-section">
                   <div className="panel-header">
                     <div>
                       <p className="section-kicker">Patient list</p>
@@ -9645,17 +9949,15 @@ export function AdminStorefrontDashboard({
                       <thead>
                         <tr>
                           <th>Patient</th>
-                          <th>Name</th>
-                          <th>Email</th>
                           <th className="narrow-col">Orders</th>
                           <th>Spend</th>
-                          <th className="narrow-col">Prescriptions</th>
                           <th className="narrow-col">Appointments</th>
                           <th>Last activity</th>
+                          <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {customerRows.length ? paginatedCustomerRows.map((row) => (
+                        {customersQuery.isLoading ? renderTableRowSkeletons(6, 6) : customerRows.length ? paginatedCustomerRows.map((row) => (
                           <tr
                             key={row.id}
                             className="table-row-button"
@@ -9671,19 +9973,24 @@ export function AdminStorefrontDashboard({
                           >
                             <td>
                               <div className="customer-list-profile">
-                                <span className="customer-list-avatar">{getNameInitials(row.name || row.label || row.email || "Patient", "CU")}</span>
-                                <span>{row.label}</span>
+                                <span className="customer-list-avatar">{row.avatarUrl ? <img src={row.avatarUrl} alt="" /> : getNameInitials(row.name || row.label || row.email || "Patient", "CU")}</span>
+                                <span><strong>{row.name}</strong><small>{row.email}</small></span>
                               </div>
                             </td>
-                            <td>{row.name}</td>
-                            <td className="email-cell">{row.email}</td>
                             <td>{formatNumber(row.orders)}</td>
                             <td>{formatMoney(row.spend, storeCurrency)}</td>
-                            <td>{formatNumber(row.prescriptions)}</td>
                             <td>{formatNumber(row.appointments)}</td>
                             <td>{formatDate(row.lastActivity, true)}</td>
+                            <td><div className="staff-row-actions">
+                              {row.accountStatus === "banned"
+                                ? patientTableActionButton(row, "unban", "Unban", "M5 12l4 4L19 6")
+                                : patientTableActionButton(row, "ban", "Ban", "M5 5l14 14M7 4h10l2 4v12H5V8l2-4")}
+                              {row.accountStatus === "pending_review" ? patientTableActionButton(row, "approve", "Approve", "M5 12l4 4L19 6") : null}
+                              {row.accountStatus !== "suspended" ? patientTableActionButton(row, "suspend", "Suspend", "M9 8l6 8M15 8l-6 8M4 12h3m10 0h3") : null}
+                              {patientTableActionButton(row, "reset-password", "Reset password for", "M4 12a8 8 0 111.8 5M4 17v-5h5M12 8v5l3 2")}
+                            </div></td>
                           </tr>
-                        )) : <tr><td colSpan="8" className="muted">No customer rows match the current search.</td></tr>}
+                        )) : <tr><td colSpan="6" className="muted">No patients match the current search.</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -9695,7 +10002,7 @@ export function AdminStorefrontDashboard({
                       ))}
                       <button className="page-item" type="button" disabled={activeCustomerPage === customerPageCount} onClick={() => setCustomerPage((prev) => Math.min(customerPageCount, prev + 1))}>Next</button>
                     </div>
-                    <div className="pagination-summary">Showing {customerRows.length ? `${formatNumber(((activeCustomerPage - 1) * customersPerPage) + 1)}-${formatNumber(Math.min(activeCustomerPage * customersPerPage, customerRows.length))}` : "0"} of {formatNumber(customerRows.length)} customers</div>
+                    <div className="pagination-summary">Showing {customerRows.length ? `${formatNumber(((activeCustomerPage - 1) * customersPerPage) + 1)}-${formatNumber(Math.min(activeCustomerPage * customersPerPage, Number(customerServerPagination.total || customerRows.length)))}` : "0"} of {formatNumber(customerServerPagination.total || customerRows.length)} patients</div>
                   </div>
                 </section>
               </section>
@@ -9708,7 +10015,6 @@ export function AdminStorefrontDashboard({
                     <div className="panel-header">
                       <div>
 
-                        <h2>Care schedule summary</h2>
                       </div>
                     </div>
                     <div className="mini-stat-grid">
@@ -9728,7 +10034,7 @@ export function AdminStorefrontDashboard({
                   </article>
                 </section>
                 <section className="consultation-table">
-                  <article className="panel table-panel">
+                  <article className="panel table-panel consultation-directory-panel admin-flat-table-section">
                     <div className="panel-header">
                       <div>
 
@@ -9800,7 +10106,6 @@ export function AdminStorefrontDashboard({
                     <div className="panel-header">
                       <div>
                         <p className="section-kicker">Medical Therapy Management</p>
-                        <h2>Status summary</h2>
                       </div>
                     </div>
                     <div className="mini-stat-grid mtm-summary-grid">
@@ -9862,7 +10167,7 @@ export function AdminStorefrontDashboard({
                         ))}
                         <button className="page-item" type="button" disabled={activeMtmPage === mtmPageCount} onClick={() => setMtmPage((prev) => Math.min(mtmPageCount, prev + 1))}>Next</button>
                       </div>
-                      <div className="pagination-summary">Showing {filteredMtmRequests.length ? `${formatNumber(((activeMtmPage - 1) * mtmPerPage) + 1)}-${formatNumber(Math.min(activeMtmPage * mtmPerPage, filteredMtmRequests.length))}` : "0"} of {formatNumber(filteredMtmRequests.length)} requests</div>
+                      <div className="pagination-summary">Showing {filteredMtmRequests.length ? `${formatNumber(((activeMtmPage - 1) * mtmPerPage) + 1)}-${formatNumber(Math.min(activeMtmPage * mtmPerPage, Number(mtmServerPagination.total || filteredMtmRequests.length)))}` : "0"} of {formatNumber(mtmServerPagination.total || filteredMtmRequests.length)} requests</div>
                     </div>
                   </section>
                 </section>
@@ -9870,14 +10175,12 @@ export function AdminStorefrontDashboard({
             )}
 
             {currentPage === "iv-therapy" && (
-              <section className="page-view active">
-                <IvTherapyOperationsPanel session={session} />
+              <section className="page-view active iv-therapy-page">
                 <section className="operations-grid mtm-summary-row">
                   <article className="panel compact mtm-summary-panel">
                     <div className="panel-header">
                       <div>
                         
-                        <h2>Status summary</h2>
                       </div>
                     </div>
                     <div className="mini-stat-grid mtm-summary-grid">
@@ -10372,68 +10675,7 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "doctors" && (
               <section className="page-view active">
-                <GovernedUsersPanel session={session} />
-                <section className="operations-grid staffs-hero-grid">
-                  <article className="panel compact">
-                    <div className="panel-header">
-                     
-                    </div>
-                    {renderTeamBlock()}
-                  </article>
-                </section>
-                <section className="panel table-panel">
-                  <div className="panel-header">
-                    <div>
-                      <p className="section-kicker">Staff directory</p>
-                      <h2>Doctors and pharmacists</h2>
-                    </div>
-                  </div>
-                  <div className="table-scroll">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Name</th>
-                          <th>Email</th>
-                          <th>Role</th>
-                          <th>Status</th>
-                          <th>Linked patients</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {doctorsLoading ? renderTableRowSkeletons(6, 5) : filteredDoctors.length ? paginatedStaffRows.map((doctor) => {
-                          const doctorId = doctor.user_id || doctor.id;
-                          const linkedPatients = new Set([
-                            ...(data.appointments || []).filter((item) => Number(item.doctor_user_id) === Number(doctorId)).map((item) => item.patient_user_id),
-                            ...(data.prescriptionDetails || []).filter((item) => Number(item.doctor_user_id) === Number(doctorId)).map((item) => item.patient_user_id)
-                          ].filter(Boolean));
-                          return (
-                          <tr key={doctorId} className="table-row-button" onClick={() => setSelectedDoctorId(doctorId)}>
-                            <td>
-                              <div className="customer-list-profile">
-                                <span className="customer-list-avatar">{getNameInitials(doctor.display_name || doctor.email || `Doctor ${doctorId}`, "ST")}</span>
-                                <span>{doctor.display_name || `Doctor #${doctor.user_id || doctor.id}`}</span>
-                              </div>
-                            </td>
-                            <td>{doctor.email || "n/a"}</td>
-                            <td>{getStaffRoleLabel(doctor)}</td>
-                            <td><StatusPill value={getDoctorStatus(doctor)}>{formatStatusLabel(getDoctorStatus(doctor))}</StatusPill></td>
-                            <td>{formatNumber(linkedPatients.size)}</td>
-                          </tr>
-                        );}) : <tr><td colSpan="5" className="muted">No staff match the current search.</td></tr>}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="pagination-row">
-                    <div className="pagination">
-                      <button className="page-item" type="button" disabled={activeStaffPage === 1} onClick={() => setStaffPage((prev) => Math.max(1, prev - 1))}>Prev</button>
-                      {Array.from({ length: staffPageCount }, (_, index) => index + 1).slice(0, 7).map((page) => (
-                        <button className={`page-item ${activeStaffPage === page ? "active" : ""}`} type="button" key={page} onClick={() => setStaffPage(page)}>{page}</button>
-                      ))}
-                      <button className="page-item" type="button" disabled={activeStaffPage === staffPageCount} onClick={() => setStaffPage((prev) => Math.min(staffPageCount, prev + 1))}>Next</button>
-                    </div>
-                    <div className="pagination-summary">Showing {filteredDoctors.length ? `${formatNumber(((activeStaffPage - 1) * staffPerPage) + 1)}-${formatNumber(Math.min(activeStaffPage * staffPerPage, filteredDoctors.length))}` : "0"} of {formatNumber(filteredDoctors.length)} staff records</div>
-                  </div>
-                </section>
+                <StaffDirectory session={session} />
               </section>
             )}
 
@@ -12706,70 +12948,168 @@ export function AdminStorefrontDashboard({
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <ModalScrim className="app-modal-backdrop" label="Close consultation details" onDismiss={() => setSelectedConsultation(null)} />
-            <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label="Consultation details">
-              <div className="panel-header stacked-order-popup-header modal-head">
-                <div><p className="section-kicker">Consultation</p><h3>{patientLabel(selectedConsultation.patient_user_id)}</h3></div>
-                <button className="icon-button" type="button" onClick={() => setSelectedConsultation(null)}><InlineIcon id="i-x" /></button>
-              </div>
-              <div className="app-modal-scroll modal-body">
-              <div className="detail-grid">
-                <div className="detail-block"><span>Doctor</span><strong>{doctorMap.get(selectedConsultation.doctor_user_id) || `Doctor #${selectedConsultation.doctor_user_id}`}</strong></div>
-                <div className="detail-block"><span>Starts</span><strong>{formatDate(selectedConsultation.start_at, true)}</strong></div>
-                <div className="detail-block"><span>Ends</span><strong>{formatDate(selectedConsultation.end_at, true)}</strong></div>
-                <div className="detail-block"><span>Status</span><strong>{formatStatusLabel(selectedConsultation.status)}</strong></div>
-                <div className="detail-block"><span>Reason</span><strong>{selectedConsultation.reason || selectedConsultation.type || "n/a"}</strong></div>
-              </div>
-              <div className="detail-form-grid consultation-action-grid">
-                <label className="detail-field">
-                  <span>Reschedule start</span>
-                  <input type="datetime-local" value={consultationDetailForm.startAt} min={nowDateTimeLocalValue()} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, startAt: event.target.value }))} />
-                </label>
-                <label className="detail-field">
-                  <span>Reschedule end</span>
-                  <input type="datetime-local" value={consultationDetailForm.endAt} min={nowDateTimeLocalValue()} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, endAt: event.target.value }))} />
-                </label>
-                <label className="detail-field detail-field-wide">
-                  <span>Doctor notes</span>
-                  <textarea rows={3} value={consultationDetailForm.doctorNotes} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, doctorNotes: event.target.value }))} />
-                </label>
-                <label className="detail-field detail-field-wide">
-                  <span>Cancellation reason</span>
-                  <textarea rows={2} value={consultationDetailForm.cancellationReason} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, cancellationReason: event.target.value }))} />
-                </label>
-              </div>
-              {consultationActionFeedback ? <p className="muted popup-support-copy">{consultationActionFeedback}</p> : null}
-              <div className="detail-section receipt-panel">
-                <div className="panel-header"><div><p className="section-kicker">Prescriptions given</p><h3>Linked patient prescriptions</h3></div></div>
-                <div className="history-list">
-                  {(data.prescriptionDetails || []).filter((item) => Number(item.patient_user_id) === Number(selectedConsultation.patient_user_id)).map((item) => (
-                    <article className="history-card" key={item.id}><strong>{item.prescription_number || `Prescription #${item.id}`}</strong><p>{item.diagnosis || "No diagnosis recorded"}</p><span>{formatStatusLabel(item.status)}</span></article>
-                  ))}
+            <section className="consultation-details-modal" role="dialog" aria-modal="true" aria-labelledby="consultation-details-title">
+              <header className="consultation-details-header">
+                <div className="consultation-details-heading">
+                  <div className="consultation-staff-avatar" aria-hidden="true">
+                    {selectedConsultationDoctorAvatar ? (
+                      <img
+                        src={selectedConsultationDoctorAvatar}
+                        alt=""
+                        onError={(event) => {
+                          event.currentTarget.style.display = "none";
+                          event.currentTarget.nextElementSibling.style.display = "grid";
+                        }}
+                      />
+                    ) : null}
+                    <span style={{ display: selectedConsultationDoctorAvatar ? "none" : "grid" }}>
+                      {getNameInitials(selectedConsultationDoctorName, "DR")}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="consultation-details-eyebrow">Consultation #{selectedConsultation.id}</p>
+                    <h2 id="consultation-details-title">{selectedConsultationPatientName}</h2>
+                    <p>Care managed by {selectedConsultationDoctorName}</p>
+                  </div>
                 </div>
+                <div className="consultation-details-header-actions">
+                  <StatusPill value={selectedConsultation.status}>
+                    {formatStatusLabel(selectedConsultation.status)}
+                  </StatusPill>
+                  <button className="consultation-action-pill consultation-action-secondary" type="button" onClick={() => setSelectedConsultation(null)}>
+                    Close details
+                  </button>
+                </div>
+              </header>
+
+              <div className="consultation-details-scroll">
+                <section className="consultation-details-section" aria-labelledby="consultation-overview-heading">
+                  <div className="consultation-details-section-head">
+                    <div>
+                      <p className="consultation-details-eyebrow">Appointment overview</p>
+                      <h3 id="consultation-overview-heading">Visit information</h3>
+                    </div>
+                    <p>The essential patient, care team, and schedule details for this consultation.</p>
+                  </div>
+                  <dl className="consultation-overview-grid">
+                    <div>
+                      <dt>Patient</dt>
+                      <dd>{selectedConsultationPatientName}</dd>
+                      <small>{selectedConsultationPatientEmail || `Patient ID ${selectedConsultation.patient_user_id || "not available"}`}</small>
+                    </div>
+                    <div>
+                      <dt>Assigned clinician</dt>
+                      <dd>{selectedConsultationDoctorName}</dd>
+                      <small>{selectedConsultationDoctor?.email || `Staff ID ${selectedConsultation.doctor_user_id || "not assigned"}`}</small>
+                    </div>
+                    <div>
+                      <dt>Starts</dt>
+                      <dd>{formatDate(selectedConsultation.start_at, true)}</dd>
+                    </div>
+                    <div>
+                      <dt>Ends</dt>
+                      <dd>{formatDate(selectedConsultation.end_at, true)}</dd>
+                    </div>
+                    <div>
+                      <dt>Consultation type</dt>
+                      <dd>{formatStatusLabel(selectedConsultation.type || "General consultation")}</dd>
+                    </div>
+                    <div>
+                      <dt>Reason for visit</dt>
+                      <dd>{selectedConsultation.reason || "No reason was provided."}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section className="consultation-details-section" aria-labelledby="consultation-management-heading">
+                  <div className="consultation-details-section-head">
+                    <div>
+                      <p className="consultation-details-eyebrow">Appointment management</p>
+                      <h3 id="consultation-management-heading">Schedule and care notes</h3>
+                    </div>
+                    <p>Update the schedule or record clinical context before using the actions below.</p>
+                  </div>
+                  <div className="consultation-management-grid">
+                    <div className="consultation-schedule-fields">
+                      <label className="consultation-detail-field">
+                        <span>New start date and time</span>
+                        <input type="datetime-local" value={consultationDetailForm.startAt} min={nowDateTimeLocalValue()} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, startAt: event.target.value }))} />
+                      </label>
+                      <label className="consultation-detail-field">
+                        <span>New end date and time</span>
+                        <input type="datetime-local" value={consultationDetailForm.endAt} min={nowDateTimeLocalValue()} onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, endAt: event.target.value }))} />
+                      </label>
+                    </div>
+                    <label className="consultation-detail-field">
+                      <span>Doctor notes</span>
+                      <textarea rows={5} value={consultationDetailForm.doctorNotes} placeholder="Add concise care notes for this consultation" onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, doctorNotes: event.target.value }))} />
+                    </label>
+                    {!["completed", "cancelled", "no_show"].includes(selectedConsultation.status) ? (
+                      <label className="consultation-detail-field">
+                        <span>Cancellation reason</span>
+                        <textarea rows={5} value={consultationDetailForm.cancellationReason} placeholder="Required when cancelling this consultation" onChange={(event) => setConsultationDetailForm((prev) => ({ ...prev, cancellationReason: event.target.value }))} />
+                      </label>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section className="consultation-details-section" aria-labelledby="consultation-prescriptions-heading">
+                  <div className="consultation-details-section-head">
+                    <div>
+                      <p className="consultation-details-eyebrow">Clinical records</p>
+                      <h3 id="consultation-prescriptions-heading">Linked prescriptions</h3>
+                    </div>
+                    <p>{selectedConsultationPrescriptions.length} prescription{selectedConsultationPrescriptions.length === 1 ? "" : "s"} linked to this patient.</p>
+                  </div>
+                  {selectedConsultationPrescriptions.length ? (
+                    <div className="consultation-prescription-list">
+                      {selectedConsultationPrescriptions.map((item) => (
+                        <article className="consultation-prescription-card" key={item.id}>
+                          <div>
+                            <strong>{item.prescription_number || `Prescription #${item.id}`}</strong>
+                            <p>{item.diagnosis || "No diagnosis recorded"}</p>
+                          </div>
+                          <StatusPill value={item.status}>{formatStatusLabel(item.status)}</StatusPill>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="consultation-empty-records">
+                      <strong>No linked prescriptions</strong>
+                      <p>Prescriptions created for this patient will appear here.</p>
+                    </div>
+                  )}
+                </section>
               </div>
-              </div>
-              <div className="stacked-order-popup-actions consultation-action-buttons modal-actions">
-                <button className="pill-button" type="button" onClick={() => runAppointmentAction("reschedule", { start_at: consultationDetailForm.startAt, end_at: consultationDetailForm.endAt })} disabled={Boolean(consultationActionLoading) || !consultationDetailForm.startAt || !consultationDetailForm.endAt}>
-                  {consultationActionLoading === "reschedule" ? "Rescheduling..." : "Reschedule"}
+
+              <footer className="consultation-details-actions" aria-label="Consultation actions">
+                <button className="consultation-action-pill consultation-action-secondary" type="button" onClick={() => runAppointmentAction("notes", { doctor_notes: consultationDetailForm.doctorNotes })} disabled={Boolean(consultationActionLoading)}>
+                  {consultationActionLoading === "notes" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
+                  <span>{consultationActionLoading === "notes" ? "Saving notes..." : "Save doctor notes"}</span>
                 </button>
-                <button className="pill-button" type="button" onClick={() => runAppointmentAction("notes", { doctor_notes: consultationDetailForm.doctorNotes })} disabled={Boolean(consultationActionLoading)}>
-                  {consultationActionLoading === "notes" ? "Saving..." : "Save Notes"}
+                <button className="consultation-action-pill consultation-action-secondary" type="button" onClick={() => runAppointmentAction("reschedule", { start_at: consultationDetailForm.startAt, end_at: consultationDetailForm.endAt })} disabled={Boolean(consultationActionLoading) || !consultationDetailForm.startAt || !consultationDetailForm.endAt}>
+                  {consultationActionLoading === "reschedule" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
+                  <span>{consultationActionLoading === "reschedule" ? "Rescheduling..." : "Reschedule consultation"}</span>
                 </button>
                 {selectedConsultation.status === "requested" ? (
-                  <button className="button-primary" type="button" onClick={() => runAppointmentAction("confirm")} disabled={Boolean(consultationActionLoading)}>
-                    {consultationActionLoading === "confirm" ? "Confirming..." : "Confirm"}
+                  <button className="consultation-action-pill consultation-action-primary" type="button" onClick={() => runAppointmentAction("confirm")} disabled={Boolean(consultationActionLoading)}>
+                    {consultationActionLoading === "confirm" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
+                    <span>{consultationActionLoading === "confirm" ? "Confirming..." : "Confirm consultation"}</span>
                   </button>
                 ) : null}
                 {!["completed", "cancelled", "no_show"].includes(selectedConsultation.status) ? (
-                  <button className="button-primary" type="button" onClick={() => runAppointmentAction("complete", { doctor_notes: consultationDetailForm.doctorNotes })} disabled={Boolean(consultationActionLoading)}>
-                    {consultationActionLoading === "complete" ? "Completing..." : "Complete"}
+                  <button className="consultation-action-pill consultation-action-primary" type="button" onClick={() => runAppointmentAction("complete", { doctor_notes: consultationDetailForm.doctorNotes })} disabled={Boolean(consultationActionLoading)}>
+                    {consultationActionLoading === "complete" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
+                    <span>{consultationActionLoading === "complete" ? "Completing..." : "Mark as completed"}</span>
                   </button>
                 ) : null}
                 {!["completed", "cancelled", "no_show"].includes(selectedConsultation.status) ? (
-                  <button className="pill-button danger" type="button" onClick={() => runAppointmentAction("cancel", { reason: consultationDetailForm.cancellationReason })} disabled={Boolean(consultationActionLoading)}>
-                    {consultationActionLoading === "cancel" ? "Cancelling..." : "Cancel"}
+                  <button className="consultation-action-pill consultation-action-danger" type="button" onClick={() => runAppointmentAction("cancel", { reason: consultationDetailForm.cancellationReason })} disabled={Boolean(consultationActionLoading) || !consultationDetailForm.cancellationReason.trim()}>
+                    {consultationActionLoading === "cancel" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
+                    <span>{consultationActionLoading === "cancel" ? "Cancelling..." : "Cancel consultation"}</span>
                   </button>
                 ) : null}
-              </div>
+              </footer>
             </section>
           </div>
         </div>
@@ -12946,6 +13286,7 @@ export function AdminStorefrontDashboard({
                     <div className="detail-item-card"><strong>Patient</strong><span className="muted">{selectedCustomerProfile.label}</span></div>
                     <div className="detail-item-card"><strong>Email</strong><span className="muted">{selectedCustomerProfile.email}</span></div>
                     <div className="detail-item-card"><strong>Current role</strong><span className="muted">{selectedCustomerRoleLabel}</span></div>
+                    <div className="detail-item-card"><strong>Account status</strong><span className="muted">{formatStatusLabel(selectedCustomerProfile.accountStatus || "approved")}</span></div>
                     <div className="detail-item-card"><strong>Total orders</strong><span className="muted">{formatNumber(selectedCustomerProfile.orders)}</span></div>
                     <div className="detail-item-card"><strong>Total spend</strong><span className="muted">{formatMoney(selectedCustomerProfile.spend, storeCurrency)}</span></div>
                     <div className="detail-item-card"><strong>Prescriptions</strong><span className="muted">{formatNumber(selectedCustomerProfile.prescriptions)}</span></div>
@@ -12974,6 +13315,19 @@ export function AdminStorefrontDashboard({
                         )}
                       </div>
                     ) : null}
+                    <div className="detail-item-card customer-detail-wide patient-governance-card">
+                      <strong>Account actions</strong>
+                      <span className="muted">Manage this patient’s dashboard access or send a secure password reset link.</span>
+                      <div className="patient-governance-actions">
+                        {selectedCustomerProfile.accountStatus === "banned"
+                          ? patientDetailActionButton("unban", "Unban patient", "pill-button primary")
+                          : patientDetailActionButton("ban", "Ban patient", "pill-button danger")}
+                        {selectedCustomerProfile.accountStatus !== "suspended"
+                          ? patientDetailActionButton("suspend", "Suspend patient", "pill-button danger")
+                          : null}
+                        {patientDetailActionButton("reset-password", "Reset password", "pill-button")}
+                      </div>
+                    </div>
                   </div>
                 ) : null}
 
@@ -13073,46 +13427,44 @@ export function AdminStorefrontDashboard({
           {customerPrivilegeEscalationOpen ? (
             <div className="app-modal-layer app-modal-layer-top is-open">
               <ModalScrim className="app-modal-backdrop" label="Close role change verification" onDismiss={closeCustomerPrivilegeEscalationModal} />
-              <article className="subscription-modal-frame subscription-protection-frame subscription-otp-card-frame" role="dialog" aria-modal="true" aria-labelledby="customerPrivilegeOtpTitle">
-                <div className="subscription-otp-topbar">
-                  <button className="btn btn-outline btn-icon subscription-otp-close" type="button" onClick={closeCustomerPrivilegeEscalationModal} aria-label="Close role change verification">
-                    <span aria-hidden="true">×</span>
-                  </button>
-                </div>
-                <div className="subscription-otp-card">
-                  <h2 id="customerPrivilegeOtpTitle">{customerPrivilegeSubject?.mode === "downgrade" ? "Approve downgrade" : "Approve upgrade"}</h2>
-                  <p className="subscription-copy">
-                    Verify this action to move <strong>{customerPrivilegeSubject?.name || "this account"}</strong> from <strong>{formatRoleLabel(customerPrivilegeSubject?.sourceRole || "")}</strong> to <strong>{formatRoleLabel(customerPrivilegeTargetRole)}</strong>.
-                  </p>
-                  <p className="subscription-helper-text">Recipient: {customerPrivilegeOtp.maskedEmail || "Waiting for OTP"}</p>
+              <article className="customer-privilege-auth-modal auth-screen-card" role="dialog" aria-modal="true" aria-labelledby="customerPrivilegeOtpTitle">
+                <div className="auth-form auth-reference-form auth-otp-form">
+                  <div className="auth-otp-card">
+                  <h2 className="auth-otp-title" id="customerPrivilegeOtpTitle">{customerPrivilegeSubject?.mode === "downgrade" ? "Approve Downgrade" : "Approve Upgrade"}</h2>
                   <input
                     ref={customerPrivilegeOtpInputRef}
-                    className="subscription-otp-hidden-input"
+                    className="auth-otp-hidden-input"
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     maxLength={6}
                     value={customerPrivilegeOtp.code}
-                    onChange={(event) => setCustomerPrivilegeOtp((current) => ({ ...current, code: event.target.value.replace(/\D/g, "").slice(0, 6), status: "" }))}
+                    onChange={(event) => setCustomerPrivilegeOtp((current) => ({ ...current, code: event.target.value.replace(/\D/g, "").slice(0, 6) }))}
+                    aria-label="Role change verification code"
                   />
-                  <div className="subscription-otp-boxes" role="group" aria-label="One time password digits">
+                  <div className="auth-otp-boxes" role="group" aria-label="Role change verification code digits">
                     {Array.from({ length: 6 }, (_, index) => (
                       <button
-                        className={`subscription-otp-box ${customerPrivilegeOtp.code[index] ? "filled" : ""}`}
+                        className={`auth-otp-box ${customerPrivilegeOtp.code[index] ? "filled" : ""}`}
                         key={`customer-privilege-otp-box-${index}`}
                         type="button"
                         onClick={() => customerPrivilegeOtpInputRef.current?.focus()}
+                        aria-label={`Digit ${index + 1}`}
                       >
                         {customerPrivilegeOtp.code[index] || ""}
                       </button>
                     ))}
                   </div>
-                  {customerPrivilegeOtp.status ? <p className="subscription-otp-status">{customerPrivilegeOtp.status}</p> : null}
-                </div>
-                <div className="modal-actions sticky-modal-actions subscription-otp-actions">
-                  <button className="pill-button" type="button" onClick={closeCustomerPrivilegeEscalationModal}>Cancel</button>
-                  <button className="btn btn-primary subscription-otp-submit" type="button" disabled={customerPrivilegeEscalationLoading || customerPrivilegeOtp.code.length !== 6} onClick={submitCustomerPrivilegeEscalation}>
-                    {customerPrivilegeEscalationLoading ? "Approving..." : `${customerPrivilegeSubject?.mode === "downgrade" ? "Downgrade" : "Upgrade"} to ${formatRoleLabel(customerPrivilegeTargetRole)}`}
+                  {customerPrivilegeOtp.status ? <p className="customer-privilege-otp-status" role="status">{customerPrivilegeOtp.status}</p> : null}
+                  <div className="customer-privilege-otp-actions">
+                  <button className="pill-button" type="button" disabled={customerPrivilegeEscalationLoading} onClick={closeCustomerPrivilegeEscalationModal}>Cancel</button>
+                  <button className="auth-primary-button auth-otp-submit" type="button" disabled={customerPrivilegeEscalationLoading || customerPrivilegeOtp.code.length !== 6} onClick={submitCustomerPrivilegeEscalation}>
+                    {customerPrivilegeEscalationLoading ? <span className="nevari-branded-spinner staff-button-spinner" aria-label={customerPrivilegeOtp.challengeId ? "Approving role change" : "Sending verification code"} /> : null}
+                    <span>{customerPrivilegeEscalationLoading
+                      ? (customerPrivilegeOtp.challengeId ? "Approving..." : "Sending OTP...")
+                      : `${customerPrivilegeSubject?.mode === "downgrade" ? "Downgrade" : "Upgrade"} to ${formatRoleLabel(customerPrivilegeTargetRole)}`}</span>
                   </button>
+                  </div>
+                  </div>
                 </div>
               </article>
             </div>

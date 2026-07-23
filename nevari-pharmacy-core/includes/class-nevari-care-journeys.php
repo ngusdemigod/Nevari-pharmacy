@@ -178,6 +178,9 @@ final class Nevari_Care_Journeys {
         if (!$wpdb->get_var("SHOW INDEX FROM {$table} WHERE Key_name='pharmacist_slot_hold'")) {
             $wpdb->query("ALTER TABLE {$table} ADD KEY pharmacist_slot_hold (assigned_pharmacist_user_id,slot_state,slot_hold_expires_at,reserved_start_at)");
         }
+        if (!$wpdb->get_var("SHOW INDEX FROM {$table} WHERE Key_name='pharmacist_round_robin'")) {
+            $wpdb->query("ALTER TABLE {$table} ADD KEY pharmacist_round_robin (assigned_pharmacist_user_id,assigned_at)");
+        }
     }
     public static function register_routes(): void {
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/staff/care-requests/(?P<service>iv-therapy|nurse)', [[

@@ -147,7 +147,7 @@ variables read on the server.
 ## UI Rules
 Design references live at the repo root as static HTML/Figma-exported
 mockups (e.g. `main nevari design system.html`, `customer
-designsystem.html`, `design_system1.html`, `nevari_admin_design_system_md.md`).
+designsystem.html`, , `nevari_admin_design_system_md.md`).
 `main nevari design system.html` is the design system for the **admin**
 dashboard (`app/admin/{storefront,doctor,pharmacist,orders}`) — treat it
 as the source of truth for admin-side layout, spacing, color, and
@@ -157,6 +157,17 @@ For any UI task:
 - Match layout, spacing, padding, font sizes, font hierarchy, colors,
   border radius, shadows, alignment, and proportions.
 - Do not approximate. Do not simplify unless explicitly asked.
+
+### Default admin storefront tabs
+
+All tabbed controls in the admin storefront use the Nevari segmented-tab pattern:
+- a pale blue-gray container with a thin border, 15px radius, and 5px inset padding;
+- 42px minimum-height tab buttons with 12px radius and horizontally scrollable overflow;
+- the active tab uses the Nevari navy background with white text;
+- optional counts appear as compact badges beside the label;
+- use semantic `tablist`/`tab`/`tabpanel` roles, `aria-selected`, keyboard-visible focus, and no layout-shifting hover effects.
+
+Reuse the shared `.segmented-mini` / `.nevari-storefront-tabs` styling for Payments, Orders, Products, subscription details, patient-profile details, and future admin-storefront tabs. Do not build a page-specific replacement.
 ---
 ## Styling Rules
 This project uses plain CSS, not a utility framework. Global styles

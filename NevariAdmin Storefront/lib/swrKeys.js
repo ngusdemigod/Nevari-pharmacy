@@ -41,6 +41,7 @@ export const swrKeys = {
     appointments: (params = {}) => buildAdminListKey("appointments", params),
     prescriptions: (params = {}) => buildAdminListKey("prescriptions", params),
     doctors: (params = {}) => buildAdminListKey("doctors", params),
+    users: (params = {}) => buildAdminListKey("users", params),
     emails: (params = {}) => buildAdminListKey("emails", params),
     audit: (params = {}) => buildAdminListKey("audit", params)
   },
@@ -110,6 +111,7 @@ export const isCustomerListKey = isAdminCacheKey("customers");
 export const isAppointmentListKey = isAdminCacheKey("appointments");
 export const isDoctorListKey = isAdminCacheKey("doctors");
 export const isAdminSummaryKey = isAdminCacheKey("summary");
+export const isGovernedUsersKey = (key) => isAdminCacheKey("users")(key) || isProxyPathKey("/admin/users")(key);
 
 export const isProxyOrdersKey = isProxyPathKey("/orders");
 export const isProxyAppointmentsKey = isProxyPathKey("/appointments");

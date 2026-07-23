@@ -30,9 +30,37 @@ final class Nevari_Rest {
         return Nevari_Auth::api_session_required();
     }
 
-    public static function store_admin_required(): bool {
+    public static function store_admin_required(?WP_REST_Request $request = null): bool {
         $user_id = Nevari_Auth::api_session_user_id();
-        return $user_id > 0 && Nevari_Helpers::is_store_admin($user_id);
+        if ($user_id <= 0 || !Nevari_Helpers::is_store_admin($user_id)) {
+            return false;
+        }
+        if (in_array('administrator', Nevari_Helpers::current_user_roles($user_id), true) || !$request) {
+            return true;
+        }
+        $route = (string) $request->get_route();
+        $areas = [
+            '/products' => 'products',
+            '/orders' => 'orders',
+            '/payments' => 'payments',
+            '/customers' => 'patients',
+            '/appointments' => 'consultations',
+            '/prescriptions' => 'mtm',
+            '/admin/mtm-requests' => 'mtm',
+            '/iv-therapy' => 'iv-therapy',
+            '/nurse' => 'nurse-requests',
+            '/audit-logs' => 'logs',
+            '/emails/logs' => 'logs',
+            '/admin/users' => 'staff',
+            '/doctors' => 'staff',
+            '/subscriptions' => 'subscriptions',
+        ];
+        foreach ($areas as $fragment => $permission) {
+            if (strpos($route, $fragment) !== false) {
+                return Nevari_User_Governance::user_has_permission($user_id, $permission);
+            }
+        }
+        return true;
     }
 
     public static function product_manager_required(): bool {
@@ -2707,7 +2735,7 @@ final class Nevari_Rest {
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/admin/users/(?P<id>\d+)/role', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'admin_users_change_role'],
-            'permission_callback' => [__CLASS__, 'store_admin_required'],
+            'permission_callback' => ['Nevari_User_Governance', 'role_change_permission'],
         ]);
     }
 
@@ -4186,14 +4214,14 @@ final class Nevari_Rest {
     }
     private static function role_change_allowed_targets(string $current_role): array {
         return match ($current_role) {
-            'customer', 'patient' => ['doctor', 'pharmacist'],
+            'customer', 'patient', 'subscriber' => ['doctor', 'pharmacist'],
             'doctor', 'pharmacist' => ['customer'],
             default => [],
         };
     }
 
     private static function role_change_primary_role(WP_User $user): string {
-        foreach (['doctor', 'pharmacist', 'customer', 'patient'] as $role) {
+        foreach (['doctor', 'pharmacist', 'customer', 'patient', 'subscriber'] as $role) {
             if (in_array($role, (array) $user->roles, true)) {
                 return $role;
             }
@@ -4203,66 +4231,61 @@ final class Nevari_Rest {
 
     public static function admin_users_change_role(WP_REST_Request $request): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('rest_admin_user_role_change', 12, MINUTE_IN_SECONDS, ['user:' . get_current_user_id()])) {
+            Nevari_User_Governance::audit_role_change_failure((int) $request['id'], '', '', 'rate_limited');
             return $response;
         }
 
         $user_id = (int) $request['id'];
         $target_role = sanitize_key((string) $request->get_param('target_role'));
         if ($user_id <= 0 || $target_role === '') {
+            Nevari_User_Governance::audit_role_change_failure($user_id, '', $target_role, 'validation_error');
             return Nevari_Helpers::error('validation_error', 'A valid user id and target_role are required.', 422);
         }
 
         $user = get_user_by('id', $user_id);
         if (!$user instanceof WP_User) {
+            Nevari_User_Governance::audit_role_change_failure($user_id, '', $target_role, 'user_not_found');
             return Nevari_Helpers::error('user_not_found', 'The selected user could not be found.', 404);
         }
 
         $current_role = self::role_change_primary_role($user);
         if ($current_role === '') {
+            Nevari_User_Governance::audit_role_change_failure($user_id, '', $target_role, 'unsupported_source_role');
             return Nevari_Helpers::error('role_change_unsupported', 'This account cannot be changed with this flow.', 409);
         }
 
         $allowed_targets = self::role_change_allowed_targets($current_role);
         if (!in_array($target_role, $allowed_targets, true)) {
+            Nevari_User_Governance::audit_role_change_failure($user_id, $current_role, $target_role, 'invalid_target_role');
             return Nevari_Helpers::error('role_change_invalid_target', 'This role transition is not allowed.', 422);
         }
 
         $resolved_target_role = $target_role === 'customer' && !get_role('customer') ? 'subscriber' : $target_role;
         if (!get_role($resolved_target_role)) {
+            Nevari_User_Governance::audit_role_change_failure($user_id, $current_role, $target_role, 'target_role_unavailable');
             return Nevari_Helpers::error('role_change_failed', 'The target role is not available on this site.', 409);
         }
-        $user->set_role($resolved_target_role);
-
+        $result = Nevari_User_Governance::change_role(
+            $user_id,
+            $resolved_target_role,
+            sanitize_text_field((string) $request->get_param('reason'))
+        );
+        if (is_wp_error($result)) {
+            return Nevari_Helpers::error($result->get_error_code(), $result->get_error_message(), 409);
+        }
         if ($target_role === 'customer') {
             delete_user_meta($user_id, '_nevari_doctor_disabled');
         }
-
-        clean_user_cache($user_id);
         $updated_user = get_user_by('id', $user_id);
-        $summary = Nevari_Helpers::user_summary($user_id) ?: [
-            'id' => $user_id,
-            'display_name' => $updated_user ? $updated_user->display_name : '',
-            'email' => $updated_user ? $updated_user->user_email : '',
-            'roles' => $updated_user ? array_values((array) $updated_user->roles) : [$target_role],
-        ];
-
-        Nevari_Audit::log('security', 'nevari', 'admin.user_role_changed', 'success', [
-            'actor_user_id' => get_current_user_id(),
-            'related_user_id' => $user_id,
-            'object_type' => 'user',
-            'object_id' => $user_id,
-            'from_role' => $current_role,
-            'to_role' => $target_role,
-            'message' => sprintf('Admin changed %s from %s to %s.', $updated_user ? $updated_user->display_name : ('User #' . $user_id), $current_role, $target_role),
-        ]);
 
         return Nevari_Helpers::success([
-            'user' => array_merge($summary, [
+            'user' => array_merge((array) ($result['user'] ?? []), [
                 'role' => $target_role,
                 'primary_role' => $target_role,
             ]),
-            'from_role' => $current_role,
+            'from_role' => (string) ($result['from_role'] ?? $current_role),
             'target_role' => $target_role,
+            'notification' => $result['notification'] ?? ['queued' => true, 'warning' => ''],
             'message' => sprintf('%s updated to %s.', $updated_user ? $updated_user->display_name : 'User', ucfirst($target_role)),
         ]);
     }

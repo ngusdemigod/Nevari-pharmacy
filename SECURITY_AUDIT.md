@@ -530,6 +530,9 @@ Consider engaging professional security consultants for:
 - Pharmacist MTM approval now fails closed unless the request has verified payment or a reserved Pro credit and an unexpired reserved slot.
 - MTM payment amounts are derived from the server option; WooCommerce/Paystack order state is authoritative.
 - Manual refund completion is store-admin-only and stores an external reference, never gateway credentials.
+- MTM requests remain unassigned until the patient confirms a provider-neutral slot. Confirmation rejects client-supplied pharmacist fields, row-locks the request and candidate user, revalidates role/governance/availability/conflicts, and assigns the least-recently-assigned eligible pharmacist.
+- Pharmacist availability reads and writes use the authenticated pharmacist's session user ID; the client cannot supply a pharmacist ID. Writes allow only the availability field and sanitize/validate bounded weekday time ranges.
+- Consent `No` is normalized server-side so skipped caregiver and clinical payloads, medication data, adherence answers, and attachments are not retained even if a forged client submits them.
 # User governance and Nurse Request assignment (2026-07-22)
 
 - Nurse registration is public but rate-limited by IP and normalized email, rejects unexpected privilege fields, assigns the `nurse` role server-side, and creates a `pending_review` governance record without issuing a dashboard session.
@@ -541,3 +544,21 @@ Consider engaging professional security consultants for:
 - Care lifecycle email dispatches claim a unique service/record/event/recipient/template fingerprint before queueing, preventing duplicate delivery under concurrent transitions without storing recipient addresses in the dispatch registry.
 - Nurse accounts have no Nevari care capabilities or dashboard route. Direct wp-admin access is redirected and the admin bar is hidden.
 - The standalone care-provider assignment surface is no longer registered. Its table/legacy identifier remains temporarily for migration compatibility only.
+# 2026-07-23 verification note
+
+The admin staff action proxy now validates the double-submit CSRF token before forwarding approve, decline, ban, suspend, or password-reset actions. Staff, MTM, and subscription list parameters are sanitized and bounded server-side; no browser token or direct WordPress-origin request was introduced.
+
+# 2026-07-23 storefront permission enforcement
+
+- Storefront area access is represented by explicit WordPress capabilities and resolved against the authenticated JWT user on each protected REST request; browser navigation is not the authorization boundary.
+- Staff access mutations are administrator-only, reject self-targets and unexpected roles/permissions, revoke the affected user's active sessions, and record safe before/after values without tokens or password data.
+- Successful staff access changes queue notifications for the affected user and acting administrator. Delivery failures do not roll back the authoritative access change and are written to the audit log.
+
+# 2026-07-23 patient governance and dashboard reset hardening
+
+- Patient and staff governance mutations now derive the required Patients or Staff Management capability from the target user's current server-side role. Self-targets and protected administrative targets remain denied.
+- Role changes update the WordPress role, explicit storefront capabilities, and the indexed governance role/status in one database transaction, then revoke the affected user's sessions.
+- Successful and failed role/status/reset actions write sanitized audit outcomes with safe before/after values and failure categories. Reset keys and email links are never written to audit metadata.
+- Administrator-triggered password resets use the trusted Nevari dashboard origin and a role-specific frontend type instead of WordPress's native reset URL. Reset confirmation validates the key against that allowlisted frontend.
+- Banned and suspended users may complete a valid administrator-requested password reset, but authentication remains blocked until their governance status is restored.
+- The role-upgrade proxy now requires the same double-submit CSRF token used by other storefront governance mutations.

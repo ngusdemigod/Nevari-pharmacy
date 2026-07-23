@@ -243,6 +243,43 @@
   gap: 14px;
 }
 
+.customer-mtm-availability-screen .appointment-surface-card,
+.customer-mtm-availability-screen .appointment-summary-card {
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.customer-mtm-pharmacist-search {
+  min-height: 76px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  color: #0a2a5e;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.customer-mtm-pharmacist-search .nevari-branded-spinner {
+  width: 32px;
+  height: 32px;
+}
+
+.customer-mtm-pharmacist-search .nevari-branded-spinner::after {
+  width: 32px;
+  height: 32px;
+}
+
+.customer-mtm-review-skip-note {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f4f7fb;
+  color: #40516e;
+  line-height: 1.5;
+}
+
 .appointment-summary-row,
 .checkout-summary-grid div {
   display: flex;
@@ -14692,7 +14729,7 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   border: 1px solid #dde2ea;
   border-radius: 8px;
   background: #f4f6f8;
-  min-height: 48px;
+  min-height: 40px;
   padding: 0 12px;
   color: #101828;
   font-size: 16px;
@@ -14703,7 +14740,7 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   border: 1px solid #dde2ea;
   border-radius: 8px;
   background: #f4f6f8;
-  min-height: 48px;
+  min-height: 40px;
   padding: 0 12px;
   color: #101828;
   font-size: 16px;
@@ -32252,6 +32289,415 @@ body .customer-mobile-panel>.subscription-manage-card .subscription-feedback.err
   }
 }
 
+/* Flat table surfaces: headings remain outside, only the table grid defines its edge. */
+.nevari-admin-storefront .table-panel,
+.nevari-admin-storefront .dashboard-table-shell,
+.nevari-admin-storefront .staff-directory-panel {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.nevari-admin-storefront .table-panel > .panel-header,
+.nevari-admin-storefront .dashboard-table-shell > .panel-header {
+  padding: 0 0 18px;
+}
+
+.nevari-admin-storefront .table-panel > .table-scroll,
+.nevari-admin-storefront .dashboard-table-shell > .table-scroll,
+.nevari-admin-storefront .staff-directory-panel > .table-scroll {
+  border: 1px solid #d8e2f0;
+  border-radius: 20px;
+  background: #fff;
+}
+
+.nevari-admin-storefront .staff-row-review td {
+  background: #edf7ff;
+}
+
+.nevari-admin-storefront .staff-row-review:hover td {
+  background: #e4f2fd;
+}
+
+.staff-fullscreen-modal {
+  border: 1px solid #d8e2f0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.staff-modal-avatar {
+  overflow: hidden;
+  border-radius: 50%;
+  background: #e7eef8;
+}
+
+.staff-access-section {
+  border: 1px solid #d8e2f0;
+  background: #fff;
+}
+
+.staff-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 20px;
+  border-top: 1px solid #e1e7f0;
+}
+
+.staff-modal-actions .pill-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 44px;
+  padding-inline: 18px;
+}
+
+.staff-modal-actions .pill-button.primary {
+  border-color: #0b326c;
+  background: #0b326c;
+  color: #fff;
+}
+
+.staff-button-spinner {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+}
+
+.staff-button-spinner::after {
+  width: 18px;
+  height: 18px;
+}
+
+.staff-icon-spinner {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  background: transparent;
+}
+
+.staff-icon-spinner::after {
+  width: 18px;
+  height: 18px;
+}
+
+.patient-governance-card {
+  gap: 10px;
+}
+
+.patient-governance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.patient-governance-actions .pill-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding-inline: 18px;
+}
+
+.staff-snackbar {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 11000;
+}
+
+.nurse-request-details-modal {
+  width: min(920px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid #d8e2f0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.nurse-request-details-modal .governed-user-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.customer-privilege-auth-modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border: 1px solid #d9e2ef;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.customer-privilege-auth-modal > .auth-otp-form {
+  padding: 48px 42px 38px;
+}
+
+.customer-privilege-auth-modal .auth-otp-card {
+  gap: 28px;
+}
+
+.customer-privilege-otp-status {
+  width: 100%;
+  margin: 0;
+  color: #4e607c;
+  line-height: 1.6;
+}
+
+.customer-privilege-otp-status {
+  min-height: 24px;
+  font-size: 14px;
+}
+
+.customer-privilege-otp-actions {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.customer-privilege-otp-actions .auth-primary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.customer-privilege-otp-actions .auth-primary-button .nevari-branded-spinner {
+  background: transparent;
+}
+
+.customer-privilege-otp-actions .auth-primary-button .nevari-branded-spinner::after {
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+}
+
+@media (max-width: 560px) {
+  .customer-privilege-auth-modal > .auth-otp-form {
+    padding: 36px 20px 28px;
+  }
+
+  .customer-privilege-otp-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-privilege-otp-actions .pill-button {
+    order: 2;
+  }
+}
+
+.table-skeleton-row .skeleton {
+  display: block;
+  min-height: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+}
+
+/* Default Nevari admin storefront tabs */
+.nevari-admin-storefront .segmented-mini,
+.nevari-admin-storefront .filter-bar,
+.nevari-admin-storefront .tabs-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px;
+  overflow-x: auto;
+  border: 1px solid #d8e0ed;
+  border-radius: 15px;
+  background: #f3f6fa;
+}
+
+.nevari-admin-storefront .segmented-mini button,
+.nevari-admin-storefront .filter-bar button,
+.nevari-admin-storefront .tabs-bar button {
+  min-height: 42px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #5a6881;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 180ms ease, background-color 180ms ease;
+}
+
+.nevari-admin-storefront .segmented-mini button.active,
+.nevari-admin-storefront .filter-bar button.active,
+.nevari-admin-storefront .tabs-bar button.active {
+  background: #0b326c;
+  color: #fff;
+}
+
+.nevari-admin-storefront .segmented-mini button:focus-visible,
+.nevari-admin-storefront .filter-bar button:focus-visible,
+.nevari-admin-storefront .tabs-bar button:focus-visible {
+  outline: 3px solid rgba(42, 118, 205, 0.35);
+  outline-offset: 2px;
+}
+
+.nevari-admin-storefront .panel-header h2,
+.nevari-admin-storefront .section-heading h2,
+.nevari-admin-storefront .page-view > h2 {
+  font-family: "Product Sans", "Google Sans", Arial, sans-serif;
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1.25;
+}
+
+.nevari-admin-storefront .mtm-summary-row + .mtm-requests-section,
+.nevari-admin-storefront .operations-grid + .consultation-table,
+.nevari-admin-storefront .operations-grid + .iv-therapy-requests-section {
+  margin-top: 24px;
+}
+
+.nevari-admin-storefront .customer-list-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.nevari-admin-storefront .customer-list-profile > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.nevari-admin-storefront .customer-list-profile small {
+  overflow: hidden;
+  color: #66758f;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staff-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(5, 17, 38, 0.78);
+}
+
+.staff-fullscreen-modal {
+  width: min(1120px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 30px 90px rgba(0, 20, 55, 0.32);
+}
+
+.staff-modal-header,
+.staff-modal-body {
+  padding: 28px;
+}
+
+.staff-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e3e8f1;
+}
+
+.staff-modal-identity {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.staff-modal-avatar {
+  width: 72px;
+  height: 72px;
+  font-size: 22px;
+}
+
+.staff-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 14px;
+  margin: 0 0 28px;
+}
+
+.staff-detail-grid > div {
+  padding: 16px;
+  border: 1px solid #dbe3ef;
+  border-radius: 14px;
+}
+
+.staff-detail-grid dt {
+  color: #66758f;
+  font-size: 13px;
+}
+
+.staff-detail-grid dd {
+  margin: 6px 0 0;
+  color: #092b60;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.staff-access-section {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.35fr) minmax(0, 1fr);
+  gap: 24px;
+  margin-bottom: 24px;
+  padding: 22px;
+  border-radius: 18px;
+  background: #f6f8fb;
+}
+
+.staff-permission-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 18px;
+}
+
+.staff-permission-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid #c9d8eb;
+  border-radius: 999px;
+  background: #eaf2fd;
+  color: #0b326c;
+}
+
+.staff-modal-notice {
+  margin: 18px 0 0;
+  color: #173e73;
+}
+
+.subscription-details-panel[hidden],
+.subscription-plans-panel[hidden] {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .staff-modal-overlay { padding: 0; }
+  .staff-fullscreen-modal { width: 100%; max-height: 100vh; min-height: 100vh; border-radius: 0; }
+  .staff-modal-header, .staff-modal-body { padding: 20px; }
+  .staff-access-section { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 480px) {
   .nevari-subscription-card {
     padding: 22px 20px 0;
@@ -38286,4 +38732,970 @@ body:has(.modal-design-system-parity) .order-modal .order-detail-scroll {
 
 .customer-mtm-slot-actions>* {
   flex: 1 1 150px;
+}
+
+.pharmacist-availability-page { padding: 28px; }
+.pharmacist-availability-times { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+.pharmacist-availability-times label { display: grid; gap: 7px; color: #496585; font-size: 13px; }
+.pharmacist-availability-times input { min-height: 44px; padding: 8px 12px; border: 1px solid #dce5ef; border-radius: 10px; background: #fff; color: #173b67; }
+@media (max-width: 640px) { .pharmacist-availability-page { padding: 18px; } .pharmacist-availability-times { grid-template-columns: 1fr; } }
+/* Admin storefront consistency pass */
+.nevari-admin-storefront .section-kicker,
+.nevari-admin-storefront .eyebrow,
+.nevari-admin-storefront .customer-section-kicker {
+  display: none !important;
+}
+
+.nevari-admin-storefront .staff-directory-panel ~ .staffs-hero-grid,
+.nevari-admin-storefront .staff-directory-panel ~ .panel.table-panel {
+  display: none;
+}
+
+.nevari-admin-storefront .page-view > .metric-grid,
+.nevari-admin-storefront .page-view > .metrics-grid,
+.nevari-admin-storefront .page-view > .operations-grid:first-child,
+.nevari-admin-storefront .products-redesign-metrics,
+.nevari-admin-storefront .mtm-summary-row,
+.nevari-admin-storefront .staffs-hero-grid {
+  min-height: 164px;
+  align-content: stretch;
+}
+
+.nevari-admin-storefront :is(.segmented, .segmented-mini, .product-editor-tabs, .email-segmented-tabs, .audit-tabs, .tabs-bar) {
+  display: inline-flex;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px;
+  overflow-x: auto;
+  border: 1px solid #e2e7ef;
+  border-radius: 12px;
+  background: #f4f6f9;
+  scrollbar-width: none;
+}
+
+.nevari-admin-storefront :is(.segmented, .segmented-mini, .product-editor-tabs, .email-segmented-tabs, .audit-tabs, .tabs-bar) button {
+  min-height: 36px;
+  flex: 0 0 auto;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #667085;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.nevari-admin-storefront :is(.segmented, .segmented-mini, .product-editor-tabs, .email-segmented-tabs, .audit-tabs, .tabs-bar) button:is(.active, [aria-selected="true"], [aria-current="page"]) {
+  color: #0e2955;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(14, 41, 85, 0.14);
+}
+
+.nevari-admin-storefront :is(.segmented, .segmented-mini, .product-editor-tabs, .email-segmented-tabs, .audit-tabs, .tabs-bar) button:focus-visible,
+.staff-action-icon:focus-visible {
+  outline: 3px solid rgba(43, 108, 176, 0.3);
+  outline-offset: 2px;
+}
+
+.staff-row-actions { display: flex; gap: 7px; align-items: center; }
+.staff-action-icon { position: relative; width: 34px; height: 34px; border: 1px solid #dfe5ed; border-radius: 9px; background: #fff; color: #0e2955; font-weight: 700; cursor: pointer; }
+.staff-action-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.staff-action-icon::after { content: attr(data-tooltip); position: absolute; z-index: 20; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); padding: 5px 8px; border-radius: 6px; background: #0e2955; color: #fff; font-size: 11px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 160ms ease; }
+.staff-action-icon:is(:hover, :focus-visible)::after { opacity: 1; }
+.staff-review-card { position: fixed; z-index: 1000; inset: 50% auto auto 50%; transform: translate(-50%, -50%); width: min(620px, calc(100vw - 32px)); padding: 24px; border-radius: 22px; background: #fff; box-shadow: 0 24px 80px rgba(14, 41, 85, 0.24); }
+
+@media (max-width: 767px) {
+  .nevari-admin-storefront .page-view > .metric-grid,
+  .nevari-admin-storefront .page-view > .metrics-grid,
+  .nevari-admin-storefront .page-view > .operations-grid:first-child,
+  .nevari-admin-storefront .products-redesign-metrics,
+  .nevari-admin-storefront .mtm-summary-row,
+  .nevari-admin-storefront .staffs-hero-grid { min-height: 0; }
+}
+
+/* Keep IV Therapy metrics and registry on the standard 24px content rhythm. */
+.nevari-admin-storefront .iv-therapy-page {
+  align-content: start;
+  gap: 24px;
+}
+
+.nevari-admin-storefront .page-view.iv-therapy-page > .operations-grid.mtm-summary-row,
+.nevari-admin-storefront .page-view.iv-therapy-page > .operations-grid.mtm-registry-row {
+  min-height: 0;
+  margin: 0;
+}
+
+/* Consultation details: flat Nevari admin modal */
+.consultation-details-modal {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(1040px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
+  border: 1px solid #dfe6ef;
+  border-radius: 28px;
+  background: #ffffff;
+  color: #0e2955;
+  box-shadow: none;
+}
+
+.consultation-details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 28px;
+  border-bottom: 1px solid #e7ebf1;
+  background: #ffffff;
+}
+
+.consultation-details-heading,
+.consultation-details-header-actions,
+.consultation-details-actions,
+.consultation-action-pill {
+  display: flex;
+  align-items: center;
+}
+
+.consultation-details-heading {
+  min-width: 0;
+  gap: 16px;
+}
+
+.consultation-details-heading > div:last-child {
+  min-width: 0;
+}
+
+.consultation-staff-avatar {
+  position: relative;
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  border: 1px solid #d8e2ee;
+  border-radius: 50%;
+  background: #eaf3fb;
+}
+
+.consultation-staff-avatar img,
+.consultation-staff-avatar span {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+
+.consultation-staff-avatar img {
+  display: block;
+  object-fit: cover;
+}
+
+.consultation-staff-avatar span {
+  place-items: center;
+  color: #0e2955;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.consultation-details-eyebrow {
+  margin: 0 0 5px;
+  color: #66758d;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.consultation-details-header h2,
+.consultation-details-section-head h3 {
+  margin: 0;
+  color: #0e2955;
+  font-family: "Product Sans", "Google Sans", Arial, sans-serif;
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1.25;
+}
+
+.consultation-details-heading p:last-child {
+  margin: 6px 0 0;
+  overflow: hidden;
+  color: #66758d;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.consultation-details-header-actions {
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.consultation-details-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 28px 32px;
+  background: #ffffff;
+}
+
+.consultation-details-section {
+  display: grid;
+  gap: 18px;
+  padding: 0 0 28px;
+  border: 0;
+  background: #ffffff;
+}
+
+.consultation-details-section + .consultation-details-section {
+  padding-top: 28px;
+  border-top: 1px solid #e7ebf1;
+}
+
+.consultation-details-section:last-child {
+  padding-bottom: 0;
+}
+
+.consultation-details-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.consultation-details-section-head > p {
+  max-width: 430px;
+  margin: 0;
+  color: #66758d;
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: right;
+}
+
+.consultation-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.consultation-overview-grid > div {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e1e7ef;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.consultation-overview-grid dt,
+.consultation-detail-field > span {
+  display: block;
+  margin-bottom: 7px;
+  color: #66758d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.consultation-overview-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #0e2955;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.consultation-overview-grid small {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #7b879a;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.consultation-management-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.consultation-schedule-fields {
+  display: grid;
+  gap: 16px;
+}
+
+.consultation-detail-field {
+  display: block;
+  min-width: 0;
+}
+
+.consultation-detail-field input,
+.consultation-detail-field textarea {
+  width: 100%;
+  border: 1px solid #ced8e5;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0e2955;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.consultation-detail-field input {
+  min-height: 48px;
+  padding: 0 13px;
+}
+
+.consultation-detail-field textarea {
+  min-height: 128px;
+  padding: 12px 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.consultation-detail-field :is(input, textarea):focus {
+  border-color: #2b6cb0;
+  box-shadow: 0 0 0 3px rgba(43, 108, 176, 0.14);
+}
+
+.consultation-prescription-list {
+  display: grid;
+  gap: 10px;
+}
+
+.consultation-prescription-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 15px 16px;
+  border: 1px solid #e1e7ef;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.consultation-prescription-card strong,
+.consultation-empty-records strong {
+  color: #0e2955;
+  font-size: 14px;
+}
+
+.consultation-prescription-card p,
+.consultation-empty-records p {
+  margin: 4px 0 0;
+  color: #66758d;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.consultation-empty-records {
+  padding: 24px;
+  border: 1px dashed #cbd6e4;
+  border-radius: 16px;
+  background: #ffffff;
+  text-align: center;
+}
+
+.consultation-details-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 18px 28px;
+  border-top: 1px solid #e7ebf1;
+  background: #ffffff;
+}
+
+.consultation-action-pill {
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.consultation-action-secondary {
+  border-color: #ced8e5;
+  background: #ffffff;
+  color: #0e2955;
+}
+
+.consultation-action-secondary:hover:not(:disabled) {
+  border-color: #0e2955;
+  background: #f5f8fc;
+}
+
+.consultation-action-primary {
+  border-color: #0e2955;
+  background: #0e2955;
+  color: #ffffff;
+}
+
+.consultation-action-primary:hover:not(:disabled) {
+  border-color: #173d72;
+  background: #173d72;
+}
+
+.consultation-action-danger {
+  border-color: #f0bebe;
+  background: #fff5f5;
+  color: #a52f2f;
+}
+
+.consultation-action-danger:hover:not(:disabled) {
+  border-color: #a52f2f;
+  background: #fdeaea;
+}
+
+.consultation-action-pill:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.consultation-action-pill:focus-visible {
+  outline: 3px solid rgba(43, 108, 176, 0.28);
+  outline-offset: 2px;
+}
+
+.consultation-action-primary .nevari-branded-spinner::after {
+  border-color: rgba(255, 255, 255, 0.32);
+  border-top-color: #ffffff;
+}
+
+@media (max-width: 820px) {
+  .consultation-details-modal {
+    width: min(720px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    border-radius: 22px;
+  }
+
+  .consultation-details-header,
+  .consultation-details-section-head {
+    align-items: flex-start;
+  }
+
+  .consultation-details-header {
+    padding: 20px;
+  }
+
+  .consultation-details-header-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+
+  .consultation-details-scroll {
+    padding: 22px 20px 28px;
+  }
+
+  .consultation-details-section-head {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .consultation-details-section-head > p {
+    max-width: none;
+    text-align: left;
+  }
+
+  .consultation-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .consultation-management-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .consultation-details-actions {
+    padding: 16px 20px;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-modal-layer:has(.consultation-details-modal) {
+    padding: 8px;
+  }
+
+  .consultation-details-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 18px;
+  }
+
+  .consultation-details-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+    padding: 18px;
+  }
+
+  .consultation-details-header-actions {
+    width: 100%;
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .consultation-staff-avatar {
+    flex-basis: 52px;
+    width: 52px;
+    height: 52px;
+  }
+
+  .consultation-details-scroll {
+    padding: 20px 18px 24px;
+  }
+
+  .consultation-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .consultation-prescription-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .consultation-details-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    max-height: 35vh;
+    overflow-y: auto;
+    padding: 14px 18px 18px;
+  }
+
+  .consultation-action-pill {
+    width: 100%;
+  }
+}
+
+/* Admin directories: headings stay on the page; only the table owns a surface. */
+.nevari-admin-storefront .admin-flat-table-section {
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible;
+}
+
+.nevari-admin-storefront .admin-flat-table-section > .panel-header {
+  padding: 0 0 18px !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.nevari-admin-storefront .admin-flat-table-section > :is(.table-scroll, .table-wrap) {
+  padding: 20px !important;
+  border: 1px solid #d8e2f0 !important;
+  border-radius: 20px !important;
+  background: #ffffff !important;
+  overflow-x: auto;
+}
+
+.nevari-admin-storefront .subscriptions-page > .subscription-surface {
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible;
+}
+
+.nevari-admin-storefront .subscriptions-page > .subscription-surface > .surface-content {
+  padding: 0 !important;
+}
+
+@media (max-width: 720px) {
+  .nevari-admin-storefront .admin-flat-table-section > :is(.table-scroll, .table-wrap) {
+    padding: 14px !important;
+    border-radius: 16px !important;
+  }
+}
+
+.nevari-admin-storefront .mtm-table-panel tbody tr[role="button"],
+.nevari-admin-storefront .mtm-table-panel tbody tr[role="button"] > td {
+  cursor: pointer;
+}
+
+.nevari-admin-storefront .mtm-table-panel tbody tr[role="button"]:hover > td {
+  background: #f6f9fc;
+}
+
+.nevari-admin-storefront .mtm-table-panel tbody tr[role="button"]:focus-visible {
+  outline: 3px solid rgba(43, 108, 176, 0.28);
+  outline-offset: -3px;
+}
+
+/* Subscription plan details: flat Nevari admin modal. */
+.subscription-plan-details-modal {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(900px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
+  border: 1px solid #dce4ee;
+  border-radius: 28px;
+  background: #ffffff;
+  color: #0e2955;
+  box-shadow: none;
+}
+
+.subscription-plan-details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 28px;
+  border-bottom: 1px solid #e5eaf1;
+  background: #ffffff;
+}
+
+.subscription-plan-details-identity,
+.subscription-plan-details-header-actions,
+.subscription-plan-details-actions,
+.subscription-details-pill {
+  display: flex;
+  align-items: center;
+}
+
+.subscription-plan-details-identity {
+  min-width: 0;
+  gap: 16px;
+}
+
+.subscription-plan-details-identity > div {
+  min-width: 0;
+}
+
+.subscription-plan-details-avatar {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  place-items: center;
+  border: 1px solid #d8e2ee;
+  border-radius: 50%;
+  background: #eaf3fb;
+  color: #0e2955;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.subscription-plan-details-identity p,
+.subscription-plan-details-section-head p {
+  margin: 0 0 5px;
+  color: #66758d;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.subscription-plan-details-identity h2,
+.subscription-plan-details-section-head h3 {
+  margin: 0;
+  color: #0e2955;
+  font-family: "Product Sans", "Google Sans", Arial, sans-serif;
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1.25;
+}
+
+.subscription-plan-details-identity > div > span {
+  display: block;
+  max-width: 520px;
+  margin-top: 6px;
+  overflow: hidden;
+  color: #66758d;
+  font-size: 13px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subscription-plan-details-header-actions {
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.subscription-plan-details-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 28px 30px;
+  background: #ffffff;
+}
+
+.subscription-plan-details-section {
+  display: grid;
+  gap: 18px;
+  padding-bottom: 28px;
+  border: 0;
+  background: #ffffff;
+}
+
+.subscription-plan-details-section + .subscription-plan-details-section {
+  padding-top: 28px;
+  border-top: 1px solid #e5eaf1;
+}
+
+.subscription-plan-details-section:last-child {
+  padding-bottom: 0;
+}
+
+.subscription-plan-details-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.subscription-plan-details-section-head > span {
+  max-width: 380px;
+  color: #66758d;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.subscription-plan-details-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.subscription-plan-details-grid > div {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e0e7ef;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.subscription-plan-details-grid dt {
+  margin-bottom: 7px;
+  color: #66758d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.subscription-plan-details-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #0e2955;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.subscription-plan-feature-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.subscription-plan-feature {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  padding: 0 13px;
+  border: 1px solid #d8e2ee;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0e2955;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.subscription-plan-details-empty {
+  padding: 24px;
+  border: 1px dashed #cbd6e4;
+  border-radius: 16px;
+  background: #ffffff;
+  text-align: center;
+}
+
+.subscription-plan-details-empty strong {
+  color: #0e2955;
+  font-size: 14px;
+}
+
+.subscription-plan-details-empty p {
+  margin: 4px 0 0;
+  color: #66758d;
+  font-size: 12px;
+}
+
+.subscription-plan-details-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 18px 28px;
+  border-top: 1px solid #e5eaf1;
+  background: #ffffff;
+}
+
+.subscription-details-pill {
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.subscription-details-pill-secondary {
+  border-color: #ced8e5;
+  background: #ffffff;
+  color: #0e2955;
+}
+
+.subscription-details-pill-secondary:hover:not(:disabled) {
+  border-color: #0e2955;
+  background: #f5f8fc;
+}
+
+.subscription-details-pill-primary {
+  border-color: #0e2955;
+  background: #0e2955;
+  color: #ffffff;
+}
+
+.subscription-details-pill-primary:hover:not(:disabled) {
+  border-color: #173d72;
+  background: #173d72;
+}
+
+.subscription-details-pill-danger {
+  border-color: #f0bebe;
+  background: #fff5f5;
+  color: #a52f2f;
+}
+
+.subscription-details-pill-danger:hover:not(:disabled) {
+  border-color: #a52f2f;
+  background: #fdeaea;
+}
+
+.subscription-details-pill:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.subscription-details-pill:focus-visible {
+  outline: 3px solid rgba(43, 108, 176, 0.28);
+  outline-offset: 2px;
+}
+
+.subscription-details-pill-primary .nevari-branded-spinner::after {
+  border-color: rgba(255, 255, 255, 0.32);
+  border-top-color: #ffffff;
+}
+
+@media (max-width: 760px) {
+  .subscription-plan-details-modal {
+    width: min(680px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    border-radius: 22px;
+  }
+
+  .subscription-plan-details-header {
+    align-items: flex-start;
+    padding: 20px;
+  }
+
+  .subscription-plan-details-header-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+
+  .subscription-plan-details-body {
+    padding: 22px 20px 28px;
+  }
+
+  .subscription-plan-details-section-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .subscription-plan-details-section-head > span {
+    max-width: none;
+    text-align: left;
+  }
+
+  .subscription-plan-details-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .subscription-plan-details-actions {
+    padding: 16px 20px;
+  }
+}
+
+@media (max-width: 520px) {
+  .app-modal-layer:has(.subscription-plan-details-modal) {
+    padding: 8px;
+  }
+
+  .subscription-plan-details-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 18px;
+  }
+
+  .subscription-plan-details-header {
+    flex-direction: column;
+    gap: 16px;
+    padding: 18px;
+  }
+
+  .subscription-plan-details-header-actions {
+    width: 100%;
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .subscription-plan-details-avatar {
+    width: 52px;
+    height: 52px;
+    flex-basis: 52px;
+  }
+
+  .subscription-plan-details-body {
+    padding: 20px 18px 24px;
+  }
+
+  .subscription-plan-details-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .subscription-plan-details-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    max-height: 34vh;
+    overflow-y: auto;
+    padding: 14px 18px 18px;
+  }
+
+  .subscription-details-pill {
+    width: 100%;
+  }
 }

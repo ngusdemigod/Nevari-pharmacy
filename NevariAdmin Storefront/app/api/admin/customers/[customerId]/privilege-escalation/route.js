@@ -183,6 +183,11 @@ export async function POST(request, { params }) {
       frontendType,
       frontendOrigin: url.origin
     };
+    const csrfCookie = requestCookie(request, "nevari_csrf");
+    const csrfHeader = String(request.headers.get("x-nevari-csrf") || "").trim();
+    if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+      return Response.json({ success: false, error: { message: "CSRF validation failed." } }, { status: 403 });
+    }
     if (!session.accessToken || session.accessToken === SESSION_MARKER) {
       return Response.json({ success: false, error: { message: "Authenticated session is required." } }, { status: 401 });
     }
@@ -214,7 +219,8 @@ export async function POST(request, { params }) {
       method: "POST",
       body: {
         target_role: targetRole,
-        verified_by_user_id: viewer?.id || viewer?.user_id || ""
+        verified_by_user_id: viewer?.id || viewer?.user_id || "",
+        reason: "Role change approved with storefront OTP verification"
       }
     });
     if (!roleResult.ok) {
@@ -227,6 +233,7 @@ export async function POST(request, { params }) {
         user: roleResult.payload?.data?.user || null,
         from_role: roleResult.payload?.data?.from_role || "",
         target_role: targetRole,
+        notification: roleResult.payload?.data?.notification || { queued: true, warning: "" },
         message: roleResult.payload?.data?.message || `User updated to ${targetRole}.`
       }
     });

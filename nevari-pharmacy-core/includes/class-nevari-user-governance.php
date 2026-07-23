@@ -4,8 +4,23 @@ if (!defined('ABSPATH')) {
 }
 
 final class Nevari_User_Governance {
-    private const ROLES = ['patient', 'customer', 'doctor', 'pharmacist', 'nurse'];
-    private const STATUSES = ['pending_review', 'approved', 'declined', 'banned'];
+    private const ROLES = ['patient', 'customer', 'subscriber', 'doctor', 'pharmacist', 'nurse', 'store_admin', 'shop_manager', 'administrator'];
+    private const STAFF_ROLES = ['administrator', 'store_admin', 'shop_manager', 'doctor', 'pharmacist', 'nurse'];
+    private const PATIENT_ROLES = ['patient', 'customer', 'subscriber'];
+    private const PERMISSIONS = [
+        'products' => 'nevari_storefront_products',
+        'orders' => 'nevari_storefront_orders',
+        'payments' => 'nevari_storefront_payments',
+        'patients' => 'nevari_storefront_patients',
+        'consultations' => 'nevari_storefront_consultations',
+        'mtm' => 'nevari_storefront_mtm',
+        'iv-therapy' => 'nevari_storefront_iv_therapy',
+        'nurse-requests' => 'nevari_storefront_nurse_requests',
+        'logs' => 'nevari_storefront_logs',
+        'staff' => 'nevari_storefront_staff',
+        'subscriptions' => 'nevari_storefront_subscriptions',
+    ];
+    private const STATUSES = ['pending_review', 'approved', 'declined', 'banned', 'suspended'];
     private const BACKFILL_HOOK = 'nevari_user_governance_backfill';
 
     public static function init(): void {
@@ -67,28 +82,205 @@ final class Nevari_User_Governance {
             'callback' => [__CLASS__, 'nurses_index'],
             'permission_callback' => [__CLASS__, 'admin_permission'],
         ]);
-        register_rest_route(NEVARI_PHARMACY_REST_NS, '/admin/users/(?P<id>\d+)/(?P<action>approve|decline|ban|unban)', [
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/admin/users/(?P<id>\d+)/(?P<action>approve|decline|ban|unban|suspend|reset-password)', [
             'methods' => WP_REST_Server::EDITABLE,
             'callback' => [__CLASS__, 'mutate_user'],
             'permission_callback' => [__CLASS__, 'target_permission'],
         ]);
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/admin/users/(?P<id>\d+)/access', [
+            'methods' => WP_REST_Server::EDITABLE,
+            'callback' => [__CLASS__, 'update_access'],
+            'permission_callback' => [__CLASS__, 'administrator_target_permission'],
+        ]);
     }
 
-    public static function admin_permission(): bool {
+    public static function admin_permission(?WP_REST_Request $request = null): bool {
+        $user_id = Nevari_Auth::api_session_user_id();
+        $permission = $request && sanitize_key((string) $request->get_param('scope')) === 'patients' ? 'patients' : 'staff';
         return Nevari_Auth::api_session_required()
-            && Nevari_Helpers::is_store_admin(Nevari_Auth::api_session_user_id());
+            && $user_id > 0
+            && Nevari_Helpers::is_store_admin($user_id)
+            && (
+                in_array('administrator', Nevari_Helpers::current_user_roles($user_id), true)
+                || self::user_has_permission($user_id, $permission)
+            );
     }
 
     public static function target_permission(WP_REST_Request $request): bool {
-        if (!self::admin_permission()) {
-            return false;
-        }
         $actor_id = Nevari_Auth::api_session_user_id();
-        $target = get_user_by('id', absint($request['id']));
-        return $target instanceof WP_User
+        $target_id = absint($request['id']);
+        $target = get_user_by('id', $target_id);
+        $target_role = $target instanceof WP_User ? self::primary_role($target) : '';
+        $required_permission = in_array($target_role, self::PATIENT_ROLES, true) ? 'patients' : 'staff';
+        $actor_is_administrator = in_array('administrator', Nevari_Helpers::current_user_roles($actor_id), true);
+        $allowed = Nevari_Auth::api_session_required()
+            && $actor_id > 0
+            && Nevari_Helpers::is_store_admin($actor_id)
+            && ($actor_is_administrator || self::user_has_permission($actor_id, $required_permission))
+            && $target instanceof WP_User
             && (int) $target->ID !== $actor_id
             && !array_intersect(['administrator', 'shop_manager', 'store_admin'], (array) $target->roles)
-            && self::managed_role($target) !== '';
+            && $target_role !== '';
+        if (!$allowed && $actor_id > 0) {
+            self::audit_event(
+                'user.' . sanitize_key((string) $request['action']),
+                $target_id,
+                $actor_id,
+                'error',
+                '',
+                '',
+                'authorization_failed'
+            );
+        }
+        return $allowed;
+    }
+
+    public static function role_change_permission(WP_REST_Request $request): bool {
+        $actor_id = Nevari_Auth::api_session_user_id();
+        $target_id = absint($request['id']);
+        $target = get_user_by('id', $target_id);
+        $target_role = $target instanceof WP_User ? self::primary_role($target) : '';
+        $required_permission = in_array($target_role, self::PATIENT_ROLES, true) ? 'patients' : 'staff';
+        $actor_is_administrator = in_array('administrator', Nevari_Helpers::current_user_roles($actor_id), true);
+        $allowed = Nevari_Auth::api_session_required()
+            && $actor_id > 0
+            && Nevari_Helpers::is_store_admin($actor_id)
+            && ($actor_is_administrator || self::user_has_permission($actor_id, $required_permission))
+            && $target instanceof WP_User
+            && (int) $target->ID !== $actor_id
+            && !in_array('administrator', (array) $target->roles, true)
+            && $target_role !== '';
+        if (!$allowed && $actor_id > 0) {
+            self::audit_event('admin.user_role_changed', $target_id, $actor_id, 'error', $target_role, '', 'authorization_failed');
+        }
+        return $allowed;
+    }
+
+    public static function change_role(int $target_id, string $target_role, string $reason = '') {
+        $target = get_user_by('id', $target_id);
+        $target_role = sanitize_key($target_role);
+        if (!$target instanceof WP_User || !in_array($target_role, array_merge(self::STAFF_ROLES, self::PATIENT_ROLES), true)) {
+            return new WP_Error('role_change_invalid_target', 'The selected role is not available.');
+        }
+
+        $before_role = self::primary_role($target);
+        $before_permissions = self::permission_keys_for_user($target_id);
+        $permissions = self::default_permissions_for_role($target_role);
+        $now = Nevari_Helpers::now();
+        global $wpdb;
+        $wpdb->query('START TRANSACTION');
+        try {
+            self::ensure_directory_row($target, $before_role);
+            $target->set_role($target_role);
+            foreach (self::PERMISSIONS as $key => $capability) {
+                if (in_array($key, $permissions, true)) {
+                    $target->add_cap($capability);
+                } else {
+                    $target->remove_cap($capability);
+                }
+            }
+            $updated = $wpdb->update(self::table(), [
+                'managed_role' => $target_role,
+                'previous_status' => null,
+                'account_status' => 'approved',
+                'decision_reason' => substr(sanitize_text_field($reason), 0, 500),
+                'decided_by' => Nevari_Auth::api_session_user_id(),
+                'decided_at' => $now,
+                'updated_at' => $now,
+            ], ['user_id' => $target_id]);
+            if ($updated === false) {
+                throw new RuntimeException('The governance directory could not be updated.');
+            }
+            self::revoke_sessions($target_id);
+            $wpdb->query('COMMIT');
+        } catch (Throwable $error) {
+            $wpdb->query('ROLLBACK');
+            clean_user_cache($target_id);
+            self::audit_event('admin.user_role_changed', $target_id, Nevari_Auth::api_session_user_id(), 'error', $before_role, $target_role, 'mutation_failed');
+            return new WP_Error('role_change_failed', 'The user role could not be updated.');
+        }
+
+        clean_user_cache($target_id);
+        $updated_user = get_user_by('id', $target_id);
+        self::audit_event('admin.user_role_changed', $target_id, Nevari_Auth::api_session_user_id(), 'success', $before_role, $target_role, '', [
+            'permissions_before' => $before_permissions,
+            'permissions_after' => $permissions,
+            'reason' => substr(sanitize_text_field($reason), 0, 500),
+        ]);
+        $notification = self::notify_role_change($updated_user, $before_role, $target_role);
+        return [
+            'user' => self::directory_user_summary($target_id, $target_role, 'approved'),
+            'from_role' => $before_role,
+            'target_role' => $target_role,
+            'notification' => $notification,
+        ];
+    }
+
+    public static function audit_role_change_failure(int $target_id, string $before_role, string $target_role, string $failure_category): void {
+        self::audit_event(
+            'admin.user_role_changed',
+            $target_id,
+            Nevari_Auth::api_session_user_id(),
+            'error',
+            $before_role,
+            $target_role,
+            $failure_category
+        );
+    }
+
+    private static function ensure_directory_row(WP_User $user, string $role): void {
+        if ($role === '') {
+            return;
+        }
+        global $wpdb;
+        $now = Nevari_Helpers::now();
+        $wpdb->query($wpdb->prepare(
+            'INSERT IGNORE INTO ' . self::table() . ' (user_id,managed_role,account_status,created_at,updated_at) VALUES (%d,%s,%s,%s,%s)',
+            (int) $user->ID,
+            $role,
+            $role === 'nurse' ? 'pending_review' : 'approved',
+            $now,
+            $now
+        ));
+    }
+
+    public static function administrator_target_permission(WP_REST_Request $request): bool {
+        $actor_id = Nevari_Auth::api_session_user_id();
+        $actor = $actor_id ? get_user_by('id', $actor_id) : false;
+        $target = get_user_by('id', absint($request['id']));
+        return Nevari_Auth::api_session_required()
+            && $actor instanceof WP_User
+            && in_array('administrator', (array) $actor->roles, true)
+            && $target instanceof WP_User
+            && (int) $target->ID !== $actor_id
+            && (bool) array_intersect(self::STAFF_ROLES, (array) $target->roles);
+    }
+
+    public static function permission_keys_for_user(int $user_id): array {
+        $keys = [];
+        foreach (self::PERMISSIONS as $key => $capability) {
+            if (user_can($user_id, $capability)) {
+                $keys[] = $key;
+            }
+        }
+        return $keys;
+    }
+
+    public static function user_has_permission(int $user_id, string $key): bool {
+        $capability = self::PERMISSIONS[sanitize_key($key)] ?? '';
+        return $capability !== '' && user_can($user_id, $capability);
+    }
+
+    public static function default_permissions_for_role(string $role): array {
+        $defaults = [
+            'administrator' => array_keys(self::PERMISSIONS),
+            'store_admin' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv-therapy', 'nurse-requests', 'logs', 'subscriptions'],
+            'shop_manager' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv-therapy', 'nurse-requests', 'logs', 'subscriptions'],
+            'pharmacist' => ['products', 'orders', 'payments', 'patients', 'mtm'],
+            'doctor' => ['patients', 'consultations'],
+            'nurse' => ['nurse-requests'],
+        ];
+        return $defaults[$role] ?? [];
     }
 
     public static function can_authenticate(int $user_id): bool {
@@ -206,13 +398,18 @@ final class Nevari_User_Governance {
 
     public static function users_index(WP_REST_Request $request): WP_REST_Response {
         global $wpdb;
+        self::ensure_directory_rows();
         $page = max(1, absint($request->get_param('page')));
         $per_page = min(50, max(1, absint($request->get_param('per_page')) ?: 20));
         $role = sanitize_key((string) $request->get_param('role'));
+        $scope = sanitize_key((string) $request->get_param('scope'));
         $status = sanitize_key((string) $request->get_param('status'));
         $search = substr(sanitize_text_field((string) $request->get_param('search')), 0, 80);
         if ($role && !in_array($role, self::ROLES, true)) {
             return Nevari_Helpers::error('invalid_role', 'Invalid role filter.', 422);
+        }
+        if ($scope && !in_array($scope, ['staff', 'patients'], true)) {
+            return Nevari_Helpers::error('invalid_scope', 'Invalid user scope.', 422);
         }
         if ($status && !in_array($status, self::STATUSES, true)) {
             return Nevari_Helpers::error('invalid_status', 'Invalid status filter.', 422);
@@ -223,6 +420,10 @@ final class Nevari_User_Governance {
         if ($role) {
             $where[] = 'g.managed_role = %s';
             $args[] = $role;
+        } elseif ($scope === 'staff') {
+            $where[] = "g.managed_role IN ('administrator','store_admin','shop_manager','doctor','pharmacist','nurse')";
+        } elseif ($scope === 'patients') {
+            $where[] = "g.managed_role IN ('patient','customer','subscriber')";
         }
         if ($status) {
             $where[] = 'g.account_status = %s';
@@ -236,9 +437,44 @@ final class Nevari_User_Governance {
         }
         $clause = implode(' AND ', $where);
         $offset = ($page - 1) * $per_page;
-        $select = "SELECT g.user_id,g.managed_role,g.account_status,g.phone,g.license_number,g.decision_reason,g.updated_at,u.display_name,u.user_email FROM "
+        $select = "SELECT g.user_id,g.managed_role,g.account_status,g.phone,g.license_number,g.decision_reason,g.updated_at,u.display_name,u.user_email,u.user_registered AS date_joined FROM "
             . self::table() . " g INNER JOIN {$wpdb->users} u ON u.ID = g.user_id WHERE {$clause} ORDER BY g.updated_at DESC LIMIT %d OFFSET %d";
         $rows = $wpdb->get_results($wpdb->prepare($select, array_merge($args, [$per_page, $offset])), ARRAY_A) ?: [];
+        foreach ($rows as &$row) {
+            $user_id = (int) ($row['user_id'] ?? 0);
+            $appointment_patients = $wpdb->get_col($wpdb->prepare(
+                'SELECT DISTINCT patient_user_id FROM ' . Nevari_Helpers::table('appointments') . ' WHERE doctor_user_id = %d AND patient_user_id > 0',
+                $user_id
+            ));
+            $prescription_patients = $wpdb->get_col($wpdb->prepare(
+                'SELECT DISTINCT patient_user_id FROM ' . Nevari_Helpers::table('prescriptions') . ' WHERE doctor_user_id = %d AND patient_user_id > 0',
+                $user_id
+            ));
+            $row['linked_patients'] = count(array_unique(array_map('intval', array_merge($appointment_patients ?: [], $prescription_patients ?: []))));
+            $summary = Nevari_Helpers::user_summary($user_id) ?: [];
+            $row['avatar_url'] = $summary['avatar_url'] ?? '';
+            $row['permissions'] = self::permission_keys_for_user($user_id);
+            $row['roles'] = [$row['managed_role']];
+            $row['last_activity'] = $wpdb->get_var($wpdb->prepare(
+                'SELECT MAX(created_at) FROM ' . Nevari_Helpers::table('audit_logs') . ' WHERE actor_user_id = %d OR related_user_id = %d',
+                $user_id,
+                $user_id
+            )) ?: $row['date_joined'];
+            if ($scope === 'patients') {
+                $row['orders'] = function_exists('wc_get_customer_order_count') ? (int) wc_get_customer_order_count($user_id) : 0;
+                $row['spend'] = function_exists('wc_get_customer_total_spent') ? (float) wc_get_customer_total_spent($user_id) : 0.0;
+                $row['appointments'] = (int) $wpdb->get_var($wpdb->prepare(
+                    'SELECT COUNT(*) FROM ' . Nevari_Helpers::table('appointments') . ' WHERE patient_user_id = %d',
+                    $user_id
+                ));
+                $last_appointment = $wpdb->get_var($wpdb->prepare(
+                    'SELECT MAX(updated_at) FROM ' . Nevari_Helpers::table('appointments') . ' WHERE patient_user_id = %d',
+                    $user_id
+                ));
+                $row['last_activity'] = $last_appointment ?: $row['date_joined'];
+            }
+        }
+        unset($row);
         $count = "SELECT COUNT(*) FROM " . self::table() . " g INNER JOIN {$wpdb->users} u ON u.ID = g.user_id WHERE {$clause}";
         $total = (int) ($args ? $wpdb->get_var($wpdb->prepare($count, $args)) : $wpdb->get_var($count));
         return Nevari_Helpers::success([
@@ -247,22 +483,149 @@ final class Nevari_User_Governance {
         ]);
     }
 
+    private static function ensure_directory_rows(): void {
+        global $wpdb;
+        $users = get_users(['role__in' => array_merge(self::STAFF_ROLES, self::PATIENT_ROLES), 'fields' => 'all']);
+        foreach ($users as $user) {
+            $role = self::primary_role($user);
+            if ($role === '') {
+                continue;
+            }
+            $existing_role = (string) $wpdb->get_var($wpdb->prepare(
+                'SELECT managed_role FROM ' . self::table() . ' WHERE user_id = %d',
+                (int) $user->ID
+            ));
+            if ($existing_role !== '' && $existing_role !== $role) {
+                $wpdb->update(self::table(), [
+                    'managed_role' => $role,
+                    'previous_status' => null,
+                    'account_status' => $role === 'nurse' ? 'pending_review' : 'approved',
+                    'updated_at' => Nevari_Helpers::now(),
+                ], ['user_id' => (int) $user->ID]);
+                self::revoke_sessions((int) $user->ID);
+                self::audit_event('user.role_synchronized', (int) $user->ID, Nevari_Auth::api_session_user_id(), 'success', $existing_role, $role);
+                continue;
+            }
+            $wpdb->query($wpdb->prepare(
+                'INSERT IGNORE INTO ' . self::table() . ' (user_id,managed_role,account_status,created_at,updated_at) VALUES (%d,%s,%s,%s,%s)',
+                (int) $user->ID,
+                $role,
+                $role === 'nurse' ? 'pending_review' : 'approved',
+                Nevari_Helpers::now(),
+                Nevari_Helpers::now()
+            ));
+        }
+    }
+
     public static function nurses_index(WP_REST_Request $request): WP_REST_Response {
         $request->set_param('role', 'nurse');
         $request->set_param('status', 'approved');
         return self::users_index($request);
     }
 
-    public static function mutate_user(WP_REST_Request $request): WP_REST_Response {
+    public static function update_access(WP_REST_Request $request): WP_REST_Response {
         $body = $request->get_json_params();
         $body = is_array($body) ? $body : [];
-        if (array_diff(array_keys($body), ['reason'])) {
+        if (array_diff(array_keys($body), ['role', 'permissions', 'reason'])) {
             return Nevari_Helpers::error('unexpected_fields', 'Unexpected request fields were supplied.', 422);
         }
         $target_id = absint($request['id']);
+        $target = get_user_by('id', $target_id);
+        if (!$target instanceof WP_User) {
+            return Nevari_Helpers::error('not_found', 'This staff account was not found.', 404);
+        }
+        $role = isset($body['role']) ? sanitize_key((string) $body['role']) : self::primary_role($target);
+        if (!in_array($role, self::STAFF_ROLES, true)) {
+            return Nevari_Helpers::error('invalid_role', 'The selected staff role is not allowed.', 422);
+        }
+        $permissions = isset($body['permissions']) && is_array($body['permissions'])
+            ? array_values(array_unique(array_map('sanitize_key', $body['permissions'])))
+            : self::permission_keys_for_user($target_id);
+        if (array_diff($permissions, array_keys(self::PERMISSIONS))) {
+            return Nevari_Helpers::error('invalid_permissions', 'One or more permissions are invalid.', 422);
+        }
+        if ($role === 'administrator') {
+            $permissions = array_keys(self::PERMISSIONS);
+        }
+        $before_role = self::primary_role($target);
+        $before_permissions = self::permission_keys_for_user($target_id);
+        if ($role !== $before_role) {
+            $target->set_role($role);
+        }
+        foreach (self::PERMISSIONS as $key => $capability) {
+            if (in_array($key, $permissions, true)) {
+                $target->add_cap($capability);
+            } else {
+                $target->remove_cap($capability);
+            }
+        }
+        global $wpdb;
+        $wpdb->update(self::table(), ['managed_role' => $role, 'updated_at' => Nevari_Helpers::now()], ['user_id' => $target_id]);
+        self::revoke_sessions($target_id);
+        Nevari_Audit::log('security', 'nevari', 'admin.staff_access_updated', 'success', [
+            'actor_user_id' => Nevari_Auth::api_session_user_id(),
+            'related_user_id' => $target_id,
+            'object_type' => 'user',
+            'object_id' => $target_id,
+            'message' => 'Administrator updated a staff role or storefront permissions.',
+            'metadata' => [
+                'from_role' => $before_role,
+                'to_role' => $role,
+                'permissions_before' => $before_permissions,
+                'permissions_after' => $permissions,
+                'reason' => substr(sanitize_text_field((string) ($body['reason'] ?? '')), 0, 500),
+            ],
+        ]);
+        $notification = self::notify_access_change($target, $role, $permissions);
+        return Nevari_Helpers::success([
+            'user' => array_merge(Nevari_Helpers::user_summary($target_id) ?: [], [
+                'user_id' => $target_id,
+                'managed_role' => $role,
+                'permissions' => $permissions,
+            ]),
+            'notification' => $notification,
+        ]);
+    }
+
+    public static function mutate_user(WP_REST_Request $request): WP_REST_Response {
+        $body = $request->get_json_params();
+        $body = is_array($body) ? $body : [];
+        $target_id = absint($request['id']);
         $action = sanitize_key((string) $request['action']);
+        if (array_diff(array_keys($body), ['reason'])) {
+            self::audit_event('user.' . $action, $target_id, Nevari_Auth::api_session_user_id(), 'error', '', '', 'unexpected_fields');
+            return Nevari_Helpers::error('unexpected_fields', 'Unexpected request fields were supplied.', 422);
+        }
         $reason = substr(sanitize_text_field((string) ($body['reason'] ?? '')), 0, 500);
         global $wpdb;
+        if ($action === 'reset-password') {
+            $target = get_user_by('id', $target_id);
+            if (!$target instanceof WP_User) {
+                self::audit_event('user.password_reset_requested', $target_id, Nevari_Auth::api_session_user_id(), 'error', '', '', 'target_not_found');
+                return Nevari_Helpers::error('not_found', 'This user was not found.', 404);
+            }
+            $result = Nevari_Auth::request_dashboard_password_reset_for_user($target);
+            if (is_wp_error($result)) {
+                self::audit_event('user.password_reset_requested', $target_id, Nevari_Auth::api_session_user_id(), 'error', '', '', 'notification_failed');
+                return Nevari_Helpers::error('reset_failed', 'The dashboard password reset email could not be sent.', 500);
+            }
+            self::audit_event('user.password_reset_requested', $target_id, Nevari_Auth::api_session_user_id(), 'success');
+            $notification = self::notify_actor_confirmation($target, 'password reset requested');
+            if (empty($result['queued'])) {
+                self::audit_event('user.password_reset_notification_failed', $target_id, Nevari_Auth::api_session_user_id(), 'error', '', '', 'notification_failed');
+                $notification = [
+                    'queued' => false,
+                    'warning' => sanitize_text_field((string) ($result['warning'] ?? 'The reset request was recorded, but the email could not be delivered.')),
+                ];
+            }
+            return Nevari_Helpers::success([
+                'user' => self::directory_user_summary($target_id),
+                'user_id' => $target_id,
+                'status' => 'reset_requested',
+                'frontend_type' => sanitize_key((string) ($result['frontend_type'] ?? '')),
+                'notification' => $notification,
+            ]);
+        }
         $wpdb->query('START TRANSACTION');
         $row = $wpdb->get_row($wpdb->prepare(
             'SELECT * FROM ' . self::table() . ' WHERE user_id = %d FOR UPDATE',
@@ -270,20 +633,23 @@ final class Nevari_User_Governance {
         ), ARRAY_A);
         if (!$row) {
             $wpdb->query('ROLLBACK');
+            self::audit_event('user.' . $action, $target_id, Nevari_Auth::api_session_user_id(), 'error', '', '', 'not_managed');
             return Nevari_Helpers::error('not_managed', 'This user is not managed.', 404);
         }
         $role = self::managed_role(get_user_by('id', $target_id));
         if (!$role || $role !== $row['managed_role']) {
             $wpdb->query('ROLLBACK');
+            self::audit_event('user.' . $action, $target_id, Nevari_Auth::api_session_user_id(), 'error', (string) $row['managed_role'], $role, 'role_changed');
             return Nevari_Helpers::error('role_changed', 'The user role changed. Refresh and try again.', 409);
         }
         if (in_array($action, ['approve', 'decline'], true) && $role !== 'nurse') {
             $wpdb->query('ROLLBACK');
+            self::audit_event('user.' . $action, $target_id, Nevari_Auth::api_session_user_id(), 'error', (string) $row['account_status'], '', 'invalid_action');
             return Nevari_Helpers::error('invalid_action', 'Only nurse applications use approval decisions.', 422);
         }
-        $next = ['approve' => 'approved', 'decline' => 'declined', 'ban' => 'banned', 'unban' => 'approved'][$action];
+        $next = ['approve' => 'approved', 'decline' => 'declined', 'ban' => 'banned', 'unban' => 'approved', 'suspend' => 'suspended'][$action];
         $now = Nevari_Helpers::now();
-        $wpdb->update(self::table(), [
+        $updated = $wpdb->update(self::table(), [
             'previous_status' => $row['account_status'],
             'account_status' => $next,
             'decision_reason' => $reason,
@@ -291,17 +657,42 @@ final class Nevari_User_Governance {
             'decided_at' => $now,
             'updated_at' => $now,
         ], ['user_id' => $target_id]);
-        if (in_array($next, ['declined', 'banned'], true)) {
+        if ($updated === false) {
+            $wpdb->query('ROLLBACK');
+            self::audit_event('user.' . $action, $target_id, Nevari_Auth::api_session_user_id(), 'error', (string) $row['account_status'], $next, 'mutation_failed');
+            return Nevari_Helpers::error('mutation_failed', 'The user account could not be updated.', 500);
+        }
+        if (in_array($next, ['declined', 'banned', 'suspended'], true)) {
             self::revoke_sessions($target_id);
         }
         if ($role === 'nurse' && $next === 'banned') {
             self::flag_reassignment($target_id);
         }
         $wpdb->query('COMMIT');
-        self::audit('user.' . $action, $target_id, Nevari_Auth::api_session_user_id());
-        $template_key = ['approve' => 'nurse_approved', 'decline' => 'nurse_declined', 'ban' => 'nurse_ban', 'unban' => 'nurse_unban'][$action];
-        self::notify_user($target_id, $template_key, 'Your Nevari nurse account status was updated');
-        return Nevari_Helpers::success(['user_id' => $target_id, 'status' => $next]);
+        self::audit_event(
+            'user.' . $action,
+            $target_id,
+            Nevari_Auth::api_session_user_id(),
+            'success',
+            (string) $row['account_status'],
+            $next,
+            '',
+            ['reason' => $reason]
+        );
+        $user_notification = self::notify_status_change($target_id, $next);
+        $notification = self::notify_actor_confirmation(get_user_by('id', $target_id), $action);
+        if (empty($user_notification['queued'])) {
+            $notification = [
+                'queued' => false,
+                'warning' => $user_notification['warning'] ?: ($notification['warning'] ?? ''),
+            ];
+        }
+        return Nevari_Helpers::success([
+            'user' => self::directory_user_summary($target_id, $role, $next),
+            'user_id' => $target_id,
+            'status' => $next,
+            'notification' => $notification,
+        ]);
     }
 
     private static function table(): string {
@@ -320,6 +711,155 @@ final class Nevari_User_Governance {
         return '';
     }
 
+    private static function primary_role(WP_User $user): string {
+        foreach (array_merge(self::STAFF_ROLES, self::PATIENT_ROLES) as $role) {
+            if (in_array($role, (array) $user->roles, true)) {
+                return $role;
+            }
+        }
+        return '';
+    }
+
+    private static function notify_access_change(WP_User $target, string $role, array $permissions): array {
+        $actor = get_user_by('id', Nevari_Auth::api_session_user_id());
+        $summary = sprintf(
+            'Your Nevari staff access was updated. Role: %s. Dashboard areas: %s.',
+            ucwords(str_replace('_', ' ', $role)),
+            $permissions ? implode(', ', $permissions) : 'none'
+        );
+        $target_result = Nevari_Emails::queue_or_send([
+            'recipient_user_id' => (int) $target->ID,
+            'subject' => 'Your Nevari staff access was updated',
+            'body_html' => '<p>' . esc_html($summary) . '</p>',
+            'body_text' => $summary,
+            'related_object_type' => 'user',
+            'related_object_id' => (int) $target->ID,
+        ]);
+        $actor_result = $actor instanceof WP_User ? Nevari_Emails::queue_or_send([
+            'recipient_user_id' => (int) $actor->ID,
+            'subject' => 'Nevari staff access update confirmed',
+            'body_html' => '<p>' . esc_html(sprintf('You updated access for %s.', $target->display_name)) . '</p>',
+            'body_text' => sprintf('You updated access for %s.', $target->display_name),
+            'related_object_type' => 'user',
+            'related_object_id' => (int) $target->ID,
+        ]) : true;
+        $failed = is_wp_error($target_result) || is_wp_error($actor_result);
+        if ($failed) {
+            Nevari_Audit::log('emails', 'nevari', 'admin.staff_access_notification_failed', 'error', [
+                'actor_user_id' => Nevari_Auth::api_session_user_id(),
+                'related_user_id' => (int) $target->ID,
+                'object_type' => 'user',
+                'object_id' => (int) $target->ID,
+                'message' => 'Staff access was saved but a notification could not be queued.',
+                'error_code' => 'notification_failed',
+            ]);
+        }
+        return ['queued' => !$failed, 'warning' => $failed ? 'Access was saved, but a notification could not be queued.' : ''];
+    }
+
+    private static function notify_role_change($target, string $before_role, string $target_role): array {
+        if (!$target instanceof WP_User) {
+            return ['queued' => false, 'warning' => 'Role changed, but the notification recipient was unavailable.'];
+        }
+        $message = sprintf(
+            'Your Nevari account role changed from %s to %s.',
+            ucwords(str_replace('_', ' ', $before_role)),
+            ucwords(str_replace('_', ' ', $target_role))
+        );
+        $target_result = Nevari_Emails::queue_or_send([
+            'recipient_user_id' => (int) $target->ID,
+            'recipient_email' => $target->user_email,
+            'subject' => 'Your Nevari account role was updated',
+            'body_html' => '<p>' . esc_html($message) . '</p>',
+            'body_text' => $message,
+            'related_object_type' => 'user_governance',
+            'related_object_id' => (int) $target->ID,
+        ], false);
+        $actor_result = self::notify_actor_confirmation($target, 'role change');
+        $failed = is_wp_error($target_result) || empty($actor_result['queued']);
+        if ($failed) {
+            self::audit_event('admin.user_role_notification_failed', (int) $target->ID, Nevari_Auth::api_session_user_id(), 'error', $before_role, $target_role, 'notification_failed');
+        }
+        return [
+            'queued' => !$failed,
+            'warning' => $failed ? 'Role changed, but one or more notification emails could not be queued.' : '',
+        ];
+    }
+
+    private static function notify_status_change(int $user_id, string $status): array {
+        $user = get_user_by('id', $user_id);
+        if (!$user instanceof WP_User) {
+            return ['queued' => false, 'warning' => 'Status changed, but the notification recipient was unavailable.'];
+        }
+        $status_label = ucwords(str_replace('_', ' ', sanitize_key($status)));
+        $message = sprintf('Your Nevari account status is now %s.', $status_label);
+        $result = Nevari_Emails::queue_or_send([
+            'recipient_user_id' => $user_id,
+            'recipient_email' => $user->user_email,
+            'subject' => 'Your Nevari account status was updated',
+            'body_html' => '<p>' . esc_html($message) . '</p>',
+            'body_text' => $message,
+            'related_object_type' => 'user_governance',
+            'related_object_id' => $user_id,
+        ], false);
+        if (is_wp_error($result)) {
+            self::audit_event('admin.status_notification_failed', $user_id, Nevari_Auth::api_session_user_id(), 'error', '', $status, 'notification_failed');
+            return ['queued' => false, 'warning' => 'Status changed, but the user notification could not be queued.'];
+        }
+        return ['queued' => true, 'warning' => ''];
+    }
+
+    private static function directory_user_summary(int $user_id, string $role = '', string $status = ''): array {
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            'SELECT managed_role,account_status,phone,license_number,updated_at FROM ' . self::table() . ' WHERE user_id = %d',
+            $user_id
+        ), ARRAY_A) ?: [];
+        $summary = Nevari_Helpers::user_summary($user_id) ?: [];
+        $user = get_user_by('id', $user_id);
+        $resolved_role = $role ?: (string) ($row['managed_role'] ?? '');
+        $resolved_status = $status ?: (string) ($row['account_status'] ?? 'approved');
+        return array_merge($summary, [
+            'user_id' => $user_id,
+            'user_email' => $user instanceof WP_User ? $user->user_email : (string) ($summary['email'] ?? ''),
+            'managed_role' => $resolved_role,
+            'roles' => $resolved_role ? [$resolved_role] : [],
+            'account_status' => $resolved_status,
+            'phone' => (string) ($row['phone'] ?? ''),
+            'license_number' => (string) ($row['license_number'] ?? ''),
+            'permissions' => self::permission_keys_for_user($user_id),
+            'last_activity' => (string) ($row['updated_at'] ?? ''),
+        ]);
+    }
+
+    private static function notify_actor_confirmation($target, string $action): array {
+        $actor = get_user_by('id', Nevari_Auth::api_session_user_id());
+        if (!$actor instanceof WP_User || !$target instanceof WP_User) {
+            return ['queued' => false, 'warning' => 'Action completed, but the confirmation recipient was unavailable.'];
+        }
+        $message = sprintf('You completed the “%s” action for %s.', sanitize_text_field($action), $target->display_name);
+        $result = Nevari_Emails::queue_or_send([
+            'recipient_user_id' => (int) $actor->ID,
+            'subject' => 'Nevari administrator action confirmed',
+            'body_html' => '<p>' . esc_html($message) . '</p>',
+            'body_text' => $message,
+            'related_object_type' => 'user',
+            'related_object_id' => (int) $target->ID,
+        ]);
+        if (is_wp_error($result)) {
+            Nevari_Audit::log('emails', 'nevari', 'admin.action_notification_failed', 'error', [
+                'actor_user_id' => (int) $actor->ID,
+                'related_user_id' => (int) $target->ID,
+                'object_type' => 'user',
+                'object_id' => (int) $target->ID,
+                'message' => 'Administrator action completed but confirmation email could not be queued.',
+                'error_code' => 'notification_failed',
+            ]);
+            return ['queued' => false, 'warning' => 'Action completed, but the confirmation email could not be queued.'];
+        }
+        return ['queued' => true, 'warning' => ''];
+    }
+
     public static function backfill_existing_users(): void {
         global $wpdb;
         $cursor = absint(get_option('nevari_user_governance_backfill_cursor', 0));
@@ -328,7 +868,9 @@ final class Nevari_User_Governance {
             $user = get_user_by('id', (int) $id);
             $role = self::managed_role($user);
             if ($role) {
-                $status = $role === 'doctor' && get_user_meta($user->ID, '_nevari_doctor_disabled', true) ? 'banned' : 'approved';
+                $status = $role === 'nurse'
+                    ? 'pending_review'
+                    : ($role === 'doctor' && get_user_meta($user->ID, '_nevari_doctor_disabled', true) ? 'banned' : 'approved');
                 $wpdb->query($wpdb->prepare(
                     'INSERT IGNORE INTO ' . self::table() . ' (user_id,managed_role,account_status,created_at,updated_at) VALUES (%d,%s,%s,%s,%s)',
                     $user->ID,
@@ -405,12 +947,37 @@ final class Nevari_User_Governance {
     }
 
     private static function audit(string $action, int $target_id, int $actor_id): void {
-        Nevari_Audit::log('security', 'nevari', $action, 'success', [
+        self::audit_event($action, $target_id, $actor_id, 'success');
+    }
+
+    private static function audit_event(
+        string $action,
+        int $target_id,
+        int $actor_id,
+        string $outcome,
+        string $before = '',
+        string $after = '',
+        string $failure_category = '',
+        array $metadata = []
+    ): void {
+        $safe_metadata = $metadata;
+        if ($before !== '') {
+            $safe_metadata['before'] = sanitize_text_field($before);
+        }
+        if ($after !== '') {
+            $safe_metadata['after'] = sanitize_text_field($after);
+        }
+        if ($failure_category !== '') {
+            $safe_metadata['failure_category'] = sanitize_key($failure_category);
+        }
+        Nevari_Audit::log('security', 'nevari', $action, $outcome === 'error' ? 'error' : 'success', [
             'actor_user_id' => $actor_id ?: null,
             'related_user_id' => $target_id,
             'object_type' => 'user_governance',
             'object_id' => $target_id,
-            'message' => 'Managed user status event recorded.',
+            'message' => $outcome === 'error' ? 'Managed user administrative action failed.' : 'Managed user administrative action completed.',
+            'error_code' => $failure_category ?: null,
+            'metadata' => $safe_metadata,
         ]);
     }
 }

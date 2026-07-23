@@ -6,7 +6,7 @@ import { AdminStorefrontDashboard } from "./admin/storefront/page";
 import ModalScrim from "./components/ModalScrim";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
-import { hydrateStoredSession, isSessionUsable } from "./components/role-dashboard-utils";
+import { apiRequest, hydrateStoredSession, isSessionUsable } from "./components/role-dashboard-utils";
 import { performGlobalLogout } from "./components/role-session";
 
 function initials(value) {
@@ -23,6 +23,7 @@ const PHARMACIST_NAV_GROUPS = [
   {
     label: "Nevari Pharmacy",
     items: [
+      { id: "overview", label: "Overview", icon: "i-layout" },
       { id: "products", label: "Products", icon: "i-pill" },
       { id: "orders", label: "Orders", icon: "i-cart" },
       { id: "payments", label: "Payments", icon: "i-credit-card" }
@@ -32,7 +33,8 @@ const PHARMACIST_NAV_GROUPS = [
     label: "Nevari Health",
     items: [
       { id: "mtm", label: "MTM", icon: "i-clipboard" },
-      { id: "iv-therapy", label: "IV Therapy", icon: "i-clipboard" }
+      { id: "iv-therapy", label: "IV Therapy", icon: "i-clipboard" },
+      { id: "availability", label: "Availability", icon: "i-clock" }
     ]
   }
 ];
@@ -117,6 +119,7 @@ function PharmacistIconSprite() {
         <path d="m13 8 5 4-5 4" />
         <path d="M18 12H9" />
       </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></symbol>
     </svg>
   );
 }
@@ -131,9 +134,13 @@ export default function PharmacistDashboard() {
   const router = useRouter();
   const [session, setSession] = useState(null);
   const [authResolved, setAuthResolved] = useState(false);
-  const [view, setView] = useState("products");
+  const [view, setView] = useState("overview");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [availability, setAvailability] = useState({});
+  const [availabilityLoaded, setAvailabilityLoaded] = useState(false);
+  const [availabilitySaving, setAvailabilitySaving] = useState(false);
+  const [availabilityNoticeOpen, setAvailabilityNoticeOpen] = useState(false);
 
   useEffect(() => {
     setDocumentMetadata("Nevari Pharmacist", "Pharmacist product management and medical therapy management.");
@@ -166,6 +173,17 @@ export default function PharmacistDashboard() {
   }, [router]);
 
   useEffect(() => {
+    if (!session) return;
+    apiRequest(session, "/pharmacist/availability", { suppressHttpError: true })
+      .then((payload) => {
+        const next = payload?.availability && typeof payload.availability === "object" ? payload.availability : {};
+        setAvailability(next);
+        setAvailabilityNoticeOpen(!Object.values(next).some((ranges) => Array.isArray(ranges) && ranges.length));
+      })
+      .finally(() => setAvailabilityLoaded(true));
+  }, [session]);
+
+  useEffect(() => {
     if (!isMobile) {
       setDrawerOpen(false);
     }
@@ -183,6 +201,19 @@ export default function PharmacistDashboard() {
   function handleViewChange(nextView) {
     setView(nextView);
     setDrawerOpen(false);
+  }
+
+
+  async function saveAvailability(nextAvailability) {
+    setAvailabilitySaving(true);
+    try {
+      const payload = await apiRequest(session, "/pharmacist/availability", { method: "PATCH", body: { availability: nextAvailability } });
+      const saved = payload?.availability || nextAvailability;
+      setAvailability(saved);
+      setAvailabilityNoticeOpen(!Object.values(saved).some((ranges) => Array.isArray(ranges) && ranges.length));
+    } finally {
+      setAvailabilitySaving(false);
+    }
   }
 
   return (
@@ -261,15 +292,36 @@ export default function PharmacistDashboard() {
             <span>{view === "profile" ? "Profile" : (PHARMACIST_NAV_GROUPS.flatMap((group) => group.items).find((item) => item.id === view)?.label || "Products")}</span>
           </div>
         </header>
-        <AdminStorefrontDashboard
+        {view === "availability" ? <PharmacistAvailabilityPage availability={availability} loaded={availabilityLoaded} saving={availabilitySaving} onSave={saveAvailability} /> : <AdminStorefrontDashboard
           key={view}
           embeddedInitialPage={view}
           embeddedSession={session}
           embeddedCreateActions={["product", "order"]}
-        />
+        />}
       </section>
+      {view === "overview" && availabilityLoaded && availabilityNoticeOpen ? <div className="customer-profile-reminder-overlay" role="presentation">
+        <div className="customer-profile-reminder-modal" role="dialog" aria-modal="true" aria-labelledby="pharmacist-availability-title">
+          <button className="customer-profile-reminder-close" type="button" onClick={() => setAvailabilityNoticeOpen(false)} aria-label="Dismiss availability reminder">×</button>
+          <div className="customer-profile-reminder-body"><span className="customer-profile-reminder-kicker">Availability reminder</span><h2 id="pharmacist-availability-title">Set your weekly availability</h2><p>Add the times you are available so patients can book MTM sessions with you.</p></div>
+          <div className="customer-profile-reminder-actions"><button type="button" className="customer-profile-reminder-secondary" onClick={() => setAvailabilityNoticeOpen(false)}>Remind me later</button><button type="button" className="customer-profile-reminder-primary" onClick={() => { setAvailabilityNoticeOpen(false); handleViewChange("availability"); }}>Set availability <span aria-hidden="true">-&gt;</span></button></div>
+        </div>
+      </div> : null}
     </main>
   );
+}
+
+const PHARMACIST_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+function PharmacistAvailabilityPage({ availability, loaded, saving, onSave }) {
+  const [draft, setDraft] = useState(availability);
+  useEffect(() => setDraft(availability), [availability]);
+  function updateDay(day, field, value) {
+    setDraft((current) => ({ ...current, [day]: [{ start: current[day]?.[0]?.start || "09:00", end: current[day]?.[0]?.end || "17:00", [field]: value }] }));
+  }
+  function toggleDay(day) {
+    setDraft((current) => ({ ...current, [day]: current[day]?.length ? [] : [{ start: "09:00", end: "17:00" }] }));
+  }
+  return <div className="nevari-admin-storefront embedded-dashboard-page pharmacist-availability-page"><div className="main-shell"><section className="page-view active"><div className="page-heading"><div><p className="eyebrow">Weekly schedule</p><h1>Availability</h1><p>Choose when patients can schedule MTM sessions with you.</p></div><button className="primary-button" type="button" disabled={!loaded || saving} onClick={() => onSave(draft)}>{saving ? "Saving..." : "Save availability"}</button></div><div className="doctor-availability-grid">{PHARMACIST_DAYS.map((day) => { const enabled = Boolean(draft[day]?.length); return <article className="doctor-availability-card" key={day}><div className="doctor-availability-head"><strong>{day[0].toUpperCase() + day.slice(1)}</strong><label><input type="checkbox" checked={enabled} onChange={() => toggleDay(day)} /> Available</label></div>{enabled ? <div className="pharmacist-availability-times"><label>From<input type="time" value={draft[day][0].start} onChange={(event) => updateDay(day, "start", event.target.value)} /></label><label>To<input type="time" value={draft[day][0].end} onChange={(event) => updateDay(day, "end", event.target.value)} /></label></div> : <p className="doctor-availability-note">Unavailable</p>}</article>; })}</div></section></div></div>;
 }
 
 function PharmacistDashboardBootSkeleton() {

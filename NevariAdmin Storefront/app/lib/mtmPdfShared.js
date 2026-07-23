@@ -252,14 +252,15 @@ export function normalizeMtmPdfPayload(request) {
 
 export function validateNormalizedPayload(data) {
   const missing = [];
+  const clinicalSectionsSkipped = String(data.caregiverConsent || "").trim().toLowerCase() === "no";
   if (!data.requestReference) missing.push("request_reference");
   if (!data.patientFullName) missing.push("patient.name");
   if (!data.patientAge) missing.push("patient.age");
   if (!data.patientDob) missing.push("patient.dob");
   if (!data.patientPhone) missing.push("patient.phoneNumber");
   if (!data.patientAddress) missing.push("patient.address");
-  if (!data.primaryDiagnosis) missing.push("medical_history.primaryDiagnosis");
-  if (!data.medications.length) missing.push("medication_profile.medications");
+  if (!clinicalSectionsSkipped && !data.primaryDiagnosis) missing.push("medical_history.primaryDiagnosis");
+  if (!clinicalSectionsSkipped && !data.medications.length) missing.push("medication_profile.medications");
   if (missing.length) {
     throw new Error(`MTM request is incomplete for PDF generation: ${missing.join(", ")}.`);
   }

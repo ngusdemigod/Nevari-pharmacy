@@ -103,7 +103,11 @@ final class Nevari_Subscriptions {
     }
 
     public static function store_admin_required(): bool {
-        return Nevari_Helpers::is_store_admin();
+        $user_id = Nevari_Auth::api_session_user_id();
+        return $user_id > 0
+            && Nevari_Helpers::is_store_admin($user_id)
+            && class_exists('Nevari_User_Governance')
+            && Nevari_User_Governance::user_has_permission($user_id, 'subscriptions');
     }
 
     public static function paystack_webhook(WP_REST_Request $request): WP_REST_Response {
@@ -1433,7 +1437,7 @@ final class Nevari_Subscriptions {
         return self::cancel();
     }
 
-    public static function admin(): WP_REST_Response {
+    public static function admin(?WP_REST_Request $request = null): WP_REST_Response {
         if (!Nevari_Helpers::is_store_admin()) {
             return Nevari_Helpers::error('forbidden', 'Store admin access is required.', 403);
         }
@@ -1510,6 +1514,15 @@ final class Nevari_Subscriptions {
                 'reference' => $row->reference ? sanitize_text_field((string) $row->reference) : '—',
                 'action' => $is_paid ? 'Edit' : 'Upgrade',
                 'accent' => self::accent_for_status($status),
+                'subscription' => [
+                    'plan' => $is_paid ? self::PLAN_NAME : 'Free',
+                    'plan_key' => $is_paid ? $plan_key : self::FREE_PLAN_KEY,
+                    'status' => $status,
+                    'amount' => self::normalize_subscription_amount($row->amount_kobo ?? 0),
+                    'currency' => sanitize_text_field((string) ($row->currency ?? self::PLAN_CURRENCY)),
+                    'interval' => sanitize_key((string) ($row->interval_unit ?? self::PLAN_INTERVAL)),
+                    'is_free' => !$is_paid,
+                ],
             ];
         }
 
@@ -1617,15 +1630,44 @@ final class Nevari_Subscriptions {
             ];
         }
 
+        $page = $request ? max(1, absint($request->get_param('page')) ?: 1) : 1;
+        $per_page = $request ? min(100, max(1, absint($request->get_param('per_page')) ?: 20)) : 20;
+        $status_filter = $request ? sanitize_key((string) $request->get_param('status')) : '';
+        $plan_filter = $request ? sanitize_key((string) $request->get_param('plan')) : '';
+        $search = $request ? strtolower(substr(sanitize_text_field((string) $request->get_param('search')), 0, 100)) : '';
+        $allowed_statuses = ['', 'active', 'trialing', 'past_due', 'cancelled', 'none'];
+        if (!in_array($status_filter, $allowed_statuses, true)) {
+            return Nevari_Helpers::error('invalid_status', 'Invalid subscription status filter.', 422);
+        }
+        $filtered_users = array_values(array_filter($users, static function (array $user) use ($status_filter, $plan_filter, $search): bool {
+            $subscription = is_array($user['subscription'] ?? null) ? $user['subscription'] : [];
+            $status = sanitize_key((string) ($subscription['status'] ?? strtolower((string) ($user['status'] ?? 'none'))));
+            $plan_key = sanitize_key((string) ($subscription['plan_key'] ?? ($user['plan_key'] ?? 'free')));
+            if ($status_filter !== '' && $status !== $status_filter) {
+                return false;
+            }
+            if ($plan_filter !== '' && $plan_key !== $plan_filter) {
+                return false;
+            }
+            if ($search !== '') {
+                $haystack = strtolower(implode(' ', [(string) ($user['name'] ?? ''), (string) ($user['email'] ?? ''), (string) ($user['reference'] ?? '')]));
+                return strpos($haystack, $search) !== false;
+            }
+            return true;
+        }));
+        $filtered_total = count($filtered_users);
+        $paged_users = array_slice($filtered_users, ($page - 1) * $per_page, $per_page);
+
         return Nevari_Helpers::success([
             'plans' => $plans,
-            'users' => $users,
+            'users' => $paged_users,
             'total_subscriptions' => count($subscription_rows ?: []),
             'active_subscriptions' => $active_subscriptions,
             'past_due_subscriptions' => $past_due_subscriptions,
             'cancelled_subscriptions' => $cancelled_subscriptions,
             'renewals_this_month' => $renewals_this_month,
-            'total_pages' => max(1, (int) ceil(max(count($users), 1) / 5)),
+            'pagination' => ['page' => $page, 'per_page' => $per_page, 'total' => $filtered_total, 'pages' => max(1, (int) ceil(max($filtered_total, 1) / $per_page))],
+            'total_pages' => max(1, (int) ceil(max($filtered_total, 1) / $per_page)),
             'active_plan_amount_label' => $active_amount_kobo > 0 ? sprintf('%s %s', self::PLAN_CURRENCY, number_format($active_amount_kobo, 0)) : '—',
         ]);
     }
@@ -3894,7 +3936,4 @@ final class Nevari_Subscriptions {
         Nevari_Audit::log('dashboard', 'customer', $event, in_array($status, ['success', 'error'], true) ? $status : 'success', $payload);
     }
 }
-
-
-
 

@@ -100,11 +100,35 @@ final class Nevari_Mtm {
 
         self::register_pharmacist_routes('/pharmacist/mtm-requests', 'pharmacist_permission');
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/admin/mtm-requests', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'pharmacist_index'],
+                'permission_callback' => static function (): bool {
+                    $user_id = Nevari_Auth::api_session_user_id();
+                    return Nevari_Auth::api_session_required() && Nevari_Helpers::is_store_admin($user_id);
+                },
+            ],
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/pharmacist/pharmacy-products', [
             [
                 'methods' => WP_REST_Server::READABLE,
                 'callback' => [__CLASS__, 'pharmacy_products'],
                 'permission_callback' => [__CLASS__, 'pharmacist_permission'],
+            ],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/pharmacist/availability', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'pharmacist_availability'],
+                'permission_callback' => [__CLASS__, 'pharmacist_self_permission'],
+            ],
+            [
+                'methods' => WP_REST_Server::EDITABLE,
+                'callback' => [__CLASS__, 'update_pharmacist_availability'],
+                'permission_callback' => [__CLASS__, 'pharmacist_self_permission'],
             ],
         ]);
     }
@@ -163,6 +187,43 @@ final class Nevari_Mtm {
     }
     public static function pharmacist_permission(): bool {
         return Nevari_Auth::api_session_required() && (Nevari_Helpers::is_pharmacist() || Nevari_Helpers::is_store_admin());
+    }
+
+    public static function pharmacist_self_permission(): bool {
+        return Nevari_Auth::api_session_required() && Nevari_Helpers::is_pharmacist();
+    }
+
+    public static function pharmacist_availability(): WP_REST_Response {
+        $user_id = Nevari_Auth::api_session_user_id();
+        $availability = get_user_meta($user_id, '_nevari_availability', true);
+        return Nevari_Helpers::success(['availability' => is_array($availability) ? $availability : []]);
+    }
+
+    public static function update_pharmacist_availability(WP_REST_Request $request): WP_REST_Response {
+        $params = $request->get_json_params();
+        if (!is_array($params) || array_diff(array_keys($params), ['availability'])) {
+            return Nevari_Helpers::error('invalid_availability_payload', 'Only availability may be updated.', 422);
+        }
+        $submitted = isset($params['availability']) && is_array($params['availability']) ? $params['availability'] : [];
+        $allowed_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        $availability = [];
+
+        foreach ($allowed_days as $day) {
+            $ranges = isset($submitted[$day]) && is_array($submitted[$day]) ? $submitted[$day] : [];
+            foreach (array_slice($ranges, 0, 8) as $range) {
+                $start = sanitize_text_field((string) ($range['start'] ?? ''));
+                $end = sanitize_text_field((string) ($range['end'] ?? ''));
+                if (!preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d$/', $start) || !preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d$/', $end) || $start >= $end) {
+                    continue;
+                }
+                $availability[$day][] = ['start' => $start, 'end' => $end];
+            }
+        }
+
+        $user_id = Nevari_Auth::api_session_user_id();
+        update_user_meta($user_id, '_nevari_availability', $availability);
+        Nevari_Audit::log('consultation', 'nevari', 'pharmacist.availability_updated', 'success', ['related_user_id' => $user_id]);
+        return Nevari_Helpers::success(['availability' => $availability]);
     }
 
     public static function pharmacist_request_permission(WP_REST_Request $request): bool {
@@ -699,36 +760,58 @@ final class Nevari_Mtm {
         return array_map([__CLASS__, 'payload_from_request'], is_array($rows) ? $rows : []);
     }
 
-    private static function workload_for_pharmacist(int $pharmacist_id): int {
-        global $wpdb;
-        return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM " . self::table() . " WHERE assigned_pharmacist_user_id = %d AND status IN ('" . implode("','", self::ACTIVE_STATUSES) . "')",
-            $pharmacist_id
-        ));
+    private static function pharmacist_is_eligible(int $user_id): bool {
+        $user = get_userdata($user_id);
+        return $user instanceof WP_User
+            && in_array('pharmacist', (array) $user->roles, true)
+            && !get_user_meta($user_id, '_nevari_pharmacist_suspended', true)
+            && class_exists('Nevari_User_Governance')
+            && Nevari_User_Governance::can_authenticate($user_id);
     }
 
-    private static function select_pharmacist(): int {
-        $users = get_users([
-            'role' => 'pharmacist',
-            'number' => 100,
-            'fields' => ['ID'],
-            'orderby' => 'ID',
-            'order' => 'ASC',
-        ]);
-        $best_id = 0;
-        $best_load = PHP_INT_MAX;
-        foreach ($users as $user) {
-            $pharmacist_id = (int) $user->ID;
-            if (get_user_meta($pharmacist_id, '_nevari_pharmacist_suspended', true)) {
-                continue;
-            }
-            $load = self::workload_for_pharmacist($pharmacist_id);
-            if ($load < $best_load) {
-                $best_load = $load;
-                $best_id = $pharmacist_id;
-            }
+    private static function eligible_pharmacist_ids(): array {
+        global $wpdb;
+        $governance_table = Nevari_Helpers::table('user_governance');
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $governance_table)) !== $governance_table) {
+            return [];
         }
-        return $best_id;
+        $ids = $wpdb->get_col(
+            "SELECT user_id FROM {$governance_table} WHERE managed_role = 'pharmacist' AND account_status = 'approved' ORDER BY user_id ASC"
+        );
+        return array_values(array_filter(array_map('absint', (array) $ids), [__CLASS__, 'pharmacist_is_eligible']));
+    }
+
+    private static function round_robin_pharmacist_ids(array $candidate_ids): array {
+        global $wpdb;
+        $candidate_ids = array_values(array_unique(array_filter(array_map('absint', $candidate_ids))));
+        if (!$candidate_ids) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($candidate_ids), '%d'));
+        $sql = $wpdb->prepare(
+            'SELECT assigned_pharmacist_user_id, MAX(assigned_at) AS last_assigned_at FROM ' . self::table()
+            . " WHERE assigned_pharmacist_user_id IN ({$placeholders}) GROUP BY assigned_pharmacist_user_id",
+            $candidate_ids
+        );
+        $last_assigned = [];
+        foreach ((array) $wpdb->get_results($sql) as $row) {
+            $last_assigned[(int) $row->assigned_pharmacist_user_id] = (string) ($row->last_assigned_at ?? '');
+        }
+        usort($candidate_ids, static function (int $left, int $right) use ($last_assigned): int {
+            $left_at = $last_assigned[$left] ?? '';
+            $right_at = $last_assigned[$right] ?? '';
+            if ($left_at === $right_at) {
+                return $left <=> $right;
+            }
+            if ($left_at === '') {
+                return -1;
+            }
+            if ($right_at === '') {
+                return 1;
+            }
+            return strcmp($left_at, $right_at);
+        });
+        return $candidate_ids;
     }
 
     private static function insert_request(int $customer_id, array $payload): int {
@@ -826,7 +909,9 @@ final class Nevari_Mtm {
         }
         $user_id = Nevari_Auth::api_session_user_id();
         $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];
-        $raw_attachments = is_array($body['attachments'] ?? null) ? array_values($body['attachments']) : [];
+        $emergency_contact = self::sanitize_deep(is_array($body['emergency_contact'] ?? null) ? $body['emergency_contact'] : []);
+        $skip_clinical_sections = strcasecmp((string) ($emergency_contact['consentToDiscussCare'] ?? ''), 'No') === 0;
+        $raw_attachments = $skip_clinical_sections ? [] : (is_array($body['attachments'] ?? null) ? array_values($body['attachments']) : []);
         if (count($raw_attachments) > 8) {
             return Nevari_Helpers::error('invalid_mtm_attachments', 'A maximum of 8 MTM images may be uploaded.', 422);
         }
@@ -854,18 +939,20 @@ final class Nevari_Mtm {
             ];
         }
         $defer_submission_notifications = !empty($body['defer_submission_notifications']);
-        $assigned = self::select_pharmacist();
+        if ($skip_clinical_sections) {
+            $emergency_contact = ['consentToDiscussCare' => 'No'];
+        }
         $request_id = self::insert_request($user_id, [
-            'status' => $assigned > 0 ? self::STATUS_UNDER_REVIEW : self::STATUS_SUBMITTED,
-            'assigned_pharmacist_user_id' => $assigned,
+            'status' => self::STATUS_SUBMITTED,
+            'assigned_pharmacist_user_id' => 0,
             'timezone' => sanitize_text_field((string) ($body['timezone'] ?? self::store_timezone())) ?: self::store_timezone(),
             'patient' => self::sanitize_deep(is_array($body['patient'] ?? null) ? $body['patient'] : []),
-            'emergency_contact' => self::sanitize_deep(is_array($body['emergency_contact'] ?? null) ? $body['emergency_contact'] : []),
-            'medical_history' => self::sanitize_deep(is_array($body['medical_history'] ?? null) ? $body['medical_history'] : []),
-            'medication_profile' => self::sanitize_deep(is_array($body['medication_profile'] ?? null) ? $body['medication_profile'] : []),
-            'adherence_assessment' => self::sanitize_deep(is_array($body['adherence_assessment'] ?? null) ? $body['adherence_assessment'] : []),
-            'additional_information' => self::sanitize_deep(is_array($body['additional_information'] ?? null) ? $body['additional_information'] : []),
-            'attachments' => $attachments,
+            'emergency_contact' => $emergency_contact,
+            'medical_history' => $skip_clinical_sections ? [] : self::sanitize_deep(is_array($body['medical_history'] ?? null) ? $body['medical_history'] : []),
+            'medication_profile' => $skip_clinical_sections ? [] : self::sanitize_deep(is_array($body['medication_profile'] ?? null) ? $body['medication_profile'] : []),
+            'adherence_assessment' => $skip_clinical_sections ? [] : self::sanitize_deep(is_array($body['adherence_assessment'] ?? null) ? $body['adherence_assessment'] : []),
+            'additional_information' => $skip_clinical_sections ? [] : self::sanitize_deep(is_array($body['additional_information'] ?? null) ? $body['additional_information'] : []),
+            'attachments' => $skip_clinical_sections ? [] : $attachments,
         ]);
         $payment = self::prepare_submission_payment($request_id, $user_id);
         $row = self::get_request($request_id);
@@ -1284,19 +1371,26 @@ final class Nevari_Mtm {
         $wpdb->query('START TRANSACTION');
         $row = $wpdb->get_row($wpdb->prepare('SELECT * FROM '.self::table().' WHERE id=%d FOR UPDATE',$id));
         if (!$row || (int)$row->customer_user_id !== Nevari_Auth::api_session_user_id()) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('forbidden','You cannot reserve this slot.',403);}
-        $pharmacist_id = (int)($row->assigned_pharmacist_user_id??0);
-        if ($pharmacist_id < 1) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('pharmacist_unavailable','A pharmacist has not been assigned yet.',409);}
-        $wpdb->get_var($wpdb->prepare('SELECT ID FROM '.$wpdb->users.' WHERE ID=%d FOR UPDATE',$pharmacist_id));
         $payment_state = (string)($row->payment_state??'pending');
         if (!in_array($payment_state,['pending','paid','quota_reserved'],true)) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('payment_unavailable','This request is not ready for availability selection.',409);}
         if (in_array((string)($row->slot_state??''),['reserved_pending_payment','reserved','active'],true)) {$wpdb->query('ROLLBACK');return Nevari_Helpers::error('slot_already_reserved','A slot is already reserved for this request.',409);}
-        if (!self::slot_matches_availability($pharmacist_id,$start,$end) || self::slot_has_conflict($pharmacist_id,$start,$end,$id)) {
-            $wpdb->query('ROLLBACK');return Nevari_Helpers::error('slot_unavailable','That slot is no longer available.',409);
+        $pharmacist_id = 0;
+        $candidate_ids = self::round_robin_pharmacist_ids(self::eligible_pharmacist_ids());
+        foreach ($candidate_ids as $candidate_id) {
+            if (!self::slot_matches_availability($candidate_id,$start,$end)) continue;
+            $wpdb->get_var($wpdb->prepare('SELECT ID FROM '.$wpdb->users.' WHERE ID=%d FOR UPDATE',$candidate_id));
+            if (!self::pharmacist_is_eligible($candidate_id)) continue;
+            if (!self::slot_matches_availability($candidate_id,$start,$end) || self::slot_has_conflict($candidate_id,$start,$end,$id)) continue;
+            $pharmacist_id = $candidate_id;
+            break;
+        }
+        if ($pharmacist_id < 1) {
+            $wpdb->query('ROLLBACK');return Nevari_Helpers::error('slot_unavailable','No pharmacist is available for that time. Select another slot.',409);
         }
         $is_unpaid = $payment_state === 'pending';
         $hold = $is_unpaid ? self::slot_hold_expiry() : null;
         $slot_state = $is_unpaid ? 'reserved_pending_payment' : 'reserved';
-        $wpdb->update(self::table(),['slot_state'=>$slot_state,'reserved_start_at'=>$start,'reserved_end_at'=>$end,'slot_hold_expires_at'=>$hold['mysql']??null,'timezone'=>$timezone,'updated_at'=>self::now(),'updated_by'=>(int)$row->customer_user_id],['id'=>$id]);
+        $wpdb->update(self::table(),['assigned_pharmacist_user_id'=>$pharmacist_id,'assigned_at'=>self::now(),'status'=>self::STATUS_UNDER_REVIEW,'slot_state'=>$slot_state,'reserved_start_at'=>$start,'reserved_end_at'=>$end,'slot_hold_expires_at'=>$hold['mysql']??null,'timezone'=>$timezone,'updated_at'=>self::now(),'updated_by'=>(int)$row->customer_user_id],['id'=>$id]);
         Nevari_Care_Journeys::event('mtm',$id,'slot_reserved',$is_unpaid?'Availability held pending payment.':'Consultation slot reserved pending clinical approval.',(int)$row->customer_user_id,['scheduled_at'=>$start]);
         $wpdb->query('COMMIT');
         if ($is_unpaid && !wp_next_scheduled(self::SLOT_HOLD_EXPIRY_HOOK,[$id])) wp_schedule_single_event((int)$hold['timestamp']+1,self::SLOT_HOLD_EXPIRY_HOOK,[$id]);
@@ -1312,21 +1406,23 @@ final class Nevari_Mtm {
     }
 
     private static function available_slots(object $row): array {
-        $pharmacist_id=(int)($row->assigned_pharmacist_user_id??0); if(!$pharmacist_id)return[];
-        $availability=get_user_meta($pharmacist_id,'_nevari_availability',true); $availability=is_array($availability)?$availability:[];
         $slots=[];
-        for($day=0;$day<14;$day++){
-            $date=gmdate('Y-m-d',strtotime('+'.$day.' days')); $weekday=strtolower(gmdate('l',strtotime($date)));
-            foreach((array)($availability[$weekday]??[]) as $range){
-                $from=strtotime($date.' '.sanitize_text_field((string)($range['start']??'09:00')).' UTC');
-                $to=strtotime($date.' '.sanitize_text_field((string)($range['end']??'17:00')).' UTC');
-                for($t=$from;$t+self::MTM_DURATION_MINUTES*60<=$to;$t+=self::MTM_DURATION_MINUTES*60){
-                    $start=gmdate('Y-m-d H:i:s',$t);$end=gmdate('Y-m-d H:i:s',$t+self::MTM_DURATION_MINUTES*60);
-                    if($t>time()+300&&!self::slot_has_conflict($pharmacist_id,$start,$end,(int)$row->id))$slots[]=['start_at'=>gmdate('c',$t),'end_at'=>gmdate('c',$t+self::MTM_DURATION_MINUTES*60)];
+        foreach (self::eligible_pharmacist_ids() as $pharmacist_id) {
+            $availability=get_user_meta($pharmacist_id,'_nevari_availability',true); $availability=is_array($availability)?$availability:[];
+            for($day=0;$day<14;$day++){
+                $date=gmdate('Y-m-d',strtotime('+'.$day.' days')); $weekday=strtolower(gmdate('l',strtotime($date)));
+                foreach((array)($availability[$weekday]??[]) as $range){
+                    $from=strtotime($date.' '.sanitize_text_field((string)($range['start']??'09:00')).' UTC');
+                    $to=strtotime($date.' '.sanitize_text_field((string)($range['end']??'17:00')).' UTC');
+                    for($t=$from;$t+self::MTM_DURATION_MINUTES*60<=$to;$t+=self::MTM_DURATION_MINUTES*60){
+                        $start=gmdate('Y-m-d H:i:s',$t);$end=gmdate('Y-m-d H:i:s',$t+self::MTM_DURATION_MINUTES*60);
+                        if($t>time()+300&&!self::slot_has_conflict($pharmacist_id,$start,$end,(int)$row->id))$slots[$start]=['start_at'=>gmdate('c',$t),'end_at'=>gmdate('c',$t+self::MTM_DURATION_MINUTES*60)];
+                    }
                 }
             }
         }
-        return array_slice($slots,0,200);
+        ksort($slots);
+        return array_slice(array_values($slots),0,200);
     }
 
     private static function slot_matches_availability(int $user_id,string $start,string $end): bool {
@@ -1388,8 +1484,9 @@ final class Nevari_Mtm {
             'mtm_request_id' => (int) $row->id,
             'request_reference' => self::ensure_request_reference((int) $row->id),
             'status' => self::normalize_status((string) $row->status),
+            'assignment_state' => !empty($row->assigned_pharmacist_user_id) ? 'assigned' : 'pending_selection',
             'pharmacist_id' => (int) ($row->assigned_pharmacist_user_id ?? 0),
-            'pharmacist_name' => self::user_name((int) ($row->assigned_pharmacist_user_id ?? 0)),
+            'pharmacist_name' => !empty($row->assigned_pharmacist_user_id) ? self::user_name((int) $row->assigned_pharmacist_user_id) : '',
             'duration_minutes' => self::MTM_DURATION_MINUTES,
             'payment_required' => !in_array((string) ($row->payment_state ?? ''), ['paid', 'quota_reserved'], true),
             'payment_state' => $payment_state,
@@ -1411,7 +1508,32 @@ final class Nevari_Mtm {
     public static function pharmacist_index(WP_REST_Request $request): WP_REST_Response {
         $user_id = Nevari_Auth::api_session_user_id();
         if (Nevari_Helpers::is_store_admin($user_id)) {
-            return Nevari_Helpers::success(['items' => self::list_query('id > 0')]);
+            global $wpdb;
+            $page = max(1, absint($request->get_param('page')) ?: 1);
+            $per_page = min(100, max(1, absint($request->get_param('per_page')) ?: 30));
+            $search = substr(sanitize_text_field((string) $request->get_param('search')), 0, 100);
+            $where = 'id > 0';
+            $params = [];
+            if ($search !== '') {
+                $like = '%' . $wpdb->esc_like($search) . '%';
+                $where .= ' AND (request_reference LIKE %s OR status LIKE %s OR patient_data LIKE %s)';
+                $params = [$like, $like, $like];
+            }
+            $table = self::table();
+            $count_sql = "SELECT COUNT(*) FROM {$table} WHERE {$where}";
+            $total = (int) ($params ? $wpdb->get_var($wpdb->prepare($count_sql, $params)) : $wpdb->get_var($count_sql));
+            $offset = ($page - 1) * $per_page;
+            $list_sql = "SELECT * FROM {$table} WHERE {$where} ORDER BY id DESC LIMIT %d OFFSET %d";
+            $rows = $wpdb->get_results($wpdb->prepare($list_sql, array_merge($params, [$per_page, $offset])));
+            return Nevari_Helpers::success([
+                'items' => array_map([__CLASS__, 'payload_from_request'], is_array($rows) ? $rows : []),
+                'pagination' => [
+                    'page' => $page,
+                    'per_page' => $per_page,
+                    'total' => $total,
+                    'pages' => max(1, (int) ceil($total / $per_page)),
+                ],
+            ]);
         }
         return Nevari_Helpers::success(['items' => self::list_query('assigned_pharmacist_user_id = %d', [$user_id])]);
     }
