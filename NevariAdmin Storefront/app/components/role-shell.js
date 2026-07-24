@@ -23,13 +23,13 @@ export function RoleShell({
   renderNavIcon = null,
   onLogout = null,
   logoutBusy = false,
-  sidebarFooter = null
+  sidebarFooter = null,
+  hideMobileBottomNav = false
 }) {
   const roleLabel = title.replace(/^Nevari\s+/i, "");
-  const visibleNavPages = navPages;
   const labelFor = (page) => pageLabels[page] || titleCase(page);
   const [sideNavOpen, setSideNavOpen] = useState(false);
-  return <div className="doctor-flow-shell">
+  return <div className={`doctor-flow-shell ${hideMobileBottomNav ? "hide-mobile-bottom-nav" : ""}`.trim()}>
     <section className="app-shell">
       {sideNavOpen ? <ModalScrim className="dashboard-side-nav-backdrop" label="Close navigation" onDismiss={() => setSideNavOpen(false)} /> : null}
       <aside className={`sidebar dashboard-side-nav ${sideNavOpen ? "is-open" : ""}`} aria-label={`${roleLabel} sections`}>
@@ -45,7 +45,7 @@ export function RoleShell({
           </div>
           <p className="nav-label">Navigation</p>
           <div className="nav-list">
-            {navPages.map((item, index) => <button className={`nav-item ${active === item ? "active" : ""}`} key={item} type="button" onClick={() => {
+            {navPages.map((item, index) => <button className={`nav-item ${active === item ? "active" : ""}`} key={item} type="button" aria-label={labelFor(item)} onClick={() => {
               onPageChange(item);
               setSideNavOpen(false);
             }}>
@@ -77,14 +77,6 @@ export function RoleShell({
         <div className={`page-body ${pageBodyClassName}`.trim()}>
           {children}
         </div>
-        <nav className="bottom-nav desktop-bottom-nav" aria-label={`${roleLabel} dashboard navigation`}>
-          {visibleNavPages.map((item, index) => <button className={`nav-item ${active === item ? "active" : ""}`} key={item} type="button" onClick={() => onPageChange(item)}>
-            <span className="nav-icon" aria-hidden="true">
-              {renderNavIcon ? renderNavIcon(item, index) : <span className={`mobile-nav-glyph glyph-${index + 1}`} />}
-            </span>
-            {active === item ? labelFor(item) : null}
-          </button>)}
-        </nav>
       </main>
     </section>
   </div>;
