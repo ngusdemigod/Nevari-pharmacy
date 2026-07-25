@@ -212,6 +212,7 @@ function PaywallPageContent() {
 
   const gateways = useMemo(() => data?.available_gateways || [], [data]);
   const items = useMemo(() => data?.items || [], [data]);
+  const mtmRequest = data?.mtm_request || null;
 
   function receiptViewerUrl(orderId) {
     const role = searchParams.get("role") || "patient";
@@ -244,6 +245,14 @@ function PaywallPageContent() {
     destination.searchParams.set("payment_result", "failed");
     window.location.href = `${destination.pathname}${destination.search}`;
     return true;
+  }
+
+  function goBack() {
+    if (returnTo) {
+      router.push(returnTo);
+      return;
+    }
+    router.back();
   }
 
   async function startPayment(gateway = activeGateway) {
@@ -306,8 +315,13 @@ function PaywallPageContent() {
           <span>Balance due</span><strong>{money(data?.totals?.balance_due, data.currency)}</strong>
         </div>
         <div className="paywall-items">
-            <h2>{data?.entity_type === "appointment" ? "Appointment details" : "Order items"}</h2>
-          {items.length ? items.map((item, index) => (
+          <h2>{data?.entity_type === "appointment" ? "Appointment details" : mtmRequest ? "MTM request" : "Order items"}</h2>
+          {mtmRequest ? (
+            <>
+              <div className="paywall-item"><span>Request ID</span><strong>{mtmRequest.reference || `MTM-${mtmRequest.id}`}</strong></div>
+              <div className="paywall-item"><span>Patient name</span><strong>{mtmRequest.patient_name || data.customer?.name || "Patient"}</strong></div>
+            </>
+          ) : items.length ? items.map((item, index) => (
             <div className="paywall-item" key={`${item.name || "item"}-${index}`}>
               <span>{item.name || "Item"} x {item.qty || item.quantity || 1}</span>
               <strong>{money(item.total ?? item.rate ?? item.price, data.currency)}</strong>
@@ -323,10 +337,11 @@ function PaywallPageContent() {
         </div>
         {!gateways.length ? <p className="paywall-error">No payment method is configured for this invoice yet.</p> : null}
         {error ? <p className="paywall-error">{error}</p> : null}
+        <button className="paywall-back-button" type="button" onClick={goBack}>Go back</button>
       </section>
       <style jsx>{`
         .paywall-page { min-height: 100vh; background: #f4f6f8; padding: 24px; color: #111; box-sizing: border-box; overflow-y: auto; font-family: "Product Sans", "Google Sans", Arial, sans-serif; }
-        .paywall-card { width: min(520px, 100%); margin: 0 auto; background: #fff; padding: 36px; border: 1px solid #dfe7f0; border-radius: 28px; box-shadow: 0 24px 80px rgba(14, 41, 85, .12); box-sizing: border-box; }
+        .paywall-card { width: min(520px, 100%); margin: 0 auto; background: #fff; padding: 36px; border: 0; border-radius: 28px; box-shadow: 0 24px 80px rgba(14, 41, 85, .12); box-sizing: border-box; }
         .paywall-card-loading { min-height: 220px; display: grid; place-items: center; }
         .paywall-card.error { color: #9f2f2f; }
         .paywall-spinner {
@@ -339,12 +354,12 @@ function PaywallPageContent() {
         }
         .paywall-logo { width: 72px; height: 72px; object-fit: contain; }
         .paywall-kicker { margin-top: 18px; color: #0E2955; text-transform: uppercase; font-weight: 700; font-size: 12px; }
-        h1 { margin: 8px 0 24px; color: #0E2955; font-size: 20px; font-weight: 300; line-height: 1.2; overflow-wrap: anywhere; }
+        h1 { margin: 8px 0 24px; color: #0E2955; font-size: 24px; font-weight: 300; line-height: 1.2; overflow-wrap: anywhere; }
         .paywall-grid { display: grid; grid-template-columns: 130px 1fr; gap: 8px 18px; margin-bottom: 24px; }
         .paywall-grid span { color: #7c8796; min-width: 0; }
         .paywall-grid strong { text-align: right; min-width: 0; overflow-wrap: anywhere; }
         .paywall-items { border-top: 1px solid #e4eaf2; border-bottom: 1px solid #e4eaf2; padding: 16px 0; margin-bottom: 20px; }
-        .paywall-items h2 { margin: 0 0 10px; color: #0E2955; font-size: 20px; font-weight: 300; line-height: 1.2; }
+        .paywall-items h2 { margin: 0 0 10px; color: #0E2955; font-size: 24px; font-weight: 300; line-height: 1.2; }
         .paywall-item { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; color: #1f2a37; }
         .paywall-item span { min-width: 0; overflow-wrap: anywhere; }
         .paywall-item strong { white-space: nowrap; }
@@ -352,6 +367,9 @@ function PaywallPageContent() {
         .gateway-list { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 18px; }
         .gateway-button { border: 1px solid #0E2955; background: #0E2955; color: #fff; padding: 14px 18px; font-weight: 400; border-radius: 999px; font-size: 15px; }
         .gateway-button:disabled { opacity: .65; cursor: wait; }
+        .paywall-back-button { width: 100%; border: 1px solid #0E2955; background: #fff; color: #0E2955; padding: 14px 18px; font-weight: 400; border-radius: 999px; font-size: 15px; cursor: pointer; }
+        .paywall-back-button:hover { background: #f4f7fb; }
+        .paywall-back-button:focus-visible { outline: 3px solid rgba(14, 41, 85, .2); outline-offset: 2px; }
         .paywall-error { margin-top: 14px; color: #9f2f2f; font-weight: 700; }
         @keyframes paywallSpin {
           from { transform: rotate(0deg); }
@@ -360,7 +378,7 @@ function PaywallPageContent() {
         @media (max-width: 720px) {
           .paywall-page { padding: 12px; }
           .paywall-card { padding: 18px; }
-          h1 { font-size: 20px; margin-bottom: 16px; }
+          h1 { font-size: 24px; margin-bottom: 16px; }
           .paywall-grid { grid-template-columns: 1fr; gap: 4px; }
           .paywall-grid strong { text-align: left; margin-bottom: 8px; }
           .gateway-button { width: 100%; }

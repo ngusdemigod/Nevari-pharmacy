@@ -15,6 +15,7 @@ final class Nevari_Mtm {
     private const STATUS_DECLINED = 'declined';
     private const ACTIVE_STATUSES = ['submitted', 'under_review', 'approved', 'scheduled', 'treatment_completed', 'follow_up'];
     private const MTM_DURATION_MINUTES = 30;
+    private const SLOT_HOLD_MINUTES = 5;
     private const PDF_MAX_BYTES = 41943040;
     private const PDF_VERSION = 'mtm-v1';
     private const SLOT_HOLD_EXPIRY_HOOK = 'nevari_mtm_expire_slot_hold';
@@ -1334,14 +1335,8 @@ final class Nevari_Mtm {
     }
 
     private static function slot_hold_expiry(): array {
-        try {
-            $timezone = new DateTimeZone(self::store_timezone());
-            $end_of_day = (new DateTimeImmutable('now', $timezone))->setTime(23, 59, 59);
-        } catch (Exception $exception) {
-            $end_of_day = new DateTimeImmutable('today 23:59:59', new DateTimeZone('UTC'));
-        }
-        $utc = $end_of_day->setTimezone(new DateTimeZone('UTC'));
-        return ['mysql'=>$utc->format('Y-m-d H:i:s'),'timestamp'=>$utc->getTimestamp()];
+        $timestamp = time() + (self::SLOT_HOLD_MINUTES * MINUTE_IN_SECONDS);
+        return ['mysql'=>gmdate('Y-m-d H:i:s',$timestamp),'timestamp'=>$timestamp];
     }
 
     public static function expire_slot_hold(int $request_id): void {

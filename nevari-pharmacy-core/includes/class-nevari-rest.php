@@ -2430,12 +2430,17 @@ final class Nevari_Rest {
     }
 
     private static function invoice_payment_data($order): array {
-        $items = $order->get_items();
+        $items = $order->get_items(['line_item', 'fee']);
         $total = (float) $order->get_total();
         $amount_paid = $order->get_date_paid() ? $total : 0.0;
         $balance_due = max(0.0, $total - $amount_paid);
         $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
         $customer_name = $customer_name ?: $order->get_formatted_billing_full_name();
+        $mtm_request_id = absint($order->get_meta('_nevari_mtm_request_id', true));
+        if (!$customer_name && $mtm_request_id > 0) {
+            $customer = get_userdata((int) $order->get_customer_id());
+            $customer_name = $customer instanceof WP_User ? $customer->display_name : '';
+        }
         $line_items = [];
         foreach ($items as $item) {
             $quantity = max(1, (int) $item->get_quantity());
@@ -2460,6 +2465,11 @@ final class Nevari_Rest {
                 'email' => (string) $order->get_billing_email(),
                 'phone' => (string) $order->get_billing_phone(),
             ],
+            'mtm_request' => $mtm_request_id > 0 ? [
+                'id' => $mtm_request_id,
+                'reference' => sprintf('MTM-%06d', $mtm_request_id),
+                'patient_name' => $customer_name ?: 'Patient',
+            ] : null,
             'items' => $line_items,
             'totals' => [
                 'subtotal' => self::order_subtotal($order, $items),

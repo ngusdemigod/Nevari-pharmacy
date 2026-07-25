@@ -41682,7 +41682,7 @@ body:has(.customer-mtm-payment-page) {
   display: grid;
   justify-items: center;
   gap: 24px;
-  border: 1px solid #d7dfef;
+  border: 0;
   border-radius: 28px !important;
   background: #ffffff;
   box-shadow: none;
@@ -41731,7 +41731,7 @@ body:has(.customer-mtm-payment-page) {
 .customer-mtm-payment-copy h2 {
   max-width: 540px;
   color: #0a2a5e;
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 300;
   line-height: 1.2;
   letter-spacing: 0;
@@ -41855,7 +41855,7 @@ body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-pa
   }
 
   .customer-mtm-payment-copy h2 {
-    font-size: 20px;
+    font-size: 24px;
   }
 
   .customer-mtm-payment-details > div {
