@@ -7,7 +7,7 @@ import useSWR from "swr";
 import { FRONTENDS } from "./components/frontend-config";
 import { setDocumentMetadata } from "./components/page-metadata";
 import { RoleShell, SkeletonBox } from "./components/role-shell";
-import { apiRequest, hydrateStoredSession, isSessionUsable, shortDate, titleCase } from "./components/role-dashboard-utils";
+import { apiFileRequest, apiRequest, hydrateStoredSession, isSessionUsable, shortDate, titleCase } from "./components/role-dashboard-utils";
 import { performGlobalLogout } from "./components/role-session";
 import {
   WEEKDAYS,
@@ -75,6 +75,26 @@ function caseReference(item, kind) {
 
 function caseDate(item) {
   return shortDate(item?.scheduled_at || item?.updated_at || item?.created_at);
+}
+
+/** Request timestamps are stored as UTC MySQL strings, which JS would otherwise read as local time. */
+function utcDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const parsed = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(raw) ? `${raw.replace(" ", "T")}Z` : raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function consultationDate(item) {
+  const date = utcDate(item?.scheduled_at);
+  if (!date) return "Not scheduled";
+  return new Intl.DateTimeFormat("en-US", { timeZone: item?.timezone || "UTC", month: "long", day: "numeric", year: "numeric" }).format(date);
+}
+
+function consultationTime(item) {
+  const date = utcDate(item?.scheduled_at);
+  if (!date) return "Not scheduled";
+  return new Intl.DateTimeFormat("en-US", { timeZone: item?.timezone || "UTC", hour: "numeric", minute: "2-digit" }).format(date);
 }
 
 function isActionRequired(item) {
@@ -154,6 +174,8 @@ export default function PharmacistDashboard() {
     logoutBusy={logoutBusy}
     showHeader={false}
     hideMobileBottomNav
+    hideTabletToolbar
+    pageBodyClassName="pharmacist-page-body"
     sidebarFooter={<div className="customer-desktop-sidebar-profile">
       <div className="customer-mobile-avatar customer-desktop-sidebar-avatar">{initials(session.user?.display_name)}</div>
       <div className="customer-desktop-sidebar-profile-copy">
@@ -162,7 +184,7 @@ export default function PharmacistDashboard() {
       </div>
     </div>}
   >
-    <div className="pharmacist-clinical-dashboard">
+    {({ openNav }) => <div className="pharmacist-clinical-dashboard">
       {notice ? <div className={`snackbar ${notice.tone}`} role="status" aria-live="polite"><div className="snackbar-copy"><strong className="snackbar-title">{titleCase(notice.tone)}</strong><span className="snackbar-message">{notice.message}</span></div></div> : null}
       {page === "overview" ? <Overview
         name={session.user?.display_name}
@@ -171,19 +193,40 @@ export default function PharmacistDashboard() {
         availability={availability}
         loading={loading}
         onNavigate={setPage}
+        onOpenNav={openNav}
       /> : null}
-      {page === "mtm" ? <MtmWorkspace session={session} items={mtmItems} query={mtmQuery} onNotice={showNotice} /> : null}
-      {page === "iv-therapy" ? <IvWorkspace session={session} items={ivItems} query={ivQuery} onNotice={showNotice} /> : null}
-      {page === "availability" ? <AvailabilityWorkspace session={session} availability={availability} loading={availabilityQuery.isLoading} mutate={availabilityQuery.mutate} onNotice={showNotice} /> : null}
-    </div>
+      {page === "mtm" ? <MtmWorkspace session={session} items={mtmItems} query={mtmQuery} onNotice={showNotice} onOpenNav={openNav} /> : null}
+      {page === "iv-therapy" ? <IvWorkspace session={session} items={ivItems} query={ivQuery} onNotice={showNotice} onOpenNav={openNav} /> : null}
+      {page === "availability" ? <AvailabilityWorkspace session={session} availability={availability} loading={availabilityQuery.isLoading} mutate={availabilityQuery.mutate} onNotice={showNotice} onOpenNav={openNav} /> : null}
+    </div>}
   </RoleShell>;
 }
 
-function PageHeading({ eyebrow, title, description }) {
-  return <div className="doctor-page-heading pharmacist-page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div></div>;
+/**
+ * Pharmacist page header: search bar, then the nav toggle beside the page title,
+ * then the page description. The nav toggle replaces the shell toolbar button and
+ * is hidden on desktop, where the sidebar is always visible.
+ */
+function PharmacistPageHeader({ title, description, onOpenNav, search = null, onSearch = null, searchPlaceholder = "" }) {
+  return <header className="pharmacist-page-header">
+    {onSearch ? <label className="doctor-mobile-search pharmacist-workspace-search">
+      <span className="sr-only">{searchPlaceholder}</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></svg>
+      <input value={search} onChange={(event) => onSearch(event.target.value)} placeholder={searchPlaceholder} />
+    </label> : null}
+    <div className="pharmacist-page-title-row">
+      <button className="pharmacist-nav-toggle" type="button" aria-label="Open navigation" onClick={onOpenNav}>
+        <span />
+        <span />
+        <span />
+      </button>
+      <h1>{title}</h1>
+    </div>
+    {description ? <p className="pharmacist-page-description">{description}</p> : null}
+  </header>;
 }
 
-function Overview({ name, mtmItems, ivItems, availability, loading, onNavigate }) {
+function Overview({ name, mtmItems, ivItems, availability, loading, onNavigate, onOpenNav }) {
   const [search, setSearch] = useState("");
   const availableDays = Object.values(availability).filter((ranges) => Array.isArray(ranges) && ranges.length).length;
   const actionRequired = [...mtmItems, ...ivItems].filter(isActionRequired).length;
@@ -202,15 +245,14 @@ function Overview({ name, mtmItems, ivItems, availability, loading, onNavigate }
     .slice(0, 6);
 
   return <section className="pharmacist-clinical-page pharmacist-overview-page">
-    <label className="doctor-mobile-search pharmacist-overview-search">
-      <span className="sr-only">Search assigned cases</span>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></svg>
-      <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search here for assigned cases" />
-    </label>
-    <header className="pharmacist-overview-heading">
-      <p>Welcome back, {String(name || "Pharmacist").split(" ")[0].toLowerCase()}</p>
-      <h1>Overview</h1>
-    </header>
+    <PharmacistPageHeader
+      title="Overview"
+      description={`Welcome back, ${String(name || "Pharmacist").split(" ")[0].toLowerCase()}`}
+      onOpenNav={onOpenNav}
+      search={search}
+      onSearch={setSearch}
+      searchPlaceholder="Search here for assigned cases"
+    />
     <section className="overview-metric-grid pharmacist-metric-grid" aria-label="Pharmacist dashboard summary metrics">
       {cards.map((card) => <button className="overview-metric-card pharmacist-metric-card" type="button" key={card.key} onClick={() => onNavigate(card.page)}>
         <span className="overview-metric-icon" aria-hidden="true">{iconFor(card.icon)}</span>
@@ -252,7 +294,7 @@ function OverviewCaseList({ items, onOpen }) {
   </section>;
 }
 
-function WorkspaceShell({ title, description, kind, items, loading, selectedId, onSelect, search, onSearch, children }) {
+function WorkspaceShell({ title, description, kind, items, loading, selectedId, onSelect, search, onSearch, onOpenNav, modalTitle = "", children }) {
   const [page, setPage] = useState(1);
   const filtered = items.filter((item) => `${patientName(item)} ${item.request_reference || item.reference || ""} ${item.status || ""}`.toLowerCase().includes(search.toLowerCase()));
   const pageCount = Math.max(1, Math.ceil(filtered.length / CASES_PER_PAGE));
@@ -267,12 +309,14 @@ function WorkspaceShell({ title, description, kind, items, loading, selectedId, 
   }, [page, pageCount]);
 
   return <section className="pharmacist-clinical-page">
-    <PageHeading eyebrow="Assigned care" title={title} description={description} />
-    <label className="doctor-mobile-search pharmacist-workspace-search">
-      <span className="sr-only">Search assigned cases</span>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></svg>
-      <input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search patient, reference, or status" />
-    </label>
+    <PharmacistPageHeader
+      title={title}
+      description={description}
+      onOpenNav={onOpenNav}
+      search={search}
+      onSearch={onSearch}
+      searchPlaceholder="Search patient, reference, or status"
+    />
     <PharmacistCaseTable
       title={`${title} cases`}
       description={`${filtered.length} ${filtered.length === 1 ? "case" : "cases"} match the current view.`}
@@ -282,7 +326,7 @@ function WorkspaceShell({ title, description, kind, items, loading, selectedId, 
       onOpen={(item) => onSelect(item.id)}
     />
     {pageCount > 1 ? <PharmacistPagination page={page} pageCount={pageCount} onPageChange={setPage} /> : null}
-    {selectedId ? <PharmacistCaseModal title={`${title} details`} onClose={() => onSelect(null)}>{children}</PharmacistCaseModal> : null}
+    {selectedId ? <PharmacistCaseModal title={modalTitle || `${title} details`} onClose={() => onSelect(null)}>{children}</PharmacistCaseModal> : null}
   </section>;
 }
 
@@ -433,7 +477,7 @@ function PharmacistCaseModal({ title, onClose, children }) {
   </div>, document.body);
 }
 
-function MtmWorkspace({ session, items, query, onNotice }) {
+function MtmWorkspace({ session, items, query, onNotice, onOpenNav }) {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [busy, setBusy] = useState("");
@@ -441,26 +485,37 @@ function MtmWorkspace({ session, items, query, onNotice }) {
   const [productSearch, setProductSearch] = useState("");
   const [attached, setAttached] = useState([]);
   const selected = items.find((item) => String(item.id) === String(selectedId)) || null;
+  const status = String(selected?.status || "").toLowerCase();
+  const isReviewStage = ["submitted", "under_review"].includes(status);
+  const isScheduled = status === "scheduled";
+  // Both parties opened their join link inside the meeting window, so the consultation happened.
+  const consultationStarted = String(selected?.attendance_status || "") === "attended";
 
   useEffect(() => {
-    setNotes("");
+    const plan = selected?.action_plan && typeof selected.action_plan === "object" && !Array.isArray(selected.action_plan) ? selected.action_plan : {};
+    const draftProducts = Array.isArray(plan.products) ? plan.products : selected?.attached_products;
+    setNotes(String(plan.note || ""));
+    setAttached(Array.isArray(draftProducts) ? draftProducts.map((item) => ({ product_id: Number(item.product_id), name: String(item.name || "") })).filter((item) => item.product_id) : []);
     setProductSearch("");
-    setAttached([]);
+    // Draft state is reloaded when a different case is opened, not on every background refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
   const productsQuery = useSWR(
-    session && selected ? ["pharmacist-mtm-products", selected.id, productSearch] : null,
+    session && selected && productSearch.trim().length >= 2 ? ["pharmacist-mtm-products", selected.id, productSearch] : null,
     () => apiRequest(session, `/pharmacist/mtm-requests/${selected.id}/pharmacy-products`, { params: { search: productSearch } }),
     { revalidateOnFocus: false }
   );
+  const productResults = listItems(productsQuery.data).filter((product) => !attached.some((item) => item.product_id === product.id)).slice(0, 6);
 
-  async function action(actionName, body = {}) {
+  async function action(actionName, body = {}, { close = false, message = "MTM case updated." } = {}) {
     if (!selected || busy) return;
     setBusy(actionName);
     try {
       await apiRequest(session, `/pharmacist/mtm-requests/${selected.id}/${actionName}`, { method: "POST", body });
       await query.mutate();
-      onNotice("MTM case updated.", "success");
+      if (close) setSelectedId(null);
+      onNotice(message, "success");
     } catch (error) {
       onNotice(error?.message || "The MTM case could not be updated.", "error");
     } finally {
@@ -468,42 +523,141 @@ function MtmWorkspace({ session, items, query, onNotice }) {
     }
   }
 
-  function addProduct(product) {
-    setAttached((current) => current.some((item) => item.product_id === product.id) ? current : [...current, { product_id: product.id, name: product.name, quantity: 1 }]);
+  async function completeConsultation() {
+    if (!selected || busy) return;
+    setBusy("consultation-complete");
+    try {
+      if (attached.length) {
+        await apiRequest(session, `/pharmacist/mtm-requests/${selected.id}/attach-products`, {
+          method: "POST",
+          body: { items: attached.map((item) => ({ product_id: item.product_id, quantity: 1 })) },
+        });
+      }
+      await apiRequest(session, `/pharmacist/mtm-requests/${selected.id}/consultation-complete`, {
+        method: "POST",
+        body: { consultation_notes: { note: notes, products: attached } },
+      });
+      await query.mutate();
+      setSelectedId(null);
+      onNotice("Consultation completed. The patient has been notified.", "success");
+    } catch (error) {
+      onNotice(error?.message || "The consultation could not be completed.", "error");
+    } finally {
+      setBusy("");
+    }
   }
 
-  return <WorkspaceShell title="Medication Therapy Management" description="Review and document only the MTM cases assigned to you." kind="mtm" items={items} loading={query.isLoading} selectedId={selectedId} onSelect={setSelectedId} search={search} onSearch={setSearch}>
+  async function downloadAttachment() {
+    if (!selected || busy) return;
+    setBusy("document");
+    try {
+      const blob = await apiFileRequest(session, `/pharmacist/mtm-requests/${selected.id}/document`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${String(selected.request_reference || `mtm-${selected.id}`).toLowerCase()}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      onNotice(error?.message || "The MTM document is not available yet.", "error");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function addProduct(product) {
+    setAttached((current) => current.some((item) => item.product_id === product.id) ? current : [...current, { product_id: product.id, name: product.name }]);
+    setProductSearch("");
+  }
+
+  const attachmentButton = <button className="doctor-mobile-action-button secondary pharmacist-attachment-button" type="button" disabled={busy === "document" || !selected?.document?.available} onClick={downloadAttachment}>
+    {selected?.document?.available ? "Download attachment" : "Attachment not ready"}
+  </button>;
+
+  return <WorkspaceShell
+    title="Medication Therapy Management"
+    description="Review and document only the MTM cases assigned to you."
+    modalTitle="Medication Therapy Management"
+    kind="mtm"
+    items={items}
+    loading={query.isLoading}
+    selectedId={selectedId}
+    onSelect={setSelectedId}
+    search={search}
+    onSearch={setSearch}
+    onOpenNav={onOpenNav}
+  >
     {selected ? <article className="pharmacist-detail-card pharmacist-modal-detail-card">
       <div className="pharmacist-detail-head"><div><p className="eyebrow">{selected.request_reference || `MTM #${selected.id}`}</p><h2>{patientName(selected)}</h2></div><span className={`doctor-mobile-status-pill ${statusTone(selected.status)}`}>{titleCase(selected.status)}</span></div>
-      <div className="pharmacist-detail-facts">
+
+      {isScheduled ? <div className="pharmacist-detail-facts pharmacist-detail-facts-wide">
+        <div><span>Patient</span><strong>{patientName(selected)}</strong></div>
+        <div><span>Date</span><strong>{consultationDate(selected)}</strong></div>
+        <div><span>Time</span><strong>{consultationTime(selected)}</strong></div>
+        <div><span>Location</span><strong>Google Meet</strong></div>
+      </div> : <div className="pharmacist-detail-facts">
         <div><span>Created</span><strong>{shortDate(selected.created_at)}</strong></div>
-        <div><span>Scheduled</span><strong>{selected.scheduled_at ? shortDate(selected.scheduled_at) : "Not scheduled"}</strong></div>
-        <div><span>Payment state</span><strong>{titleCase(selected.payment?.payment_state || selected.payment_state || "Pending")}</strong></div>
-      </div>
-      <label className="doctor-mobile-form-field"><span>Clinical note or action plan</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={5000} placeholder="Record a concise clinical note." /></label>
-      <div className="doctor-mobile-card-actions pharmacist-action-row">
-        <button className="doctor-mobile-action-button primary" type="button" disabled={Boolean(busy)} onClick={() => action("approve")}>Approve</button>
-        <button className="doctor-mobile-action-button secondary" type="button" disabled={Boolean(busy) || !notes.trim()} onClick={() => action("consultation-complete", { consultation_notes: { note: notes } })}>Complete consultation</button>
-        <button className="doctor-mobile-action-button secondary" type="button" disabled={Boolean(busy) || !notes.trim()} onClick={() => action("action-plan", { action_plan: { note: notes } })}>Save action plan</button>
-        <button className="doctor-mobile-action-button danger" type="button" disabled={Boolean(busy) || !notes.trim()} onClick={() => action("decline", { reason: notes })}>Decline</button>
-      </div>
-      <section className="pharmacist-product-picker">
-        <div className="doctor-mobile-page-head"><div><p className="eyebrow">Assigned-case tools</p><h3>Medication products</h3></div></div>
-        <input className="pharmacist-input" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Search products for this action plan" />
-        <div className="pharmacist-product-results">
-          {listItems(productsQuery.data).slice(0, 6).map((product) => <button type="button" key={product.id} onClick={() => addProduct(product)}><span><strong>{product.name}</strong><small>{product.sku || "Pharmacy product"}</small></span><b>Add</b></button>)}
+        <div><span>Scheduled</span><strong>{selected.scheduled_at ? consultationDate(selected) : "Not scheduled"}</strong></div>
+        <div><span>Payment state</span><strong>{titleCase(selected.payment?.state || selected.payment?.payment_state || selected.payment_state || "Pending")}</strong></div>
+      </div>}
+
+      <div className="pharmacist-action-row pharmacist-attachment-row">{attachmentButton}</div>
+
+      {isReviewStage ? <>
+        <label className="doctor-mobile-form-field"><span>Clinical note or action plan</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={5000} placeholder="Record a concise clinical note." /></label>
+        <div className="doctor-mobile-card-actions pharmacist-action-row">
+          <button className="doctor-mobile-action-button primary" type="button" disabled={Boolean(busy)} onClick={() => action("approve", {}, { message: "Request approved and scheduled." })}>Approve</button>
+          <button className="doctor-mobile-action-button danger" type="button" disabled={Boolean(busy) || !notes.trim()} onClick={() => action("decline", { reason: notes }, { close: true, message: "Request declined." })}>Decline</button>
         </div>
-        {attached.length ? <div className="pharmacist-attached-products">{attached.map((item) => <div key={item.product_id}><span>{item.name}</span><input aria-label={`Quantity for ${item.name}`} type="number" min="1" max="999" value={item.quantity} onChange={(event) => setAttached((current) => current.map((row) => row.product_id === item.product_id ? { ...row, quantity: Math.max(1, Number(event.target.value) || 1) } : row))} /><button type="button" onClick={() => setAttached((current) => current.filter((row) => row.product_id !== item.product_id))}>Remove</button></div>)}</div> : null}
-        <div className="pharmacist-action-row">
-          <button className="doctor-mobile-action-button secondary" type="button" disabled={!attached.length || Boolean(busy)} onClick={() => action("attach-products", { items: attached })}>Attach products</button>
-          <button className="doctor-mobile-action-button primary" type="button" disabled={Boolean(busy)} onClick={() => action("create-product-order")}>Create linked order</button>
+        {!notes.trim() ? <p className="pharmacist-action-hint">Add a clinical note to record a decline reason.</p> : null}
+      </> : null}
+
+      {isScheduled ? <>
+        <div className="doctor-mobile-card-actions pharmacist-action-row">
+          {consultationStarted
+            ? <button className="doctor-mobile-action-button primary" type="button" disabled={Boolean(busy)} onClick={completeConsultation}>Complete consultation</button>
+            : <a className="doctor-mobile-action-button primary pharmacist-join-link" href={selected.pharmacist_join_url || "#"} target="_blank" rel="noopener noreferrer" aria-disabled={!selected.pharmacist_join_url}>Join meeting</a>}
+          {consultationStarted
+            ? <button className="doctor-mobile-action-button secondary" type="button" disabled={Boolean(busy)} onClick={() => action("action-plan", { action_plan: { note: notes, products: attached } }, { close: true, message: "Saved as draft." })}>Save action plan</button>
+            : <button className="doctor-mobile-action-button secondary" type="button" disabled={Boolean(busy)} onClick={() => action("reschedule", {}, { close: true, message: "The patient has been asked to pick a new slot." })}>Reschedule</button>}
         </div>
-      </section>
+        {consultationStarted ? <>
+          <label className="doctor-mobile-form-field"><span>Clinical note or action plan</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={5000} placeholder="Record a concise clinical note." /></label>
+          <section className="pharmacist-product-picker">
+            <div className="doctor-mobile-page-head"><div><p className="eyebrow">Assigned-case tools</p><h3>Medication products</h3></div></div>
+            <div className="pharmacist-product-field">
+              <div className="pharmacist-product-tags">
+                {attached.map((item) => <span className="pharmacist-product-tag" key={item.product_id}>
+                  {item.name}
+                  <button type="button" aria-label={`Remove ${item.name}`} onClick={() => setAttached((current) => current.filter((row) => row.product_id !== item.product_id))}>×</button>
+                </span>)}
+                <input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder={attached.length ? "Add another product" : "Search products for this action plan"} aria-label="Search pharmacy products" />
+              </div>
+              {productSearch.trim().length >= 2 ? <div className="pharmacist-product-suggestions" role="listbox" aria-label="Product results">
+                {productsQuery.isLoading ? <p className="pharmacist-product-empty">Searching products...</p> : null}
+                {!productsQuery.isLoading && !productResults.length ? <p className="pharmacist-product-empty">No products match this search.</p> : null}
+                {productResults.map((product) => <button type="button" role="option" aria-selected="false" key={product.id} onClick={() => addProduct(product)}>
+                  <strong>{product.name}</strong>
+                  <small>{product.sku || "Pharmacy product"}</small>
+                </button>)}
+              </div> : null}
+            </div>
+          </section>
+        </> : null}
+      </> : null}
+
+      {!isReviewStage && !isScheduled ? <p className="pharmacist-action-hint">{
+        status === "approved"
+          ? "Waiting for the patient to pick a consultation slot."
+          : "This case has no pending pharmacist action."
+      }</p> : null}
     </article> : <div className="doctor-mobile-empty-card">Select an assigned MTM case.</div>}
   </WorkspaceShell>;
 }
 
-function IvWorkspace({ session, items, query, onNotice }) {
+function IvWorkspace({ session, items, query, onNotice, onOpenNav }) {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -537,7 +691,7 @@ function IvWorkspace({ session, items, query, onNotice }) {
   }
 
   const current = detail || selected;
-  return <WorkspaceShell title="IV Therapy" description="Review only IV Therapy cases assigned to your pharmacist account." kind="iv" items={items} loading={query.isLoading} selectedId={selectedId} onSelect={setSelectedId} search={search} onSearch={setSearch}>
+  return <WorkspaceShell title="IV Therapy" description="Review only IV Therapy cases assigned to your pharmacist account." kind="iv" items={items} loading={query.isLoading} selectedId={selectedId} onSelect={setSelectedId} search={search} onSearch={setSearch} onOpenNav={onOpenNav}>
     {current ? <article className="pharmacist-detail-card pharmacist-modal-detail-card">
       <div className="pharmacist-detail-head"><div><p className="eyebrow">{current.reference || `IV #${current.id}`}</p><h2>{patientName(current)}</h2></div><span className={`doctor-mobile-status-pill ${statusTone(current.status)}`}>{titleCase(current.status)}</span></div>
       <div className="pharmacist-detail-facts">
@@ -560,15 +714,27 @@ function ClinicalDetails({ value }) {
   return <dl className="pharmacist-clinical-details">{rows.map(([key, item]) => <div key={key}><dt>{titleCase(key)}</dt><dd>{String(item)}</dd></div>)}</dl>;
 }
 
-function AvailabilityWorkspace({ session, availability, loading, mutate, onNotice }) {
+function AvailabilityWorkspace({ session, availability, loading, mutate, onNotice, onOpenNav }) {
   const [draft, setDraft] = useState(availability);
   const [saving, setSaving] = useState(false);
   const frames = useMemo(() => buildAvailabilityTimeFrames(DEFAULT_SLOT_INTERVAL_MINUTES), []);
-  useEffect(() => setDraft(availability), [availability]);
+  // The parent rebuilds `availability` on every render, so compare by value: a background
+  // refresh must never reset the draft and discard unsaved edits.
+  const savedSignature = JSON.stringify(normalizeAvailability(availability));
+  useEffect(() => setDraft(JSON.parse(savedSignature)), [savedSignature]);
   const selectedFramesByDay = useMemo(() => WEEKDAYS.reduce((result, day) => ({
     ...result,
     [day]: getSelectedAvailabilityFrames(draft[day], DEFAULT_SLOT_INTERVAL_MINUTES, frames),
   }), {}), [draft, frames]);
+  const savedFramesByDay = useMemo(() => {
+    const saved = JSON.parse(savedSignature);
+    return WEEKDAYS.reduce((result, day) => ({
+      ...result,
+      [day]: getSelectedAvailabilityFrames(saved[day], DEFAULT_SLOT_INTERVAL_MINUTES, frames),
+    }), {});
+  }, [savedSignature, frames]);
+  const changedDays = WEEKDAYS.filter((day) => selectedFramesByDay[day].join("|") !== savedFramesByDay[day].join("|"));
+  const hasChanges = changedDays.length > 0;
   const activeDays = WEEKDAYS.filter((day) => selectedFramesByDay[day].length).length;
   const totalSlots = WEEKDAYS.reduce((sum, day) => sum + selectedFramesByDay[day].length, 0);
   const morningFrames = frames.filter((time) => Number(time.slice(0, 2)) < 12);
@@ -602,14 +768,11 @@ function AvailabilityWorkspace({ session, availability, loading, mutate, onNotic
   }
 
   return <section className="page-view active pharmacist-availability-editor" data-page-panel="availability">
-    <div className="setup-bar" aria-label="Availability setup controls">
-      <div className="setup-meta">
-        <span className="meta-chip"><strong>{activeDays}</strong> active days</span>
-        <span className="meta-chip"><strong>{totalSlots}</strong> live slots</span>
-        <span className="meta-chip"><strong>{DEFAULT_SLOT_INTERVAL_MINUTES}</strong> min interval</span>
-      </div>
-      <button className="btn primary pharmacist-availability-save" type="button" disabled={loading || saving} onClick={save}>{saving ? "Saving changes..." : "Save changes"}</button>
-    </div>
+    <PharmacistPageHeader
+      title="Availability"
+      description="Set the days and times patients can book an MTM consultation with you."
+      onOpenNav={onOpenNav}
+    />
     <div className="availability-layout">
       <aside className="summary-column">
         <section className="section-card pad">
@@ -630,10 +793,21 @@ function AvailabilityWorkspace({ session, availability, loading, mutate, onNotic
       {WEEKDAYS.map((day) => {
         const selected = selectedFramesByDay[day];
         const enabled = Boolean(selected.length);
-        return <details className={`day-card ${enabled ? "" : "closed"}`.trim()} key={day} open>
+        const changed = changedDays.includes(day);
+        return <details className={`day-card ${enabled ? "" : "closed"} ${changed ? "has-unsaved-changes" : ""}`.trim()} key={day} open>
           <summary className="day-summary">
             <div className="day-heading"><div><h3 className="day-name">{titleCase(day)}</h3><p className="day-note"><span>{selected.length}</span> selected slots - {enabled ? `starts ${formatAvailabilityLabel(selected[0])}` : "patients cannot book this day"}</p></div></div>
             <div className="summary-right">
+              {changed ? <button
+                className="btn primary pharmacist-day-save"
+                type="button"
+                disabled={loading || saving}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  save();
+                }}
+              >{saving ? "Saving..." : "Save changes"}</button> : null}
               <label className="switch day-summary-switch" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
                 <input type="checkbox" checked={enabled} disabled={loading || saving} aria-label={`Allow bookings on ${titleCase(day)}`} onClick={(event) => event.stopPropagation()} onChange={(event) => setDraft((current) => toggleAvailabilityDay(current, day, event.target.checked, DEFAULT_SLOT_INTERVAL_MINUTES))} />
                 <span className="switch-ui" aria-hidden="true" />
@@ -661,6 +835,9 @@ function AvailabilityWorkspace({ session, availability, loading, mutate, onNotic
       })}
       </section>
     </div>
+    {hasChanges ? <div className="pharmacist-availability-savebar">
+      <button className="btn primary" type="button" disabled={loading || saving} onClick={save}>{saving ? "Saving changes..." : "Save changes"}</button>
+    </div> : null}
   </section>;
 }
 

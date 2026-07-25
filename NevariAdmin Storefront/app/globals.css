@@ -14120,6 +14120,15 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   line-height: 1.2;
 }
 
+/* Long page titles (IV Therapy, Medication Therapy Management) shrink to fit
+   on one line instead of wrapping or clipping - see AutoFitPageTitle. */
+.customer-mobile-pagehead-row .customer-mobile-pagehead-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
 .customer-mobile-icon-button {
   width: 28px;
   height: 28px;
@@ -42007,5 +42016,323 @@ body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-pa
 
   .customer-mtm-payment-details dt {
     flex: 0 0 42%;
+  }
+}
+
+/* Pharmacist dashboard: compact 10px page frame, borderless case tables,
+   in-page nav toggle beside the page title. */
+.doctor-flow-shell .pharmacist-page-body {
+  padding: 10px;
+}
+
+.doctor-flow-shell:has(.pharmacist-clinical-dashboard) .pharmacist-clinical-page,
+.doctor-flow-shell .pharmacist-clinical-page {
+  padding: 0;
+}
+
+.doctor-flow-shell:has(.pharmacist-clinical-dashboard) .pharmacist-case-table-panel {
+  padding: 0;
+  border: 0;
+}
+
+.doctor-flow-shell:has(.pharmacist-clinical-dashboard) .pharmacist-case-table-wrap {
+  border: 0;
+  border-radius: 0;
+}
+
+.pharmacist-page-header {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pharmacist-page-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pharmacist-page-title-row h1 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: #0a2a5e;
+  font-size: clamp(21px, 2.4vw, 32px);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.pharmacist-nav-toggle {
+  display: grid;
+  flex: 0 0 auto;
+  place-content: center;
+  gap: 4px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--flow-line, #d7dfef);
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.pharmacist-nav-toggle span {
+  width: 16px;
+  height: 2px;
+  border-radius: 999px;
+  background: #0a2a5e;
+}
+
+.pharmacist-page-description {
+  margin: 0;
+  color: var(--flow-text-secondary, #65748e);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+@media (min-width: 1101px) {
+  /* The sidebar is permanently visible, so the in-page toggle is redundant. */
+  .pharmacist-nav-toggle {
+    display: none;
+  }
+}
+
+/* Availability: unsaved changes surface on the changed day card (desktop)
+   or in a floating action bar (mobile). */
+.pharmacist-day-save {
+  min-height: 38px;
+  padding: 0 16px;
+  white-space: nowrap;
+}
+
+.doctor-flow-shell .day-card.has-unsaved-changes {
+  border-color: #0e2955;
+}
+
+.pharmacist-availability-savebar {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .pharmacist-day-save {
+    display: none;
+  }
+
+  .pharmacist-availability-savebar {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    z-index: 40;
+    display: block;
+  }
+
+  .pharmacist-availability-savebar .btn.primary {
+    width: 100%;
+    min-height: 52px;
+    border-radius: 999px;
+    box-shadow: 0 12px 28px rgb(10 42 94 / 28%);
+  }
+}
+
+/* MTM case detail: status-specific facts, attachment action and product tag field. */
+.pharmacist-detail-facts-wide {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pharmacist-attachment-row {
+  justify-content: flex-start;
+}
+
+.pharmacist-attachment-button {
+  width: auto;
+  min-width: 200px;
+}
+
+.pharmacist-join-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.pharmacist-join-link[aria-disabled="true"] {
+  opacity: .55;
+  pointer-events: none;
+}
+
+.pharmacist-action-hint {
+  margin: 0;
+  color: var(--flow-text-secondary, #65748e);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.pharmacist-product-field {
+  position: relative;
+  display: grid;
+  gap: 8px;
+}
+
+.pharmacist-product-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 7px 10px;
+  border: 1px solid #d7dfef;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.pharmacist-product-tags input {
+  flex: 1 1 160px;
+  min-width: 120px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #10233f;
+  outline: none;
+}
+
+.pharmacist-product-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 6px 5px 12px;
+  border-radius: 999px;
+  background: #edf3f9;
+  color: #0a2a5e;
+  font-size: 13px;
+}
+
+.pharmacist-product-tag button {
+  display: grid;
+  place-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #d7e2ee;
+  color: #0a2a5e;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pharmacist-product-suggestions {
+  display: grid;
+  gap: 4px;
+  max-height: 240px;
+  padding: 6px;
+  border: 1px solid #d7dfef;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow-y: auto;
+}
+
+.pharmacist-product-suggestions button {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #10233f;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pharmacist-product-suggestions button:hover,
+.pharmacist-product-suggestions button:focus-visible {
+  background: #f5f8fc;
+}
+
+.pharmacist-product-suggestions small {
+  color: #65748e;
+  font-size: 12px;
+}
+
+.pharmacist-product-empty {
+  margin: 0;
+  padding: 10px 12px;
+  color: #65748e;
+  font-size: 13px;
+}
+
+/* Patient MTM detail: read-only pharmacist action plan (only after the consultation is completed). */
+.customer-mtm-action-plan {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #e2e8f2;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
+.customer-mtm-action-plan h3 {
+  margin: 0;
+  color: #0b326d;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.customer-mtm-action-plan-note {
+  margin: 0;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.customer-mtm-action-plan-products {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.customer-mtm-action-plan-products li {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.customer-mtm-action-plan-products strong {
+  color: #0b326d;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.customer-mtm-action-plan-products span,
+.customer-mtm-action-plan-products small {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.pharmacist-page-header .pharmacist-workspace-search {
+  width: 100%;
+  max-width: none;
+  min-height: 50px;
+  margin: 0;
+}
+
+.pharmacist-availability-editor {
+  gap: 14px;
+}
+
+@media (max-width: 720px) {
+  /* Clearance for the floating save bar. */
+  .pharmacist-availability-editor {
+    padding-bottom: 76px;
   }
 }

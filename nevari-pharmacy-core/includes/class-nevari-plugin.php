@@ -681,26 +681,41 @@ final class Nevari_Plugin {
             [
                 'template_key' => 'mtm_request_approved_customer',
                 'name' => 'MTM Request Approved Customer',
-                'subject' => 'Your MTM request {{request_reference}} has been approved',
-                'body_html' => '<p>Hello {{patient_name}},</p><p>Your MTM request has been approved by {{pharmacist_name}}.</p><p>{{mtm_request_link_html}}</p>',
-                'body_text' => 'Hello {{patient_name}}, your MTM request {{request_reference}} has been approved by {{pharmacist_name}}. View request: {{mtm_request_link}}',
-                'variables' => ['patient_name', 'pharmacist_name', 'request_reference', 'mtm_request_link', 'mtm_request_link_html'],
+                'subject' => 'Your MTM request has been reviewed',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Hurry your MTM request has been reviewed and consultation has been Approved.</p><p>You would receive a follow up email shortly.</p>',
+                'body_text' => 'Hello {{patient_name}}, hurry your MTM request has been reviewed and consultation has been Approved. You would receive a follow up email shortly.',
+                'variables' => ['patient_name', 'pharmacist_name', 'request_reference'],
             ],
             [
                 'template_key' => 'mtm_request_scheduled_customer',
                 'name' => 'MTM Request Scheduled Customer',
-                'subject' => 'Your MTM consultation is scheduled for {{appointment_date}} at {{appointment_time}}',
-                'body_html' => '<p>Hello {{patient_name}},</p><p>Your MTM consultation has been scheduled for {{appointment_date}} at {{appointment_time}} ({{timezone}}).</p><p>{{google_meet_link_html}}</p><p>{{mtm_request_link_html}}</p>',
-                'body_text' => 'Hello {{patient_name}}, your MTM consultation is scheduled for {{appointment_date}} at {{appointment_time}} ({{timezone}}). Join: {{google_meet_link}}. View request: {{mtm_request_link}}',
-                'variables' => ['patient_name', 'appointment_date', 'appointment_time', 'timezone', 'google_meet_link', 'google_meet_link_html', 'mtm_request_link', 'mtm_request_link_html'],
+                'subject' => 'Your consultation date has been approved',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your MTM consultation has been approved.</p>'
+                    . '<table style="width:100%;margin:18px 0;border-collapse:collapse;">'
+                    . '<tr><td style="padding:10px 12px;border:1px solid #e6ded3;color:#6d7586;">Pharmacist</td><td style="padding:10px 12px;border:1px solid #e6ded3;font-weight:700;">{{pharmacist_name}}</td></tr>'
+                    . '<tr><td style="padding:10px 12px;border:1px solid #e6ded3;color:#6d7586;">Date</td><td style="padding:10px 12px;border:1px solid #e6ded3;font-weight:700;">{{appointment_date}}</td></tr>'
+                    . '<tr><td style="padding:10px 12px;border:1px solid #e6ded3;color:#6d7586;">Time</td><td style="padding:10px 12px;border:1px solid #e6ded3;font-weight:700;">{{appointment_time}} ({{timezone}})</td></tr>'
+                    . '<tr><td style="padding:10px 12px;border:1px solid #e6ded3;color:#6d7586;">Location</td><td style="padding:10px 12px;border:1px solid #e6ded3;font-weight:700;">Google Meet</td></tr>'
+                    . '</table>'
+                    . '<p>{{google_meet_link_html}}</p><p>{{mtm_request_link_html}}</p>',
+                'body_text' => 'Hello {{patient_name}}, your MTM consultation has been approved. Pharmacist: {{pharmacist_name}}. Date: {{appointment_date}}. Time: {{appointment_time}} ({{timezone}}). Location: Google Meet. Join: {{google_meet_link}}. View request: {{mtm_request_link}}',
+                'variables' => ['patient_name', 'pharmacist_name', 'appointment_date', 'appointment_time', 'timezone', 'google_meet_link', 'google_meet_link_html', 'mtm_request_link', 'mtm_request_link_html'],
+            ],
+            [
+                'template_key' => 'mtm_request_reschedule_customer',
+                'name' => 'MTM Reschedule Required Customer',
+                'subject' => 'Please pick a new date for your MTM consultation',
+                'body_html' => '<p>Hello {{patient_name}},</p><p>Your MTM consultation with {{pharmacist_name}} has been released and needs a new date.</p><p>Open your dashboard to pick a new consultation slot - you do not need to pay again.</p><p>{{mtm_request_link_html}}</p>',
+                'body_text' => 'Hello {{patient_name}}, your MTM consultation with {{pharmacist_name}} has been released and needs a new date. Pick a new slot (no new payment is required): {{mtm_request_link}}',
+                'variables' => ['patient_name', 'pharmacist_name', 'request_reference', 'mtm_request_link', 'mtm_request_link_html'],
             ],
             [
                 'template_key' => 'mtm_request_documentation_added_customer',
                 'name' => 'MTM Documentation Added Customer',
                 'subject' => '{{update_label}} for MTM request {{request_reference}}',
-                'body_html' => '<p>Hello {{patient_name}},</p><p>{{update_description}}</p><p>Current status: {{current_status}}</p><p>{{mtm_request_link_html}}</p>',
-                'body_text' => 'Hello {{patient_name}}, {{update_description}} Current status: {{current_status}}. View request: {{mtm_request_link}}',
-                'variables' => ['patient_name', 'request_reference', 'update_label', 'update_description', 'current_status', 'mtm_request_link', 'mtm_request_link_html'],
+                'body_html' => '<p>Hello {{patient_name}},</p><p>{{update_description}}</p><p>Current status: {{current_status}}</p><p>{{action_plan_link_html}}</p>',
+                'body_text' => 'Hello {{patient_name}}, {{update_description}} Current status: {{current_status}}. View your action plan: {{action_plan_link}}',
+                'variables' => ['patient_name', 'request_reference', 'update_label', 'update_description', 'current_status', 'action_plan_link', 'action_plan_link_html'],
             ],
             [
                 'template_key' => 'mtm_request_documentation_added_pharmacist',
@@ -842,6 +857,16 @@ final class Nevari_Plugin {
             'appointment_cancelled',
             'appointment_rescheduled',
         ];
+
+        // MTM lifecycle copy was rewritten; refresh seeded (never admin-edited) rows in place.
+        $stale_mtm_keys = [
+            'mtm_request_approved_customer' => 'has been reviewed',
+            'mtm_request_scheduled_customer' => 'Location',
+            'mtm_request_documentation_added_customer' => '{{action_plan_link_html}}',
+        ];
+        if (isset($stale_mtm_keys[$template_key])) {
+            return $version <= 1 && strpos($body_html, $stale_mtm_keys[$template_key]) === false;
+        }
 
         if (!in_array($template_key, $stale_booking_keys, true)) {
             return false;

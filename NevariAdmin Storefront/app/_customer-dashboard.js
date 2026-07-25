@@ -3721,6 +3721,14 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
     }
   }
 
+  // Only completed consultations are shown to the patient - a saved action plan is a pharmacist draft.
+  const consultationNotes = request?.consultation_notes && typeof request.consultation_notes === "object" && !Array.isArray(request.consultation_notes) ? request.consultation_notes : {};
+  const actionPlanNote = String(consultationNotes.note || "").trim();
+  const actionPlanProducts = Array.isArray(request?.attached_products) && request.attached_products.length
+    ? request.attached_products
+    : (Array.isArray(consultationNotes.products) ? consultationNotes.products : []);
+  const hasActionPlan = Boolean(actionPlanNote) || actionPlanProducts.length > 0;
+
   const slotState = String(booking?.slot_state || request?.slot_reservation?.state || "unreserved");
   const reservedStart = booking?.reserved_start_at || request?.slot_reservation?.start_at || "";
   const holdExpiresAt = booking?.slot_hold_expires_at || request?.slot_reservation?.hold_expires_at || "";
@@ -3774,6 +3782,17 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
           {reservedStart && slotState === "reserved_pending_payment" ? <p className="customer-flow-status-inline-message">Your availability is held pending payment{holdExpiresAt ? ` until ${formatAppointmentListDateTime(holdExpiresAt, storeTimeZone)}` : " until the end of today"}.</p> : null}
         </> : null}
       </section>
+      {hasActionPlan ? <section className="customer-mtm-action-plan" aria-label="Pharmacist action plan">
+        <h3>Your action plan</h3>
+        {actionPlanNote ? <p className="customer-mtm-action-plan-note">{actionPlanNote}</p> : null}
+        {actionPlanProducts.length ? <ul className="customer-mtm-action-plan-products">
+          {actionPlanProducts.map((product, index) => <li key={`${product?.product_id || "product"}-${index}`}>
+            <strong>{String(product?.name || "Medication")}</strong>
+            {product?.dosage_instruction ? <span>{String(product.dosage_instruction)}</span> : null}
+            {product?.usage_note ? <small>{String(product.usage_note)}</small> : null}
+          </li>)}
+        </ul> : null}
+      </section> : null}
       <div className="stacked-order-popup-actions">
         {request?.customer_join_url || request?.join_url ? <a className="button-primary" href={request.customer_join_url || request.join_url} target="_blank" rel="noreferrer">Join MTM Meeting</a> : null}
         {downloadHref ? <a className="pill-button" href={downloadHref} target="_blank" rel="noreferrer">Download Request PDF</a> : <span className="customer-mobile-field-hint" role="status">Submitted PDF unavailable</span>}
@@ -8941,7 +8960,7 @@ function CustomerMobileDashboard({
 
   function renderHeader(title, showBack = false, onBack = onResetJourney, headerAction = null) {
     const greetingName = customerDisplayName;
-    const isOverviewHeader = ["overview", "iv-therapy", "therapy"].includes(page);
+    const isOverviewHeader = page === "overview";
     const spacerClass = page === "appointment" ? "is-appointment" : isOverviewHeader ? "is-overview" : "is-compact";
     const searchbar = page === "search" ? <div className="customer-mobile-searchbar is-search-page">
       <MobileIcon name="search" />
@@ -8971,7 +8990,7 @@ function CustomerMobileDashboard({
           <button className="customer-mobile-icon-button" type="button" aria-label="Open menu" onClick={() => setDrawerOpen(true)}>
             <MobileIcon name="menu" />
           </button>
-          <h1>{title}</h1>
+          <AutoFitPageTitle title={title} />
           {headerAction}
         </div>}
         {isOverviewHeader ? <div className="customer-mobile-title-row">
@@ -10505,6 +10524,49 @@ function CustomerMobileDashboard({
       </section>
     </main>
   </div>;
+}
+
+function AutoFitPageTitle({ title }) {
+  const headingRef = useRef(null);
+
+  useEffect(() => {
+    const node = headingRef.current;
+    if (!node || typeof window === "undefined") {
+      return undefined;
+    }
+
+    let lastWidth = 0;
+    const fit = () => {
+      delete node.dataset.baseFontSize;
+      node.style.fontSize = "";
+      fitTextToContainer(node, { minFontSize: 15, step: 0.5 });
+    };
+    fit();
+    document.fonts?.ready?.then(fit).catch(() => {});
+
+    const parent = node.parentElement;
+    const observer = parent && typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver((entries) => {
+        const width = entries[0]?.contentRect?.width || 0;
+        if (Math.abs(width - lastWidth) < 1) {
+          return;
+        }
+        lastWidth = width;
+        fit();
+      })
+      : null;
+    if (observer && parent) {
+      lastWidth = parent.getBoundingClientRect().width;
+      observer.observe(parent);
+    }
+    window.addEventListener("resize", fit);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", fit);
+    };
+  }, [title]);
+
+  return <h1 ref={headingRef} className="customer-mobile-pagehead-title" title={title}>{title}</h1>;
 }
 
 function CustomerOverviewActions({ spentThisMonth, upcomingAppointments, orderTotal, availableDoctors }) {

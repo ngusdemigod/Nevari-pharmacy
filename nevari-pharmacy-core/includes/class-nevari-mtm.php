@@ -112,6 +112,15 @@ final class Nevari_Mtm {
             ],
         ]);
 
+        // Same canonical submission PDF as the customer route, scoped to the assigned pharmacist.
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/pharmacist/mtm-requests/(?P<id>\d+)/document', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'document_download'],
+                'permission_callback' => [__CLASS__, 'pharmacist_request_permission'],
+            ],
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/pharmacist/mtm-requests/(?P<id>\d+)/pharmacy-products', [
             [
                 'methods' => WP_REST_Server::READABLE,
@@ -154,6 +163,7 @@ final class Nevari_Mtm {
         $actions = [
             'approve' => 'approve_request',
             'decline' => 'decline_request',
+            'reschedule' => 'pharmacist_reschedule',
             'refund-complete' => 'refund_complete',
             'schedule' => 'schedule',
             'consultation-complete' => 'consultation_complete',
@@ -461,7 +471,9 @@ final class Nevari_Mtm {
         if ($stored_hash === '' || !hash_equals($stored_hash, hash('sha256', $token))) {
             return '';
         }
-        return self::frontend_origin('patient_dashboard', '/dashboard') . '/therapy/join/' . rawurlencode($token);
+        // The join screen is a standalone route on the dashboard origin (/therapy/join/...),
+        // not a page under /dashboard - prefixing it there returns a 404.
+        return self::frontend_origin('patient_dashboard') . '/therapy/join/' . rawurlencode($token);
     }
 
     private static function decode_join_token(string $token): array {
@@ -499,6 +511,25 @@ final class Nevari_Mtm {
     private static function get_request(int $id): ?object {
         global $wpdb;
         return $wpdb->get_row($wpdb->prepare("SELECT * FROM " . self::table() . " WHERE id = %d LIMIT 1", $id));
+    }
+
+    public static function invoice_summary(int $request_id, int $order_id): ?array {
+        $row = self::get_request($request_id);
+        if (!$row || (int) ($row->payment_order_id ?? 0) !== $order_id) {
+            return null;
+        }
+
+        $pharmacist_id = (int) ($row->assigned_pharmacist_user_id ?? 0);
+        return [
+            'id' => (int) $row->id,
+            'reference' => self::ensure_request_reference((int) $row->id),
+            'status' => self::normalize_status((string) ($row->status ?? '')),
+            'pharmacist_name' => $pharmacist_id > 0 ? self::user_name($pharmacist_id) : '',
+            'selected_availability' => !empty($row->reserved_start_at) ? (string) $row->reserved_start_at : null,
+            'duration_minutes' => self::MTM_DURATION_MINUTES,
+            'timezone' => sanitize_text_field((string) ($row->timezone ?? 'UTC')),
+            'consultation_method' => sanitize_text_field((string) ($row->consultation_method ?? 'Google Meet')),
+        ];
     }
 
     private static function decode_json($value): array {
@@ -1678,6 +1709,64 @@ final class Nevari_Mtm {
         return Nevari_Helpers::success(['request' => self::payload_from_request($updated), 'meet' => $meet]);
     }
 
+    /**
+     * Pharmacist-initiated reschedule: releases the meeting and the reserved slot and
+     * returns the request to "approved" so the patient can pick a new slot. Payment
+     * state is left untouched - the patient must not pay again.
+     */
+    public static function pharmacist_reschedule(WP_REST_Request $request): WP_REST_Response {
+        $row = self::guard_pharmacist_request((int) $request['id']);
+        if ($row instanceof WP_REST_Response) {
+            return $row;
+        }
+        $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];
+        if (array_diff(array_keys($body), ['reason'])) {
+            return Nevari_Helpers::error('unexpected_fields', 'Unexpected reschedule fields were supplied.', 422);
+        }
+        if (self::normalize_status((string) $row->status) !== self::STATUS_SCHEDULED) {
+            return Nevari_Helpers::error('invalid_status', 'Only scheduled MTM consultations can be rescheduled.', 409);
+        }
+        $reason = substr(sanitize_textarea_field((string) ($body['reason'] ?? '')), 0, 500);
+
+        self::end_meet_space_for_request((int) $row->id);
+        $row = self::get_request((int) $row->id) ?: $row;
+
+        $updated = self::update_request((int) $row->id, [
+            'status' => self::STATUS_APPROVED,
+            'scheduled_at' => null,
+            'slot_state' => 'released',
+            'reserved_start_at' => null,
+            'reserved_end_at' => null,
+            'slot_hold_expires_at' => null,
+            'google_calendar_event_id' => null,
+            'google_meet_space_name' => null,
+            'google_meet_code' => null,
+            'google_meet_link' => null,
+            'google_meet_error' => null,
+            'google_meet_created_at' => null,
+            'google_meet_ended_at' => null,
+            'customer_join_token_hash' => null,
+            'pharmacist_join_token_hash' => null,
+            'join_valid_from_at' => null,
+            'join_expires_at' => null,
+            'customer_checked_in_at' => null,
+            'pharmacist_checked_in_at' => null,
+            'missed_attendance_at' => null,
+            'missed_attendance_role' => null,
+            'updated_by' => Nevari_Auth::api_session_user_id(),
+        ]);
+
+        if ($updated) {
+            Nevari_Care_Journeys::event('mtm', (int) $row->id, 'reschedule_requested', $reason !== '' ? $reason : 'Pharmacist asked the patient to pick a new consultation slot.', Nevari_Auth::api_session_user_id());
+            self::dispatch_request_update_notifications($row, $updated);
+        }
+
+        return Nevari_Helpers::success([
+            'request' => self::payload_from_request($updated),
+            'message' => 'The patient has been asked to pick a new consultation slot.',
+        ]);
+    }
+
     private static function create_meet_space_for_request(object $row, string $start, string $end): array {
         $appointment = (object) [
             'id' => (int) $row->id,
@@ -2109,6 +2198,8 @@ final class Nevari_Mtm {
             ] : '',
             'mtm_request_link' => $request_link,
             'mtm_request_link_html' => self::safe_email_link($request_link, 'View MTM request'),
+            'action_plan_link' => $request_link,
+            'action_plan_link_html' => self::safe_email_link($request_link, 'View your action plan'),
             'dashboard_link' => $request_link,
             'pharmacist_dashboard_link' => $pharmacist_link,
             'pharmacist_dashboard_link_html' => self::safe_email_link($pharmacist_link, 'Open MTM queue'),
@@ -2217,16 +2308,42 @@ final class Nevari_Mtm {
             'current_status' => self::status_label($after_status),
         ]);
 
+        $consultation_documented = self::json_column_changed($before, $after, 'consultation_notes_json')
+            && self::json_column_has_content($after, 'consultation_notes_json');
+
         if ($before_status !== $after_status) {
-            $approvalTemplate = Nevari_Emails::get_active_template('mtm_request_approved_customer');
-            $approvalTemplateActive = is_object($approvalTemplate) && !empty($approvalTemplate->template_key);
-            if ($after_status === self::STATUS_APPROVED) {
-                if ($approvalTemplateActive) {
-                    self::queue_mtm_email('mtm_request_approved_customer', $patient instanceof WP_User ? $patient : null, $after, $base_variables, 'customer', $approvedCustomerAttachments);
-                } else {
-                    self::queue_mtm_email('mtm_request_status_changed_customer', $patient instanceof WP_User ? $patient : null, $after, $base_variables, 'customer', $approvedCustomerAttachments);
-                }
-            } else {
+            // A pharmacist approval lands on approved or (when a slot is already held) scheduled.
+            // Both mean "your request has been reviewed" to the patient.
+            $review_transition = in_array($after_status, [self::STATUS_APPROVED, self::STATUS_SCHEDULED], true)
+                && in_array($before_status, [self::STATUS_SUBMITTED, self::STATUS_UNDER_REVIEW], true);
+            // approved -> scheduled is already covered by the consultation-scheduled email below.
+            $covered_by_schedule_email = ($after_status === self::STATUS_SCHEDULED && $before_status === self::STATUS_APPROVED)
+                // A completed consultation is announced by the documentation email, which carries the action plan link.
+                || ($after_status === self::STATUS_TREATMENT_COMPLETED && $consultation_documented);
+            // scheduled -> approved means the consultation was released and needs a new slot.
+            $reschedule_transition = $after_status === self::STATUS_APPROVED && $before_status === self::STATUS_SCHEDULED;
+
+            if ($reschedule_transition) {
+                $rescheduleTemplate = Nevari_Emails::get_active_template('mtm_request_reschedule_customer');
+                self::queue_mtm_email(
+                    is_object($rescheduleTemplate) && !empty($rescheduleTemplate->template_key) ? 'mtm_request_reschedule_customer' : 'mtm_request_status_changed_customer',
+                    $patient instanceof WP_User ? $patient : null,
+                    $after,
+                    $base_variables,
+                    'customer'
+                );
+            } elseif ($review_transition) {
+                $approvalTemplate = Nevari_Emails::get_active_template('mtm_request_approved_customer');
+                $approvalTemplateActive = is_object($approvalTemplate) && !empty($approvalTemplate->template_key);
+                self::queue_mtm_email(
+                    $approvalTemplateActive ? 'mtm_request_approved_customer' : 'mtm_request_status_changed_customer',
+                    $patient instanceof WP_User ? $patient : null,
+                    $after,
+                    $base_variables,
+                    'customer',
+                    $approvedCustomerAttachments
+                );
+            } elseif (!$covered_by_schedule_email) {
                 self::queue_mtm_email('mtm_request_status_changed_customer', $patient instanceof WP_User ? $patient : null, $after, $base_variables, 'customer');
             }
             self::queue_mtm_email('mtm_request_status_changed_pharmacist', $pharmacist instanceof WP_User ? $pharmacist : null, $after, $base_variables, 'pharmacist');
@@ -2240,16 +2357,18 @@ final class Nevari_Mtm {
             self::queue_mtm_email('mtm_request_scheduled_customer', $patient instanceof WP_User ? $patient : null, $after, $base_variables, 'customer');
         }
 
+        // Action plans and attached products are pharmacist drafts until the consultation is
+        // completed, so only the pharmacist is notified about them.
         if (self::json_column_changed($before, $after, 'action_plan_json') && self::json_column_has_content($after, 'action_plan_json')) {
-            self::dispatch_documentation_notifications($after, $patient, $pharmacist, $base_variables, 'Action Plan Saved', 'A medication action plan was added to this MTM request.');
+            self::dispatch_documentation_notifications($after, $patient, $pharmacist, $base_variables, 'Action Plan Saved', 'A medication action plan was added to this MTM request.', false);
         }
 
         if (self::json_column_changed($before, $after, 'attached_products_json') && self::json_column_has_content($after, 'attached_products_json')) {
-            self::dispatch_documentation_notifications($after, $patient, $pharmacist, $base_variables, 'Products Attached', 'Pharmacy products were attached to this MTM request.');
+            self::dispatch_documentation_notifications($after, $patient, $pharmacist, $base_variables, 'Products Attached', 'Pharmacy products were attached to this MTM request.', false);
         }
 
-        if (self::json_column_changed($before, $after, 'consultation_notes_json') && self::json_column_has_content($after, 'consultation_notes_json')) {
-            self::dispatch_documentation_notifications($after, $patient, $pharmacist, $base_variables, 'Consultation Completed', 'Consultation documentation was added to this MTM request.');
+        if ($consultation_documented) {
+            self::dispatch_documentation_notifications($after, $patient, $pharmacist, $base_variables, 'Consultation Completed', 'Your consultation is complete and your pharmacist action plan is ready to view.');
         }
 
         if (self::json_column_changed($before, $after, 'follow_up_json') && self::json_column_has_content($after, 'follow_up_json')) {
@@ -2269,13 +2388,15 @@ final class Nevari_Mtm {
         }
     }
 
-    private static function dispatch_documentation_notifications(object $row, ?WP_User $patient, ?WP_User $pharmacist, array $base_variables, string $label, string $description): void {
+    private static function dispatch_documentation_notifications(object $row, ?WP_User $patient, ?WP_User $pharmacist, array $base_variables, string $label, string $description, bool $notify_customer = true): void {
         $variables = array_merge($base_variables, [
             'update_label' => $label,
             'update_description' => $description,
         ]);
 
-        self::queue_mtm_email('mtm_request_documentation_added_customer', $patient instanceof WP_User ? $patient : null, $row, $variables, 'customer');
+        if ($notify_customer) {
+            self::queue_mtm_email('mtm_request_documentation_added_customer', $patient instanceof WP_User ? $patient : null, $row, $variables, 'customer');
+        }
         self::queue_mtm_email('mtm_request_documentation_added_pharmacist', $pharmacist instanceof WP_User ? $pharmacist : null, $row, $variables, 'pharmacist');
     }
 }

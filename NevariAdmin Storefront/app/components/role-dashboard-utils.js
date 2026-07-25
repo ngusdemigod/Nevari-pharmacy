@@ -183,6 +183,23 @@ export async function apiRequest(session, path, { method = "GET", params = {}, b
   return payload.data;
 }
 
+/** Downloads a binary endpoint (PDF/ICS) through the signed proxy and returns it as a Blob. */
+export async function apiFileRequest(session, path, params = {}) {
+  const response = await fetch(buildUrl(session, path, params), {
+    headers: {
+      Accept: "application/pdf",
+      Authorization: session.accessToken ? `Bearer ${session.accessToken}` : "",
+      "X-Nevari-Frontend-Type": session.frontendType,
+      "X-Nevari-Frontend-Origin": currentOriginValue()
+    }
+  });
+  if (!response.ok || !String(response.headers.get("content-type") || "").includes("application/pdf")) {
+    const payload = await response.json().catch(() => null);
+    throw createApiError(payload, response);
+  }
+  return response.blob();
+}
+
 export function describeDashboardFetchError(error) {
   const code = String(error?.code || "");
   const status = Number(error?.status || error?.details?.status || 0);

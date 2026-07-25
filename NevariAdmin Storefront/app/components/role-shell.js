@@ -24,7 +24,8 @@ export function RoleShell({
   onLogout = null,
   logoutBusy = false,
   sidebarFooter = null,
-  hideMobileBottomNav = false
+  hideMobileBottomNav = false,
+  hideTabletToolbar = false
 }) {
   const roleLabel = title.replace(/^Nevari\s+/i, "");
   const labelFor = (page) => pageLabels[page] || titleCase(page);
@@ -65,17 +66,17 @@ export function RoleShell({
         {sidebarFooter}
       </aside>
       <main className="main">
-        <div className="dashboard-tablet-toolbar">
+        {hideTabletToolbar ? null : <div className="dashboard-tablet-toolbar">
           <button className="dashboard-menu-button" type="button" aria-label="Open navigation" onClick={() => setSideNavOpen(true)}>
             <span />
             <span />
             <span />
           </button>
-        </div>
+        </div>}
         {topContent}
 
         <div className={`page-body ${pageBodyClassName}`.trim()}>
-          {children}
+          {typeof children === "function" ? children({ openNav: () => setSideNavOpen(true) }) : children}
         </div>
       </main>
     </section>

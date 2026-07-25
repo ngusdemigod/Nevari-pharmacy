@@ -420,3 +420,10 @@ Stale display data can appear after account switching if cache keys or cleanup a
 
 - **Decision:** Appointment and order payment emails may expose only the signed dashboard `/pay/{invoice}` capability URL. WordPress no longer falls back to its own origin when the dashboard payment origin is unconfigured, and the dashboard booking mailer no longer falls back to WooCommerce or gateway checkout URLs. Missing dashboard configuration fails closed by omitting the payment link.
 - **Status:** Implemented locally; invoice-page and payment-initialization regression coverage required.
+
+## Pharmacist MTM case actions stay inside the assigned-case boundary
+
+- **Decision:** every new pharmacist MTM route (submission-document read, reschedule) is registered under `/pharmacist/mtm-requests/{id}/...` with the assignment-checking `pharmacist_request_permission` callback, never by widening the customer-facing `/mtm-requests` surface or the Next.js proxy allowlist.
+- **Decision:** a pharmacist-initiated reschedule may release scheduling state (slot, Meet space, join tokens, attendance) but must never modify payment or consultation-credit state; the patient re-picks a slot without paying again.
+- **Decision:** action plans and attached products are pharmacist drafts and are not emailed or shown to the patient until the consultation is completed; only completed consultation documentation reaches the patient.
+- **Status:** Implemented locally; pharmacist-role and wrong-pharmacist regression coverage required for both new routes.
