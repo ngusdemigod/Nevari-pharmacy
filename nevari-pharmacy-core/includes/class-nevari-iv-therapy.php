@@ -169,14 +169,28 @@ final class Nevari_Iv_Therapy {
     }
 
     public static function staff_index(WP_REST_Request $request): WP_REST_Response {
+        $user_id = Nevari_Auth::api_session_user_id();
+        $is_admin = Nevari_Helpers::is_store_admin($user_id);
+        $page = max(1, absint($request->get_param('page')) ?: 1);
+        $per_page = min(100, max(1, absint($request->get_param('per_page')) ?: 20));
+        $total = 0;
+        $items = self::staff_requests($user_id, $is_admin, $page, $per_page, $total);
         return Nevari_Helpers::success([
-            'items' => self::all_requests(),
+            'items' => $items,
+            'pagination' => [
+                'page' => $page,
+                'per_page' => $per_page,
+                'total' => $total,
+                'pages' => max(1, (int) ceil($total / $per_page)),
+            ],
         ]);
     }
 
     public static function staff_show(WP_REST_Request $request): WP_REST_Response {
         $request_id = sanitize_text_field((string) $request['id']);
-        $item = self::find_request_across_users($request_id);
+        $user_id = Nevari_Auth::api_session_user_id();
+        $is_admin = Nevari_Helpers::is_store_admin($user_id);
+        $item = self::find_request_for_staff($request_id, $user_id, $is_admin);
         if (!$item) {
             return Nevari_Helpers::error('iv_therapy_not_found', 'IV therapy request not found.', 404);
         }
@@ -273,9 +287,20 @@ final class Nevari_Iv_Therapy {
         }
         return $items;
     }
-    private static function all_requests(): array {
+    private static function staff_requests(int $viewer_id, bool $is_admin, int $page, int $per_page, ?int &$total = null): array {
         global $wpdb;
-        $rows = $wpdb->get_results('SELECT * FROM ' . Nevari_Care_Journeys::table('iv_therapy_requests') . ' ORDER BY created_at DESC LIMIT 200', ARRAY_A);
+        $table = Nevari_Care_Journeys::table('iv_therapy_requests');
+        $where = '1=1';
+        $params = [];
+        if (!$is_admin) {
+            $where .= ' AND assigned_clinician_user_id = %d';
+            $params[] = $viewer_id;
+        }
+        $count_sql = "SELECT COUNT(*) FROM {$table} WHERE {$where}";
+        $total = (int) ($params ? $wpdb->get_var($wpdb->prepare($count_sql, $params)) : $wpdb->get_var($count_sql));
+        $offset = max(0, ($page - 1) * $per_page);
+        $list_sql = "SELECT * FROM {$table} WHERE {$where} ORDER BY created_at DESC LIMIT %d OFFSET %d";
+        $rows = $wpdb->get_results($wpdb->prepare($list_sql, array_merge($params, [$per_page, $offset])), ARRAY_A);
         return array_values(array_filter(array_map([__CLASS__, 'normalize_row'], $rows ?: [])));
     }
     private static function find_request(int $user_id, string $request_id): ?array {
@@ -287,13 +312,19 @@ final class Nevari_Iv_Therapy {
         return null;
     }
 
-    private static function find_request_across_users(string $request_id): ?array {
-        foreach (self::all_requests() as $item) {
-            if ((string) ($item['id'] ?? '') === $request_id) {
-                return $item;
-            }
+    private static function find_request_for_staff(string $request_id, int $viewer_id, bool $is_admin): ?array {
+        global $wpdb;
+        $table = Nevari_Care_Journeys::table('iv_therapy_requests');
+        $row = ctype_digit($request_id)
+            ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", (int) $request_id), ARRAY_A)
+            : $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE legacy_key = %s", $request_id), ARRAY_A);
+        if (!$row) {
+            return null;
         }
-        return null;
+        if (!$is_admin && (int) ($row['assigned_clinician_user_id'] ?? 0) !== $viewer_id) {
+            return null;
+        }
+        return self::normalize_row($row);
     }
 
     private static function mark_notifications_dispatched(int $user_id, string $request_id): void {

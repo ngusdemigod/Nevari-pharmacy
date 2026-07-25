@@ -7673,18 +7673,6 @@ export function AdminStorefrontDashboard({
   const previewIvTherapyRequest = filteredIvTherapyRequests.find((request) => String(request.id) === String(ivTherapyPreviewRequestId || "")) || null;
 
   useEffect(() => {
-    if (!filteredMtmRequests.length) {
-      setMtmPreviewRequestId(null);
-    }
-  }, [filteredMtmRequests]);
-
-  useEffect(() => {
-    if (!filteredIvTherapyRequests.length) {
-      setIvTherapyPreviewRequestId(null);
-    }
-  }, [filteredIvTherapyRequests]);
-
-  useEffect(() => {
     if (!mtmPreviewRequestId) return;
     if (!filteredMtmRequests.some((request) => String(request.id) === String(mtmPreviewRequestId))) {
       setMtmPreviewRequestId(null);
@@ -11665,7 +11653,7 @@ export function AdminStorefrontDashboard({
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <ModalScrim className="app-modal-backdrop" label="Close MTM preview" onDismiss={() => setMtmPreviewRequestId(null)} />
-            <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`MTM preview for ${previewMtmRequest.request_reference || `MTM-${String(previewMtmRequest.id || "").padStart(6, "0")}`}`}>
+            <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame detail-flat-modal mtm-detail-modal" role="dialog" aria-modal="true" aria-label={`MTM preview for ${previewMtmRequest.request_reference || `MTM-${String(previewMtmRequest.id || "").padStart(6, "0")}`}`}>
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
                   <p className="section-kicker">MTM preview</p>
@@ -11797,7 +11785,7 @@ export function AdminStorefrontDashboard({
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <ModalScrim className="app-modal-backdrop" label="Close payment receipt" onDismiss={closePaymentReceiptModal} />
-            <section className="detail-section stacked-order-popup receipt-popup receipt-popup-redesign admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`Receipt for order #${selectedPaymentReceipt.number}`}>
+            <section className="detail-section stacked-order-popup receipt-popup receipt-popup-redesign admin-surface-modal modal-frame detail-frame detail-flat-modal payment-receipt-detail-modal" role="dialog" aria-modal="true" aria-label={`Receipt for order #${selectedPaymentReceipt.number}`}>
             <div className="receipt-hero modal-head">
               <div>
                 <p className="section-kicker">Payment receipt</p>
@@ -13164,7 +13152,7 @@ export function AdminStorefrontDashboard({
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <ModalScrim className="app-modal-backdrop" label="Close staff details" onDismiss={() => setSelectedDoctorId(null)} />
-            <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label="Staff details">
+            <section className="detail-section stacked-order-popup receipt-popup admin-surface-modal modal-frame detail-frame detail-flat-modal staff-detail-modal" role="dialog" aria-modal="true" aria-label="Staff details">
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div><p className="section-kicker">Staff details</p><h3>{selectedDoctorProfile.display_name}</h3></div>
                 <button className="icon-button" type="button" onClick={() => setSelectedDoctorId(null)}><InlineIcon id="i-x" /></button>
@@ -13271,7 +13259,7 @@ export function AdminStorefrontDashboard({
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <ModalScrim className="app-modal-backdrop" label="Close patient details" onDismiss={closeCustomerDetails} />
-            <section className="detail-section stacked-order-popup receipt-popup customer-detail-popup admin-surface-modal modal-frame detail-frame" role="dialog" aria-modal="true" aria-label={`Patient details for ${selectedCustomerProfile.name}`}>
+            <section className="detail-section stacked-order-popup receipt-popup customer-detail-popup admin-surface-modal modal-frame detail-frame detail-flat-modal patient-detail-modal" role="dialog" aria-modal="true" aria-label={`Patient details for ${selectedCustomerProfile.name}`}>
               <div className="panel-header stacked-order-popup-header modal-head patient-profile-header">
                 <div className="patient-profile-identity">
                   <span className="patient-profile-avatar">

@@ -39,7 +39,10 @@ export default function StaffDirectory({ session }) {
   const isAdministrator = (session.user?.roles || []).includes("administrator");
   const key = session.baseUrl ? swrKeys.admin.users(withBaseUrl(session, { scope: "staff", page, per_page: 10 })) : null;
   const { data, error, isLoading, mutate } = useSWR(key, async (url) => {
-    const response = await fetch(url, { headers: { "x-nevari-frontend-origin": window.location.origin, "x-nevari-frontend-type": session.frontendType } });
+    const response = await fetch(url, {
+      cache: "no-store",
+      headers: { "x-nevari-frontend-origin": window.location.origin, "x-nevari-frontend-type": session.frontendType }
+    });
     const payload = await response.json();
     if (!response.ok || !payload?.success) throw new Error(payload?.error?.message || "Unable to load staff.");
     return payload.data;
@@ -104,7 +107,7 @@ export default function StaffDirectory({ session }) {
 
   const modal = selected && typeof document !== "undefined" ? createPortal(
     <div className="staff-modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
-      <section className="staff-fullscreen-modal" role="dialog" aria-modal="true" aria-labelledby="staff-modal-title">
+      <section className="staff-fullscreen-modal detail-flat-modal staff-directory-detail-modal" role="dialog" aria-modal="true" aria-labelledby="staff-modal-title">
         <header className="staff-modal-header">
           <div className="staff-modal-identity">{avatar(selected, true)}<div><p className="section-kicker">Staff details</p><h2 id="staff-modal-title">{selected.display_name}</h2><p>{selected.user_email}</p></div></div>
           <button ref={closeRef} className="icon-button" type="button" aria-label="Close staff details" onClick={() => setSelected(null)}>×</button>

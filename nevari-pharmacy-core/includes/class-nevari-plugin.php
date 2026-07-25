@@ -25,6 +25,8 @@ final class Nevari_Plugin {
         add_action('init', [$this, 'register_product_meta']);
         add_action('init', [$this, 'register_subscription_plan_meta']);
         add_action('init', [$this, 'register_order_statuses']);
+        add_action('admin_init', [$this, 'block_pharmacist_wordpress_admin']);
+        add_filter('show_admin_bar', [$this, 'hide_pharmacist_admin_bar']);
         add_action('woocommerce_product_options_general_product_data', [$this, 'render_product_prescription_field']);
         add_action('woocommerce_admin_process_product_object', [$this, 'save_product_prescription_field']);
         add_filter('rest_post_dispatch', [$this, 'append_rest_cors_headers'], 10, 3);
@@ -50,6 +52,9 @@ final class Nevari_Plugin {
         add_action('nevari_expire_appointment_reservation', [$this, 'expire_appointment_reservation'], 10, 1);
         add_action('nevari_process_appointment_meet_creation', [$this, 'process_appointment_meet_creation'], 10, 1);
         add_action('nevari_end_appointment_meet_conference', [$this, 'end_appointment_meet_conference'], 10, 1);
+        add_action('wp_login', [$this, 'reconcile_guest_orders_after_login'], 20, 2);
+        add_action('nevari_customer_authenticated', [$this, 'reconcile_guest_orders_for_user'], 10, 1);
+        add_action('nevari_continue_guest_order_reconciliation', [$this, 'reconcile_guest_orders_for_user'], 10, 1);
 
         Nevari_Audit::init();
         Nevari_User_Governance::init();
@@ -67,6 +72,64 @@ final class Nevari_Plugin {
 
         $this->maybe_run_schema_migrations();
         $this->register_woocommerce_hooks();
+    }
+
+    public function reconcile_guest_orders_after_login(string $user_login, WP_User $user): void {
+        $this->reconcile_guest_orders_for_user((int) $user->ID);
+    }
+
+    public function reconcile_guest_orders_for_user(int $user_id): void {
+        if (!function_exists('wc_get_orders') || $user_id < 1) {
+            return;
+        }
+
+        $user = get_user_by('id', $user_id);
+        $email = $user ? sanitize_email((string) $user->user_email) : '';
+        if (!$user || !is_email($email)) {
+            return;
+        }
+
+        $lock_key = 'nevari_guest_order_reconcile_' . $user_id;
+        if (get_transient($lock_key)) {
+            return;
+        }
+        set_transient($lock_key, 1, 2 * MINUTE_IN_SECONDS);
+
+        try {
+            $orders = wc_get_orders([
+                'limit' => 50,
+                'status' => array_keys(wc_get_order_statuses()),
+                'customer_id' => 0,
+                'billing_email' => $email,
+                'orderby' => 'date',
+                'order' => 'DESC',
+            ]);
+
+            foreach ($orders as $order) {
+                if (!$order || (int) $order->get_customer_id() !== 0) {
+                    continue;
+                }
+                if (strtolower(trim((string) $order->get_billing_email())) !== strtolower($email)) {
+                    continue;
+                }
+
+                $order->set_customer_id($user_id);
+                $order->save();
+                Nevari_Audit::log('order', 'woocommerce', 'order.guest_attached', 'success', [
+                    'actor_user_id' => $user_id,
+                    'related_user_id' => $user_id,
+                    'order_id' => (int) $order->get_id(),
+                    'message' => 'Guest order attached after verified account authentication.',
+                    'metadata' => ['reason' => 'exact_billing_email_match'],
+                ]);
+            }
+
+            if (count($orders) === 50 && !wp_next_scheduled('nevari_continue_guest_order_reconciliation', [$user_id])) {
+                wp_schedule_single_event(time() + MINUTE_IN_SECONDS, 'nevari_continue_guest_order_reconciliation', [$user_id]);
+            }
+        } finally {
+            delete_transient($lock_key);
+        }
     }
 
     /**
@@ -155,7 +218,6 @@ final class Nevari_Plugin {
     private function ensure_pharmacist_role(): void {
         $caps = [
             'read',
-            'upload_files',
             'nevari_view_mtm_requests',
             'nevari_review_mtm_requests',
             'nevari_schedule_mtm_appointments',
@@ -171,8 +233,26 @@ final class Nevari_Plugin {
         }
         $role = get_role('pharmacist');
         if ($role) {
+            foreach (array_keys((array) $role->capabilities) as $existing_cap) {
+                if (!in_array($existing_cap, $caps, true)) {
+                    $role->remove_cap($existing_cap);
+                }
+            }
             foreach ($caps as $cap) {
                 $role->add_cap($cap);
+            }
+        }
+        $pharmacists = get_users([
+            'role' => 'pharmacist',
+            'fields' => 'ids',
+            'number' => 500,
+        ]);
+        foreach ($pharmacists as $pharmacist_id) {
+            $pharmacist = new WP_User((int) $pharmacist_id);
+            foreach (array_keys((array) $pharmacist->caps) as $direct_cap) {
+                if ($direct_cap !== 'pharmacist') {
+                    $pharmacist->remove_cap($direct_cap);
+                }
             }
         }
         foreach (['administrator', 'shop_manager', 'store_admin'] as $role_name) {
@@ -184,6 +264,24 @@ final class Nevari_Plugin {
                 $admin_role->add_cap($cap);
             }
         }
+    }
+
+    public function block_pharmacist_wordpress_admin(): void {
+        $user_id = get_current_user_id();
+        if ($user_id <= 0 || !Nevari_Helpers::is_pharmacist($user_id)) {
+            return;
+        }
+        if (wp_doing_ajax()) {
+            wp_die(esc_html__('Pharmacist accounts cannot access WordPress administration.', 'nevari-pharmacy-core'), '', ['response' => 403]);
+        }
+        $dashboard_url = Nevari_Helpers::frontend_dashboard_url('/admin/pharmacist');
+        wp_safe_redirect($dashboard_url ?: home_url('/'));
+        exit;
+    }
+
+    public function hide_pharmacist_admin_bar(bool $show): bool {
+        $user_id = get_current_user_id();
+        return $user_id > 0 && Nevari_Helpers::is_pharmacist($user_id) ? false : $show;
     }
 
     private function ensure_mtm_workflow_columns(): void {
@@ -660,8 +758,8 @@ final class Nevari_Plugin {
             'mtm_slot_reserved' => 'MTM slot reserved pending approval',
             'mtm_slot_reserved_customer' => 'MTM availability reserved',
             'mtm_slot_reserved_pharmacist' => 'New MTM availability reserved',
-            'mtm_slot_held_customer' => 'MTM availability held pending payment',
-            'mtm_slot_held_pharmacist' => 'MTM availability held pending payment',
+            'mtm_slot_held_customer' => 'MTM Procees to payment',
+            'mtm_slot_held_pharmacist' => 'MTM Procees to payment',
             'mtm_declined' => 'MTM request declined',
             'mtm_refund_required' => 'MTM refund requires action',
             'mtm_refund_completed' => 'MTM refund recorded',
@@ -1474,6 +1572,12 @@ final class Nevari_Plugin {
         }
         $currency = $order->get_currency() ?: (function_exists('get_woocommerce_currency') ? get_woocommerce_currency() : 'USD');
         $total = function_exists('wc_price') ? wp_strip_all_tags(wc_price((float) $order->get_total(), ['currency' => $currency])) : (string) $order->get_total();
+        $payment_link = '';
+        $payment_link_html = '';
+        if ($order->needs_payment() && !in_array($order->get_status(), ['cancelled', 'refunded'], true)) {
+            $payment_link = Nevari_Helpers::order_invoice_payment_url($order);
+            $payment_link_html = '<a href=' . esc_url($payment_link) . ' class=nevari-email-button>' . esc_html__('Pay now', 'nevari-pharmacy-core') . '</a>';
+        }
         return [
             'customer_name' => $customer_name,
             'customer_firstname' => $parts[0] ?? $customer_name,
@@ -1487,6 +1591,8 @@ final class Nevari_Plugin {
             'order_number' => (string) $order->get_order_number(),
             'order_total' => $total,
             'invoice_total' => $total,
+            'payment_link' => $payment_link,
+            'payment_link_html' => ['html' => $payment_link_html, 'text' => $payment_link],
             'items_purchased' => implode(', ', $items),
             'primary_product_name' => $primary['name'] ?? '',
             'product_service_assigned' => $primary['name'] ?? '',

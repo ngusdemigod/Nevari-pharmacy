@@ -101,6 +101,10 @@ export async function GET(request, context) {
     }
 
     const requestUrl = new URL(request.url);
+    const frontendType = String(request.headers.get("x-nevari-frontend-type") || "").trim();
+    if (frontendType.toLowerCase().includes("pharmacist")) {
+      return Response.json({ success: false, error: { message: "Pharmacist sessions cannot access admin resources." } }, { status: 403 });
+    }
     const baseUrl = normalizeBaseUrl(requestUrl.searchParams.get("baseUrl"));
     if (!baseUrl || !isAllowedUrl(baseUrl, allowedOrigins())) {
       return Response.json({ success: false, error: { message: "Missing baseUrl." } }, { status: 400 });
@@ -124,7 +128,6 @@ export async function GET(request, context) {
         headers.set(name, value);
       }
     });
-    const frontendType = String(request.headers.get("x-nevari-frontend-type") || "").trim();
     const accessToken = requestCookie(request, cookieName(frontendType));
     const requestedAuthorization = String(request.headers.get("authorization") || "");
     if (accessToken) {
@@ -136,6 +139,7 @@ export async function GET(request, context) {
 
     const response = await fetch(target, {
       headers,
+      cache: resource === "users" || resource === "patients" || resource === "nurses" ? "no-store" : "default",
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
     });
 
@@ -143,7 +147,12 @@ export async function GET(request, context) {
     responseHeaders.delete("content-encoding");
     responseHeaders.delete("content-length");
     responseHeaders.delete("transfer-encoding");
-    responseHeaders.set("Cache-Control", "private, max-age=30, stale-while-revalidate=120");
+    responseHeaders.set(
+      "Cache-Control",
+      resource === "users" || resource === "patients" || resource === "nurses"
+        ? "private, no-store, max-age=0"
+        : "private, max-age=30, stale-while-revalidate=120"
+    );
 
     return new Response(response.body, {
       status: response.status,

@@ -200,6 +200,25 @@ function softFailStatus(status) {
   return Number(status) >= 500;
 }
 
+function assertFrontendPathAccess(frontendType, targetUrl) {
+  if (!String(frontendType || "").toLowerCase().includes("pharmacist")) {
+    return;
+  }
+  const marker = `/${API_NAMESPACE}`;
+  const path = targetUrl.pathname.includes(marker)
+    ? targetUrl.pathname.slice(targetUrl.pathname.indexOf(marker) + marker.length)
+    : "";
+  const allowed = path.startsWith("/auth/")
+    || path.startsWith("/pharmacist/mtm-requests")
+    || path === "/pharmacist/availability"
+    || path.startsWith("/staff/care-requests/iv-therapy");
+  if (!allowed) {
+    const error = new Error("Pharmacist sessions can only access assigned clinical resources.");
+    error.status = 403;
+    throw error;
+  }
+}
+
 function withSoftFailStatus(status, softFail) {
   return softFail && softFailStatus(status) ? 200 : status;
 }
@@ -217,6 +236,7 @@ async function proxyRequest(request, { params } = {}) {
   const softFail = shouldSoftFail(request.url);
   const headers = new Headers();
   const frontendType = String(request.headers.get("x-nevari-frontend-type") || "").trim();
+  assertFrontendPathAccess(frontendType, targetUrl);
   assertCsrf(request, frontendType);
   const accessToken = requestCookie(request, cookieName("access", frontendType));
 
@@ -394,7 +414,7 @@ export async function GET(request) {
   } catch (error) {
     return Response.json(
       { success: false, error: { message: error?.message || "Proxy request failed." } },
-      { status: 400 }
+      { status: Number(error?.status || 400) }
     );
   }
 }
@@ -405,7 +425,7 @@ export async function POST(request) {
   } catch (error) {
     return Response.json(
       { success: false, error: { message: error?.message || "Proxy request failed." } },
-      { status: 400 }
+      { status: Number(error?.status || 400) }
     );
   }
 }
@@ -416,7 +436,7 @@ export async function PUT(request) {
   } catch (error) {
     return Response.json(
       { success: false, error: { message: error?.message || "Proxy request failed." } },
-      { status: 400 }
+      { status: Number(error?.status || 400) }
     );
   }
 }
@@ -427,7 +447,18 @@ export async function DELETE(request) {
   } catch (error) {
     return Response.json(
       { success: false, error: { message: error?.message || "Proxy request failed." } },
-      { status: 400 }
+      { status: Number(error?.status || 400) }
+    );
+  }
+}
+
+export async function PATCH(request) {
+  try {
+    return await proxyRequest(request);
+  } catch (error) {
+    return Response.json(
+      { success: false, error: { message: error?.message || "Proxy request failed." } },
+      { status: Number(error?.status || 400) }
     );
   }
 }

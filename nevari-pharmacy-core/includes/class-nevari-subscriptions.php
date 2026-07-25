@@ -94,7 +94,11 @@ final class Nevari_Subscriptions {
     }
 
     public static function auth_required(): bool {
-        return Nevari_Auth::api_session_required();
+        if (!Nevari_Auth::api_session_required()) {
+            return false;
+        }
+        $user_id = Nevari_Auth::api_session_user_id();
+        return $user_id > 0 && !Nevari_Helpers::is_pharmacist($user_id);
     }
 
     public static function patient_required(): bool {
@@ -3936,4 +3940,3 @@ final class Nevari_Subscriptions {
         Nevari_Audit::log('dashboard', 'customer', $event, in_array($status, ['success', 'error'], true) ? $status : 'success', $payload);
     }
 }
-

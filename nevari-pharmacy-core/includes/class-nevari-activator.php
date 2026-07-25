@@ -732,7 +732,6 @@ final class Nevari_Activator {
 
         $pharmacist_caps = [
             'read' => true,
-            'upload_files' => true,
             'nevari_view_mtm_requests' => true,
             'nevari_review_mtm_requests' => true,
             'nevari_schedule_mtm_appointments' => true,
@@ -823,7 +822,7 @@ final class Nevari_Activator {
             'administrator' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv_therapy', 'nurse_requests', 'logs', 'staff', 'subscriptions'],
             'store_admin' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv_therapy', 'nurse_requests', 'logs', 'subscriptions'],
             'shop_manager' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv_therapy', 'nurse_requests', 'logs', 'subscriptions'],
-            'pharmacist' => ['products', 'orders', 'payments', 'patients', 'mtm'],
+            'pharmacist' => [],
             'doctor' => ['patients', 'consultations'],
             'nurse' => ['nurse_requests'],
         ];

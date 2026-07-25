@@ -27,7 +27,11 @@ final class Nevari_Rest {
     }
 
     public static function auth_required(): bool {
-        return Nevari_Auth::api_session_required();
+        if (!Nevari_Auth::api_session_required()) {
+            return false;
+        }
+        $user_id = Nevari_Auth::api_session_user_id();
+        return $user_id > 0 && !Nevari_Helpers::is_pharmacist($user_id);
     }
 
     public static function store_admin_required(?WP_REST_Request $request = null): bool {
@@ -63,9 +67,9 @@ final class Nevari_Rest {
         return true;
     }
 
-    public static function product_manager_required(): bool {
+    public static function orders_access_required(): bool {
         $user_id = Nevari_Auth::api_session_user_id();
-        return $user_id > 0 && (Nevari_Helpers::is_store_admin($user_id) || Nevari_Helpers::is_pharmacist($user_id));
+        return $user_id > 0 && Nevari_Auth::api_session_required() && !Nevari_Helpers::is_pharmacist($user_id);
     }
 
     public static function doctor_or_admin_required(): bool {
@@ -82,12 +86,12 @@ final class Nevari_Rest {
             [
                 'methods' => WP_REST_Server::READABLE,
                 'callback' => [__CLASS__, 'orders_index'],
-                'permission_callback' => [__CLASS__, 'auth_required'],
+                'permission_callback' => [__CLASS__, 'orders_access_required'],
             ],
             [
                 'methods' => WP_REST_Server::CREATABLE,
                 'callback' => [__CLASS__, 'orders_create'],
-                'permission_callback' => [__CLASS__, 'auth_required'],
+                'permission_callback' => [__CLASS__, 'orders_access_required'],
             ],
         ]);
 
@@ -204,7 +208,7 @@ final class Nevari_Rest {
             [
                 'methods' => WP_REST_Server::CREATABLE,
                 'callback' => [__CLASS__, 'products_create'],
-                'permission_callback' => [__CLASS__, 'product_manager_required'],
+                'permission_callback' => [__CLASS__, 'store_admin_required'],
             ],
         ]);
 
@@ -217,31 +221,31 @@ final class Nevari_Rest {
             [
                 'methods' => WP_REST_Server::EDITABLE,
                 'callback' => [__CLASS__, 'products_update'],
-                'permission_callback' => [__CLASS__, 'product_manager_required'],
+                'permission_callback' => [__CLASS__, 'store_admin_required'],
             ],
             [
                 'methods' => WP_REST_Server::DELETABLE,
                 'callback' => [__CLASS__, 'products_delete'],
-                'permission_callback' => [__CLASS__, 'product_manager_required'],
+                'permission_callback' => [__CLASS__, 'store_admin_required'],
             ],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/(?P<id>\d+)/duplicate', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'products_duplicate'],
-            'permission_callback' => [__CLASS__, 'product_manager_required'],
+            'permission_callback' => [__CLASS__, 'store_admin_required'],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/media', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'products_upload_media'],
-            'permission_callback' => [__CLASS__, 'product_manager_required'],
+            'permission_callback' => [__CLASS__, 'store_admin_required'],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/(?P<id>\d+)/pharmacy-rules', [
             'methods' => WP_REST_Server::EDITABLE,
             'callback' => [__CLASS__, 'products_update_rules'],
-            'permission_callback' => [__CLASS__, 'product_manager_required'],
+            'permission_callback' => [__CLASS__, 'store_admin_required'],
         ]);
 
         foreach (['categories' => 'product_cat', 'tags' => 'product_tag'] as $path => $taxonomy) {
@@ -258,7 +262,7 @@ final class Nevari_Rest {
                     'callback' => static function (WP_REST_Request $request) use ($taxonomy) {
                         return self::terms_create($request, $taxonomy);
                     },
-                    'permission_callback' => [__CLASS__, 'product_manager_required'],
+                    'permission_callback' => [__CLASS__, 'store_admin_required'],
                 ],
             ]);
             register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/' . $path . '/(?P<id>\d+)', [
@@ -267,14 +271,14 @@ final class Nevari_Rest {
                     'callback' => static function (WP_REST_Request $request) use ($taxonomy) {
                         return self::terms_update($request, $taxonomy);
                     },
-                    'permission_callback' => [__CLASS__, 'product_manager_required'],
+                    'permission_callback' => [__CLASS__, 'store_admin_required'],
                 ],
                 [
                     'methods' => WP_REST_Server::DELETABLE,
                     'callback' => static function (WP_REST_Request $request) use ($taxonomy) {
                         return self::terms_delete($request, $taxonomy);
                     },
-                    'permission_callback' => [__CLASS__, 'product_manager_required'],
+                    'permission_callback' => [__CLASS__, 'store_admin_required'],
                 ],
             ]);
         }
@@ -724,9 +728,6 @@ final class Nevari_Rest {
             } elseif (Nevari_Helpers::is_doctor()) {
                 $args['meta_key'] = '_nevari_assigned_doctor_user_id';
                 $args['meta_value'] = (string) get_current_user_id();
-            } elseif (Nevari_Helpers::is_pharmacist()) {
-                // Pharmacists oversee retail and MTM-linked orders from the same dashboard views.
-                // They intentionally share the broader order list scope with store operations.
             } else {
                 return Nevari_Helpers::error('forbidden', 'You cannot list these orders.', 403);
             }
@@ -2356,14 +2357,11 @@ final class Nevari_Rest {
     }
 
     private static function invoice_number_for_order($order): string {
-        return 'NVH-INV-' . str_pad((string) $order->get_order_number(), 5, '0', STR_PAD_LEFT);
+        return Nevari_Helpers::order_invoice_number($order);
     }
 
     private static function branded_invoice_payment_url($order): string {
-        return add_query_arg(
-            ['payment_token' => self::invoice_payment_token($order)],
-            Nevari_Helpers::payment_frontend_origin() . '/pay/' . rawurlencode(self::invoice_number_for_order($order))
-        );
+        return Nevari_Helpers::order_invoice_payment_url($order);
     }
 
     private static function documents_url_for_order($order): string {
@@ -2380,15 +2378,7 @@ final class Nevari_Rest {
     }
 
     private static function invoice_payment_token($order): string {
-        $payload = [
-            'purpose' => 'invoice_payment',
-            'order_id' => (int) $order->get_id(),
-            'invoice_number' => self::invoice_number_for_order($order),
-            'exp' => time() + (int) apply_filters('nevari_invoice_payment_token_ttl', 7 * DAY_IN_SECONDS),
-        ];
-        $encoded = Nevari_Helpers::base64url_encode(wp_json_encode($payload));
-        $signature = Nevari_Helpers::base64url_encode(hash_hmac('sha256', $encoded, Nevari_Helpers::jwt_secret(), true));
-        return $encoded . '.' . $signature;
+        return Nevari_Helpers::order_invoice_payment_token($order);
     }
 
     private static function payment_token_from_request(WP_REST_Request $request, ?array $params = null): string {

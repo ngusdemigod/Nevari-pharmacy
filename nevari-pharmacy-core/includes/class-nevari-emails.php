@@ -50,6 +50,11 @@ final class Nevari_Emails {
             $body_text = str_replace('{' . $key . '}', $safe_text, $body_text);
         }
 
+        $supported_placeholder = '/\{\{\s*[a-zA-Z0-9_]+\s*\}\}|\{[a-zA-Z0-9_]+\}/';
+        $subject = preg_replace($supported_placeholder, '', $subject);
+        $body_html = preg_replace($supported_placeholder, '', $body_html);
+        $body_text = preg_replace($supported_placeholder, '', $body_text);
+
         return [
             'subject' => sanitize_text_field($subject),
             'body_html' => self::wrap_html(sanitize_text_field($subject), wp_kses_post($body_html)),
@@ -80,7 +85,10 @@ final class Nevari_Emails {
             $variables = isset($args['variables']) && is_array($args['variables']) ? $args['variables'] : [];
             $payment_link = isset($variables['payment_link']) ? esc_url_raw((string) $variables['payment_link']) : '';
             if ($template->template_key === 'order-invoice-email' && $payment_link && strpos($body_html, $payment_link) === false) {
-                $payment_link_html = isset($variables['payment_link_html']) ? wp_kses_post((string) $variables['payment_link_html']) : '';
+                $payment_link_value = $variables['payment_link_html'] ?? '';
+                $payment_link_html = is_array($payment_link_value)
+                    ? wp_kses_post((string) ($payment_link_value['html'] ?? ''))
+                    : wp_kses_post((string) $payment_link_value);
                 if (!$payment_link_html) {
                     $payment_link_html = sprintf('<p><a href="%1$s" target="_blank" rel="noopener noreferrer">Pay now</a></p>', esc_url($payment_link));
                 } else {

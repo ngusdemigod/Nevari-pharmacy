@@ -396,3 +396,18 @@ Stale display data can appear after account switching if cache keys or cleanup a
 - Decision: administrator-triggered password-reset links use the shared trusted dashboard origin and an allowlisted role-specific `frontend_type`; WordPress reset pages are not used.
 - Decision: approved nurses use the permission-restricted storefront frontend for their Nurse Requests access. This supersedes the earlier “no dashboard” decision; pending, declined, banned, and suspended nurses remain unable to authenticate.
 - Decision: role, status, and reset mutations remain authoritative when a notification fails. The failure is audited and shown to the acting administrator without exposing reset keys or links.
+
+# 2026-07-24 — Pharmacist dashboard scope reduction
+
+- Decision: pharmacists lose all general commerce and administration authority. General products, orders, payments, subscriptions, customers, staff, settings, logs, email administration, and store-dashboard APIs reject pharmacist sessions server-side.
+- Decision: the only product lookup retained is `/pharmacist/mtm-requests/{id}/pharmacy-products`; assignment is verified by the permission callback. Linked MTM orders derive the customer and items from the authorized case and reject client-supplied bodies.
+- Decision: the pharmacist dashboard's IV Therapy view is built against `class-nevari-care-journeys.php`'s `/staff/care-requests/iv-therapy` (already assignment-scoped and paginated per the 2026-07-22 decision above), not the legacy `class-nevari-iv-therapy.php` `/pharmacist/iv-therapy-requests` routes — but those legacy routes are hardened with the same assignment scoping and pagination regardless, since they remain directly callable outside the dashboard.
+- Decision: MTM and IV-therapy list endpoints available to the pharmacist role must always return only requests assigned to the calling pharmacist (store admins retain full visibility), and must be paginated rather than returning an unbounded or arbitrarily-capped result set — enforced server-side, not left to the frontend to filter.
+- Decision: version 0.6.3 removes legacy role and direct-user pharmacist capabilities, removes Media Library authority, blocks wp-admin/admin-AJAX, and hides the admin bar. The Next.js proxy independently allowlists pharmacist frontend paths.
+
+# 2026-07-25 — Dedicated MTM payment flow
+
+- Decision: MTM forms and record modals never render or open WooCommerce checkout URLs. Pending payments route to an authenticated, ownership-checked MTM payment page.
+- Decision: the MTM server response exposes only Nevari's signed, expiring invoice capability URL. The existing invoice endpoint initializes Paystack from the server-owned order and verifies the provider reference before changing payment state.
+- Decision: payment callback return paths are restricted to local `/dashboard/` routes; client-supplied amounts, currencies, order IDs, and payment states remain non-authoritative.
+- Decision: MTM confirmation success is rendered only from the server-owned MTM payment state. The callback result query may select a failed presentation but cannot mark a payment successful or mutate the request.

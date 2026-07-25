@@ -880,7 +880,7 @@ final class Nevari_Auth {
     }
 
     public static function frontend_requires_email_verification(string $frontend_type): bool {
-        return in_array($frontend_type, ['storefront', 'doctors_dashboard'], true);
+        return $frontend_type === 'storefront';
     }
 
     private static function login_requires_email_verification(array $frontend): bool {

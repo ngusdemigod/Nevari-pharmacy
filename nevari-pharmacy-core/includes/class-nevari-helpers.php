@@ -1189,6 +1189,29 @@ final class Nevari_Helpers {
         );
     }
 
+    public static function order_invoice_number($order): string {
+        return 'NVH-INV-' . str_pad((string) $order->get_order_number(), 5, '0', STR_PAD_LEFT);
+    }
+
+    public static function order_invoice_payment_token($order): string {
+        $payload = [
+            'purpose' => 'invoice_payment',
+            'order_id' => (int) $order->get_id(),
+            'invoice_number' => self::order_invoice_number($order),
+            'exp' => time() + (int) apply_filters('nevari_invoice_payment_token_ttl', 7 * DAY_IN_SECONDS),
+        ];
+        $encoded = self::base64url_encode(wp_json_encode($payload));
+        $signature = self::base64url_encode(hash_hmac('sha256', $encoded, self::jwt_secret(), true));
+        return $encoded . '.' . $signature;
+    }
+
+    public static function order_invoice_payment_url($order): string {
+        return add_query_arg(
+            ['payment_token' => self::order_invoice_payment_token($order)],
+            self::payment_frontend_origin() . '/pay/' . rawurlencode(self::order_invoice_number($order))
+        );
+    }
+
     public static function global_doctor_consultation_fee(): float {
         $stored = get_option('nevari_global_doctor_consultation_fee', null);
         $value = is_numeric($stored) ? (float) $stored : 0.0;

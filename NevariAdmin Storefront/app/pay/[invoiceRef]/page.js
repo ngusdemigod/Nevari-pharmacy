@@ -18,6 +18,14 @@ function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function sanitizePaymentReturnPath(value) {
+  const path = String(value || "").trim();
+  if (!path.startsWith("/dashboard/") || path.startsWith("//")) {
+    return "";
+  }
+  return path;
+}
+
 function hydrateSession(frontend = "patient", queryBaseUrl = "") {
   if (typeof window === "undefined") return DEFAULT_SESSION;
   const config = FRONTENDS[frontend] || FRONTENDS.patient;
@@ -114,6 +122,7 @@ function PaywallPageContent() {
   const [activeGateway, setActiveGateway] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const paymentToken = searchParams.get("payment_token") || "";
+  const returnTo = sanitizePaymentReturnPath(searchParams.get("return_to"));
 
   useEffect(() => {
     const role = searchParams.get("role") || "patient";
@@ -184,9 +193,13 @@ function PaywallPageContent() {
           });
           if (active && verified?.paid) {
             openPaymentSuccess(data);
+          } else if (active && !verified?.paid && openPaymentFailure()) {
+            return;
           }
       } catch (nextError) {
-        if (active) setError(String(nextError?.message || "Payment verification failed."));
+        if (active && !openPaymentFailure()) {
+          setError(String(nextError?.message || "Payment verification failed."));
+        }
       } finally {
         if (active) setSubmitting(false);
       }
@@ -206,6 +219,12 @@ function PaywallPageContent() {
   }
 
   function openPaymentSuccess(payload) {
+    if (returnTo) {
+      const destination = new URL(returnTo, window.location.origin);
+      destination.searchParams.set("payment_result", "success");
+      window.location.href = `${destination.pathname}${destination.search}`;
+      return;
+    }
     if (payload?.entity_type === "appointment") {
       const role = searchParams.get("role") || "patient";
       const dashboardPath = role === "doctor" ? "/admin/doctor/dashboard" : role === "admin" ? "/admin/storefront" : "/dashboard";
@@ -217,6 +236,14 @@ function PaywallPageContent() {
     if (payload?.order_id) {
       window.location.href = receiptViewerUrl(payload.order_id);
     }
+  }
+
+  function openPaymentFailure() {
+    if (!returnTo) return false;
+    const destination = new URL(returnTo, window.location.origin);
+    destination.searchParams.set("payment_result", "failed");
+    window.location.href = `${destination.pathname}${destination.search}`;
+    return true;
   }
 
   async function startPayment(gateway = activeGateway) {
@@ -232,6 +259,9 @@ function PaywallPageContent() {
       });
       if (session.baseUrl) {
         callbackParams.set("base_url", session.baseUrl);
+      }
+      if (returnTo) {
+        callbackParams.set("return_to", returnTo);
       }
       const callbackUrl = `${window.location.origin}/pay/${encodeURIComponent(data.invoice_number)}?${callbackParams.toString()}`;
       const path = data?.entity_type === "appointment"
@@ -295,8 +325,8 @@ function PaywallPageContent() {
         {error ? <p className="paywall-error">{error}</p> : null}
       </section>
       <style jsx>{`
-        .paywall-page { min-height: 100vh; background: #f4f6f8; padding: 24px; color: #111; box-sizing: border-box; overflow-y: auto; }
-        .paywall-card { width: min(520px, 100%); margin: 0 auto; background: #fff; padding: 36px; border: 1px solid #dfe7f0; box-shadow: 0 24px 80px rgba(14, 41, 85, .12); box-sizing: border-box; }
+        .paywall-page { min-height: 100vh; background: #f4f6f8; padding: 24px; color: #111; box-sizing: border-box; overflow-y: auto; font-family: "Product Sans", "Google Sans", Arial, sans-serif; }
+        .paywall-card { width: min(520px, 100%); margin: 0 auto; background: #fff; padding: 36px; border: 1px solid #dfe7f0; border-radius: 28px; box-shadow: 0 24px 80px rgba(14, 41, 85, .12); box-sizing: border-box; }
         .paywall-card-loading { min-height: 220px; display: grid; place-items: center; }
         .paywall-card.error { color: #9f2f2f; }
         .paywall-spinner {
@@ -309,18 +339,18 @@ function PaywallPageContent() {
         }
         .paywall-logo { width: 72px; height: 72px; object-fit: contain; }
         .paywall-kicker { margin-top: 18px; color: #0E2955; text-transform: uppercase; font-weight: 700; font-size: 12px; }
-        h1 { margin: 8px 0 24px; color: #0E2955; font-size: 36px; line-height: 1.1; overflow-wrap: anywhere; }
+        h1 { margin: 8px 0 24px; color: #0E2955; font-size: 20px; font-weight: 300; line-height: 1.2; overflow-wrap: anywhere; }
         .paywall-grid { display: grid; grid-template-columns: 130px 1fr; gap: 8px 18px; margin-bottom: 24px; }
         .paywall-grid span { color: #7c8796; min-width: 0; }
         .paywall-grid strong { text-align: right; min-width: 0; overflow-wrap: anywhere; }
         .paywall-items { border-top: 1px solid #e4eaf2; border-bottom: 1px solid #e4eaf2; padding: 16px 0; margin-bottom: 20px; }
-        .paywall-items h2 { margin: 0 0 10px; color: #0E2955; font-size: 16px; }
+        .paywall-items h2 { margin: 0 0 10px; color: #0E2955; font-size: 20px; font-weight: 300; line-height: 1.2; }
         .paywall-item { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; color: #1f2a37; }
         .paywall-item span { min-width: 0; overflow-wrap: anywhere; }
         .paywall-item strong { white-space: nowrap; }
         .paywall-muted { margin: 0; color: #7c8796; }
         .gateway-list { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 18px; }
-        .gateway-button { border: 1px solid #0E2955; background: #0E2955; color: #fff; padding: 14px 18px; font-weight: 800; border-radius: 8px; font-size: 15px; }
+        .gateway-button { border: 1px solid #0E2955; background: #0E2955; color: #fff; padding: 14px 18px; font-weight: 400; border-radius: 999px; font-size: 15px; }
         .gateway-button:disabled { opacity: .65; cursor: wait; }
         .paywall-error { margin-top: 14px; color: #9f2f2f; font-weight: 700; }
         @keyframes paywallSpin {
@@ -330,7 +360,7 @@ function PaywallPageContent() {
         @media (max-width: 720px) {
           .paywall-page { padding: 12px; }
           .paywall-card { padding: 18px; }
-          h1 { font-size: 26px; margin-bottom: 16px; }
+          h1 { font-size: 20px; margin-bottom: 16px; }
           .paywall-grid { grid-template-columns: 1fr; gap: 4px; }
           .paywall-grid strong { text-align: left; margin-bottom: 8px; }
           .gateway-button { width: 100%; }

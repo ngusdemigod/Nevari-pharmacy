@@ -41632,3 +41632,237 @@ body:has(.modal-design-system-parity) .order-modal .order-detail-scroll {
     margin-top: 4px;
   }
 }
+
+/* Dedicated customer MTM payment page. */
+html:has(.customer-mtm-payment-page),
+body:has(.customer-mtm-payment-page) {
+  height: auto;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body:has(.customer-mtm-payment-page) {
+  padding: 0;
+  background: #ffffff;
+}
+
+.customer-mtm-payment-page {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: clamp(20px, 4vw, 48px);
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 28px;
+  background: #ffffff;
+  color: #102039;
+  font-family: "Product Sans", "Google Sans", Arial, sans-serif;
+}
+
+.customer-mtm-payment-page *,
+.customer-mtm-payment-page *::before,
+.customer-mtm-payment-page *::after {
+  box-sizing: border-box;
+  font-family: inherit;
+  font-weight: 400;
+}
+
+.customer-mtm-payment-loading {
+  place-content: center;
+}
+
+.customer-mtm-payment-card {
+  width: min(100%, 760px);
+}
+
+.customer-mtm-payment-card {
+  padding: clamp(24px, 5vw, 42px);
+  display: grid;
+  justify-items: center;
+  gap: 24px;
+  border: 1px solid #d7dfef;
+  border-radius: 28px !important;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.customer-mtm-payment-status-icon {
+  width: 84px;
+  height: 84px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #ead9ae;
+  border-radius: 50%;
+  background: #fff8e5;
+  color: #ad6b19;
+}
+
+.customer-mtm-payment-status-icon.is-success {
+  border-color: #c9ecd7;
+  background: #e6f8ee;
+  color: #1f8e57;
+}
+
+.customer-mtm-payment-status-icon.is-failure {
+  border-color: #f0c5c5;
+  background: #fff0f0;
+  color: #c33d3d;
+}
+
+.customer-mtm-payment-status-icon svg {
+  width: 36px;
+  height: 36px;
+}
+
+.customer-mtm-payment-copy {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.customer-mtm-payment-copy h2,
+.customer-mtm-payment-copy p {
+  margin: 0;
+}
+
+.customer-mtm-payment-copy h2 {
+  max-width: 540px;
+  color: #0a2a5e;
+  font-size: 20px;
+  font-weight: 300;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.customer-mtm-payment-copy p {
+  max-width: 560px;
+  color: #7d8492;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.customer-mtm-payment-countdown {
+  color: #0a2a5e;
+  font-size: 14px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.customer-mtm-payment-details {
+  width: 100%;
+  margin: 0;
+  display: grid;
+}
+
+.customer-mtm-payment-details > div {
+  min-height: 56px;
+  padding: 14px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #d7dfef;
+}
+
+.customer-mtm-payment-details dt {
+  color: #7d8492;
+}
+
+.customer-mtm-payment-details dd {
+  margin: 0;
+  color: #0a2a5e;
+  text-align: right;
+}
+
+.customer-mtm-confirmation-details > div:last-child {
+  border-bottom: 0;
+}
+
+.customer-mtm-payment-download {
+  min-height: 34px;
+  padding: 7px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #0a2a5e;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0a2a5e;
+  font-size: 13px;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.customer-mtm-payment-download:hover {
+  background: #f4f7fb;
+}
+
+.customer-mtm-payment-download:focus-visible {
+  outline: 3px solid rgba(10, 42, 94, 0.2);
+  outline-offset: 2px;
+}
+
+.customer-mtm-payment-actions {
+  width: 100%;
+  display: grid;
+  gap: 12px;
+}
+
+body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-payment-actions > .customer-mobile-primary-button,
+body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-payment-actions > .customer-mobile-secondary-button {
+  width: 100%;
+  min-height: 58px;
+  justify-content: center;
+  border-radius: 999px !important;
+  text-decoration: none;
+}
+
+.customer-mtm-payment-alert {
+  width: 100%;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #efcaca;
+  border-radius: 12px;
+  background: #fff5f5;
+  color: #9f2f2f;
+  line-height: 1.45;
+}
+
+.customer-mtm-payment-alert button {
+  margin-left: 8px;
+  border: 0;
+  background: transparent;
+  color: #0a2a5e;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .customer-mtm-payment-page {
+    padding: 18px 20px 28px;
+    gap: 24px;
+  }
+
+  .customer-mtm-payment-card {
+    padding: 28px 20px 24px;
+    gap: 22px;
+    border-radius: 28px !important;
+  }
+
+  .customer-mtm-payment-copy h2 {
+    font-size: 20px;
+  }
+
+  .customer-mtm-payment-details > div {
+    gap: 14px;
+  }
+
+  .customer-mtm-payment-details dt {
+    flex: 0 0 42%;
+  }
+}

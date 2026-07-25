@@ -729,9 +729,12 @@ export async function saveMtmActionPlan(session, id, body = {}) {
   return payload?.request || null;
 }
 
-export async function fetchPharmacistMtmRequests(session) {
-  const payload = await apiRequest(session, "/pharmacist/mtm-requests", { suppressHttpError: true });
-  return Array.isArray(payload?.items) ? payload.items : [];
+export async function fetchPharmacistMtmRequests(session, params = {}) {
+  const payload = await apiRequest(session, "/pharmacist/mtm-requests", { params, suppressHttpError: true });
+  return {
+    items: Array.isArray(payload?.items) ? payload.items : [],
+    pagination: payload?.pagination || null,
+  };
 }
 
 export async function fetchPharmacistMtmRequest(session, id) {
