@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git push *)",
+      "Bash(jobs)",
+      "Bash(python -c ' *)",
+      "Bash(node temp/verify_bugfix_pass.js)",
+      "Bash(node temp/mtm_debug.js)",
+      "Bash(git commit -m 'fix: mobile payment, SSO handoff, nurse request, MTM, round-robin, and nav bugs *)",
+      "Bash(git commit -m 'fix: bundle MTM PDF template so Vercel functions can load it *)",
+      "Bash(git remote *)",
+      "Bash(awk 'NR>1 && /get_var\\\\\\(|get_row\\\\\\(|get_results\\\\\\(|wc_get_order\\\\\\(|get_user_meta\\\\\\(/ && loop {print FILENAME\":\"NR\": \"$0} /foreach *\\\\\\(/ {loop=NR} /^    }/ {loop=0}' includes/class-nevari-plugin.php)",
+      "Bash(gzip -c app/globals.css)",
+      "Bash(gzip -c app/_customer-dashboard.js)",
+      "Bash(php -l \"d:/dev/nevari-pharmacy-core/nevari-pharmacy-core/includes/class-nevari-nurse-requests.php\")",
+      "Bash(php -l \"d:/dev/nevari-pharmacy-core/nevari-pharmacy-core/includes/class-nevari-plugin.php\")"
+    ]
+  }
+}

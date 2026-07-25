@@ -135,9 +135,11 @@ export default function RoleLoginPage({ config }) {
   const [googleAuth, setGoogleAuth] = useState({ checked: false, enabled: false, clientId: "" });
   const googleButtonRef = useRef(null);
   const [authSecuritySettings, setAuthSecuritySettings] = useState(() => loadAuthSecuritySettings());
+  const [continuationPath, setContinuationPath] = useState("");
   const querySsoTransactionId = String(searchParams.get("sso_transaction_id") || "").trim();
   const queryNextPath = String(searchParams.get("next") || "").trim();
   const querySource = String(searchParams.get("from") || "").trim().toLowerCase();
+  const isExpiredSessionBlock = searchParams.get("expired") === "1";
   const ssoClientId = String(searchParams.get("client_id") || "").trim();
   const ssoRedirectUri = String(searchParams.get("redirect_uri") || "").trim();
   const ssoState = String(searchParams.get("state") || "").trim();
@@ -203,10 +205,20 @@ export default function RoleLoginPage({ config }) {
       window.location.assign(payload.data.redirect_url);
       return;
     }
-    const destination = fallbackDestination || queryNextPath || config.dashboardPath;
+    const destination = fallbackDestination || queryNextPath || continuationPath || config.dashboardPath;
+    if (continuationPath && destination === continuationPath) {
+      fetch("/api/auth/continuation", { method: "DELETE" }).catch(() => null);
+    }
     router.prefetch(destination);
     router.replace(destination);
   }
+
+  useEffect(() => {
+    fetch("/api/auth/continuation", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload) => setContinuationPath(String(payload?.path || "")))
+      .catch(() => setContinuationPath(""));
+  }, []);
 
   useEffect(() => {
     if (!hasConsultationBookingIntent && !hasSubscriptionIntent) {
@@ -261,7 +273,7 @@ export default function RoleLoginPage({ config }) {
       router.prefetch(queryNextPath || config.dashboardPath);
       if (!active) return;
       setSession(next);
-      if (isSessionUsable(next)) {
+      if (isSessionUsable(next) && !isExpiredSessionBlock) {
         if (hasCheckoutSsoContext) {
           try {
             const response = await fetch(buildUrl(next, "/sso/wordpress/start"), {
@@ -282,14 +294,14 @@ export default function RoleLoginPage({ config }) {
             }
           } catch {}
         }
-        router.replace(queryNextPath || config.dashboardPath);
+        router.replace(queryNextPath || continuationPath || config.dashboardPath);
       }
     }
     initializeSession();
     return () => {
       active = false;
     };
-  }, [config, hasCheckoutSsoContext, queryNextPath, router, ssoClientId, ssoRedirectUri, ssoReturnTo, ssoState]);
+  }, [config, continuationPath, hasCheckoutSsoContext, isExpiredSessionBlock, queryNextPath, router, ssoClientId, ssoRedirectUri, ssoReturnTo, ssoState]);
 
   useEffect(() => {
     const challengeId = String(searchParams.get("challenge_id") || "").trim();

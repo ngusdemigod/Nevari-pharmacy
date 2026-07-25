@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "baseUrl": "http://localhost:3000",
+  "error": "page.waitForResponse: Timeout 45000ms exceeded while waiting for event \"response\"",
+  "screenshot": "D:\\dev\\nevari-pharmacy-core\\temp\\playwright-subscription-verify\\local-subscription-management-cancel.png"
+}

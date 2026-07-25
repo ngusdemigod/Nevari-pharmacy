@@ -96,12 +96,7 @@ async function sendBookingEmails({
     || ""
   ).trim();
   const paymentUrl = String(
-    buildBrandedAppointmentPaymentUrl(appOrigin, checkout, appointment, "patient")
-    || checkout?.payment_url
-    || checkout?.checkout_url
-    || appointment?.checkout_url
-    || appointment?.payment_url
-    || ""
+    buildBrandedAppointmentPaymentUrl(appOrigin, checkout, appointment, "patient") || ""
   ).trim();
   const paymentStatus = String(
     confirmation?.appointment?.payment_status
@@ -443,7 +438,7 @@ export async function POST(request) {
         : null;
       const resolvedAppointment = {
         ...created,
-        checkout_url: buildBrandedAppointmentPaymentUrl(body.appOrigin || new URL(request.url).origin, normalizedCheckoutData, created, "patient") || normalizedCheckoutData?.payment_url || normalizedCheckoutData?.checkout_url || created?.checkout_url || "",
+        checkout_url: buildBrandedAppointmentPaymentUrl(body.appOrigin || new URL(request.url).origin, normalizedCheckoutData, created, "patient"),
         payment_status: confirmationData?.appointment?.payment_status || normalizedCheckoutData?.payment_status || created?.payment_status || "pending",
         status: confirmationData?.appointment?.status || (String(confirmationData?.appointment?.payment_status || normalizedCheckoutData?.payment_status || created?.payment_status || "").toLowerCase() === "paid" ? "confirmed" : (created?.status || "awaiting_payment"))
       };

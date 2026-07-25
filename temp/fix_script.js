@@ -1,0 +1,11 @@
+const fs = require('fs');
+const path = 'temp/implement_profile_crop.js';
+let s = fs.readFileSync(path, 'utf8');
+s = s.split('return `${stem}.png`;').join('return stem + ".png";');
+s = s.split('return `${stem}.webp`;').join('return stem + ".webp";');
+s = s.split('return `${stem}.jpg`;').join('return stem + ".jpg";');
+s = s.split('className={`customer-profile-cropper-surface${loadingCropImage ? " is-loading" : ""}`}').join('className={"customer-profile-cropper-surface" + (loadingCropImage ? " is-loading" : "")}');
+s = s.split('width: `${cropState.naturalWidth * cropState.scale}px`,').join('width: (cropState.naturalWidth * cropState.scale) + "px",');
+s = s.split('height: `${cropState.naturalHeight * cropState.scale}px`,').join('height: (cropState.naturalHeight * cropState.scale) + "px",');
+s = s.split('transform: `translate(${cropState.offsetX - ((cropState.naturalWidth * cropState.scale) / 2)}px, ${cropState.offsetY - ((cropState.naturalHeight * cropState.scale) / 2)}px)`,').join('transform: "translate(" + (cropState.offsetX - ((cropState.naturalWidth * cropState.scale) / 2)) + "px, " + (cropState.offsetY - ((cropState.naturalHeight * cropState.scale) / 2)) + "px)",');
+fs.writeFileSync(path, s);

@@ -1,0 +1,137 @@
+{
+  "ok": true,
+  "baseUrl": "http://localhost:3000",
+  "currentUrl": "http://localhost:3000/dashboard?page=subscription-management",
+  "initialButtons": [
+    {
+      "text": "Overview",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "Orders",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "Appointments",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "Request a Nurse",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "Medication Therapy Management",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "IV Therapy (Wellness infusions)",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "My Profile",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "Nevari Access Pro",
+      "ariaLabel": "",
+      "className": "nav-item active",
+      "visible": true
+    },
+    {
+      "text": "Logout",
+      "ariaLabel": "",
+      "className": "nav-item nav-logout",
+      "visible": true
+    },
+    {
+      "text": "",
+      "ariaLabel": "Open Next.js Dev Tools",
+      "className": "",
+      "visible": true
+    }
+  ],
+  "afterButtons": [
+    {
+      "text": "Overview",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "Orders",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "Appointments",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "Request a Nurse",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "Medication Therapy Management",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "IV Therapy (Wellness infusions)",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "My Profile",
+      "ariaLabel": "",
+      "className": "nav-item ",
+      "visible": true
+    },
+    {
+      "text": "Nevari Access Pro",
+      "ariaLabel": "",
+      "className": "nav-item active",
+      "visible": true
+    },
+    {
+      "text": "Logout",
+      "ariaLabel": "",
+      "className": "nav-item nav-logout",
+      "visible": true
+    },
+    {
+      "text": "",
+      "ariaLabel": "Open Next.js Dev Tools",
+      "className": "",
+      "visible": true
+    }
+  ],
+  "cancelAttempted": false,
+  "cancelHttpStatus": null,
+  "cancelResponseBody": null,
+  "ui": {
+    "cancelErrorText": "",
+    "successText": ""
+  },
+  "screenshot": "D:\\dev\\nevari-pharmacy-core\\temp\\playwright-subscription-verify\\local-subscription-management.png"
+}

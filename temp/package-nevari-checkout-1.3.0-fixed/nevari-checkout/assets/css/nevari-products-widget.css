@@ -1,0 +1,285 @@
+.nevari-products-widget,
+.nevari-products-widget * {
+    box-sizing: border-box;
+}
+
+.nevari-products-widget {
+    --nevari-products-gap: 20px;
+    --nevari-products-image-bg: transparent;
+    --nevari-products-image-radius: 14px;
+    --nevari-products-card-radius: 16px;
+    --nevari-products-card-border: transparent;
+    --nevari-products-card-border-width: 0px;
+    --nevari-products-card-padding: 0px;
+    --nevari-products-card-shadow: none;
+    --nevari-products-badge-sale-bg: #3ec67b;
+    --nevari-products-badge-featured-bg: #b85dff;
+    --nevari-products-badge-color: #ffffff;
+    --nevari-products-category-color: #5ca7e0;
+    --nevari-products-category-hover: #2172b8;
+    --nevari-products-title-color: #243553;
+    --nevari-products-title-hover: #0b2d66;
+    --nevari-products-quantity-color: #8e8792;
+    --nevari-products-price-color: #f2991c;
+    --nevari-products-button-bg: #0b2d66;
+    --nevari-products-button-text: #ffffff;
+    --nevari-products-button-hover-bg: #143b7d;
+    --nevari-products-button-hover-text: #ffffff;
+    --nevari-products-button-radius: 999px;
+    --nevari-products-button-border: transparent;
+    --nevari-products-button-border-width: 0px;
+    --nevari-products-button-padding-y: 12px;
+    --nevari-products-button-padding-x: 18px;
+    --nevari-products-button-icon-gap: 8px;
+    --nevari-products-button-icon-size: 16px;
+    --nevari-products-pagination-color: #19386f;
+    --nevari-products-pagination-active-bg: #0b2d66;
+    --nevari-products-pagination-active-color: #ffffff;
+}
+
+.nevari-products-widget__grid {
+    display: grid;
+    gap: var(--nevari-products-gap);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.nevari-products-widget__card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: var(--nevari-products-card-padding);
+    border-radius: var(--nevari-products-card-radius);
+    border: var(--nevari-products-card-border-width) solid var(--nevari-products-card-border);
+    box-shadow: var(--nevari-products-card-shadow);
+    background: transparent;
+    min-width: 0;
+}
+
+.nevari-products-widget__image-link {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+    border-radius: var(--nevari-products-image-radius);
+    background: transparent;
+    border: 0 solid transparent;
+    text-decoration: none;
+}
+
+.nevari-products-widget__image-link img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    padding: 0;
+}
+
+.nevari-products-widget__badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    color: var(--nevari-products-badge-color);
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    box-shadow: 0 8px 20px rgba(17, 31, 68, 0.12);
+}
+
+.nevari-products-widget__badge.is-sale {
+    background: var(--nevari-products-badge-sale-bg);
+}
+
+.nevari-products-widget__badge.is-featured {
+    background: var(--nevari-products-badge-featured-bg);
+}
+
+.nevari-products-widget__body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.nevari-products-widget__categories {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 0;
+    color: var(--nevari-products-category-color);
+    font-size: 12px;
+    line-height: 1.35;
+    font-weight: 500;
+}
+
+.nevari-products-widget__categories a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.nevari-products-widget__categories a:hover {
+    color: var(--nevari-products-category-hover);
+}
+
+.nevari-products-widget__title {
+    margin: 0;
+    color: var(--nevari-products-title-color);
+    font-size: 15px;
+    line-height: 1.28;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.nevari-products-widget__title a {
+    color: inherit;
+    text-decoration: none;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.nevari-products-widget__title a:hover {
+    color: var(--nevari-products-title-hover);
+}
+
+.nevari-products-widget__quantity {
+    color: var(--nevari-products-quantity-color);
+    font-size: 12px;
+    line-height: 1.4;
+    font-weight: 500;
+}
+
+.nevari-products-widget__price {
+    color: var(--nevari-products-price-color);
+    font-size: 16px;
+    line-height: 1.2;
+    font-weight: 700;
+}
+
+.nevari-products-widget__price .price {
+    color: inherit;
+}
+
+.nevari-products-widget__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--nevari-products-button-icon-gap);
+    width: 100%;
+    min-height: 46px;
+    padding: var(--nevari-products-button-padding-y) var(--nevari-products-button-padding-x);
+    border-radius: var(--nevari-products-button-radius);
+    border: var(--nevari-products-button-border-width) solid var(--nevari-products-button-border);
+    background: var(--nevari-products-button-bg);
+    color: var(--nevari-products-button-text);
+    text-decoration: none;
+    font-size: 14px;
+    line-height: 1;
+    font-weight: 600;
+    transition: transform 0.18s ease, background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+    box-shadow: 0 16px 30px rgba(11, 45, 102, 0.16);
+}
+
+.nevari-products-widget__button:hover {
+    background: var(--nevari-products-button-hover-bg);
+    color: var(--nevari-products-button-hover-text);
+    transform: translateY(-1px);
+}
+
+.nevari-products-widget__button-icon {
+    width: var(--nevari-products-button-icon-size);
+    height: var(--nevari-products-button-icon-size);
+    flex: 0 0 var(--nevari-products-button-icon-size);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.nevari-products-widget__button-icon svg,
+.nevari-products-widget__button-icon img {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.nevari-products-widget__pagination {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 22px;
+    flex-wrap: wrap;
+}
+
+.nevari-products-widget__pagination.is-center {
+    justify-content: center;
+}
+
+.nevari-products-widget__pagination.is-end {
+    justify-content: flex-end;
+}
+
+.nevari-products-widget__pagination.is-start {
+    justify-content: flex-start;
+}
+
+.nevari-products-widget__pagination .page-numbers,
+.nevari-products-widget__load-more {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 38px;
+    min-height: 38px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(25, 56, 111, 0.14);
+    color: var(--nevari-products-pagination-color);
+    background: #ffffff;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1;
+    transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.nevari-products-widget__pagination .page-numbers:hover,
+.nevari-products-widget__load-more:hover {
+    transform: translateY(-1px);
+}
+
+.nevari-products-widget__pagination .page-numbers.current {
+    background: var(--nevari-products-pagination-active-bg);
+    color: var(--nevari-products-pagination-active-color);
+    border-color: var(--nevari-products-pagination-active-bg);
+}
+
+.nevari-products-widget__pagination .page-numbers.dots {
+    border-color: transparent;
+    background: transparent;
+    min-width: auto;
+    padding: 0 4px;
+}
+
+@media (max-width: 1024px) {
+    .nevari-products-widget__grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 767px) {
+    .nevari-products-widget__grid {
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+
+    .nevari-products-widget__button {
+        min-height: 44px;
+    }
+}

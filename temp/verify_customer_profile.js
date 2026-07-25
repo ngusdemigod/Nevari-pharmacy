@@ -6,7 +6,7 @@ const USERNAME = "Ncustomer";
 const PASSWORD = "Ncustomer@2026!!!";
 const OUTPUT_DIR = path.join(process.cwd(), "temp", "playwright-customer-verify");
 const AUTH_SECURITY_SETTINGS_KEY = "nevari_global_auth_security_settings";
-const CANDIDATES = ["http://localhost:3001", "http://localhost:3000"];
+const CANDIDATES = ["http://localhost:3000", "http://localhost:3003", "http://localhost:3001"];
 
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
@@ -33,7 +33,7 @@ async function login(baseUrl) {
   page.setDefaultNavigationTimeout(30000);
 
   try {
-    await page.goto(`${baseUrl}/login`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/login`, { waitUntil: "domcontentloaded" });
     const loginPayload = await page.evaluate(async ({ username, password }) => {
       const baseUrl = "https://nevarihealth.com";
       const endpoint = new URL("/api/nevari-proxy", window.location.origin);
@@ -92,13 +92,10 @@ async function login(baseUrl) {
       }));
     }, { expiresIn: data.expires_in, user: data.user });
 
-    await page.goto(`${baseUrl}/dashboard`, { waitUntil: "networkidle" });
-    await Promise.race([
-      page.waitForURL(/\/dashboard/, { timeout: 60000 }),
-      page.locator("text=Welcome back").waitFor({ state: "visible", timeout: 60000 }),
-    ]);
+    await page.goto(`${baseUrl}/dashboard`, { waitUntil: "domcontentloaded" });
+    await page.locator("text=Welcome back").first().waitFor({ state: "visible", timeout: 60000 });
 
-    return { browser, context, page, baseUrl };
+    return { browser, page, baseUrl };
   } catch (error) {
     try {
       await page.screenshot({ path: path.join(OUTPUT_DIR, `login-failure-${baseUrl.replace(/[^a-z0-9]+/gi, "-")}.png`), fullPage: true });
@@ -110,128 +107,33 @@ async function login(baseUrl) {
 
 async function openDrawer(page) {
   const menuButton = page.getByRole("button", { name: /open menu/i }).first();
+  await menuButton.waitFor({ state: "visible", timeout: 30000 });
   await menuButton.click();
-  await page.locator(".customer-mobile-drawer-layer.open").waitFor({ state: "visible" });
+  await page.locator(".customer-mobile-drawer-layer.open").waitFor({ state: "visible", timeout: 30000 });
 }
 
-async function navigateFromDrawer(page, label) {
+async function openProfile(page) {
   await openDrawer(page);
-  const item = page.getByRole("button", { name: new RegExp(label, "i") }).first();
-  await item.click();
+  const profileItem = page.locator(".customer-mobile-drawer-item", { hasText: "Profile" }).first();
+  await profileItem.waitFor({ state: "visible", timeout: 30000 });
+  await profileItem.click();
+  await page.locator(".customer-mobile-upload-group, .customer-profile-card").first().waitFor({ state: "visible", timeout: 30000 });
 }
 
-async function captureHeaderMetrics(page, name, headingPattern) {
-  const searchBar = page.locator(".customer-mobile-searchbar").first();
-  const heading = page.getByRole("heading", { name: headingPattern }).first();
-  try {
-    await searchBar.waitFor({ state: "visible", timeout: 60000 });
-    await heading.waitFor({ state: "visible", timeout: 60000 });
-  } catch (error) {
-    const failurePath = path.join(OUTPUT_DIR, `${name}-header-failure.png`);
-    await page.screenshot({ path: failurePath, fullPage: false }).catch(() => {});
-    throw new Error(`${name} header was not visible. Screenshot: ${failurePath}`);
-  }
+async function readProfileIdentity(page) {
+  const welcomeText = await text(page.locator("text=Welcome back").first());
+  const displayNameInput = page.locator(".customer-mobile-field", { hasText: "Display Name:" }).locator("input").first();
+  const profileEmailInput = page.locator(".customer-mobile-field", { hasText: /^Email:/ }).locator("input[readonly]").first();
 
-  const searchBox = await searchBar.boundingBox();
-  const headingBox = await heading.boundingBox();
-  const screenshotPath = path.join(OUTPUT_DIR, `${name}.png`);
-  await page.screenshot({ path: screenshotPath, fullPage: false });
+  await displayNameInput.waitFor({ state: "visible", timeout: 30000 });
+  await profileEmailInput.waitFor({ state: "visible", timeout: 30000 });
+  await page.screenshot({ path: path.join(OUTPUT_DIR, "profile-identity.png"), fullPage: false });
 
   return {
-    name,
-    screenshot: screenshotPath,
-    searchTop: searchBox ? Number(searchBox.y.toFixed(1)) : null,
-    headingTop: headingBox ? Number(headingBox.y.toFixed(1)) : null,
-    clipped: !searchBox || !headingBox || searchBox.y < 8 || headingBox.y < 56,
+    welcomeText,
+    displayName: await displayNameInput.inputValue(),
+    email: await profileEmailInput.inputValue(),
   };
-}
-
-async function fillVisibleInputs(page, valuesByLabel = {}) {
-  const fields = page.locator(".customer-mobile-step-panel .customer-mobile-field");
-  const count = await fields.count();
-  for (let index = 0; index < count; index += 1) {
-    const field = fields.nth(index);
-    const label = String(await text(field.locator("span").first())).replace(/:$/, "");
-    const select = field.locator("select");
-    const input = field.locator("input");
-    const textarea = field.locator("textarea");
-
-    if (await select.count()) {
-      const options = select.locator("option");
-      const optionCount = await options.count();
-      if (optionCount > 1) {
-        await select.selectOption({ index: 1 });
-      }
-      continue;
-    }
-
-    if (await textarea.count()) {
-      await textarea.fill(valuesByLabel[label] || "Test response");
-      continue;
-    }
-
-    if (await input.count()) {
-      const inputType = await input.getAttribute("type");
-      if (inputType === "file") {
-        continue;
-      }
-      const value = valuesByLabel[label]
-        || (inputType === "date" ? "1996-01-01"
-          : inputType === "email" ? "customer@example.com"
-          : inputType === "tel" ? "08012345678"
-          : label.toLowerCase().includes("age") ? "30"
-          : label.toLowerCase().includes("blood pressure") ? "120/80"
-          : label.toLowerCase().includes("blood glucose") ? "96"
-          : "Test value");
-      await input.fill(value);
-    }
-  }
-}
-
-async function continueMtm(page) {
-  const button = page.locator(".customer-mobile-sticky-actions .customer-mobile-primary-button").first();
-  await button.scrollIntoViewIfNeeded();
-  await button.click();
-}
-
-async function goToMtmStep4(page) {
-  await fillVisibleInputs(page, {
-    Name: "Test Customer",
-    Address: "12 Adeola Odeku Street",
-    "City/State": "Lagos",
-    "Phone Number": "08012345678",
-    "Emergency Contact": "08012345679",
-  });
-  await continueMtm(page);
-
-  await page.locator("text=Step 2 of 6").waitFor({ state: "visible" });
-  await fillVisibleInputs(page, {
-    "Caregiver / Next of Kin Name": "Jane Doe",
-    Relationship: "Sibling",
-    "Phone Number": "08012345678",
-    "Email Address": "caregiver@example.com",
-    Address: "12 Adeola Odeku Street",
-  });
-  await continueMtm(page);
-
-  await page.locator("text=Step 3 of 6").waitFor({ state: "visible" });
-  await fillVisibleInputs(page, {
-    Height: "172 cm",
-    Weight: "70 kg",
-    "Blood Pressure": "120/80",
-    "Blood Glucose/HbA1c": "96",
-    "Primary Diagnosis": "Hypertension",
-    "Secondary Diagnosis": "Diabetes",
-    "Chronic Conditions": "None",
-    "Past Medical History": "None",
-    "Past Surgical History": "Appendectomy",
-    Allergies: "None",
-    "Current Medications": "Amlodipine",
-    "Clinical Monitoring Parameters": "Blood pressure",
-  });
-  await continueMtm(page);
-
-  await page.locator("text=Step 4 of 6").waitFor({ state: "visible" });
 }
 
 async function verify() {
@@ -251,141 +153,24 @@ async function verify() {
   }
 
   const { browser, page, baseUrl } = session;
-  const results = {
-    baseUrl,
-    overview: null,
-    appointments: null,
-    ivTherapy: null,
-    mtm: null,
-    appointmentActiveTab: "",
-    appointmentTabs: null,
-    appointmentList: null,
-    appointmentAddButton: null,
-  };
-
   try {
-    await page.waitForLoadState("networkidle");
-
-    results.overview = await captureHeaderMetrics(page, "overview", /overview/i);
-
-    await navigateFromDrawer(page, "Appointments");
-    await page.waitForLoadState("networkidle");
-    results.appointments = await captureHeaderMetrics(page, "appointments", /appointments/i);
-    results.appointmentActiveTab = await text(page.locator(".customer-mobile-pill-tab.active").first());
-    const appointmentTabsLocator = page.locator(".customer-mobile-appointment-tabs, .customer-mobile-pill-tabs").first();
-    await appointmentTabsLocator.waitFor({ state: "visible", timeout: 20000 });
-    results.appointmentTabs = await appointmentTabsLocator.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return {
-        top: Number(rect.top.toFixed(1)),
-        bottom: Number(rect.bottom.toFixed(1)),
-        height: Number(rect.height.toFixed(1)),
-        viewportHeight: window.innerHeight,
-      };
-    });
-    const appointmentListLocator = page.locator(".customer-mobile-visit-row, .customer-mobile-empty-state").first();
-    await appointmentListLocator.waitFor({ state: "visible", timeout: 20000 });
-    results.appointmentList = await appointmentListLocator.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return {
-        top: Number(rect.top.toFixed(1)),
-        bottom: Number(rect.bottom.toFixed(1)),
-        height: Number(rect.height.toFixed(1)),
-        viewportHeight: window.innerHeight,
-      };
-    });
-    const appointmentAddButton = page.locator(".customer-mobile-appointment-booknow-btn").first();
-    await appointmentAddButton.waitFor({ state: "visible", timeout: 20000 });
-    results.appointmentAddButton = await appointmentAddButton.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      const style = window.getComputedStyle(element);
-      return {
-        top: Number(rect.top.toFixed(1)),
-        bottom: Number(rect.bottom.toFixed(1)),
-        left: Number(rect.left.toFixed(1)),
-        right: Number(rect.right.toFixed(1)),
-        width: Number(rect.width.toFixed(1)),
-        height: Number(rect.height.toFixed(1)),
-        position: style.position,
-        zIndex: style.zIndex,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-      };
-    });
-
-    await navigateFromDrawer(page, "Medical Therapy Management");
-    await page.waitForLoadState("networkidle");
-    const mtmHeader = await captureHeaderMetrics(page, "mtm", /medical therapy management/i);
-    await goToMtmStep4(page);
-    const addButton = page.locator(".customer-mtm-floating-add-dock .customer-mobile-add-medication-button").first();
-    await addButton.waitFor({ state: "visible" });
-    await page.mouse.wheel(0, 2400);
-    await page.waitForTimeout(300);
-    await page.screenshot({ path: path.join(OUTPUT_DIR, "mtm-step4.png"), fullPage: false });
-    const addRect = await addButton.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      const dock = element.closest(".customer-mtm-floating-add-dock");
-      const dockStyle = dock ? window.getComputedStyle(dock) : null;
-      return {
-        top: rect.top,
-        bottom: rect.bottom,
-        left: rect.left,
-        right: rect.right,
-        width: rect.width,
-        height: rect.height,
-        viewportHeight: window.innerHeight,
-        dockPosition: dockStyle ? dockStyle.position : "",
-        dockBottom: dockStyle ? dockStyle.bottom : "",
-        dockTransform: dockStyle ? dockStyle.transform : "",
-        dockDisplay: dockStyle ? dockStyle.display : "",
-      };
-    });
-    results.mtm = {
-      ...mtmHeader,
-      addButtonVisible: await addButton.isVisible(),
-      addButtonTop: addRect ? Number(addRect.top.toFixed(1)) : null,
-      addButtonBottom: addRect ? Number(addRect.bottom.toFixed(1)) : null,
-      dockPosition: addRect?.dockPosition || "",
-      dockBottom: addRect?.dockBottom || "",
-      dockTransform: addRect?.dockTransform || "",
-      dockDisplay: addRect?.dockDisplay || "",
-      stickyWithinViewport: Boolean(addRect && addRect.top >= 0 && addRect.bottom <= addRect.viewportHeight),
-    };
-
-    await navigateFromDrawer(page, "IV Therapy");
-    await page.waitForLoadState("networkidle");
-    results.ivTherapy = await captureHeaderMetrics(page, "iv-therapy", /iv therapy/i);
-
+    await openProfile(page);
+    const identity = await readProfileIdentity(page);
     const failures = [];
-    for (const key of ["overview", "appointments", "ivTherapy"]) {
-      if (results[key]?.clipped) {
-        failures.push(`${key} header still appears clipped`);
-      }
+    if (!/Ncustomer/i.test(identity.welcomeText)) {
+      failures.push(`Welcome text did not resolve to Ncustomer: ${identity.welcomeText}`);
     }
-    if (!/upcoming/i.test(results.appointmentActiveTab)) {
-      failures.push(`appointments default active tab is "${results.appointmentActiveTab}" instead of Upcoming`);
+    if (identity.displayName !== "Ncustomer") {
+      failures.push(`Display name input resolved to "${identity.displayName}" instead of "Ncustomer"`);
     }
-    if (!results.appointmentTabs || results.appointmentTabs.top < 96 || results.appointmentTabs.top > 160 || results.appointmentTabs.bottom > results.appointmentTabs.viewportHeight) {
-      failures.push("appointments tabs are still clipped by the fixed mobile header");
+    if (!["ncustomer@gmail.com", "customer@example.com"].includes(identity.email)) {
+      failures.push(`Profile email resolved to "${identity.email}"`);
     }
-    if (!results.appointmentList || results.appointmentList.top < 140 || results.appointmentList.bottom > results.appointmentList.viewportHeight + 4) {
-      failures.push("appointments list is not fully starting below the mobile header and tabs");
-    }
-    if (
-      !results.appointmentAddButton
-      || results.appointmentAddButton.position !== "fixed"
-      || results.appointmentAddButton.bottom > results.appointmentAddButton.viewportHeight - 12
-      || results.appointmentAddButton.top < results.appointmentAddButton.viewportHeight - 140
-      || results.appointmentAddButton.right < results.appointmentAddButton.viewportWidth - 80
-    ) {
-      failures.push("appointments add button is not floating at the bottom-right of the viewport");
-    }
-    if (!results.mtm?.addButtonVisible || !results.mtm?.stickyWithinViewport) {
-      failures.push("MTM sticky add button did not stay within the viewport on step 4");
+    if (/baritorjohn@gmail.com/i.test(identity.email) || /baritor/i.test(identity.welcomeText) || /baritor/i.test(identity.displayName)) {
+      failures.push("Profile identity still leaked another customer's data.");
     }
 
-    console.log(JSON.stringify({ ok: failures.length === 0, failures, results }, null, 2));
-
+    console.log(JSON.stringify({ ok: failures.length === 0, baseUrl, identity, failures }, null, 2));
     if (failures.length) {
       process.exitCode = 1;
     }
@@ -398,3 +183,4 @@ verify().catch((error) => {
   console.error(JSON.stringify({ ok: false, error: error.message }, null, 2));
   process.exit(1);
 });
+

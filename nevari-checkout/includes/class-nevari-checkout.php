@@ -64,6 +64,10 @@ final class Nevari_Checkout {
     add_filter('the_content', array($this, 'replace_thankyou_page_content'), 1000);
 
     add_filter('woocommerce_checkout_fields', array($this, 'make_default_fields_optional'));
+    add_action('wp_footer', array($this, 'render_checkout_auth_modal'), 40);
+    add_action('woocommerce_checkout_process', array($this, 'require_authenticated_checkout'), 1);
+    add_filter('woocommerce_checkout_posted_data', array($this, 'enforce_authenticated_checkout_email'), 50);
+    add_action('woocommerce_checkout_create_order', array($this, 'assign_authenticated_customer_to_order'), 5, 2);
     add_action('woocommerce_checkout_process', array($this, 'validate_custom_fields'));
     add_action('woocommerce_checkout_create_order', array($this, 'save_custom_fields'), 20, 2);
 
@@ -1618,6 +1622,12 @@ public function replace_thankyou_page_content($content) {
         wp_add_inline_style('nevari-checkout', $this->css());
 
         if (function_exists('is_checkout') && is_checkout()) {
+            wp_enqueue_style('nevari-auth-widget', plugins_url('assets/css/nevari-auth-widget.css', $this->get_plugin_file()), array(), '1.0.0');
+            wp_enqueue_script('nevari-auth-widget', plugins_url('assets/js/nevari-auth-widget.js', $this->get_plugin_file()), array(), '1.0.0', true);
+            wp_localize_script('nevari-auth-widget', 'NevariAuthWidget', array(
+                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('nevari-auth-widget'),
+            ));
             $checkout_design = $this->get_checkout_design_options();
             $notice_icon = $this->get_notice_icon_character(isset($checkout_design['info_notice_icon']) ? $checkout_design['info_notice_icon'] : 'info');
             $notice_css = sprintf(
@@ -1628,6 +1638,7 @@ public function replace_thankyou_page_content($content) {
                 esc_attr($checkout_design['banner_accent_color'])
             );
             wp_add_inline_style('nevari-checkout', $notice_css);
+            wp_add_inline_style('nevari-checkout', $this->checkout_auth_modal_css());
         }
 
         wp_register_script('nevari-checkout', false, array('jquery'), '1.0.4', true);
@@ -5447,6 +5458,62 @@ body.woocommerce-checkout {
 CSS;
     }
 
+    public function require_authenticated_checkout() {
+        if (!is_user_logged_in()) {
+            wc_add_notice(__('Please sign in or create an account before placing your order.', 'woocommerce'), 'error');
+        }
+    }
+
+    public function enforce_authenticated_checkout_email($data) {
+        if (is_user_logged_in()) {
+            $user = wp_get_current_user();
+            if ($user && is_email($user->user_email)) {
+                $data['billing_email'] = sanitize_email($user->user_email);
+            }
+        }
+        return $data;
+    }
+
+    public function assign_authenticated_customer_to_order($order, $data) {
+        if (is_user_logged_in()) {
+            $user = wp_get_current_user();
+            $order->set_customer_id((int) $user->ID);
+            $order->set_billing_email(sanitize_email($user->user_email));
+        }
+    }
+
+    private function checkout_auth_modal_css() {
+        return '.nevari-checkout-auth{position:fixed;inset:0;z-index:999999;display:grid;place-items:center;padding:24px;background:rgba(5,25,58,.72);backdrop-filter:blur(8px)}.nevari-checkout-auth[hidden]{display:none}.nevari-checkout-auth__dialog{width:min(100%,560px);max-height:calc(100vh - 48px);overflow:auto;border-radius:28px;background:#fff;box-shadow:0 28px 80px rgba(0,18,52,.28)}.nevari-checkout-auth__brand{padding:28px 32px 0;color:#0b326f;font-size:14px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.nevari-checkout-auth .nevari-auth-widget{border:0;max-width:none;margin:0;padding-top:22px}.nevari-checkout-auth-lock{overflow:hidden}.nevari-checkout-auth :focus-visible{outline:3px solid rgba(36,103,190,.35);outline-offset:3px}@media(max-width:640px){.nevari-checkout-auth{padding:0;align-items:end}.nevari-checkout-auth__dialog{max-height:94vh;border-radius:28px 28px 0 0}.nevari-checkout-auth__brand{padding:24px 20px 0}}';
+    }
+
+    public function render_checkout_auth_modal() {
+        if (!function_exists('is_checkout') || !is_checkout() || is_order_received_page()) {
+            return;
+        }
+        $hidden = is_user_logged_in() ? ' hidden' : '';
+        echo '<div class=nevari-checkout-auth data-nevari-checkout-auth-modal' . $hidden . '><section class=nevari-checkout-auth__dialog role=dialog aria-modal=true><div class=nevari-checkout-auth__brand>NEVARI HEALTH</div>';
+        $this->render_checkout_auth_forms();
+        echo '</section></div>';
+        if (!is_user_logged_in()) {
+            echo '<script>document.documentElement.style.overflow=String.fromCharCode(104,105,100,100,101,110);</script>';
+        }
+    }
+
+    private function render_checkout_auth_forms() {
+        $nonce = esc_attr(wp_create_nonce('nevari-auth-widget'));
+        $return_url = esc_attr(wc_get_checkout_url());
+        echo '<div class=nevari-auth-widget><div class=nevari-auth-widget__tabs role=tablist><button type=button class=nevari-auth-widget__tab data-nevari-auth-tab=login>Login</button><button type=button class=nevari-auth-widget__tab data-nevari-auth-tab=signup>Create-account</button></div><div class=nevari-auth-widget__message role=status aria-live=polite hidden></div>';
+        echo '<div class=nevari-auth-widget__state data-nevari-auth-state=login><h2 class=nevari-auth-widget__heading>Sign-in-to-complete-checkout</h2><p class=nevari-auth-widget__description>Your-cart-and-checkout-details-will-stay-on-this-page.</p><form class=nevari-auth-widget__form data-nevari-auth-form=login><input type=hidden name=action value=nevari_auth_widget_login><input type=hidden name=nonce value=' . $nonce . '><input type=hidden name=return_url value=' . $return_url . '><input class=nevari-auth-widget__input name=username placeholder=Email-or-username required><input class=nevari-auth-widget__input type=password name=password placeholder=Password required><button class=nevari-auth-widget__button type=submit>Sign-in</button></form><button type=button class=nevari-auth-widget__link data-nevari-auth-view=reset>Forgot-password?</button></div>';
+        $this->render_checkout_registration_form($nonce, $return_url);
+        echo '</div>';
+    }
+
+    private function render_checkout_registration_form($nonce, $return_url) {
+        echo '<div class=nevari-auth-widget__state data-nevari-auth-state=signup hidden><h2 class=nevari-auth-widget__heading>Create-your-account</h2><form class=nevari-auth-widget__form data-nevari-auth-form=signup><input type=hidden name=action value=nevari_auth_widget_signup><input type=hidden name=nonce value=' . $nonce . '><input type=hidden name=return_url value=' . $return_url . '><input class=nevari-auth-widget__input name=first_name placeholder=First-name required><input class=nevari-auth-widget__input name=last_name placeholder=Last-name required><input class=nevari-auth-widget__input type=email name=email placeholder=Email required><input class=nevari-auth-widget__input type=password name=password minlength=8 placeholder=Password required><button class=nevari-auth-widget__button type=submit>Create-account</button></form></div>';
+        echo '<div class=nevari-auth-widget__state data-nevari-auth-state=reset hidden><h2 class=nevari-auth-widget__heading>Reset-password</h2><form class=nevari-auth-widget__form data-nevari-auth-form=reset><input type=hidden name=action value=nevari_auth_widget_reset_password><input type=hidden name=nonce value=' . $nonce . '><input class=nevari-auth-widget__input name=username placeholder=Email-or-username required><button class=nevari-auth-widget__button type=submit>Send-reset-instructions</button></form><button type=button class=nevari-auth-widget__link data-nevari-auth-view=login>Back-to-login</button></div>';
+        echo '<div class=nevari-auth-widget__state data-nevari-auth-state=verify hidden><h2 class=nevari-auth-widget__heading>Verify-your-account</h2><p class=nevari-auth-widget__description data-nevari-auth-masked-email></p><form class=nevari-auth-widget__form data-nevari-auth-form=verify><input type=hidden name=action value=nevari_auth_widget_verify_code><input type=hidden name=nonce value=' . $nonce . '><input type=hidden name=challenge_id data-nevari-auth-challenge><input type=hidden name=frontend_type data-nevari-auth-frontend-type><input type=hidden name=sso_transaction_id data-nevari-auth-sso-transaction><input type=hidden name=return_url value=' . $return_url . '><input class=nevari-auth-widget__input type=text name=code inputmode=numeric pattern=[0-9]{6} maxlength=6 placeholder=Six-digit-code required><button class=nevari-auth-widget__button type=submit>Verify</button></form><button type=button class=nevari-auth-widget__link data-nevari-auth-resend>Resend-code</button></div>';
+    }
+
     public function ajax_auth_widget_login() {
         $this->verify_auth_widget_ajax_request();
 
@@ -5480,6 +5547,7 @@ CSS;
 
         wp_set_current_user((int) $user->ID);
         wp_set_auth_cookie((int) $user->ID, $remember, is_ssl());
+        do_action('nevari_customer_authenticated', (int) $user->ID);
 
         $redirect_url = $this->auth_widget_redirect_url($user, $return_url, $fallback_redirect_path);
 

@@ -53,6 +53,10 @@ const pages = ["overview", "orders", "appointment", "request", "therapy", "iv-th
 const CUSTOMER_DASHBOARD_REFRESH_MS = 60_000;
 const CUSTOMER_MOBILE_BREAKPOINT = 960;
 
+function customerDashboardPagePath(page) {
+  return page === "overview" ? "/dashboard" : `/dashboard/${encodeURIComponent(page)}`;
+}
+
 function isCustomerMobileViewport() {
   if (typeof window === "undefined") {
     return true;
@@ -2026,6 +2030,12 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     setPage("search");
   }
 
+  function navigateToPage(nextPage) {
+    const safePage = pages.includes(nextPage) ? nextPage : "overview";
+    setPage(safePage);
+    router.push(customerDashboardPagePath(safePage));
+  }
+
   function closeDesktopSearch() {
     setDesktopSearchQuery("");
     setPage(desktopSearchPreviousPage || "overview");
@@ -2522,7 +2532,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       title="Nevari Patient"
       pages={pages}
       active={page}
-      onPageChange={setPage}
+      onPageChange={navigateToPage}
       pageBodyClassName={dashboardRevealClassName}
       pageLabels={pageLabels}
       renderNavIcon={renderCustomerNavIcon}
@@ -2533,11 +2543,11 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         role="button"
         tabIndex={0}
         aria-label="Open profile settings"
-        onClick={() => setPage("profile")}
+        onClick={() => navigateToPage("profile")}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            setPage("profile");
+            navigateToPage("profile");
           }
         }}
       >
@@ -2600,7 +2610,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         session={session}
         setSession={setSession}
         page={page}
-        setPage={setPage}
+        setPage={navigateToPage}
         showSkeleton={false}
         state={state}
         stateError={orderActionError || state.error}
@@ -2671,7 +2681,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       {!showSkeleton && page === "orders" ? <CustomerMobileDashboard
         session={session}
         page={page}
-        setPage={setPage}
+        setPage={navigateToPage}
         showSkeleton={false}
         state={state}
         stateError={orderActionError || state.error}
@@ -2858,7 +2868,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         session={session}
         setSession={setSession}
         page={page}
-        setPage={setPage}
+        setPage={navigateToPage}
         showSkeleton={false}
         state={state}
         stateError={orderActionError || state.error}
@@ -2927,7 +2937,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       {!showSkeleton && page === "therapy" ? <CustomerMobileDashboard
         session={session}
         page={page}
-        setPage={setPage}
+        setPage={navigateToPage}
         showSkeleton={showSkeleton}
         state={state}
         stateError={orderActionError || state.error}
@@ -2996,7 +3006,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       {!showSkeleton && page === "iv-therapy" ? <CustomerMobileDashboard
         session={session}
         page={page}
-        setPage={setPage}
+        setPage={navigateToPage}
         showSkeleton={showSkeleton}
         state={state}
         stateError={orderActionError || state.error}
@@ -3089,7 +3099,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       <CustomerMobileDashboard
         session={session}
         page={page}
-        setPage={setPage}
+        setPage={navigateToPage}
         showSkeleton={showSkeleton}
         state={state}
         stateError={orderActionError || state.error}
@@ -4478,20 +4488,81 @@ function AvailableTimePage({ doctor, journey, onBack, onUpdateAvailabilityDate, 
 }
 
 function MtmAvailabilityPage({ context, selectedDate, selectedSlot, loading, error, busy, storeTimeZone, onBack, onUpdateDate, onSelectSlot, onRefresh, onReserve }) {
-  const slots = Array.isArray(context?.available_slots) ? context.available_slots.filter((slot) => String(slot.start_at || "").slice(0, 10) === selectedDate) : [];
+  const allSlots = Array.isArray(context?.available_slots) ? context.available_slots : [];
+  const initialDate = parseDateKey(selectedDate || localDateKey(new Date()));
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date(initialDate.getFullYear(), initialDate.getMonth(), 1));
+  const slots = allSlots.filter((slot) => String(slot.start_at || "").slice(0, 10) === selectedDate);
+  const availableDates = useMemo(() => new Set(allSlots.map((slot) => String(slot.start_at || "").slice(0, 10)).filter(Boolean)), [allSlots]);
+  const daysInMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate();
+  const leadingDays = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1).getDay();
+  const calendarCells = Array.from({ length: leadingDays + daysInMonth }, (_, index) => {
+    const day = index - leadingDays + 1;
+    return day > 0 ? day : null;
+  });
+
+  useEffect(() => {
+    const nextDate = parseDateKey(selectedDate || localDateKey(new Date()));
+    setCalendarMonth((current) => (
+      current.getFullYear() === nextDate.getFullYear() && current.getMonth() === nextDate.getMonth()
+        ? current
+        : new Date(nextDate.getFullYear(), nextDate.getMonth(), 1)
+    ));
+  }, [selectedDate]);
+
   return <section className="appointment-mobile-sheet customer-mtm-availability-screen">
-    <div className="appointment-mobile-header"><button className="appointment-circle-button" type="button" aria-label="Back to review details" onClick={onBack}>←</button></div>
-    <AvailabilitySlotPicker providerName={context?.pharmacist_name || "Choose your preferred time"} selectedDate={selectedDate} slots={slots} selectedSlot={selectedSlot} loading={loading} error={error} onUpdateDate={onUpdateDate} onSelectSlot={onSelectSlot} storeTimeZone={storeTimeZone} emptyLabel="No pharmacist is available" />
-    <div className="appointment-summary-card">
-      <h3>Selected availability</h3>
-      <div className="appointment-summary-row"><span>Date</span><strong>{friendlyDateFromDateKey(selectedDate, storeTimeZone)}</strong></div>
-      <div className="appointment-summary-row"><span>Time</span><strong>{selectedSlot ? formatTime(selectedSlot.start_at, storeTimeZone) : "Select a time"}</strong></div>
-      <div className="appointment-summary-row"><span>Duration</span><strong>30 minutes</strong></div>
-      <button className="pill-button" type="button" disabled={busy} onClick={onRefresh}>Refresh availability</button>
+    <button className="customer-mobile-back-link customer-mtm-availability-back" type="button" onClick={onBack}>
+      <MobileIcon name="arrow-left" />
+      <span>Go back</span>
+    </button>
+    <div className="customer-mobile-book-card customer-mobile-book-card-shot customer-mtm-calendar-card">
+      <div className="customer-mobile-book-month">
+        <strong>{calendarMonth.toLocaleString("en-US", { month: "long", year: "numeric" })}</strong>
+        <div className="customer-mobile-book-arrows">
+          <button type="button" aria-label="Previous month" onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}><MobileIcon name="arrow-left" /></button>
+          <button type="button" aria-label="Next month" onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}><MobileIcon name="arrow-right" /></button>
+        </div>
+      </div>
+      <div className="customer-mobile-calendar-head">
+        {["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((label) => <span key={label}>{label}</span>)}
+      </div>
+      <div className="customer-mobile-calendar-grid">
+        {calendarCells.map((day, index) => {
+          if (!day) return <span key={`mtm-calendar-blank-${index}`} />;
+          const dateValue = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          const unavailable = !availableDates.has(dateValue);
+          return <button
+            key={dateValue}
+            type="button"
+            className={`customer-mobile-calendar-day ${selectedDate === dateValue ? "active" : ""} ${unavailable ? "is-past" : ""}`}
+            disabled={unavailable || busy}
+            aria-label={`Select ${friendlyDateFromDateKey(dateValue, storeTimeZone)}`}
+            onClick={() => {
+              onUpdateDate(dateValue);
+              const firstSlot = allSlots.find((slot) => String(slot.start_at || "").slice(0, 10) === dateValue);
+              onSelectSlot(firstSlot || null);
+            }}
+          >
+            {day}
+          </button>;
+        })}
+      </div>
+      <div className="customer-mobile-time-row customer-mobile-time-row-shot">
+        <strong>Time</strong>
+        <select
+          aria-label="Select a time"
+          value={selectedSlot?.start_at || ""}
+          disabled={loading || busy || !slots.length}
+          onChange={(event) => onSelectSlot(slots.find((slot) => slot.start_at === event.target.value) || null)}
+        >
+          <option value="">{loading ? "Checking availability..." : slots.length ? "Select a time" : "No time available"}</option>
+          {slots.map((slot) => <option key={slot.start_at} value={slot.start_at}>{formatTime(slot.start_at, storeTimeZone)}</option>)}
+        </select>
+      </div>
+      {error ? <p className="customer-mobile-field-error" role="alert">{error}</p> : null}
     </div>
     {busy ? <div className="customer-mtm-pharmacist-search" role="status" aria-live="polite"><BrandedSpinner label="Finding available Pharmacists" /><span>Finding available Pharmacists</span></div> : null}
     <button className="appointment-primary-cta" type="button" disabled={!selectedSlot || loading || busy} onClick={onReserve}>Confirm Availability</button>
-    <button className="customer-mobile-secondary-button" type="button" disabled={busy} onClick={onBack}>Go Back</button>
+    <button className="customer-mobile-secondary-button" type="button" disabled={busy} onClick={onRefresh}>Refresh availability</button>
   </section>;
 }
 
@@ -4515,6 +4586,20 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
   const canProceedToPayment = canRefreshPayment && Boolean(paymentUrl);
   const heading = hasError ? "Appointment unavailable" : paymentPending ? "Appointment reserved" : "Appointment ready";
   const subtitle = hasError ? "We could not complete this booking step. Review the error below and try again." : paymentPending ? "Complete payment to confirm your consultation." : "Your booking details are ready.";
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
+  useEffect(() => {
+    const reservedUntil = String(appointment?.reserved_until || "").trim();
+    if (!paymentPending || !reservedUntil) {
+      setRemainingSeconds(0);
+      return undefined;
+    }
+    const expiry = Date.parse(`${reservedUntil.replace(" ", "T")}Z`);
+    const updateCountdown = () => setRemainingSeconds(Math.max(0, Math.ceil((expiry - Date.now()) / 1000)));
+    updateCountdown();
+    const interval = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(interval);
+  }, [appointment?.reserved_until, paymentPending]);
+  const countdown = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`;
     useEffect(() => {
       if (!paymentPending || !appointment?.id || journey.loading) {
         return;
@@ -4545,11 +4630,11 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
   return <div className="customer-confirmation-modal customer-appointment-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="appointment-checkout-title">
     <section className={`customer-flow-status-page customer-flow-status-page-${statusTone} customer-flow-status-page-modal`}>
       <div className={`customer-flow-status-card customer-flow-status-card-checkout is-${statusTone}`}>
-      <button className="customer-flow-status-back" type="button" aria-label="Go back" onClick={onBack}>
-        <MobileIcon name="arrow-left" />
-      </button>
       <header className="customer-flow-status-head">
         <CustomerStatusIcon tone={statusTone} type={hasError ? "error" : paymentPending ? "warning" : "check"} />
+        {paymentPending && !hasError ? <div className="customer-reservation-countdown" role="timer" aria-live="off">
+          <strong>{countdown}</strong>
+        </div> : null}
         <h2 id="appointment-checkout-title">{heading}</h2>
         <p>{subtitle}</p>
       </header>
@@ -4559,20 +4644,10 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
           <span className="customer-flow-amount-label">Amount due</span>
           <strong className="customer-flow-amount-value">{appointmentAmount}</strong>
         </div>
-        <CustomerStatusPill tone="warning">Pending payment</CustomerStatusPill>
+        <CustomerStatusPill tone="processing">Pending payment</CustomerStatusPill>
       </section> : null}
 
       <section className="customer-flow-status-panel customer-flow-status-panel-soft" aria-label="Appointment details">
-        <div className="customer-flow-status-panel-head">
-          <div className="customer-flow-status-panel-icon" aria-hidden="true">
-            <MobileIcon name="calendar" />
-          </div>
-          
-          
-          <CustomerStatusPill tone={hasError ? "error" : paymentPending ? "warning" : appointmentChipTone(appointment)}>
-            {hasError ? "Failed" : paymentPending ? "Pending" : appointmentChipLabel(appointment)}
-          </CustomerStatusPill>
-        </div>
         <CustomerStatusKeyValueList rows={[
           { label: "Doctor", value: doctorName },
           { label: "Date", value: appointmentDate },
@@ -4581,9 +4656,6 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
         ]} />
       </section>
 
-      {paymentPending && !hasError ? <div className="customer-flow-status-note is-warning">
-        <p>This booking expires after 10 minutes if payment is not completed.</p>
-      </div> : null}
       {pendingRefreshMessage ? <div className="customer-flow-status-note">
         <p>Payment confirmation will appear automatically once the gateway webhook is received. You can still check manually if needed.</p>
       </div> : null}
@@ -4592,10 +4664,10 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
       </div> : null}
 
       <CustomerStatusActions>
-        {canProceedToPayment ? <a className="customer-mobile-primary-button customer-flow-status-link" href={paymentUrl} target="_blank" rel="noreferrer">{!livePaymentsEnabled && paymentUrl === "#demo-payment" ? "Open demo payment" : "Proceed to payment"}</a> : null}
-        {canRefreshPayment ? <button className="customer-mobile-secondary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? <BrandedSpinner className="button-spinner" label="Checking payment status" /> : "Check payment status"}</button> : null}
+        {canProceedToPayment ? <a className="customer-mobile-primary-button customer-flow-status-link" href={paymentUrl}>{!livePaymentsEnabled && paymentUrl === "#demo-payment" ? "Open demo payment" : "Proceed to payment"}</a> : null}
+        {canRefreshPayment ? <button className="customer-mobile-secondary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? <BrandedSpinner className="button-spinner" label="Checking payment status" /> : "I have made payment"}</button> : null}
         {!paymentPending && hasAppointment ? <button className="customer-mobile-primary-button" type="button" onClick={onRefreshConfirmation} disabled={journey.loading}>{journey.loading ? <BrandedSpinner className="button-spinner" label="Loading confirmation" /> : "View confirmation"}</button> : null}
-        {canCancelAppointment ? <button className="customer-mobile-secondary-button customer-flow-status-danger-button" type="button" onClick={onCancelCheckoutAppointment} disabled={journey.loading}>Cancel appointment</button> : null}
+        {canCancelAppointment ? <button className="customer-mobile-secondary-button customer-flow-status-danger-button" type="button" onClick={onCancelCheckoutAppointment} disabled={journey.loading}>Cancel Appointment</button> : null}
       </CustomerStatusActions>
 
       <CustomerStatusSecurityNote tone={statusTone === "error" ? "warning" : "success"}>
@@ -7164,6 +7236,7 @@ function CustomerMobileDashboard({
   const [mtmBookingError, setMtmBookingError] = useState("");
   const [mtmSelectedRequestId, setMtmSelectedRequestId] = useState(String(initialMtmRequestId || ""));
   const [mtmHistoryModalRequestId, setMtmHistoryModalRequestId] = useState(String(initialMtmRequestId || ""));
+  const mtmDeepLinkHandledRef = useRef(false);
   const [mtmStepErrors, setMtmStepErrors] = useState({});
   const [mtmTouchedFields, setMtmTouchedFields] = useState({});
   const [mtmShowErrors, setMtmShowErrors] = useState(false);
@@ -7316,7 +7389,6 @@ function CustomerMobileDashboard({
     if (initialPage !== "therapy") {
       return;
     }
-    setPage("therapy");
     setMtmTab("history");
     if (initialMtmRequestId) {
       setMtmSelectedRequestId(String(initialMtmRequestId));
@@ -7324,7 +7396,7 @@ function CustomerMobileDashboard({
   }, [initialMtmRequestId, initialPage]);
 
   useEffect(() => {
-    if (!session || typeof window === "undefined") {
+    if (!session || mtmDeepLinkHandledRef.current || typeof window === "undefined") {
       return;
     }
     const params = new URLSearchParams(window.location.search);
@@ -7332,6 +7404,7 @@ function CustomerMobileDashboard({
     if (!mtmRequestId) {
       return;
     }
+    mtmDeepLinkHandledRef.current = true;
     if (page !== "therapy") {
       goToPage("therapy");
       return;

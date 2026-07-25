@@ -1,0 +1,161 @@
+.nevari-auth-widget {
+    --nevari-auth-card-bg: #ffffff;
+    --nevari-auth-border: #d9e1ea;
+    --nevari-auth-text: #17324d;
+    --nevari-auth-muted: #667085;
+    --nevari-auth-primary: #17496c;
+    --nevari-auth-primary-contrast: #ffffff;
+    --nevari-auth-input-bg: #ffffff;
+    --nevari-auth-input-border: #cfd8e3;
+    --nevari-auth-radius: 20px;
+    background: var(--nevari-auth-card-bg);
+    border: 1px solid var(--nevari-auth-border);
+    border-radius: var(--nevari-auth-radius);
+    color: var(--nevari-auth-text);
+    margin: 0 auto;
+    max-width: 520px;
+    padding: 32px;
+}
+
+.nevari-auth-widget__tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.nevari-auth-widget__tab,
+.nevari-auth-widget__button,
+.nevari-auth-widget__link {
+    appearance: none;
+    border: 0;
+    cursor: pointer;
+    font: inherit;
+}
+
+.nevari-auth-widget__tab {
+    background: transparent;
+    border-bottom: 2px solid transparent;
+    color: var(--nevari-auth-muted);
+    padding: 8px 2px;
+}
+
+.nevari-auth-widget__tab.is-active {
+    border-color: var(--nevari-auth-primary);
+    color: var(--nevari-auth-primary);
+}
+
+.nevari-auth-widget__heading {
+    color: var(--nevari-auth-text);
+    margin: 0 0 8px;
+}
+
+.nevari-auth-widget__description,
+.nevari-auth-widget__verify-meta {
+    color: var(--nevari-auth-muted);
+    margin: 0 0 18px;
+}
+
+.nevari-auth-widget__message {
+    border-radius: 14px;
+    margin-bottom: 16px;
+    padding: 12px 14px;
+}
+
+.nevari-auth-widget__message.is-error {
+    background: #fff1f0;
+    color: #b42318;
+}
+
+.nevari-auth-widget__message.is-success {
+    background: #edf7ed;
+    color: #166534;
+}
+
+.nevari-auth-widget__form {
+    display: grid;
+    gap: 14px;
+}
+
+.nevari-auth-widget__field {
+    display: grid;
+    gap: 8px;
+}
+
+.nevari-auth-widget__label {
+    color: var(--nevari-auth-text);
+    font-size: 14px;
+}
+
+.nevari-auth-widget__input {
+    background: var(--nevari-auth-input-bg);
+    border: 1px solid var(--nevari-auth-input-border);
+    border-radius: 14px;
+    color: var(--nevari-auth-text);
+    min-height: 48px;
+    padding: 12px 14px;
+    width: 100%;
+}
+
+.nevari-auth-widget__input--code {
+    letter-spacing: 0.24em;
+    text-align: center;
+}
+
+.nevari-auth-widget__checkbox {
+    align-items: center;
+    color: var(--nevari-auth-muted);
+    display: inline-flex;
+    gap: 8px;
+}
+
+.nevari-auth-widget__button {
+    border-radius: 999px;
+    display: inline-flex;
+    justify-content: center;
+    min-height: 48px;
+    padding: 12px 18px;
+    text-decoration: none;
+    transition: opacity 0.2s ease;
+}
+
+.nevari-auth-widget__button:disabled,
+.nevari-auth-widget__link:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+
+.nevari-auth-widget__button--primary {
+    background: var(--nevari-auth-primary);
+    color: var(--nevari-auth-primary-contrast);
+}
+
+.nevari-auth-widget__button--ghost {
+    background: transparent;
+    border: 1px solid var(--nevari-auth-input-border);
+    color: var(--nevari-auth-primary);
+}
+
+.nevari-auth-widget__link {
+    background: transparent;
+    color: var(--nevari-auth-primary);
+    padding: 0;
+    text-align: left;
+}
+
+.nevari-auth-widget__inline-actions,
+.nevari-auth-widget__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+@media (max-width: 640px) {
+    .nevari-auth-widget {
+        padding: 24px 18px;
+    }
+
+    .nevari-auth-widget__actions {
+        flex-direction: column;
+    }
+}

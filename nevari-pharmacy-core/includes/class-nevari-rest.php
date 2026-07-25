@@ -5170,7 +5170,7 @@ final class Nevari_Rest {
             return Nevari_Helpers::error('appointment_slot_unavailable', 'This appointment slot is no longer available.', 409);
         }
         $now = Nevari_Helpers::now();
-        $reserved_until = gmdate('Y-m-d H:i:s', time() + (30 * MINUTE_IN_SECONDS));
+        $reserved_until = gmdate('Y-m-d H:i:s', time() + (5 * MINUTE_IN_SECONDS));
         $wpdb->insert($table, [
             'patient_user_id' => $patient_id,
             'doctor_user_id' => $doctor_id,
@@ -5248,7 +5248,7 @@ final class Nevari_Rest {
                     'invoice_number' => (string) $invoice->invoice_number,
                 ],
                 'body_html' => sprintf(
-                    '<p>Hello %1$s,</p><p>Your appointment with %2$s is pending payment.</p><p>Your appointment has been created for %3$s at %4$s.</p><p><strong>Reference:</strong> %5$s<br /><strong>Invoice:</strong> %6$s</p><p>This booking expires after 10 minutes if payment is not completed.</p><div style="margin:24px 0 12px;"><a href="%7$s" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:12px 22px;border-radius:999px;background:#0E2955;color:#ffffff;text-decoration:none;font-weight:700;">Pay Now</a></div><p>You can also view this booking inside your Nevari dashboard.</p>',
+                    '<p>Hello %1$s,</p><p>Your appointment with %2$s is pending payment.</p><p>Your appointment has been created for %3$s at %4$s.</p><p><strong>Reference:</strong> %5$s<br /><strong>Invoice:</strong> %6$s</p><p>This booking expires after 5 minutes if payment is not completed.</p><div style="margin:24px 0 12px;"><a href="%7$s" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:12px 22px;border-radius:999px;background:#0E2955;color:#ffffff;text-decoration:none;font-weight:700;">Pay Now</a></div><p>You can also view this booking inside your Nevari dashboard.</p>',
                     esc_html($patient->display_name ?: 'Patient'),
                     esc_html($doctor ? $doctor->display_name : 'Doctor'),
                     esc_html($appointment_date),
@@ -5258,7 +5258,7 @@ final class Nevari_Rest {
                     esc_url($payment_link)
                 ),
                 'body_text' => sprintf(
-                    'Hello %1$s, your appointment with %2$s is pending payment for %3$s at %4$s. Reference: %5$s. Invoice: %6$s. This booking expires after 10 minutes if unpaid. Pay now: %7$s',
+                    'Hello %1$s, your appointment with %2$s is pending payment for %3$s at %4$s. Reference: %5$s. Invoice: %6$s. This booking expires after 5 minutes if unpaid. Pay now: %7$s',
                     $patient->display_name ?: 'Patient',
                     $doctor ? $doctor->display_name : 'Doctor',
                     $appointment_date,

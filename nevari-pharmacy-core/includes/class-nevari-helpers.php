@@ -1130,7 +1130,19 @@ final class Nevari_Helpers {
     }
 
     public static function payment_frontend_origin(): string {
-        return rtrim(self::shared_frontend_base_url(), '/');
+        $stored = self::normalize_frontend_base_url((string) get_option('nevari_shared_frontend_base_url', ''));
+        if ($stored !== '') {
+            return $stored;
+        }
+
+        foreach (['NEVARI_SHARED_FRONTEND_BASE_URL', 'NEVARI_FRONTEND_BASE_URL', 'NEXT_PUBLIC_NEVARI_BASE_URL'] as $env_key) {
+            $env_value = self::normalize_frontend_base_url((string) getenv($env_key));
+            if ($env_value !== '') {
+                return $env_value;
+            }
+        }
+
+        return '';
     }
 
     public static function shared_frontend_base_url(): string {
@@ -1180,12 +1192,16 @@ final class Nevari_Helpers {
     }
 
     public static function appointment_invoice_payment_url($invoice): string {
+        $payment_origin = self::payment_frontend_origin();
+        if ($payment_origin === '') {
+            return '';
+        }
         $invoice_number = isset($invoice->invoice_number) && $invoice->invoice_number
             ? (string) $invoice->invoice_number
             : self::appointment_invoice_number((int) ($invoice->id ?? 0));
         return add_query_arg(
             ['payment_token' => self::appointment_invoice_payment_token($invoice)],
-            self::payment_frontend_origin() . '/pay/' . rawurlencode($invoice_number)
+            $payment_origin . '/pay/' . rawurlencode($invoice_number)
         );
     }
 
@@ -1206,9 +1222,13 @@ final class Nevari_Helpers {
     }
 
     public static function order_invoice_payment_url($order): string {
+        $payment_origin = self::payment_frontend_origin();
+        if ($payment_origin === '') {
+            return '';
+        }
         return add_query_arg(
             ['payment_token' => self::order_invoice_payment_token($order)],
-            self::payment_frontend_origin() . '/pay/' . rawurlencode(self::order_invoice_number($order))
+            $payment_origin . '/pay/' . rawurlencode(self::order_invoice_number($order))
         );
     }
 

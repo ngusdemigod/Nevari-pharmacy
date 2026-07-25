@@ -107,6 +107,19 @@
             setMessage(widget, payload.message || 'Success.', 'success');
         }
 
+        var checkoutModal = widget.closest('[data-nevari-checkout-auth-modal]');
+        if (checkoutModal && (formType === 'verify' || formType === 'login' || formType === 'signup')) {
+            checkoutModal.hidden = true;
+            document.documentElement.style.overflow = '';
+            document.documentElement.classList.remove('nevari-checkout-auth-lock');
+            document.body.classList.remove('nevari-checkout-auth-lock');
+            document.dispatchEvent(new CustomEvent('nevari:checkout-authenticated'));
+            if (window.jQuery) {
+                window.jQuery(document.body).trigger('update_checkout');
+            }
+            return;
+        }
+
         if (payload.redirect_url) {
             window.location.href = payload.redirect_url;
         }
@@ -237,5 +250,15 @@
 
     document.addEventListener('DOMContentLoaded', function () {
         document.querySelectorAll('.nevari-auth-widget').forEach(initWidget);
+        if (window.jQuery) {
+            window.jQuery(document.body).on('checkout_error', function () {
+                var modal = document.querySelector('[data-nevari-checkout-auth-modal]');
+                var notices = document.querySelector('.woocommerce-error');
+                if (modal && notices && /sign in|create an account/i.test(notices.textContent || '')) {
+                    modal.hidden = false;
+                    document.documentElement.style.overflow = 'hidden';
+                }
+            });
+        }
     });
 })();

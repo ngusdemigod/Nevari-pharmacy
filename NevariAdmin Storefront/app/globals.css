@@ -249,6 +249,23 @@
   box-shadow: none;
 }
 
+.customer-mtm-availability-screen {
+  width: min(100%, 620px);
+  margin-inline: auto;
+  gap: 22px;
+  background: #ffffff;
+}
+
+.customer-mtm-availability-back {
+  justify-self: start;
+  margin: 0;
+}
+
+.customer-mtm-calendar-card {
+  width: 100%;
+  margin: 0;
+}
+
 .customer-mtm-pharmacist-search {
   min-height: 76px;
   display: grid;
@@ -17103,6 +17120,98 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   position: relative;
 }
 
+.customer-flow-status-card-checkout {
+  max-width: 560px;
+  gap: 22px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  font-family: "Product Sans", "Google Sans", Arial, sans-serif;
+}
+
+.customer-flow-status-card-checkout .customer-flow-status-head {
+  gap: 10px;
+}
+
+.customer-flow-status-card-checkout .customer-flow-status-head h2 {
+  font-size: 24px;
+  font-weight: 300;
+  line-height: 1.18;
+  letter-spacing: -0.025em;
+}
+
+.customer-flow-status-card-checkout .customer-flow-status-head p {
+  font-size: 16px;
+}
+
+.customer-flow-status-card-checkout .customer-flow-status-icon {
+  border: 0;
+  box-shadow: none;
+}
+
+.customer-reservation-countdown {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  color: #09255a;
+}
+
+.customer-reservation-countdown strong {
+  font-size: 24px;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+
+.customer-flow-status-card-checkout .customer-flow-amount-card {
+  border: 0;
+  border-radius: 20px;
+  background: #e2effc;
+}
+
+.customer-flow-status-card-checkout .customer-flow-status-panel {
+  border: 0;
+  border-radius: 0;
+  background: #e2effc;
+  padding: 0;
+}
+
+.customer-flow-status-card-checkout .customer-flow-status-actions {
+  gap: 12px;
+}
+
+.customer-flow-status-card-checkout .customer-flow-status-actions :is(.customer-mobile-primary-button, .customer-mobile-secondary-button) {
+  min-height: 52px;
+  border-radius: 999px;
+  box-shadow: none;
+  font-family: "Product Sans", "Google Sans", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 300;
+}
+
+.customer-flow-status-card-checkout .customer-flow-status-danger-button {
+  border-color: #e9b9b9;
+}
+
+.customer-flow-status-card-checkout .customer-flow-status-icon.is-warning,
+.customer-flow-status-card-checkout .customer-flow-status-pill.is-processing {
+  background: #e2effc;
+  color: #0c3270;
+}
+
+.customer-flow-status-card-checkout .customer-flow-status-pill.is-processing {
+  border-color: #0c3270;
+}
+
+.customer-flow-status-card-checkout .customer-flow-amount-value {
+  font-size: clamp(24px, 7vw, 30px);
+  white-space: nowrap;
+}
+
+.customer-flow-status-page-warning {
+  background: #ffffff;
+}
+
 .customer-flow-status-card-confirmed {
   width: min(100%, 500px);
   max-width: 500px;
@@ -32339,6 +32448,40 @@ body .customer-mobile-panel>.subscription-manage-card .subscription-feedback.err
   .nevari-subscription-mobile-only {
     display: block;
   }
+}
+
+/* Appointment reservation is a flat, white payment step rather than a raised modal. */
+.customer-appointment-confirmation-modal:has(.customer-flow-status-card-checkout) {
+  padding: 0 !important;
+  background: #ffffff !important;
+  backdrop-filter: none !important;
+}
+
+.customer-appointment-confirmation-modal .customer-flow-status-card-checkout {
+  width: min(100%, 560px) !important;
+  max-width: 560px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.customer-appointment-confirmation-modal .customer-flow-status-card-checkout .customer-flow-status-panel {
+  padding: 0 !important;
+}
+
+.customer-appointment-confirmation-modal .customer-flow-status-card-checkout .customer-flow-status-actions {
+  grid-template-columns: 1fr !important;
+  gap: 12px !important;
+}
+
+.customer-appointment-confirmation-modal .customer-flow-status-card-checkout .customer-flow-status-actions :is(.customer-mobile-primary-button,
+  .customer-mobile-secondary-button,
+  .customer-flow-status-link) {
+  min-height: 52px !important;
+  border-radius: 9999px !important;
+  padding: 0 20px !important;
+  font-size: 14px !important;
+  font-weight: 300 !important;
 }
 
 @media (max-width: 720px) {

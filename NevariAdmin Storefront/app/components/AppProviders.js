@@ -23,6 +23,7 @@ function PostHogPageView() {
 export default function AppProviders({ children }) {
   const activeModalRef = useRef(null);
   const previousFocusRef = useRef(null);
+  const authRedirectStartedRef = useRef(false);
 
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
@@ -49,17 +50,36 @@ export default function AppProviders({ children }) {
       const isMutating = !["GET", "HEAD", "OPTIONS"].includes(method);
       const isSameOriginApi = requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith("/api/");
 
-      if (!isMutating || !isSameOriginApi) {
-        return originalFetch(input, init);
-      }
-
-      const csrf = readCookie("nevari_csrf");
       const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined) || {});
-      if (csrf && !headers.has("x-nevari-csrf")) {
-        headers.set("x-nevari-csrf", csrf);
+      if (isMutating && isSameOriginApi) {
+        const csrf = readCookie("nevari_csrf");
+        if (csrf && !headers.has("x-nevari-csrf")) {
+          headers.set("x-nevari-csrf", csrf);
+        }
       }
 
-      return originalFetch(input, { ...init, headers });
+      const response = await originalFetch(input, { ...init, headers });
+      const isAuthRoute = requestUrl.pathname.startsWith("/api/auth/")
+        || requestUrl.pathname === "/api/nevari-proxy" && /\/auth\//.test(requestUrl.search);
+      const isLoginPage = /\/login\/?$/.test(window.location.pathname);
+      if (isSameOriginApi && response.status === 401 && !isAuthRoute && !isLoginPage && !authRedirectStartedRef.current) {
+        authRedirectStartedRef.current = true;
+        const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        const loginPath = window.location.pathname.startsWith("/admin/doctor")
+          ? "/admin/doctor/login"
+          : window.location.pathname.startsWith("/admin/pharmacist")
+            ? "/admin/pharmacist/login"
+            : window.location.pathname.startsWith("/admin")
+              ? "/admin/storefront/login"
+              : "/login";
+        await originalFetch("/api/auth/continuation", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ path: currentPath })
+        }).catch(() => null);
+        window.location.replace(`${loginPath}?expired=1`);
+      }
+      return response;
     };
 
     return () => {

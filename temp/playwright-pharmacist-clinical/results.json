@@ -1,0 +1,210 @@
+[
+  {
+    "width": 375,
+    "navLabels": [
+      "Overview",
+      "MTM",
+      "IV Therapy",
+      "Availability"
+    ],
+    "requestedPaths": [
+      "/pharmacist/mtm-requests",
+      "/staff/care-requests/iv-therapy",
+      "/pharmacist/availability",
+      "/pharmacist/mtm-requests/31/pharmacy-products",
+      "/pharmacist/mtm-requests/31/attach-products",
+      "/staff/care-requests/iv-therapy/18"
+    ],
+    "mutations": [
+      {
+        "path": "/pharmacist/mtm-requests/31/attach-products",
+        "method": "POST",
+        "body": {
+          "items": [
+            {
+              "product_id": 7,
+              "name": "Vitamin Support",
+              "quantity": 1
+            }
+          ]
+        }
+      },
+      {
+        "path": "/pharmacist/availability",
+        "method": "PATCH",
+        "body": {
+          "availability": {
+            "sunday": [],
+            "monday": [
+              {
+                "start": "09:00",
+                "end": "10:00"
+              }
+            ],
+            "tuesday": [],
+            "wednesday": [],
+            "thursday": [],
+            "friday": [],
+            "saturday": []
+          }
+        }
+      }
+    ]
+  },
+  {
+    "width": 768,
+    "navLabels": [
+      "Overview",
+      "MTM",
+      "IV Therapy",
+      "Availability"
+    ],
+    "requestedPaths": [
+      "/pharmacist/mtm-requests",
+      "/staff/care-requests/iv-therapy",
+      "/pharmacist/availability",
+      "/pharmacist/mtm-requests/31/pharmacy-products",
+      "/pharmacist/mtm-requests/31/attach-products",
+      "/staff/care-requests/iv-therapy/18"
+    ],
+    "mutations": [
+      {
+        "path": "/pharmacist/mtm-requests/31/attach-products",
+        "method": "POST",
+        "body": {
+          "items": [
+            {
+              "product_id": 7,
+              "name": "Vitamin Support",
+              "quantity": 1
+            }
+          ]
+        }
+      },
+      {
+        "path": "/pharmacist/availability",
+        "method": "PATCH",
+        "body": {
+          "availability": {
+            "sunday": [],
+            "monday": [
+              {
+                "start": "09:00",
+                "end": "10:00"
+              }
+            ],
+            "tuesday": [],
+            "wednesday": [],
+            "thursday": [],
+            "friday": [],
+            "saturday": []
+          }
+        }
+      }
+    ]
+  },
+  {
+    "width": 1024,
+    "navLabels": [
+      "Overview",
+      "MTM",
+      "IV Therapy",
+      "Availability"
+    ],
+    "requestedPaths": [
+      "/pharmacist/mtm-requests",
+      "/staff/care-requests/iv-therapy",
+      "/pharmacist/availability",
+      "/pharmacist/mtm-requests/31/pharmacy-products",
+      "/pharmacist/mtm-requests/31/attach-products",
+      "/staff/care-requests/iv-therapy/18"
+    ],
+    "mutations": [
+      {
+        "path": "/pharmacist/mtm-requests/31/attach-products",
+        "method": "POST",
+        "body": {
+          "items": [
+            {
+              "product_id": 7,
+              "name": "Vitamin Support",
+              "quantity": 1
+            }
+          ]
+        }
+      },
+      {
+        "path": "/pharmacist/availability",
+        "method": "PATCH",
+        "body": {
+          "availability": {
+            "sunday": [],
+            "monday": [
+              {
+                "start": "09:00",
+                "end": "10:00"
+              }
+            ],
+            "tuesday": [],
+            "wednesday": [],
+            "thursday": [],
+            "friday": [],
+            "saturday": []
+          }
+        }
+      }
+    ]
+  },
+  {
+    "width": 1440,
+    "navLabels": [
+      "Overview",
+      "MTM",
+      "IV Therapy",
+      "Availability"
+    ],
+    "requestedPaths": [
+      "/pharmacist/mtm-requests",
+      "/staff/care-requests/iv-therapy",
+      "/pharmacist/availability",
+      "/pharmacist/mtm-requests/31/pharmacy-products",
+      "/pharmacist/mtm-requests/31/attach-products",
+      "/staff/care-requests/iv-therapy/18"
+    ],
+    "mutations": [
+      {
+        "path": "/pharmacist/mtm-requests/31/attach-products",
+        "method": "POST",
+        "body": {
+          "items": [
+            {
+              "product_id": 7,
+              "name": "Vitamin Support",
+              "quantity": 1
+            }
+          ]
+        }
+      },
+      {
+        "path": "/pharmacist/availability",
+        "method": "PATCH",
+        "body": {
+          "availability": {
+            "sunday": [],
+            "monday": [
+              {
+                "start": "09:00",
+                "end": "10:00"
+              }
+            ],
+            "tuesday": [],
+            "wednesday": [],
+            "thursday": [],
+            "friday": [],
+            "saturday": []
+          }
+        }
+      }
+    ]
+  }
+]

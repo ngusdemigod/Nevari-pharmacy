@@ -411,3 +411,12 @@ Stale display data can appear after account switching if cache keys or cleanup a
 - Decision: the MTM server response exposes only Nevari's signed, expiring invoice capability URL. The existing invoice endpoint initializes Paystack from the server-owned order and verifies the provider reference before changing payment state.
 - Decision: payment callback return paths are restricted to local `/dashboard/` routes; client-supplied amounts, currencies, order IDs, and payment states remain non-authoritative.
 - Decision: MTM confirmation success is rendered only from the server-owned MTM payment state. The callback result query may select a failed presentation but cannot mark a payment successful or mutate the request.
+## Auth continuation after an expired dashboard session
+
+- **Decision:** An API `401` blocks the active screen with the correct role login and stores only a validated, same-origin relative continuation path in a short-lived `HttpOnly`, `SameSite=Strict` cookie. Successful authentication consumes the cookie and resumes that path. Tokens and page data are never placed in the continuation.
+- **Status:** Implemented locally; Playwright login/resume regression coverage required.
+
+## Email payment links must enter through the dashboard invoice
+
+- **Decision:** Appointment and order payment emails may expose only the signed dashboard `/pay/{invoice}` capability URL. WordPress no longer falls back to its own origin when the dashboard payment origin is unconfigured, and the dashboard booking mailer no longer falls back to WooCommerce or gateway checkout URLs. Missing dashboard configuration fails closed by omitting the payment link.
+- **Status:** Implemented locally; invoice-page and payment-initialization regression coverage required.

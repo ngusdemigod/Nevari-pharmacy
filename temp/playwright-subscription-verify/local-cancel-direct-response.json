@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "baseUrl": "http://localhost:3000",
+  "currentUrl": "http://localhost:3000/dashboard?page=subscription-management",
+  "result": {
+    "ok": false,
+    "status": 400,
+    "payload": {
+      "success": false,
+      "error": {
+        "message": "CSRF validation failed."
+      }
+    }
+  }
+}

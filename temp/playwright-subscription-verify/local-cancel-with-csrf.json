@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "baseUrl": "http://localhost:3000",
+  "currentUrl": "http://localhost:3000/dashboard?page=subscription-management",
+  "result": {
+    "csrfPresent": true,
+    "ok": false,
+    "status": 400,
+    "payload": {
+      "success": false,
+      "error": {
+        "code": "paystack_cancel_details_missing",
+        "message": "This subscription cannot be cancelled automatically because Paystack cancellation details are missing. Please contact support.",
+        "details": []
+      },
+      "meta": {
+        "request_id": "req_e11ff1a6-33ea-47ba-873b-886e7685549c"
+      }
+    }
+  }
+}

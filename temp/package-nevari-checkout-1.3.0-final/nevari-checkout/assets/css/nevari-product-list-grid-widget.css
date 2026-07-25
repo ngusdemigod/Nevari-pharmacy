@@ -1,0 +1,90 @@
+.nevari-product-list-grid-widget,
+.nevari-product-list-grid-widget * {
+    box-sizing: border-box;
+}
+
+.nevari-product-list-grid-widget {
+    --nevari-product-list-grid-gap-x: 80px;
+    --nevari-product-list-grid-gap-y: 30px;
+    --nevari-product-list-grid-item-gap: 14px;
+    --nevari-product-list-grid-thumb-size: 72px;
+    --nevari-product-list-grid-thumb-radius: 12px;
+    --nevari-product-list-grid-thumb-bg: #f4f3f9;
+}
+
+.nevari-product-list-grid-widget__grid {
+    display: grid;
+    gap: var(--nevari-product-list-grid-gap-y) var(--nevari-product-list-grid-gap-x);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.nevari-product-list-grid-widget__item {
+    display: flex;
+    align-items: center;
+    gap: var(--nevari-product-list-grid-item-gap);
+    min-width: 0;
+}
+
+.nevari-product-list-grid-widget__thumb {
+    position: relative;
+    flex: 0 0 var(--nevari-product-list-grid-thumb-size);
+    width: var(--nevari-product-list-grid-thumb-size);
+    height: var(--nevari-product-list-grid-thumb-size);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: var(--nevari-product-list-grid-thumb-radius);
+    background: var(--nevari-product-list-grid-thumb-bg);
+    text-decoration: none;
+}
+
+.nevari-product-list-grid-widget .nevari-products-widget__image-link img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    padding: 8px;
+}
+
+.nevari-product-list-grid-widget__content {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.nevari-product-list-grid-widget .nevari-products-widget__categories {
+    font-size: 11px;
+    line-height: 1.2;
+}
+
+.nevari-product-list-grid-widget .nevari-products-widget__title {
+    font-size: 14px;
+    line-height: 1.2;
+}
+
+.nevari-product-list-grid-widget .nevari-products-widget__price {
+    font-size: 12px;
+    line-height: 1.1;
+}
+
+.nevari-product-list-grid-widget__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+@media (max-width: 1024px) {
+    .nevari-product-list-grid-widget__grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 24px 40px;
+    }
+}
+
+@media (max-width: 767px) {
+    .nevari-product-list-grid-widget__grid {
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+        gap: 18px;
+    }
+}
