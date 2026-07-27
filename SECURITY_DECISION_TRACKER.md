@@ -1,5 +1,18 @@
 # Frontend and Plugin Security Decision Tracker
 
+## 2026-07-27 — Custom dashboard permission scope
+
+- Decision: only Administrator, Store Admin, and legacy Shop Manager target roles may receive customized storefront permission sets.
+- Decision: Doctor, Pharmacist, and Nurse roles retain fixed server-defined permissions; submitted custom sets are ignored and replaced with the relevant role defaults.
+- Decision: Analytics is part of the customizable permission catalogue and is granted by default to Administrator, Store Admin, and legacy Shop Manager roles.
+- Security boundary: the WordPress access mutation handler normalizes the permission set before applying capabilities. UI visibility is not treated as authorization.
+
+## 2026-07-25 — Public-form CAPTCHA and privacy-safe product analytics
+
+- Unauthenticated mutating requests routed through the signed Next.js proxy require a short-lived reCAPTCHA v3 token in production. Verification checks the expected action, minimum score, and configured hostname before WordPress receives the request.
+- Authenticated clinical and administrative writes continue to use the HttpOnly session, double-submit CSRF token, rate limits, role checks, and resource ownership rather than adding CAPTCHA friction.
+- PostHog remains manual and privacy-minimized: pathname-only pageviews and bounded application context are allowed; autocapture, replay, heatmaps, surveys, query strings, patient data, clinical data, payment data, and record identifiers remain prohibited.
+
 **Review date:** May 26, 2026  
 **Scope:** `NevariAdmin Storefront` frontend and `nevari-pharmacy-core` WordPress plugin REST/security layer.
 
@@ -427,3 +440,16 @@ Stale display data can appear after account switching if cache keys or cleanup a
 - **Decision:** a pharmacist-initiated reschedule may release scheduling state (slot, Meet space, join tokens, attendance) but must never modify payment or consultation-credit state; the patient re-picks a slot without paying again.
 - **Decision:** action plans and attached products are pharmacist drafts and are not emailed or shown to the patient until the consultation is completed; only completed consultation documentation reaches the patient.
 - **Status:** Implemented locally; pharmacist-role and wrong-pharmacist regression coverage required for both new routes.
+# 2026-07-27 — Product prescription content and order-item snapshots
+
+- **Decision:** Treat formatted product prescriptions as healthcare-adjacent content and allow only bold, underline, lists, paragraphs, line breaks, and preset sizes.
+- **Decision:** Snapshot sanitized prescription content onto every purchased order item, including dashboard-created manual orders.
+- **Reason:** Historical orders and customer emails must retain the instructions that existed at purchase time without exposing unrestricted HTML.
+- **Boundary:** WordPress performs the authoritative sanitization. The dashboard editor is an input convenience and is not a security boundary.
+# Administrator-created user accounts (2026-07-27)
+
+- User creation is handled only by the authenticated `/admin/users` aggregate route.
+- Store managers may create non-administrator accounts; only an Administrator may create another Administrator.
+- Administrator permissions are fixed to the full allowlist. Only an Administrator may customize a new Store Manager's dashboard permissions. Doctor, Patient, Nurse, and Pharmacist accounts receive server-defined role defaults.
+- Requests reject unexpected fields, duplicate emails, invalid roles, weak passwords, invalid phone data where required, and avatars outside the JPG/PNG/WebP, one-file, 2 MB policy.
+- User creation is audited. A failed avatar validation removes the newly-created account so a partially configured account is not retained.

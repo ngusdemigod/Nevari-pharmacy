@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { DEFAULT_NEVARI_BASE_URL } from "../components/frontend-config";
+import RecaptchaDisclosure from "../components/RecaptchaDisclosure";
+import { requireRecaptchaToken } from "../lib/recaptcha-client";
 
 const EMPTY_FORM = {
   first_name: "",
@@ -44,9 +46,13 @@ export default function NurseRegistrationPage() {
     if (Object.values(nextErrors).some(Boolean)) return;
     setSubmitting(true);
     try {
+      const captchaToken = await requireRecaptchaToken("public_submit");
       const response = await fetch("/api/nurse-registration", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-nevari-recaptcha-token": captchaToken,
+        },
         body: JSON.stringify({ ...form, baseUrl: DEFAULT_NEVARI_BASE_URL }),
       });
       const result = await response.json();
@@ -82,6 +88,7 @@ export default function NurseRegistrationPage() {
         <small className="field-error">{errors.consent}</small>
         {errors.form ? <p className="form-error" role="alert">{errors.form}</p> : null}
         <button className="primary-action" type="submit" disabled={submitting}>{submitting ? "Submitting…" : "Submit application"}</button>
+        <RecaptchaDisclosure />
       </form>}
     </section>
   </main>;

@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { BrandedSpinner } from "../components/BrandedSpinner";
 import { FRONTEND_BY_TYPE, FRONTENDS } from "../components/frontend-config";
 import { buildUrl, defaultSession, frontendContext, loadSession } from "../components/role-session";
+import { requireRecaptchaToken } from "../lib/recaptcha-client";
+import RecaptchaDisclosure from "../components/RecaptchaDisclosure";
 
 function passwordError(value) {
   const password = String(value || "");
@@ -64,12 +66,14 @@ export default function ResetPasswordPageClient() {
     setSubmitting(true);
     setNotice({ message: "Updating password...", tone: "warning" });
     try {
+      const captchaToken = await requireRecaptchaToken("public_submit");
       const response = await fetch(buildUrl(session, "/auth/password-reset/confirm"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": config.type,
           "X-Nevari-Frontend-Origin": typeof window !== "undefined" ? window.location.origin : "",
+          "X-Nevari-Recaptcha-Token": captchaToken,
         },
         body: JSON.stringify({
           login,
@@ -146,6 +150,7 @@ export default function ResetPasswordPageClient() {
             <div className="auth-footer-links">
               <Link href={config.loginPath} className="auth-text-link">Back to login</Link>
             </div>
+            <RecaptchaDisclosure />
           </form>
         )}
       </div>

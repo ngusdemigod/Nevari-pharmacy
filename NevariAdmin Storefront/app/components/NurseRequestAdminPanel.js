@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import useSWR from "swr";
+import AdminMetricCards from "./AdminMetricCards";
+import AdminPageHeading from "./AdminPageHeading";
+import { adminStatusTone } from "./admin-status";
 
 async function getJson(url, session) {
   const response = await fetch(url, { headers: { "x-nevari-frontend-origin": window.location.origin, "x-nevari-frontend-type": session.frontendType } });
@@ -29,6 +32,12 @@ export default function NurseRequestAdminPanel({ session }) {
   const documentsUrl = selected ? `/api/nevari-proxy?${new URLSearchParams({ baseUrl: session.baseUrl || "", path: documentsPath })}` : null;
   const documentsQuery = useSWR(documentsUrl, (url) => getJson(url, session));
   const documents = documentsQuery.data?.items || [];
+  const nurseMetrics = [
+    { label: "Total requests", value: requests.length, note: "Nurse requests in the current view", icon: "clipboard" },
+    { label: "Awaiting review", value: requests.filter((item) => ["submitted", "under_review"].includes(String(item.status || ""))).length, note: "Requests needing an operational review", icon: "clockAlert" },
+    { label: "Assigned", value: requests.filter((item) => Boolean(item.assignee?.id)).length, note: "Requests with an approved nurse", icon: "userCheck" },
+    { label: "Scheduled", value: requests.filter((item) => Boolean(item.scheduled_at)).length, note: "Visits with a confirmed date and time", icon: "calendarCheck" },
+  ];
 
   function csrfToken() {
     return decodeURIComponent(document.cookie.match(/(?:^|;\s*)nevari_csrf=([^;]+)/)?.[1] || "");
@@ -93,12 +102,14 @@ export default function NurseRequestAdminPanel({ session }) {
     finally { setBusy(false); }
   }
 
-  return <section className="page-view active nurse-requests-page"><section className="panel table-panel admin-flat-table-section">
-    <div className="panel-header"><div><p className="section-kicker">Care operations</p><h2>Nurse Requests</h2><p>Every request requires manual nurse selection and scheduling.</p></div></div>
+  return <section className="page-view active nurse-requests-page">
+  <AdminPageHeading title="Nurse Requests" description="Every request requires manual nurse selection and scheduling." />
+  <AdminMetricCards cards={nurseMetrics} ariaLabel="Nurse request metrics" loading={requestsQuery.isLoading} />
+  <section className="panel table-panel admin-flat-table-section">
     {message ? <p className="receipt-feedback" role="status">{message}</p> : null}
     {requestsQuery.error ? <p className="form-error">{requestsQuery.error.message}</p> : null}
     <div className="table-scroll"><table><thead><tr><th>Reference</th><th>Patient</th><th>Status</th><th>Assignee</th><th>Schedule</th><th>Action</th></tr></thead><tbody>
-      {requestsQuery.isLoading ? Array.from({length:6},(_,row)=><tr className="table-skeleton-row" key={`nurse-skeleton-${row}`}>{Array.from({length:6},(_,column)=><td key={column}><span className={`skeleton skeleton-line ${column%2?"skeleton-line-md":"skeleton-line-lg"}`} /></td>)}</tr>) : requests.length ? requests.map((item) => <tr key={item.id} className="table-row-button" tabIndex={0} onClick={() => { setSelectedId(String(item.id)); setNurseId(String(item.assignee?.id || "")); }}><td>{item.reference}</td><td>{item.patient?.name}</td><td><span className="status-pill warning">{item.status_label}</span></td><td>{item.assignee?.name || "Unassigned"}</td><td>{item.scheduled_at ? new Date(item.scheduled_at).toLocaleString() : "Not scheduled"}</td><td><button className="pill-button" type="button" onClick={(event) => { event.stopPropagation(); setSelectedId(String(item.id)); setNurseId(String(item.assignee?.id || "")); }}>Manage</button></td></tr>) : <tr><td colSpan="6">No Nurse Requests.</td></tr>}
+      {requestsQuery.isLoading ? Array.from({length:6},(_,row)=><tr className="table-skeleton-row" key={`nurse-skeleton-${row}`}>{Array.from({length:6},(_,column)=><td key={column}><span className={`skeleton skeleton-line ${column%2?"skeleton-line-md":"skeleton-line-lg"}`} /></td>)}</tr>) : requests.length ? requests.map((item) => <tr key={item.id} className="table-row-button" tabIndex={0} onClick={() => { setSelectedId(String(item.id)); setNurseId(String(item.assignee?.id || "")); }}><td>{item.reference}</td><td><div className="customer-list-profile"><span className="customer-list-avatar">{item.patient?.avatar_url ? <img src={item.patient.avatar_url} alt="" /> : String(item.patient?.name || "Patient").split(/\s+/).slice(0,2).map((part)=>part[0]).join("").toUpperCase()}</span><span><strong>{item.patient?.name || "Patient"}</strong><small>{item.patient?.email || "Patient"}</small></span></div></td><td><span className={`status-pill ${adminStatusTone(item.status || item.status_label)}`}>{item.status_label}</span></td><td>{item.assignee?.name || "Unassigned"}</td><td>{item.scheduled_at ? new Date(item.scheduled_at).toLocaleString() : "Not scheduled"}</td><td><button className="pill-button" type="button" onClick={(event) => { event.stopPropagation(); setSelectedId(String(item.id)); setNurseId(String(item.assignee?.id || "")); }}>Manage</button></td></tr>) : <tr><td colSpan="6">No Nurse Requests.</td></tr>}
     </tbody></table></div>
   </section>
   {selected && typeof document !== "undefined" ? createPortal(<div className="app-modal-layer app-modal-layer-top is-open"><button className="app-modal-backdrop" type="button" aria-label="Close Nurse Request details" onClick={() => setSelectedId("")} /><section className="modal-frame nurse-assignment-panel nurse-request-details-modal detail-flat-modal" role="dialog" aria-modal="true" aria-label="Nurse Request details"><div className="modal-head"><div><p className="section-kicker">{selected.reference}</p><h2>Nurse Request details</h2></div><button className="icon-button" type="button" aria-label="Close Nurse Request details" onClick={() => setSelectedId("")}>×</button></div><div className="modal-body">

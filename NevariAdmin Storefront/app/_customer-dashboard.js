@@ -3698,6 +3698,7 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
   }, []);
 
   const documentAvailable = request?.document?.available === true;
+  const documentStatus = String(request?.document?.status || "pending").toLowerCase();
   const downloadHref = requestId && documentAvailable
     ? `/api/mtm/${encodeURIComponent(requestId)}/pdf?baseUrl=${encodeURIComponent(session?.baseUrl || "")}&frontendType=${encodeURIComponent(session?.frontendType || "patient")}`
     : "";
@@ -3795,7 +3796,11 @@ function MtmRequestDetailsModal({ request, storeTimeZone, session, busy = false,
       </section> : null}
       <div className="stacked-order-popup-actions">
         {request?.customer_join_url || request?.join_url ? <a className="button-primary" href={request.customer_join_url || request.join_url} target="_blank" rel="noreferrer">Join MTM Meeting</a> : null}
-        {downloadHref ? <a className="pill-button" href={downloadHref} target="_blank" rel="noreferrer">Download Request PDF</a> : <span className="customer-mobile-field-hint" role="status">Submitted PDF unavailable</span>}
+        {downloadHref
+          ? <a className="pill-button" href={downloadHref} target="_blank" rel="noreferrer">Download Request PDF</a>
+          : documentStatus === "failed"
+            ? <span className="customer-mobile-field-error" role="alert">The request PDF could not be prepared. Please contact support to retry it.</span>
+            : <span className="customer-mobile-field-hint customer-pdf-preparing" role="status"><span className="appointment-cta-spinner" aria-hidden="true" /> Preparing request PDF…</span>}
         {request?.can_reschedule ? <button className="pill-button" type="button" disabled={busy} onClick={() => onRequestReschedule?.(request.id)}>{busy ? <BrandedSpinner label="Requesting reschedule" /> : "Request reschedule"}</button> : null}
       </div>
     </section>
@@ -8062,6 +8067,13 @@ function CustomerMobileDashboard({
     setRequestStep3ShowErrors(true);
     const errors = getRequestStep3Errors();
     setRequestStep3Errors(errors);
+    if (Object.keys(errors).length) {
+      window.requestAnimationFrame(() => {
+        const firstInvalid = document.querySelector(".customer-mobile-step-panel .has-error, .customer-mobile-step-panel [aria-invalid='true']");
+        firstInvalid?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        firstInvalid?.focus?.({ preventScroll: true });
+      });
+    }
     return Object.keys(errors).length === 0;
   }
 
@@ -8122,10 +8134,7 @@ function CustomerMobileDashboard({
     });
   }
 
-  const requestContinueDisabled = requestSubmitting
-      || (requestStep === 1 && !NURSE_REQUEST_CARE_TYPES.includes(selectedCareType))
-      || (requestStep === 2 && Object.keys(getRequestStep2Errors()).length > 0)
-      || (requestStep === 3 && Object.keys(getRequestStep3Errors()).length > 0);
+  const requestContinueDisabled = requestSubmitting;
 
   async function handleRequestContinue() {
     if (requestStep === 1) {

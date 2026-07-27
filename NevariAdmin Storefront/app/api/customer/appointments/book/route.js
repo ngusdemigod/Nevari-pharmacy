@@ -28,12 +28,43 @@ import {
   sendUpstreamEmail,
   upstreamErrorMessage
 } from "../_shared";
-import { sendConfirmationEmails } from "../notify/route";
 
 const DEFAULT_ADMIN_EMAIL = "careteam@nevarihealth.com";
 
 function invalid(message, field) {
   return invalidNextJson(NextResponse, message, field);
+}
+
+async function sendConfirmationEmails({
+  baseUrl,
+  appOrigin,
+  accessToken,
+  appointmentId,
+  customerEmail,
+  customerName,
+  adminEmail
+}) {
+  try {
+    const response = await fetch(new URL("/api/customer/appointments/notify", appOrigin), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseUrl,
+        accessToken,
+        appointmentId,
+        customerEmail,
+        customerName,
+        adminEmail
+      }),
+      cache: "no-store"
+    });
+    const payload = await response.json().catch(() => null);
+    return response.ok
+      ? { ok: true, confirmation: payload?.confirmation || null, emailDispatch: payload?.emailDispatch || null }
+      : { ok: false, confirmation: null, emailDispatch: null };
+  } catch {
+    return { ok: false, confirmation: null, emailDispatch: null };
+  }
 }
 
 function asText(value) {
@@ -452,7 +483,7 @@ export async function POST(request) {
       const confirmationEmailResult = isConfirmed
         ? await sendConfirmationEmails({
           baseUrl: resolvedBaseUrl,
-          appOrigin: body.appOrigin || new URL(request.url).origin,
+          appOrigin: new URL(request.url).origin,
           accessToken,
           appointmentId: appointmentId || resolvedAppointment?.id,
           customerEmail,

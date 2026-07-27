@@ -6,6 +6,7 @@ if (!defined('ABSPATH')) {
 final class Nevari_User_Governance {
     private const ROLES = ['patient', 'customer', 'subscriber', 'doctor', 'pharmacist', 'nurse', 'store_admin', 'shop_manager', 'administrator'];
     private const STAFF_ROLES = ['administrator', 'store_admin', 'shop_manager', 'doctor', 'pharmacist', 'nurse'];
+    private const CUSTOM_PERMISSION_ROLES = ['administrator', 'store_admin', 'shop_manager'];
     private const PATIENT_ROLES = ['patient', 'customer', 'subscriber'];
     private const PERMISSIONS = [
         'products' => 'nevari_storefront_products',
@@ -19,6 +20,7 @@ final class Nevari_User_Governance {
         'logs' => 'nevari_storefront_logs',
         'staff' => 'nevari_storefront_staff',
         'subscriptions' => 'nevari_storefront_subscriptions',
+        'analytics' => 'nevari_storefront_analytics',
     ];
     private const STATUSES = ['pending_review', 'approved', 'declined', 'banned', 'suspended'];
     private const BACKFILL_HOOK = 'nevari_user_governance_backfill';
@@ -73,9 +75,16 @@ final class Nevari_User_Governance {
             'permission_callback' => '__return_true',
         ]);
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/admin/users', [
-            'methods' => WP_REST_Server::READABLE,
-            'callback' => [__CLASS__, 'users_index'],
-            'permission_callback' => [__CLASS__, 'admin_permission'],
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'users_index'],
+                'permission_callback' => [__CLASS__, 'admin_permission'],
+            ],
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'create_user'],
+                'permission_callback' => [__CLASS__, 'create_user_permission'],
+            ],
         ]);
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/admin/nurses', [
             'methods' => WP_REST_Server::READABLE,
@@ -104,6 +113,160 @@ final class Nevari_User_Governance {
                 in_array('administrator', Nevari_Helpers::current_user_roles($user_id), true)
                 || self::user_has_permission($user_id, $permission)
             );
+    }
+
+    public static function create_user_permission(): bool {
+        $actor_id = Nevari_Auth::api_session_user_id();
+        return Nevari_Auth::api_session_required()
+            && $actor_id > 0
+            && Nevari_Helpers::is_store_admin($actor_id)
+            && (
+                in_array('administrator', Nevari_Helpers::current_user_roles($actor_id), true)
+                || self::user_has_permission($actor_id, 'staff')
+            );
+    }
+
+    public static function create_user(WP_REST_Request $request): WP_REST_Response {
+        if (strlen((string) $request->get_body()) > 3145728) {
+            return Nevari_Helpers::error('invalid_request', 'The user account could not be created.', 413);
+        }
+        $body = $request->get_json_params();
+        $body = is_array($body) ? $body : [];
+        $allowed = [
+            'first_name', 'last_name', 'email', 'phone', 'password', 'role', 'permissions',
+            'avatar', 'specialty', 'license_number', 'location', 'weekly_capacity',
+            'is_available', 'address',
+        ];
+        if (array_diff(array_keys($body), $allowed)) {
+            return Nevari_Helpers::error('unexpected_fields', 'Unexpected request fields were supplied.', 422);
+        }
+
+        $actor_id = Nevari_Auth::api_session_user_id();
+        $actor_is_administrator = in_array('administrator', Nevari_Helpers::current_user_roles($actor_id), true);
+        $role = sanitize_key((string) ($body['role'] ?? ''));
+        $role_map = ['administrator', 'store_admin', 'doctor', 'patient', 'nurse', 'pharmacist'];
+        if (!in_array($role, $role_map, true) || ($role === 'administrator' && !$actor_is_administrator)) {
+            self::audit_event('admin.user_created', 0, $actor_id, 'error', '', $role, 'authorization_failed');
+            return Nevari_Helpers::error('forbidden_role', 'You cannot create the selected account role.', 403);
+        }
+
+        $first_name = substr(sanitize_text_field((string) ($body['first_name'] ?? '')), 0, 80);
+        $last_name = substr(sanitize_text_field((string) ($body['last_name'] ?? '')), 0, 80);
+        $email = sanitize_email((string) ($body['email'] ?? ''));
+        $phone = substr(sanitize_text_field((string) ($body['phone'] ?? '')), 0, 40);
+        $password = (string) ($body['password'] ?? '');
+        $requires_phone = in_array($role, ['doctor', 'nurse', 'pharmacist'], true);
+        $phone_valid = !$requires_phone || (bool) preg_match('/^[+0-9][0-9 ()-]{7,24}$/', $phone);
+        $password_valid = strlen($password) >= 12
+            && preg_match('/[A-Z]/', $password)
+            && preg_match('/[a-z]/', $password)
+            && preg_match('/\d/', $password)
+            && preg_match('/[^A-Za-z0-9]/', $password);
+        if ($first_name === '' || $last_name === '' || !is_email($email) || !$phone_valid || !$password_valid) {
+            return Nevari_Helpers::error('invalid_request', 'Check the required fields and password requirements.', 422);
+        }
+        if (email_exists($email) || username_exists($email)) {
+            return Nevari_Helpers::error('account_exists', 'An account already uses this email address.', 409);
+        }
+
+        $permissions = is_array($body['permissions'] ?? null)
+            ? array_values(array_unique(array_map('sanitize_key', $body['permissions'])))
+            : self::default_permissions_for_role($role);
+        if (array_diff($permissions, array_keys(self::PERMISSIONS))) {
+            return Nevari_Helpers::error('invalid_permissions', 'One or more permissions are invalid.', 422);
+        }
+        if ($role === 'administrator') {
+            $permissions = array_keys(self::PERMISSIONS);
+        } elseif ($role !== 'store_admin' || !$actor_is_administrator) {
+            $permissions = self::default_permissions_for_role($role);
+        }
+
+        $user_id = wp_insert_user([
+            'user_login' => $email,
+            'user_email' => $email,
+            'user_pass' => $password,
+            'first_name' => $first_name,
+            'last_name' => $last_name,
+            'display_name' => trim($first_name . ' ' . $last_name),
+            'role' => $role,
+        ]);
+        if (is_wp_error($user_id)) {
+            self::audit_event('admin.user_created', 0, $actor_id, 'error', '', $role, 'creation_failed');
+            return Nevari_Helpers::error('creation_failed', 'The user account could not be created.', 422);
+        }
+
+        $license = strtoupper(substr(sanitize_text_field((string) ($body['license_number'] ?? '')), 0, 80));
+        $now = Nevari_Helpers::now();
+        global $wpdb;
+        $saved = $wpdb->replace(self::table(), [
+            'user_id' => (int) $user_id,
+            'managed_role' => $role,
+            'account_status' => 'approved',
+            'phone' => $phone,
+            'license_number' => $license,
+            'decided_by' => $actor_id,
+            'decided_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        if ($saved === false) {
+            require_once ABSPATH . 'wp-admin/includes/user.php';
+            wp_delete_user((int) $user_id);
+            return Nevari_Helpers::error('creation_failed', 'The user account could not be created.', 500);
+        }
+
+        $user = get_user_by('id', (int) $user_id);
+        foreach (self::PERMISSIONS as $key => $capability) {
+            in_array($key, $permissions, true) ? $user->add_cap($capability) : $user->remove_cap($capability);
+        }
+        update_user_meta((int) $user_id, 'billing_phone', $phone);
+        update_user_meta((int) $user_id, 'billing_address_1', substr(sanitize_textarea_field((string) ($body['address'] ?? '')), 0, 300));
+        update_user_meta((int) $user_id, '_nevari_specialty', substr(sanitize_text_field((string) ($body['specialty'] ?? '')), 0, 100));
+        update_user_meta((int) $user_id, '_nevari_license_number', $license);
+        update_user_meta((int) $user_id, '_nevari_location', substr(sanitize_text_field((string) ($body['location'] ?? '')), 0, 120));
+        update_user_meta((int) $user_id, '_nevari_weekly_capacity', min(168, max(1, absint($body['weekly_capacity'] ?? 40))));
+        update_user_meta((int) $user_id, '_nevari_is_available', rest_sanitize_boolean($body['is_available'] ?? true) ? '1' : '0');
+
+        $avatar_result = self::save_created_user_avatar((int) $user_id, $body['avatar'] ?? null);
+        if (is_wp_error($avatar_result)) {
+            require_once ABSPATH . 'wp-admin/includes/user.php';
+            wp_delete_user((int) $user_id);
+            return Nevari_Helpers::error('invalid_avatar', $avatar_result->get_error_message(), 422);
+        }
+
+        self::audit_event('admin.user_created', (int) $user_id, $actor_id, 'success', '', $role, '', [
+            'permissions_after' => $permissions,
+        ]);
+        return Nevari_Helpers::success([
+            'user' => self::directory_user_summary((int) $user_id, $role, 'approved'),
+        ], [], 201);
+    }
+
+    private static function save_created_user_avatar(int $user_id, $avatar) {
+        if ($avatar === null || $avatar === '') {
+            return true;
+        }
+        if (!is_array($avatar) || array_diff(array_keys($avatar), ['name', 'type', 'data'])) {
+            return new WP_Error('invalid_avatar', 'Select one valid JPG, PNG, or WebP image.');
+        }
+        $name = sanitize_file_name((string) ($avatar['name'] ?? ''));
+        $type = sanitize_mime_type((string) ($avatar['type'] ?? ''));
+        $data = (string) ($avatar['data'] ?? '');
+        $allowed = ['image/jpeg' => ['jpg', 'jpeg'], 'image/png' => ['png'], 'image/webp' => ['webp']];
+        $extension = strtolower((string) pathinfo($name, PATHINFO_EXTENSION));
+        if (!isset($allowed[$type]) || !in_array($extension, $allowed[$type], true) || !preg_match('/^data:' . preg_quote($type, '/') . ';base64,/', $data)) {
+            return new WP_Error('invalid_avatar', 'Select one valid JPG, PNG, or WebP image.');
+        }
+        $binary = base64_decode(substr($data, strpos($data, ',') + 1), true);
+        if ($binary === false || strlen($binary) < 1 || strlen($binary) > 2097152 || @getimagesizefromstring($binary) === false) {
+            return new WP_Error('invalid_avatar', 'The avatar must be a valid image no larger than 2 MB.');
+        }
+        $upload = wp_upload_bits('nevari-user-' . $user_id . '.' . $extension, null, $binary);
+        if (!empty($upload['error'])) {
+            return new WP_Error('avatar_upload_failed', 'The avatar could not be saved.');
+        }
+        update_user_meta($user_id, '_nevari_customer_profile_image_url', esc_url_raw((string) $upload['url']));
+        return true;
     }
 
     public static function target_permission(WP_REST_Request $request): bool {
@@ -274,8 +437,8 @@ final class Nevari_User_Governance {
     public static function default_permissions_for_role(string $role): array {
         $defaults = [
             'administrator' => array_keys(self::PERMISSIONS),
-            'store_admin' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv-therapy', 'nurse-requests', 'logs', 'subscriptions'],
-            'shop_manager' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv-therapy', 'nurse-requests', 'logs', 'subscriptions'],
+            'store_admin' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv-therapy', 'nurse-requests', 'logs', 'subscriptions', 'analytics'],
+            'shop_manager' => ['products', 'orders', 'payments', 'patients', 'consultations', 'mtm', 'iv-therapy', 'nurse-requests', 'logs', 'subscriptions', 'analytics'],
             'pharmacist' => ['products', 'orders', 'payments', 'patients', 'mtm'],
             'doctor' => ['patients', 'consultations'],
             'nurse' => ['nurse-requests'],
@@ -546,6 +709,8 @@ final class Nevari_User_Governance {
         }
         if ($role === 'administrator') {
             $permissions = array_keys(self::PERMISSIONS);
+        } elseif (!in_array($role, self::CUSTOM_PERMISSION_ROLES, true)) {
+            $permissions = self::default_permissions_for_role($role);
         }
         $before_role = self::primary_role($target);
         $before_permissions = self::permission_keys_for_user($target_id);

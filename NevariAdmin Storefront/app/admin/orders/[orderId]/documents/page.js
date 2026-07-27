@@ -162,6 +162,7 @@ function OrderDocumentsPageContent() {
   const { orderId } = useParams();
   const searchParams = useSearchParams();
   const previewRef = useRef(null);
+  const previewShellRef = useRef(null);
   const role = searchParams.get("role") || "admin";
   const statusMode = searchParams.get("statusMode") === "payment" ? "payment" : "order";
   const queryTab = String(searchParams.get("tab") || "invoice").toLowerCase();
@@ -169,6 +170,7 @@ function OrderDocumentsPageContent() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [previewScale, setPreviewScale] = useState(1);
 
   useEffect(() => {
     let mounted = true;
@@ -237,6 +239,23 @@ function OrderDocumentsPageContent() {
     }
   }, [data, loading, searchParams]);
 
+  useEffect(() => {
+    const shell = previewShellRef.current;
+    if (!shell) return undefined;
+    const fitPreview = () => {
+      const availableWidth = Math.max(280, shell.clientWidth);
+      setPreviewScale(Math.min(1, availableWidth / 850));
+    };
+    fitPreview();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(fitPreview) : null;
+    observer?.observe(shell);
+    window.addEventListener("resize", fitPreview);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", fitPreview);
+    };
+  }, [data]);
+
   const documentHtml = useMemo(() => {
     if (!data || typeof window === "undefined") return "";
     return renderDocumentHtml(data, activeDocumentType, { appOrigin: window.location.origin, statusMode });
@@ -267,12 +286,17 @@ function OrderDocumentsPageContent() {
           <button className="doc-btn" type="button" onClick={printPage}>Print / Save PDF</button>
         </div>
       </div>
-      <div className="document-preview-shell">
+      <div
+        ref={previewShellRef}
+        className="document-preview-shell"
+        style={{ height: `${1120 * previewScale + 24}px` }}
+      >
         <iframe
           ref={previewRef}
           className="document-preview"
           title={`${titleCase(activeDocumentType)} preview`}
           srcDoc={documentHtml}
+          style={{ transform: `scale(${previewScale})` }}
         />
       </div>
       <style jsx>{`
@@ -281,8 +305,8 @@ function OrderDocumentsPageContent() {
         .doc-btn { border: 1px solid #dce4ef; background: #fff; color: var(--nevari-primary-blue); border-radius: 8px; padding: 9px 14px; font-weight: 700; margin-left: 6px; }
         .doc-btn:disabled { opacity: .6; cursor: wait; }
         .doc-secondary-action { max-width: 850px; margin: 0 auto 10px; text-align: right; }
-        .document-preview-shell { max-width: 100%; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
-        .document-preview { display: block; width: 850px; height: 1120px; margin: 30px auto; background: #fff; border: 0; box-shadow: 0 0 0 1px #dce4ef; }
+        .document-preview-shell { width: 100%; max-width: 850px; margin: 0 auto; overflow: hidden; }
+        .document-preview { display: block; width: 850px; height: 1120px; margin: 12px 0; transform-origin: top left; background: #fff; border: 0; box-shadow: 0 0 0 1px #dce4ef; }
 
         @media print {
           .doc-toolbar, .no-print, .doc-secondary-action { display: none !important; }
@@ -294,7 +318,7 @@ function OrderDocumentsPageContent() {
           main { padding: 12px !important; }
           .doc-toolbar { flex-direction: column; max-width: 100%; }
           .doc-btn { margin-left: 0; width: 100%; }
-          .document-preview { width: 850px; min-width: 850px; margin: 12px auto; }
+          .document-preview-shell { margin-inline: auto; }
         }
       `}</style>
     </main>

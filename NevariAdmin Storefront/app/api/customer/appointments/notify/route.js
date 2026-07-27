@@ -24,7 +24,7 @@ function invalid(message, field) {
   return invalidNextJson(NextResponse, message, field);
 }
 
-export async function sendConfirmationEmails({
+async function sendConfirmationEmails({
   baseUrl,
   appOrigin,
   accessToken,

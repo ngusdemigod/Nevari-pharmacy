@@ -5,12 +5,30 @@ import { usePathname } from "next/navigation";
 import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
 import { SWRConfig } from "swr";
+import { requireRecaptchaToken } from "../lib/recaptcha-client";
 
 function PostHogPageView() {
   const pathname = usePathname();
 
   useEffect(() => {
     if (!process.env.NEXT_PUBLIC_POSTHOG_KEY || !pathname) return;
+    const appArea = pathname.startsWith("/admin/pharmacist")
+      ? "pharmacist"
+      : pathname.startsWith("/admin/doctor")
+        ? "doctor"
+        : pathname.startsWith("/admin")
+          ? "store_admin"
+          : "patient";
+    const routeGroup = pathname.split("/").filter(Boolean).slice(0, 2).join("/") || "home";
+    const viewportCategory = window.innerWidth < 768 ? "mobile" : window.innerWidth < 1024 ? "tablet" : "desktop";
+    posthog.register({
+      environment: process.env.NEXT_PUBLIC_APP_ENV || process.env.NODE_ENV || "unknown",
+      app_area: appArea,
+      authenticated_role: appArea,
+      route_group: routeGroup,
+      viewport_category: viewportCategory,
+      release: process.env.NEXT_PUBLIC_APP_RELEASE || "unknown",
+    });
     posthog.capture("$pageview", {
       $pathname: pathname,
       $current_url: `${window.location.origin}${pathname}`,
@@ -55,6 +73,9 @@ export default function AppProviders({ children }) {
         const csrf = readCookie("nevari_csrf");
         if (csrf && !headers.has("x-nevari-csrf")) {
           headers.set("x-nevari-csrf", csrf);
+        }
+        if (!csrf && !headers.has("x-nevari-recaptcha-token")) {
+          headers.set("x-nevari-recaptcha-token", await requireRecaptchaToken("public_submit"));
         }
       }
 

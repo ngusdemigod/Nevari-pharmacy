@@ -3,7 +3,7 @@
 import { createPortal } from "react-dom";
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { GalleryThumbnailsIcon } from "@hugeicons/core-free-icons";
+import { Download04Icon, GalleryThumbnailsIcon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import useSWR, { useSWRConfig } from "swr";
 import { DEFAULT_NEVARI_BASE_URL } from "../../components/frontend-config";
@@ -20,6 +20,11 @@ import { clearStoredSessions, createPairingRequiredError, isPairingRequiredError
 import { buildSWRRevealSignature, useSWRReveal } from "../../components/useSWRReveal";
 import StaffDirectory from "../../components/StaffDirectory";
 import NurseRequestAdminPanel from "../../components/NurseRequestAdminPanel";
+import AdminMetricCards from "../../components/AdminMetricCards";
+import AdminPageHeading from "../../components/AdminPageHeading";
+import AnalyticsDashboard from "../../components/analytics/AnalyticsDashboard";
+import { adminStatusTone } from "../../components/admin-status";
+import { identifyAnalyticsUser, resetAnalyticsIdentity } from "../../lib/analytics-events";
 
 const STORAGE_KEY = "nevari_admin_storefront_session";
 const STORE_CURRENCY_KEY = "nevari_store_currency";
@@ -119,9 +124,15 @@ const LEGACY_PAGE_ALIASES = {
 
 const FRONTEND_PAGES = [
   {
-    label: "Nevari Pharmacy",
+    label: "",
     items: [
       ["overview", "Overview", "i-layout"],
+      ["analytics", "Analytics", "i-chart"]
+    ]
+  },
+  {
+    label: "Nevari Pharmacy",
+    items: [
       ["products", "Products", "i-pill"],
       ["orders", "Orders", "i-cart"],
       ["payments", "Payments", "i-credit-card"],
@@ -148,6 +159,7 @@ const FRONTEND_PAGES = [
   }
 ];
 const STOREFRONT_PAGE_PERMISSIONS = {
+  analytics: "analytics",
   products: "products", orders: "orders", payments: "payments", customers: "patients",
   consultations: "consultations", mtm: "mtm", "iv-therapy": "iv-therapy",
   "nurse-requests": "nurse-requests", audit: "logs", emails: "logs",
@@ -155,6 +167,7 @@ const STOREFRONT_PAGE_PERMISSIONS = {
 };
 
 const SEARCH_PLACEHOLDERS = {
+  analytics: "Analytics uses the controls on this page",
   overview: "Search bookings, MTM requests, products, orders or customers",
   orders: "Search orders",
   payments: "Search payments",
@@ -173,22 +186,22 @@ const SEARCH_PLACEHOLDERS = {
 };
 
 const EMPTY_ORDER_FORM = {
-  firstName: "Patient",
-  lastName: "Guest",
-  email: "africanbursary@gmail.com",
-  phone: "0812 334 8821",
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
   customerId: "",
   address: "",
   city: "",
   state: "",
   postcode: "",
-  country: "US",
+  country: "",
   productId: "",
   quantity: 1,
-  status: "Awaiting payment",
+  status: "",
   doctorId: "",
-  deliveryMethod: "Pickup",
-  prescription: "No linked prescription"
+  deliveryMethod: "",
+  prescription: ""
 };
 
 const EMPTY_PRODUCT_FORM = {
@@ -236,6 +249,7 @@ const EMPTY_PRODUCT_DRAFT = {
   brands: [],
   shippingInfo: "",
   stockQuantity: "",
+  stockStatus: "instock",
   lowStockAlert: "",
   sku: "",
   weight: "",
@@ -249,20 +263,20 @@ const PRODUCT_CREATE_STEPS = [
   {
     key: "identity",
     eyebrow: "Step 1",
-    label: "Product identity",
-    description: "Define what the product is, where it belongs, and how it is priced."
+    label: "Identity",
+    description: "Add the product image, name, short description, generated SKU, and gallery."
   },
   {
-    key: "description",
+    key: "commerce",
     eyebrow: "Step 2",
-    label: "Prescription and description",
-    description: "Set the patient-facing copy and the prescription note for the product."
+    label: "Pricing and inventory",
+    description: "Set pricing, quantity, stock, shipping, brand, tags, and categories."
   },
   {
-    key: "media",
+    key: "prescription",
     eyebrow: "Step 3",
-    label: "Media",
-    description: "Upload the featured image and gallery that will follow the product everywhere."
+    label: "Prescription",
+    description: "Record the prescription copied into order items and customer emails."
   }
 ];
 
@@ -278,6 +292,40 @@ const EMPTY_CUSTOMER_FORM = {
   phone: "",
   address: ""
 };
+
+const EMPTY_USER_ACCOUNT_FORM = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
+  password: "",
+  role: "patient",
+  permissions: [],
+  avatar: null,
+  specialty: "",
+  licenseNumber: "",
+  location: "",
+  weeklyCapacity: 40,
+  isAvailable: true,
+  address: ""
+};
+
+const USER_ACCOUNT_ROLES = [
+  ["administrator", "Administrator"],
+  ["store_admin", "Store Manager"],
+  ["doctor", "Doctor"],
+  ["patient", "Patient"],
+  ["nurse", "Nurse"],
+  ["pharmacist", "Pharmacist"]
+];
+
+const USER_PERMISSION_OPTIONS = [
+  ["products", "Products"], ["orders", "Orders"], ["payments", "Payments"],
+  ["patients", "Patients"], ["consultations", "Consultations"], ["mtm", "MTM"],
+  ["iv-therapy", "IV Therapy"], ["nurse-requests", "Nurse Requests"],
+  ["logs", "Audit logs"], ["staff", "Staff Management"],
+  ["subscriptions", "Subscription Management"], ["analytics", "Analytics"]
+];
 
 const EMPTY_CONSULTATION_FORM = {
   patientUserId: "",
@@ -621,17 +669,7 @@ function persistSubscriptionSettings(settings) {
 }
 
 function formatPlanStatusTone(status) {
-  const normalized = normalizeText(String(status || ""));
-  if (normalized === "active") {
-    return "confirmed";
-  }
-  if (normalized === "draft") {
-    return "draft";
-  }
-  if (normalized === "archived") {
-    return "cancelled";
-  }
-  return "processing";
+  return adminStatusTone(status);
 }
 
 function normalizeBaseUrl(value) {
@@ -713,6 +751,9 @@ function sanitizedPersistedSession(session = {}) {
   const roles = Array.isArray(session?.user?.roles)
     ? session.user.roles.map((value) => String(value || "").trim()).filter(Boolean)
     : [];
+  const storefrontPermissions = Array.isArray(session?.user?.storefront_permissions)
+    ? session.user.storefront_permissions.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
   return {
     ...session,
     baseUrl: resolveRuntimeBaseUrl(session.baseUrl),
@@ -724,7 +765,8 @@ function sanitizedPersistedSession(session = {}) {
       email: session.user.email || "",
       avatar_url: session.user.avatar_url || session.user.avatarUrl || session.user.picture || "",
       role: session.user.role || "",
-      roles
+      roles,
+      storefront_permissions: storefrontPermissions
     } : null
   };
 }
@@ -1463,17 +1505,7 @@ function formatLiveLabel(value = new Date(), timeZone = storedStoreTimeZone()) {
 }
 
 function toneClass(value) {
-  const normalized = String(value || "").toLowerCase();
-  if (["success", "fulfilled", "completed", "sent", "processing", "released", "trusted", "confirmed", "active"].includes(normalized)) {
-    return "success";
-  }
-  if (["error", "failed", "cancelled", "invalid", "forbidden", "revoked"].includes(normalized)) {
-    return "error";
-  }
-  if (["warning", "on_hold", "on-hold", "pending", "draft", "requested", "issued", "assigned_to_patient", "expired", "queued"].includes(normalized)) {
-    return "warning";
-  }
-  return "info";
+  return adminStatusTone(value);
 }
 
 function patientLabel(userId) {
@@ -2254,6 +2286,9 @@ function IconSprite() {
         <rect x="14" y="11" width="7" height="9" rx="2" />
         <rect x="3" y="14" width="7" height="6" rx="2" />
       </symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24">
+        <path d="M4 19V9M10 19V5M16 19v-7M22 19V3M2 19h20" />
+      </symbol>
       <symbol id="i-pill" viewBox="0 0 24 24">
         <path d="M10.5 20.5 3.5 13.5a5 5 0 1 1 7-7l7 7a5 5 0 1 1-7 7Z" />
         <path d="m8 8 8 8" />
@@ -2413,7 +2448,7 @@ function IconSprite() {
   );
 }
 
-export function AdminStorefrontDashboard({
+function AdminStorefrontDashboard({
   embeddedProductOnly = false,
   embeddedSession = null,
   embeddedInitialPage = "",
@@ -2429,9 +2464,12 @@ export function AdminStorefrontDashboard({
     : (embeddedInitialPage ? normalizePageId(embeddedInitialPage) : "");
   const isEmbeddedDashboard = embeddedProductOnly || Boolean(resolvedEmbeddedPage);
   const embeddedInitialData = embeddedData ? { ...emptyData(), ...embeddedData } : null;
-  const createMenuItems = Array.isArray(embeddedCreateActions) && embeddedCreateActions.length
+  const rawCreateMenuItems = Array.isArray(embeddedCreateActions) && embeddedCreateActions.length
     ? embeddedCreateActions
     : (embeddedProductOnly ? ["product"] : ["product", "order", "consultation", "doctor", "customer"]);
+  const createMenuItems = [...new Set(rawCreateMenuItems.map((type) => (
+    type === "doctor" || type === "customer" ? "user" : type
+  )))];
   const embeddedInitialSession = embeddedSession ? { ...defaultSession(), ...embeddedSession, paired: true } : null;
   const [session, setSession] = useState(() => embeddedInitialSession || defaultSession());
   const [currentPage, setCurrentPage] = useState(() => resolvedEmbeddedPage || "overview");
@@ -2443,6 +2481,7 @@ export function AdminStorefrontDashboard({
   const [selectedAuditIndex, setSelectedAuditIndex] = useState(0);
   const [auditDetailModalOpen, setAuditDetailModalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const identifiedAnalyticsUserRef = useRef("");
   const [authGate, setAuthGate] = useState({ visible: false, stage: "auth" });
   const [setupFeedback, setSetupFeedback] = useState("Dashboard configuration is ready.");
   const [authFeedback, setAuthFeedback] = useState("Not connected.");
@@ -2463,6 +2502,9 @@ export function AdminStorefrontDashboard({
   const [subscriptionTablePage, setSubscriptionTablePage] = useState(1);
   const [subscriptionUserPage, setSubscriptionUserPage] = useState(1);
   const [subscriptionDetailsOpen, setSubscriptionDetailsOpen] = useState(false);
+  const [subscriptionDetailsTab, setSubscriptionDetailsTab] = useState("details");
+  const [subscriptionPriceEditing, setSubscriptionPriceEditing] = useState(false);
+  const [subscriptionInlinePrice, setSubscriptionInlinePrice] = useState("");
   const [subscriptionDetailsActionLoading, setSubscriptionDetailsActionLoading] = useState("");
   const [subscriptionModalPlan, setSubscriptionModalPlan] = useState(null);
   const [subscriptionCreateLoading, setSubscriptionCreateLoading] = useState(false);
@@ -2503,8 +2545,10 @@ export function AdminStorefrontDashboard({
   const [createFeedback, setCreateFeedback] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
   const [orderCreateSearch, setOrderCreateSearch] = useState("");
-  const [orderCreateCustomerSearch, setOrderCreateCustomerSearch] = useState("Patient Guest");
+  const [orderCreateCustomerSearch, setOrderCreateCustomerSearch] = useState("");
   const [orderCreateCustomerMenuOpen, setOrderCreateCustomerMenuOpen] = useState(false);
+  const deferredOrderCreateSearch = useDeferredValue(orderCreateSearch.trim());
+  const deferredOrderCreateCustomerSearch = useDeferredValue(orderCreateCustomerSearch.trim());
   const [productEditorMode, setProductEditorMode] = useState("edit");
   const [productCreateForm, setProductCreateForm] = useState(buildEmptyProductDraft());
   const [consultationCreateForm, setConsultationCreateForm] = useState(EMPTY_CONSULTATION_FORM);
@@ -2517,7 +2561,8 @@ export function AdminStorefrontDashboard({
   const [doctorCreateForm, setDoctorCreateForm] = useState(EMPTY_DOCTOR_FORM);
   const [doctorCreateCategorySearch, setDoctorCreateCategorySearch] = useState("");
   const [customerCreateForm, setCustomerCreateForm] = useState(EMPTY_CUSTOMER_FORM);
-  const [orderCreateItems, setOrderCreateItems] = useState([{ ...EMPTY_ORDER_LINE, key: "line-1" }]);
+  const [userAccountCreateForm, setUserAccountCreateForm] = useState(EMPTY_USER_ACCOUNT_FORM);
+  const [orderCreateItems, setOrderCreateItems] = useState([]);
   const [selectedProductEdit, setSelectedProductEdit] = useState(null);
   const [productEditForm, setProductEditForm] = useState(null);
   const [productEditMedia, setProductEditMedia] = useState([]);
@@ -2727,6 +2772,16 @@ export function AdminStorefrontDashboard({
   }, [session]);
 
   useEffect(() => {
+    const analyticsUuid = session.user?.analytics_uuid || "";
+    if (!analyticsUuid || identifiedAnalyticsUserRef.current === analyticsUuid) {
+      return;
+    }
+    const role = (session.user?.roles || [])[0] || "unknown";
+    identifyAnalyticsUser(analyticsUuid, role);
+    identifiedAnalyticsUserRef.current = analyticsUuid;
+  }, [session.user?.analytics_uuid, session.user?.roles]);
+
+  useEffect(() => {
     if (!isEmbeddedDashboard || !embeddedSession) {
       return;
     }
@@ -2842,6 +2897,9 @@ export function AdminStorefrontDashboard({
     setSelectedSubscriptionPlanKey(String(plan.plan_key || plan.slug || plan.planKey || "").trim());
     setSelectedSubscriptionPlanId(String(plan.id ?? plan.plan_id ?? plan.plan_key ?? plan.slug ?? "").trim());
     setSubscriptionDetailsActionLoading("");
+    setSubscriptionDetailsTab("details");
+    setSubscriptionPriceEditing(false);
+    setSubscriptionInlinePrice(String(plan.amount ?? plan.amount_kobo ?? "").trim());
     setSubscriptionDetailsOpen(true);
   }
 
@@ -2850,26 +2908,18 @@ export function AdminStorefrontDashboard({
       return;
     }
     setSubscriptionDetailsOpen(false);
+    setSubscriptionPriceEditing(false);
   }
 
-  async function refreshSubscriptionDetails() {
-    setSubscriptionDetailsActionLoading("refresh");
-    const refreshed = await refreshSubscriptionStatus();
-    if (refreshed) {
-      showSnackbar("Subscription details refreshed.", "success");
-    } else {
-      showSnackbar("Subscription details could not be refreshed.", "error");
-    }
-    setSubscriptionDetailsActionLoading("");
-  }
-
-  function editSelectedSubscriptionPlan() {
-    if (!selectedSubscriptionPlan) {
-      showSnackbar("Select a subscription plan first.", "warning");
+  function continueInlineSubscriptionPriceEdit() {
+    const amount = normalizeNairaAmount(subscriptionInlinePrice);
+    if (!Number.isFinite(Number(amount)) || Number(amount) < 0) {
+      showSnackbar("Enter a valid subscription price.", "warning");
       return;
     }
     setSubscriptionDetailsOpen(false);
-    openSubscriptionModal("edit", selectedSubscriptionPlan);
+    setSubscriptionPriceEditing(false);
+    openSubscriptionModal("edit", { ...selectedSubscriptionPlan, amount });
   }
 
   function openSubscriptionModal(mode = "create", planData = "") {
@@ -3098,8 +3148,6 @@ export function AdminStorefrontDashboard({
       return undefined;
     }
 
-    setSubscriptionState((current) => ({ ...current, loading: true, error: "" }));
-
     const eventUrl = new URL("/api/subscriptions/events", window.location.origin);
     eventUrl.searchParams.set("baseUrl", String(session?.baseUrl || "").trim());
     eventUrl.searchParams.set("frontendType", String(session?.frontendType || "storefront").trim());
@@ -3118,13 +3166,13 @@ export function AdminStorefrontDashboard({
       eventSource.removeEventListener("subscription", handleSubscriptionEvent);
       eventSource.close();
     };
-  }, [currentPage, session.accessToken]);
+  }, [currentPage, session.accessToken, session.baseUrl, session.frontendType]);
 
   useEffect(() => {
     if (currentPage === "subscriptions" && session.accessToken) {
       refreshSubscriptionStatus().catch(() => {});
     }
-  }, [subscriptionUserPage]);
+  }, [currentPage, session.accessToken, session.baseUrl, subscriptionUserPage]);
 
   useEffect(() => {
     setEmailTemplates(loadEmailTemplates());
@@ -3974,14 +4022,9 @@ export function AdminStorefrontDashboard({
   function openOrderCreateModal() {
     closeAllOrderPopups();
     setOrderCreateForm(EMPTY_ORDER_FORM);
-    setOrderCreateItems([{
-      ...EMPTY_ORDER_LINE,
-      key: "line-1",
-      productId: String((data.products || [])[0]?.id || ""),
-      quantity: 1
-    }]);
-    setOrderCreateSearch((data.products || [])[0]?.name || "");
-    setOrderCreateCustomerSearch("Patient Guest");
+    setOrderCreateItems([]);
+    setOrderCreateSearch("");
+    setOrderCreateCustomerSearch("");
     setOrderCreateCustomerMenuOpen(false);
     setOrderCreateFeedback("");
     setOrderCreateModalOpen(true);
@@ -4013,15 +4056,12 @@ export function AdminStorefrontDashboard({
       setCreateModalType("consultation");
       return;
     }
-    if (type === "doctor") {
-      setDoctorCreateForm(EMPTY_DOCTOR_FORM);
-      setDoctorCreateCategorySearch("");
-      setCreateModalType("doctor");
-      return;
-    }
-    if (type === "customer") {
-      setCustomerCreateForm(EMPTY_CUSTOMER_FORM);
-      setCreateModalType("customer");
+    if (type === "user" || type === "doctor" || type === "customer") {
+      setUserAccountCreateForm({
+        ...EMPTY_USER_ACCOUNT_FORM,
+        role: type === "doctor" ? "doctor" : "patient"
+      });
+      setCreateModalType("user");
     }
   }
 
@@ -4031,6 +4071,7 @@ export function AdminStorefrontDashboard({
     setOrderCreateSearch("");
     setCustomerCreateForm(EMPTY_CUSTOMER_FORM);
     setDoctorCreateForm(EMPTY_DOCTOR_FORM);
+    setUserAccountCreateForm(EMPTY_USER_ACCOUNT_FORM);
     setDoctorCreateCategorySearch("");
     setConsultationCreateForm(EMPTY_CONSULTATION_FORM);
     setConsultationCalendarMode("week");
@@ -4047,6 +4088,50 @@ export function AdminStorefrontDashboard({
     setOrderCreateSearch("");
     setOrderCreateCustomerSearch("");
     setOrderCreateCustomerMenuOpen(false);
+  }
+
+  function generateUserAccountPassword() {
+    const groups = ["ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnopqrstuvwxyz", "23456789", "!@#$%&*_-+"];
+    const randomIndex = (length) => {
+      const values = new Uint32Array(1);
+      window.crypto.getRandomValues(values);
+      return values[0] % length;
+    };
+    const required = groups.map((group) => group[randomIndex(group.length)]);
+    const all = groups.join("");
+    while (required.length < 18) {
+      required.push(all[randomIndex(all.length)]);
+    }
+    for (let index = required.length - 1; index > 0; index -= 1) {
+      const swapIndex = randomIndex(index + 1);
+      [required[index], required[swapIndex]] = [required[swapIndex], required[index]];
+    }
+    setUserAccountCreateForm((previous) => ({ ...previous, password: required.join("") }));
+  }
+
+  function selectUserAccountAvatar(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    const allowedExtensions = ["jpg", "jpeg", "png", "webp"];
+    if (!allowedTypes.includes(file.type) || !allowedExtensions.includes(extension) || file.size > 2 * 1024 * 1024) {
+      const message = "Choose one JPG, PNG, or WebP avatar no larger than 2 MB.";
+      setCreateFeedback(message);
+      showSnackbar(message, "warning");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setUserAccountCreateForm((previous) => ({
+        ...previous,
+        avatar: { name: file.name, type: file.type, data: String(reader.result || "") }
+      }));
+      setCreateFeedback("");
+    };
+    reader.onerror = () => setCreateFeedback("The selected avatar could not be read.");
+    reader.readAsDataURL(file);
   }
 
   function getOrderCreateCustomerName(form = orderCreateForm) {
@@ -4082,8 +4167,8 @@ export function AdminStorefrontDashboard({
     const customerId = String(customer.id || customer.user_id || customer.customer_id || "");
     const customerName = customerNameFromRecord(customer) || customer.display_name || customer.email || `Patient #${customerId}`;
     const nameParts = customerName.trim().split(/\s+/).filter(Boolean);
-    const firstName = nameParts.shift() || "Patient";
-    const lastName = nameParts.join(" ") || "Guest";
+    const firstName = nameParts.shift() || "";
+    const lastName = nameParts.join(" ");
     const nextEmail = customerEmail(customer) || customer.email || "";
     const nextPhone = customerPhoneFromRecord(customer) || "";
     setOrderCreateForm((prev) => ({
@@ -4091,8 +4176,8 @@ export function AdminStorefrontDashboard({
       customerId,
       firstName,
       lastName,
-      email: nextEmail || prev.email,
-      phone: nextPhone || prev.phone
+      email: nextEmail,
+      phone: nextPhone
     }));
     setOrderCreateCustomerSearch(customerName);
     setOrderCreateCustomerMenuOpen(false);
@@ -4103,7 +4188,7 @@ export function AdminStorefrontDashboard({
   }
 
   function getOrderCreateSelectedProductId() {
-    return String(getOrderCreateSelectedLineItem().productId || popupOrderProducts[0]?.id || "6005");
+    return String(getOrderCreateSelectedLineItem().productId || "");
   }
 
   function setOrderCreateSelectedProduct(productId) {
@@ -4292,7 +4377,7 @@ export function AdminStorefrontDashboard({
     const loading = tableActionLoading === `patient-${userId}-${action}`;
     return (
       <button
-        className="staff-action-icon"
+        className={`staff-action-icon patient-action-button patient-action-${action}`}
         type="button"
         aria-label={`${label} ${row.name || "patient"}`}
         data-tooltip={loading ? `${label} in progress` : label}
@@ -4468,16 +4553,7 @@ export function AdminStorefrontDashboard({
 
   async function createOrderFromForm(event) {
     event.preventDefault();
-    const fallbackProduct = popupOrderProducts.find((product) => String(product.id) === String(getOrderCreateSelectedLineItem().productId))
-      || popupOrderProducts[0]
-      || null;
-    const fallbackQuantity = Math.max(1, Number(getOrderCreateSelectedLineItem().quantity || 1));
-    const lineItems = orderCreateItems.length ? orderCreateItems : [{
-      ...EMPTY_ORDER_LINE,
-      productId: String(fallbackProduct?.id || ""),
-      quantity: fallbackQuantity
-    }];
-    const normalizedLineItems = lineItems
+    const normalizedLineItems = orderCreateItems
       .map((item) => ({
         product_id: Number(item.productId || 0),
         quantity: Number(item.quantity || 1)
@@ -4487,6 +4563,13 @@ export function AdminStorefrontDashboard({
     if (!normalizedLineItems.length) {
       setOrderCreateFeedback("Add at least one product before creating the order.");
       showSnackbar("Add at least one product before creating the order.", "warning");
+      return;
+    }
+
+    if (!orderCreateForm.customerId) {
+      const message = "Select an existing patient from the search results.";
+      setOrderCreateFeedback(message);
+      showSnackbar(message, "warning");
       return;
     }
 
@@ -4503,7 +4586,10 @@ export function AdminStorefrontDashboard({
     setOrderCreateFeedback("");
     try {
       const billingParts = getOrderCreateCustomerName().split(" ");
-      const paymentStatus = ORDER_CREATE_PAYMENT_STATUS_MAP[orderCreateForm.status] || "pending";
+      const paymentStatus = ORDER_CREATE_PAYMENT_STATUS_MAP[orderCreateForm.status];
+      if (!paymentStatus) {
+        throw new Error("Select a payment status.");
+      }
       const payload = await apiRequest("/orders", {
         method: "POST",
         body: {
@@ -4520,8 +4606,8 @@ export function AdminStorefrontDashboard({
           delivery_method: orderCreateForm.deliveryMethod,
           prescription: orderCreateForm.prescription,
           billing: {
-            first_name: billingParts[0] || "Patient",
-            last_name: billingParts.slice(1).join(" ") || "Guest",
+            first_name: billingParts[0] || "",
+            last_name: billingParts.slice(1).join(" "),
             email: orderCreateForm.email,
             phone: orderCreateForm.phone,
             address_1: orderCreateForm.address,
@@ -4636,6 +4722,38 @@ export function AdminStorefrontDashboard({
         setCreateFeedback("Consultation created.");
         showSnackbar("Consultation created.", "success");
         closeCreateModal();
+      } else if (createModalType === "user") {
+        const payload = await apiRequest("/admin/users", {
+          method: "POST",
+          body: {
+            first_name: userAccountCreateForm.firstName,
+            last_name: userAccountCreateForm.lastName,
+            email: userAccountCreateForm.email,
+            phone: userAccountCreateForm.phone,
+            password: userAccountCreateForm.password,
+            role: userAccountCreateForm.role,
+            permissions: userAccountCreateForm.permissions,
+            avatar: userAccountCreateForm.avatar,
+            specialty: userAccountCreateForm.specialty,
+            license_number: userAccountCreateForm.licenseNumber,
+            location: userAccountCreateForm.location,
+            weekly_capacity: Number(userAccountCreateForm.weeklyCapacity || 40),
+            is_available: userAccountCreateForm.isAvailable,
+            address: userAccountCreateForm.address
+          }
+        });
+        const createdUser = payload?.data?.user;
+        if (createdUser) {
+          if (userAccountCreateForm.role === "patient") {
+            setData((prev) => ({ ...prev, customers: [createdUser, ...(prev.customers || [])] }));
+            revalidateCacheGroups(isCustomerListKey);
+          } else {
+            setData((prev) => ({ ...prev, staff: [createdUser, ...(prev.staff || [])] }));
+            if (userAccountCreateForm.role === "doctor") revalidateCacheGroups(isDoctorListKey);
+          }
+        }
+        showSnackbar("User account created.", "success");
+        closeCreateModal();
       } else if (createModalType === "doctor") {
         const payload = await apiRequest("/doctors", {
           method: "POST",
@@ -4683,7 +4801,7 @@ export function AdminStorefrontDashboard({
         closeCreateModal();
       }
     } catch (error) {
-      const entityLabel = createModalType === "doctor" ? "doctor" : "customer";
+      const entityLabel = createModalType === "user" ? "user account" : (createModalType === "doctor" ? "doctor" : "customer");
       const message = parseCreateError(error, entityLabel);
       setCreateFeedback(message);
       showSnackbar(message, "error");
@@ -5386,22 +5504,22 @@ export function AdminStorefrontDashboard({
     if (stepKey === "identity") {
       return {
         title: nextForm.title?.trim() ? "" : "Product name is required.",
+        shortDescription: nextForm.shortDescription?.trim() ? "" : "Add a short description."
+      };
+    }
+    if (stepKey === "commerce") {
+      return {
         category: nextForm.categories?.[0] ? "" : "Select a category.",
-        shortDescription: nextForm.shortDescription?.trim() ? "" : "Add a short description.",
         regularPrice: String(nextForm.regularPrice || "").trim() !== "" ? "" : "Enter a unit price.",
         salePrice: Number(nextForm.salePrice || 0) > Number(nextForm.regularPrice || 0)
           ? "Sale price cannot be greater than unit price."
           : ""
       };
     }
-    if (stepKey === "description") {
+    if (stepKey === "prescription") {
       return {
-        longDescription: "",
-        prescriptionNotes: nextForm.prescriptionNotes?.trim() ? "" : "Add a prescription note."
+        longDescription: nextForm.longDescription?.replace(/<[^>]*>/g, "").trim() ? "" : "Add a prescription."
       };
-    }
-    if (stepKey === "media") {
-      return {};
     }
     return {};
   }
@@ -5614,6 +5732,7 @@ export function AdminStorefrontDashboard({
             regular_price: productEditForm.regularPrice,
             sale_price: productEditForm.salePrice,
             stock_quantity: Number(productEditForm.stockQuantity || 0),
+            stock_status: productEditForm.stockStatus || "instock",
             categories: productEditForm.categories,
             tags: productEditForm.tags,
             brands: productEditForm.brands,
@@ -5626,7 +5745,7 @@ export function AdminStorefrontDashboard({
               { key: "strength_dosage", value: productEditForm.strengthDosage || "" },
               { key: "expiry_date", value: productEditForm.expiryDate || "" },
               { key: "prescription_rule", value: productEditForm.prescriptionRule || "no_prescription_needed" },
-              { key: "prescription_notes", value: productEditForm.prescriptionNotes || "" }
+              { key: "prescription_notes", value: productEditorMode === "create" ? productEditForm.longDescription : (productEditForm.prescriptionNotes || "") }
             ],
             purchase_note: productEditForm.purchaseNotes,
             shipping_information: productEditForm.shippingInfo,
@@ -6788,6 +6907,8 @@ export function AdminStorefrontDashboard({
     }
 
     const nextSession = { ...session, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
+    resetAnalyticsIdentity();
+    identifiedAnalyticsUserRef.current = "";
     clearDashboardCacheStorage();
     setSession(nextSession);
     setAppDataLoaded(false);
@@ -7088,11 +7209,11 @@ export function AdminStorefrontDashboard({
     dedupingInterval: 120_000
   };
   const orderCreateProductsQuery = useSWR(
-    canLoadSections && orderCreateModalOpen
-      ? swrKeys.admin.products(withBaseUrl(session, { per_page: 100, page: 1 }))
+    canLoadSections && orderCreateModalOpen && deferredOrderCreateSearch.length >= 2
+      ? swrKeys.admin.products(withBaseUrl(session, { per_page: 20, page: 1, search: deferredOrderCreateSearch }))
       : null,
-    () => adminApiRequest("products", { params: { per_page: 100, page: 1 } }, session),
-    { ...popupQueryOptions, fallbackData: data.products?.length ? { data: data.products } : undefined }
+    () => adminApiRequest("products", { params: { per_page: 20, page: 1, search: deferredOrderCreateSearch } }, session),
+    { ...popupQueryOptions, dedupingInterval: 15_000 }
   );
   const orderCreateDoctorsQuery = useSWR(
     canLoadSections && orderCreateModalOpen
@@ -7109,11 +7230,11 @@ export function AdminStorefrontDashboard({
     { ...popupQueryOptions, fallbackData: data.doctors?.length ? { data: data.doctors } : undefined }
   );
   const orderCreateCustomersQuery = useSWR(
-    canLoadSections && orderCreateModalOpen
-      ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 100, page: 1 }))
+    canLoadSections && orderCreateModalOpen && deferredOrderCreateCustomerSearch.length >= 2
+      ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 20, page: 1, search: deferredOrderCreateCustomerSearch }))
       : null,
-    () => adminApiRequest("customers", { params: { per_page: 100, page: 1 } }, session),
-    { ...popupQueryOptions, fallbackData: data.customers?.length ? { data: data.customers.slice(0, 100) } : undefined }
+    () => adminApiRequest("customers", { params: { per_page: 20, page: 1, search: deferredOrderCreateCustomerSearch } }, session),
+    { ...popupQueryOptions, dedupingInterval: 15_000 }
   );
   const productEditorCategoriesQuery = useSWR(
     canLoadSections && Boolean(productEditForm && (selectedProductEdit || productEditorMode === "create"))
@@ -7382,7 +7503,7 @@ export function AdminStorefrontDashboard({
   const selectedConsultationPrescriptions = selectedConsultation
     ? (data.prescriptionDetails || []).filter((item) => Number(item.patient_user_id) === Number(selectedConsultation.patient_user_id))
     : [];
-  const showPageSearch = true;
+  const showPageSearch = currentPage !== "analytics";
   const searchPlaceholder = SEARCH_PLACEHOLDERS[currentPage] || "Search this page";
   const siteName = session.siteName || DEFAULT_SITE_NAME;
   const siteLogo = session.siteLogo || "/ne.webp";
@@ -8509,7 +8630,7 @@ export function AdminStorefrontDashboard({
   const dashboardRevealActive = useSWRReveal(dashboardRevealSignature, { durationMs: 260 });
   const dashboardRevealClassName = `dashboard-swr-reveal ${dashboardRevealActive ? "is-active" : ""}`.trim();
 
-  const showPageSkeleton = Boolean(!isEmbeddedDashboard && session.accessToken && !appDataLoaded);
+  const showPageSkeleton = Boolean(!isEmbeddedDashboard && currentPage !== "analytics" && session.accessToken && !appDataLoaded);
 
   if (!hydrated || !accessResolved) {
     return (
@@ -8614,9 +8735,13 @@ export function AdminStorefrontDashboard({
     if (currentPage === "overview") {
       return (
         <section className="page-view active overview-skeleton-page">
-          <section className="metrics-grid overview-skeleton-metrics">
-            {renderMetricSkeletons(5)}
-          </section>
+          <AdminMetricCards
+            className="overview-admin-metrics"
+            cards={Array.from({ length: 6 }, (_, index) => ({ label: `Overview metric ${index + 1}`, value: "—", note: "Loading overview information" }))}
+            loading
+            maxCards={8}
+            ariaLabel="Loading overview metrics"
+          />
           <section className="overview-v2-content-grid overview-skeleton-content-grid">
             <div className="overview-v2-stack">
               <article className="panel skeleton-panel overview-skeleton-panel">
@@ -8755,17 +8880,8 @@ export function AdminStorefrontDashboard({
     if (currentPage === "orders") {
       return (
         <section className="page-view active">
-          <section className="page-banner panel skeleton-panel">
-            <div className="detail-list">
-              <SkeletonBox className="skeleton-line skeleton-line-xs" />
-              <SkeletonBox className="skeleton-line skeleton-line-lg" />
-              <SkeletonBox className="skeleton-line skeleton-line-md" />
-            </div>
-            <div className="banner-stats">
-              <div className="mini-stat skeleton-panel"><SkeletonBox className="skeleton-line skeleton-line-xs" /><SkeletonBox className="skeleton-line skeleton-line-md skeleton-line-tall" /></div>
-              <div className="mini-stat skeleton-panel"><SkeletonBox className="skeleton-line skeleton-line-xs" /><SkeletonBox className="skeleton-line skeleton-line-md skeleton-line-tall" /></div>
-            </div>
-          </section>
+          <AdminPageHeading title="Nevari Pharmacy Orders" />
+          <AdminMetricCards cards={Array.from({ length: 4 }, (_, index) => ({ label: `Order metric ${index + 1}`, value: "—", note: "Loading order information" }))} loading ariaLabel="Loading order metrics" />
           <section className="panel table-panel skeleton-panel">
             <div className="panel-header">
               <div>
@@ -8968,7 +9084,7 @@ export function AdminStorefrontDashboard({
                               </div>
                             </td>
                             <td>{row.plan || row.plan_name || selectedSubscriptionPlan?.name || subscriptionSettings.planName || "—"}</td>
-                            <td><span className={`chip ${row.statusTone || "draft"}`}>{row.status || row.subscription_status || "—"}</span></td>
+                            <td><span className={`chip ${adminStatusTone(row.status || row.subscription_status || row.statusTone)}`}>{row.status || row.subscription_status || "—"}</span></td>
                             <td>{row.renewal || row.renewal_date || "—"}</td>
                             <td>{row.amount || row.amount_label || "—"}</td>
                             <td>{row.ref || row.gateway_ref || row.reference || "—"}</td>
@@ -8998,13 +9114,11 @@ export function AdminStorefrontDashboard({
             </div>
           </section>
 
-          {subscriptionDetailsOpen && selectedSubscriptionPlan ? (
-            <div className="app-modal-stack">
-              <div className="app-modal-layer app-modal-layer-top is-open">
-                <ModalScrim className="app-modal-backdrop" label="Close subscription details" onDismiss={closeSubscriptionDetails} />
-                <article className="subscription-plan-details-modal" role="dialog" aria-modal="true" aria-labelledby="subscription-plan-details-title">
-                  <header className="subscription-plan-details-header">
-                    <div className="subscription-plan-details-identity">
+          {subscriptionDetailsOpen && selectedSubscriptionPlan && typeof document !== "undefined" ? createPortal(
+            <div className="staff-modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSubscriptionDetails(); }}>
+                <article className="staff-fullscreen-modal detail-flat-modal subscription-plan-details-modal" role="dialog" aria-modal="true" aria-labelledby="subscription-plan-details-title">
+                  <header className="staff-modal-header subscription-plan-details-header">
+                    <div className="staff-modal-identity subscription-plan-details-identity">
                       <span className="subscription-plan-details-avatar" aria-hidden="true">
                         {generateInitials(selectedSubscriptionPlan.name || "Subscription")}
                       </span>
@@ -9018,70 +9132,122 @@ export function AdminStorefrontDashboard({
                       <span className={`chip ${formatPlanStatusTone(selectedSubscriptionPlan.status)}`}>
                         {formatStatusLabel(selectedSubscriptionPlan.status || "active")}
                       </span>
-                      <button className="subscription-details-pill subscription-details-pill-secondary" type="button" autoFocus disabled={Boolean(subscriptionDetailsActionLoading)} onClick={closeSubscriptionDetails}>
-                        Close details
-                      </button>
+                      <button className="icon-button" type="button" autoFocus aria-label="Close subscription details" disabled={Boolean(subscriptionDetailsActionLoading)} onClick={closeSubscriptionDetails}>×</button>
                     </div>
                   </header>
 
-                  <div className="subscription-plan-details-body">
-                    <section className="subscription-plan-details-section" aria-labelledby="subscription-plan-overview-title">
-                      <div className="subscription-plan-details-section-head">
-                        <div>
-                          <p>Plan overview</p>
-                          <h3 id="subscription-plan-overview-title">Commercial configuration</h3>
-                        </div>
-                        <span>Review the pricing, billing schedule, usage, and gateway source.</span>
-                      </div>
-                      <dl className="subscription-plan-details-grid">
-                        <div><dt>Price</dt><dd>{selectedSubscriptionPlan.price || (selectedSubscriptionPlan.amount != null ? formatMoney(selectedSubscriptionPlan.amount, selectedSubscriptionPlan.currency || "NGN") : "NGN 0")}</dd></div>
-                        <div><dt>Billing cycle</dt><dd>{formatStatusLabel(selectedSubscriptionPlan.billing || selectedSubscriptionPlan.interval || "manual")}</dd></div>
-                        <div><dt>Subscribed users</dt><dd>{formatNumber(selectedSubscriptionPlan.users || 0)}</dd></div>
-                        <div><dt>Gateway/source</dt><dd>{isSystemSubscriptionPlan(selectedSubscriptionPlan) ? "System" : (selectedSubscriptionPlan.checkout_type === "manual" ? "Manual" : "Paystack")}</dd></div>
-                        <div><dt>Plan key</dt><dd>{selectedSubscriptionPlan.plan_key || selectedSubscriptionPlan.slug || "Not assigned"}</dd></div>
-                        <div><dt>Checkout type</dt><dd>{formatStatusLabel(selectedSubscriptionPlan.checkout_type || "auto generated")}</dd></div>
-                      </dl>
-                    </section>
+                  <div className="staff-modal-body subscription-plan-details-body">
+                    <div className="segmented-mini nevari-storefront-tabs subscription-details-tabs" role="tablist" aria-label="Subscription plan sections">
+                      {[
+                        ["details", "Details"],
+                        ["users", "Users"]
+                      ].map(([key, label]) => (
+                        <button
+                          id={`subscription-details-tab-${key}`}
+                          className={subscriptionDetailsTab === key ? "active" : ""}
+                          type="button"
+                          role="tab"
+                          aria-selected={subscriptionDetailsTab === key}
+                          aria-controls={`subscription-details-panel-${key}`}
+                          key={key}
+                          onClick={() => setSubscriptionDetailsTab(key)}
+                        >
+                          {label}{key === "users" ? <span className="badge-count">{formatNumber(visibleSubscriptionUsers.length)}</span> : null}
+                        </button>
+                      ))}
+                    </div>
 
-                    <section className="subscription-plan-details-section" aria-labelledby="subscription-plan-features-title">
+                    {subscriptionDetailsTab === "details" ? <div id="subscription-details-panel-details" role="tabpanel" aria-labelledby="subscription-details-tab-details">
+                      <section className="subscription-plan-details-section" aria-labelledby="subscription-plan-overview-title">
+                        <div className="subscription-plan-details-section-head">
+                          <div>
+                            <p>Plan overview</p>
+                            <h3 id="subscription-plan-overview-title">Commercial configuration</h3>
+                          </div>
+                          <span>Review the pricing, billing schedule, usage, and gateway source.</span>
+                        </div>
+                        <dl className="subscription-plan-details-grid">
+                          <div>
+                            <dt>Price</dt>
+                            <dd className="subscription-inline-price">
+                              {subscriptionPriceEditing ? <>
+                                <label className="sr-only" htmlFor="subscription-inline-price-input">Subscription price</label>
+                                <input id="subscription-inline-price-input" type="number" min="0" step="0.01" value={subscriptionInlinePrice} autoFocus onChange={(event) => setSubscriptionInlinePrice(event.target.value)} />
+                                <button type="button" onClick={continueInlineSubscriptionPriceEdit}>Continue</button>
+                                <button type="button" onClick={() => setSubscriptionPriceEditing(false)}>Cancel</button>
+                              </> : <>
+                                <span>{selectedSubscriptionPlan.price || (selectedSubscriptionPlan.amount != null ? formatMoney(selectedSubscriptionPlan.amount, selectedSubscriptionPlan.currency || "NGN") : "NGN 0")}</span>
+                                <button className="subscription-inline-edit-button" type="button" aria-label="Edit subscription price" onClick={() => setSubscriptionPriceEditing(true)}>
+                                  <HugeiconsIcon icon={PencilEdit02Icon} size={17} strokeWidth={1.8} />
+                                </button>
+                              </>}
+                            </dd>
+                          </div>
+                          <div><dt>Billing cycle</dt><dd>{formatStatusLabel(selectedSubscriptionPlan.billing || selectedSubscriptionPlan.interval || "manual")}</dd></div>
+                          <div><dt>Subscribed users</dt><dd>{formatNumber(selectedSubscriptionPlan.users || 0)}</dd></div>
+                          <div><dt>Gateway/source</dt><dd>{isSystemSubscriptionPlan(selectedSubscriptionPlan) ? "System" : (selectedSubscriptionPlan.checkout_type === "manual" ? "Manual" : "Paystack")}</dd></div>
+                          <div><dt>Plan key</dt><dd>{selectedSubscriptionPlan.plan_key || selectedSubscriptionPlan.slug || "Not assigned"}</dd></div>
+                          <div><dt>Checkout type</dt><dd>{formatStatusLabel(selectedSubscriptionPlan.checkout_type || "auto generated")}</dd></div>
+                        </dl>
+                      </section>
+
+                      <section className="subscription-plan-details-section" aria-labelledby="subscription-plan-features-title">
+                        <div className="subscription-plan-details-section-head">
+                          <div>
+                            <p>Plan access</p>
+                            <h3 id="subscription-plan-features-title">Included features</h3>
+                          </div>
+                          <span>Benefits made available to subscribers on this plan.</span>
+                        </div>
+                        {splitFeatureList(selectedSubscriptionPlan.features || "").length ? (
+                          <div className="subscription-plan-feature-list">
+                            {splitFeatureList(selectedSubscriptionPlan.features || "").map((feature) => (
+                              <span className="subscription-plan-feature" key={feature}>{feature}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="subscription-plan-details-empty">
+                            <strong>No features configured</strong>
+                            <p>Use the price edit flow when this plan needs an update.</p>
+                          </div>
+                        )}
+                      </section>
+                    </div> : <section id="subscription-details-panel-users" className="subscription-plan-users-panel" role="tabpanel" aria-labelledby="subscription-details-tab-users">
                       <div className="subscription-plan-details-section-head">
-                        <div>
-                          <p>Plan access</p>
-                          <h3 id="subscription-plan-features-title">Included features</h3>
-                        </div>
-                        <span>Benefits made available to subscribers on this plan.</span>
+                        <div><p>Plan users</p><h3>Subscribed users</h3></div>
+                        <span>Users currently assigned to this subscription plan.</span>
                       </div>
-                      {splitFeatureList(selectedSubscriptionPlan.features || "").length ? (
-                        <div className="subscription-plan-feature-list">
-                          {splitFeatureList(selectedSubscriptionPlan.features || "").map((feature) => (
-                            <span className="subscription-plan-feature" key={feature}>{feature}</span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="subscription-plan-details-empty">
-                          <strong>No features configured</strong>
-                          <p>Edit this plan to add subscriber benefits.</p>
-                        </div>
-                      )}
-                    </section>
+                      <div className="table-scroll subscription-plan-users-table">
+                        <table>
+                          <thead><tr><th>User</th><th>Status</th><th>Date joined</th></tr></thead>
+                          <tbody>
+                            {visibleSubscriptionUsers.length ? visibleSubscriptionUsers.map((row, index) => {
+                              const userName = row.name || row.full_name || row.display_name || row.email || "Subscriber";
+                              const avatarUrl = row.avatar_url || row.avatarUrl || row.profile_image || "";
+                              return <tr key={row.id || row.ref || `${userName}-${index}`}>
+                                <td><div className="customer-list-profile">
+                                  <span className="customer-list-avatar">{avatarUrl ? <img src={avatarUrl} alt="" /> : getNameInitials(userName, "SU")}</span>
+                                  <span><strong>{userName}</strong><small>{row.email || row.user_email || "—"}</small></span>
+                                </div></td>
+                                <td><span className={`chip ${adminStatusTone(row.status || row.subscription_status || row.statusTone || "active")}`}>{row.status || row.subscription_status || "Active"}</span></td>
+                                <td>{formatDate(row.joined_at || row.date_joined || row.created_at || row.subscription_started_at, true)}</td>
+                              </tr>;
+                            }) : <tr><td colSpan="3" className="muted">No users are currently assigned to this plan.</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>}
                   </div>
 
-                  <footer className="subscription-plan-details-actions" aria-label="Subscription plan actions">
-                    <button className="subscription-details-pill subscription-details-pill-secondary" type="button" disabled={Boolean(subscriptionDetailsActionLoading)} onClick={refreshSubscriptionDetails}>
-                      {subscriptionDetailsActionLoading === "refresh" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
-                      <span>{subscriptionDetailsActionLoading === "refresh" ? "Refreshing..." : "Refresh details"}</span>
-                    </button>
-                    <button className="subscription-details-pill subscription-details-pill-primary" type="button" disabled={Boolean(subscriptionDetailsActionLoading)} onClick={editSelectedSubscriptionPlan}>
-                      <span>Edit subscription plan</span>
-                    </button>
+                  <footer className="modal-actions subscription-plan-details-actions" aria-label="Subscription plan actions">
                     <button className="subscription-details-pill subscription-details-pill-danger" type="button" disabled={Boolean(subscriptionDetailsActionLoading) || isSystemSubscriptionPlan(selectedSubscriptionPlan)} onClick={() => deleteSubscriptionPlan(selectedSubscriptionPlan)}>
                       {subscriptionDetailsActionLoading === "delete" || subscriptionDeleteLoading ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
                       <span>{subscriptionDetailsActionLoading === "delete" || subscriptionDeleteLoading ? "Deleting..." : "Delete subscription plan"}</span>
                     </button>
                   </footer>
                 </article>
-              </div>
-            </div>
+            </div>,
+            document.body
           ) : null}
 
           <div className={`subscription-modal-backdrop rx-live-modal ${subscriptionModalOpen ? "open visible" : ""}`} aria-hidden={!subscriptionModalOpen} onClick={closeSubscriptionModal}>
@@ -9293,6 +9459,8 @@ export function AdminStorefrontDashboard({
 
     return (
       <section className="page-view active">
+        <AdminPageHeading title={formatStatusLabel(currentPage)} />
+        <AdminMetricCards cards={Array.from({ length: 4 }, (_, index) => ({ label: `Page metric ${index + 1}`, value: "—", note: "Loading page information" }))} loading ariaLabel="Loading page metrics" />
         <section className="panel table-panel skeleton-panel">
           <div className="panel-header">
             <div>
@@ -9441,8 +9609,8 @@ export function AdminStorefrontDashboard({
 
             <nav className="nav-groups" aria-label="Primary">
               {FRONTEND_PAGES.map((group) => (
-                <div className="nav-group" key={group.label}>
-                  <p className="nav-label">{group.label}</p>
+                <div className={`nav-group ${group.label ? "" : "nav-group-top-level"}`} key={group.label || "top-level"}>
+                  {group.label ? <p className="nav-label">{group.label}</p> : null}
                   {group.items.filter(([pageId]) => {
                     const requiredPermission = STOREFRONT_PAGE_PERMISSIONS[pageId];
                     return (session.user?.roles || []).includes("administrator") || !requiredPermission || (session.user?.storefront_permissions || []).includes(requiredPermission);
@@ -9500,9 +9668,7 @@ export function AdminStorefrontDashboard({
                             ? "New Order"
                             : type === "consultation"
                               ? "New Consultation"
-                              : type === "doctor"
-                                ? "New Doctor"
-                                : "New Patient"}
+                              : "New user account"}
                       </button>
                     ))}
                   </div>
@@ -9524,65 +9690,25 @@ export function AdminStorefrontDashboard({
           <div className={`pages-stack ${dashboardRevealClassName}`.trim()}>
             {showPageSkeleton ? renderPageSkeleton() : (
               <>
+            {currentPage === "analytics" && (
+              <section className="page-view active analytics-reference">
+                <AnalyticsDashboard baseUrl={session.baseUrl} frontendType={session.frontendType} />
+              </section>
+            )}
             {currentPage === "subscriptions" && renderPageSkeleton()}
             {currentPage === "overview" && (
               <section className="page-view active overview-reference">
-                <section className="metric-grid">
-                  <article className="metric-card primary">
-                    <div className="metric-top">
-                      <span className="metric-icon"><InlineIcon id="i-mail" /></span>
-                      <StatusPill value="pending">finance</StatusPill>
-                    </div>
-                    <span className="metric-label">Total Revenue</span>
-                    <strong className="metric-value">{formatCompactMoney(sales.month || 0, storeCurrency)}</strong>
-                    <small className="metric-note">{formatCompactMoney(sales.today || 0, storeCurrency)} processed today</small>
-                  </article>
-                  <article className="metric-card accent">
-                    <div className="metric-top">
-                      <span className="metric-icon"><InlineIcon id="i-credit-card" /></span>
-                      <StatusPill value="completed">verified</StatusPill>
-                    </div>
-                    <span className="metric-label">Revenue today</span>
-                    <strong className="metric-value">{formatCompactMoney(sales.today || 0, storeCurrency)}</strong>
-                    <small className="metric-note">{formatCompactMoney(sales.pending || 0, storeCurrency)} awaiting verification</small>
-                  </article>
-                  <article className="metric-card">
-                    <div className="metric-top">
-                      <span className="metric-icon"><InlineIcon id="i-calendar" /></span>
-                      <StatusPill value="processing">active</StatusPill>
-                    </div>
-                    <span className="metric-label">Consultations today</span>
-                    <strong className="metric-value">{formatNumber(todayAppointments.length)}</strong>
-                    <small className="metric-note">{formatNumber(consultations.confirmed || 0)} confirmed, {formatNumber(consultations.requested || 0)} requested</small>
-                  </article>
-                  <article className="metric-card">
-                    <div className="metric-top">
-                      <span className="metric-icon"><InlineIcon id="i-clipboard" /></span>
-                      <StatusPill value="pending">review</StatusPill>
-                    </div>
-                    <span className="metric-label">Prescriptions</span>
-                    <strong className="metric-value">{formatNumber((data.prescriptions || []).length)}</strong>
-                    <small className="metric-note">{formatNumber(prescriptionsSummary.draft || 0)} need pharmacist decision</small>
-                  </article>
-                  <article className="metric-card">
-                    <div className="metric-top">
-                      <span className="metric-icon"><InlineIcon id="i-pill" /></span>
-                      <StatusPill value="completed">live</StatusPill>
-                    </div>
-                    <span className="metric-label">Active products</span>
-                    <strong className="metric-value">{formatNumber((data.products || []).length)}</strong>
-                    <small className="metric-note">{formatNumber(overviewInventoryAlertCount)} stock flags</small>
-                  </article>
-                  <article className="metric-card">
-                    <div className="metric-top">
-                      <span className="metric-icon"><InlineIcon id="i-cart" /></span>
-                      <StatusPill value="processing">orders</StatusPill>
-                    </div>
-                    <span className="metric-label">Orders in progress</span>
-                    <strong className="metric-value">{formatNumber(overviewOrderRows.filter((order) => ["pending", "processing", "on-hold"].includes(String(order.status || "").toLowerCase())).length)}</strong>
-                    <small className="metric-note">{formatNumber(overviewOrderRows.filter((order) => String(order.status || "").toLowerCase() === "completed").length)} completed recently</small>
-                  </article>
-                </section>
+                <AdminMetricCards
+                  className="overview-admin-metrics"
+                  maxCards={4}
+                  ariaLabel="Overview metrics"
+                  cards={[
+                    { label: "Total revenue", value: formatCompactMoney(sales.month || 0, storeCurrency), note: `${formatCompactMoney(sales.today || 0, storeCurrency)} processed today`, icon: "moneyBag", tone: "blue" },
+                    { label: "Consultations today", value: formatNumber(todayAppointments.length), note: `${formatNumber(consultations.confirmed || 0)} confirmed, ${formatNumber(consultations.requested || 0)} requested`, icon: "calendarCheck", tone: "blue" },
+                    { label: "Active products", value: formatNumber((data.products || []).length), note: `${formatNumber(overviewInventoryAlertCount)} stock flags`, icon: "pill", tone: "mint" },
+                    { label: "Orders in progress", value: formatNumber(overviewOrderRows.filter((order) => ["pending", "processing", "on-hold"].includes(String(order.status || "").toLowerCase())).length), note: `${formatNumber(overviewOrderRows.filter((order) => String(order.status || "").toLowerCase() === "completed").length)} completed recently`, icon: "cart", tone: "lavender" },
+                  ]}
+                />
 
                 <section className="overview-v2-content-grid">
                   <div className="overview-v2-stack">
@@ -9727,12 +9853,19 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "orders" && (
               <section className="page-view active">
+                <AdminPageHeading title="Nevari Pharmacy Orders" />
+                <AdminMetricCards
+                  ariaLabel="Order metrics"
+                  loading={ordersLoading}
+                  cards={[
+                    { label: "Total orders", value: formatNumber(orderQueueCounts.all || 0), note: "Orders in the current queue", icon: "package" },
+                    { label: "Needs prescription", value: formatNumber(orderQueueCounts.needs_rx || 0), note: "Orders awaiting prescription review", icon: "prescription" },
+                    { label: "Awaiting payment", value: formatNumber(orderQueueCounts.awaiting_payment || 0), note: "Orders waiting for verified payment", icon: "creditCard" },
+                    { label: "Doctor follow-up", value: formatNumber(orderQueueCounts.doctor_follow_up || 0), note: "Orders requiring doctor attention", icon: "doctor" },
+                  ]}
+                />
                 <section className="table-panel dashboard-table-shell orders-table-shell">
                   <div className="panel-header">
-                    <div>
-                      
-                      <h2>Nevari Pharmacy Orders</h2>
-                    </div>
                     <div className="toolbar">
                       
                       <div className="filter-bar order-queue-tabs" role="tablist" aria-label="Order queue filters">
@@ -9791,9 +9924,9 @@ export function AdminStorefrontDashboard({
                               <td><div className="table-title"><strong>#{order.number}</strong><span className="muted">{formatDate(order.created_at, true)}</span></div></td>
                               <td><StatusPill value={typeMeta.tone}>{typeMeta.label}</StatusPill></td>
                               <td>
-                                <div className="table-customer-cell order-customer-cell">
-                                  <strong>{resolveOrderCustomerSummary(order).name}</strong>
-                                  <span>{resolveOrderCustomerSummary(order).email}</span>
+                                <div className="customer-list-profile">
+                                  <span className="customer-list-avatar">{getNameInitials(resolveOrderCustomerSummary(order).name, "PT")}</span>
+                                  <span><strong>{resolveOrderCustomerSummary(order).name}</strong><small>{resolveOrderCustomerSummary(order).email}</small></span>
                                 </div>
                               </td>
                               <td>{productMixText}</td>
@@ -9831,28 +9964,19 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "payments" && (
               <section className="page-view active">
-                <section className="operations-grid">
-                  <article className="panel compact dashboard-stats-shell payments-stats-shell">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Payment summary</p>
-                        
-                      </div>
-                    </div>
-                    <div className="mini-stat-grid">
-                      <div className="mini-stat"><span>Month revenue</span><strong>{formatMoney(sales.month || 0, storeCurrency)}</strong><small>WooCommerce totals from dashboard</small></div>
-                      <div className="mini-stat"><span>Today revenue</span><strong>{formatMoney(sales.today || 0, storeCurrency)}</strong><small>Processed today</small></div>
-                      <div className="mini-stat"><span>Completed payments</span><strong>{formatNumber(paymentRows.filter((row) => row.paymentStatus === "completed").length)}</strong><small>Processed payments</small></div>
-                      <div className="mini-stat"><span>Failed or refunded</span><strong>{formatNumber(paymentRows.filter((row) => ["failed", "refunded"].includes(row.paymentStatus)).length)}</strong><small>Payment exceptions</small></div>
-                    </div>
-                  </article>
-                </section>
+                <AdminPageHeading title="Payments" />
+                <AdminMetricCards
+                  ariaLabel="Payment metrics"
+                  loading={paymentsLoading}
+                  cards={[
+                    { label: "Month revenue", value: formatMoney(sales.month || 0, storeCurrency), note: "WooCommerce revenue this month", icon: "moneyBag" },
+                    { label: "Today revenue", value: formatMoney(sales.today || 0, storeCurrency), note: "Verified payments processed today", icon: "moneyReceive" },
+                    { label: "Completed payments", value: formatNumber(paymentRows.filter((row) => row.paymentStatus === "completed").length), note: "Successfully processed payments", icon: "check" },
+                    { label: "Payment exceptions", value: formatNumber(paymentRows.filter((row) => ["failed", "refunded"].includes(row.paymentStatus)).length), note: "Failed or refunded payments", icon: "alert" },
+                  ]}
+                />
                 <section className="table-panel dashboard-table-shell payments-table-shell">
                   <div className="panel-header">
-                    <div>
-                      <p className="section-kicker"> Store Payments</p>
-                      
-                    </div>
                     <div className="toolbar">
                       <div className="filter-bar" aria-label="Payment filters">
                         {[
@@ -9899,9 +10023,9 @@ export function AdminStorefrontDashboard({
                           >
                             <td className="order-col">#{row.number}</td>
                             <td>
-                              <div className="table-customer-cell payment-customer-cell">
-                                <strong>{customerSummary(row.sourceOrder).name}</strong>
-                                <span>{customerSummary(row.sourceOrder).email}</span>
+                              <div className="customer-list-profile">
+                                <span className="customer-list-avatar">{getNameInitials(customerSummary(row.sourceOrder).name, "PT")}</span>
+                                <span><strong>{customerSummary(row.sourceOrder).name}</strong><small>{customerSummary(row.sourceOrder).email}</small></span>
                               </div>
                             </td>
                             <td className="created-col">{formatDate(row.createdAt, true)}</td>
@@ -9936,13 +10060,18 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "customers" && (
               <section className="page-view active">
+                <AdminPageHeading title="Patients" />
+                <AdminMetricCards
+                  ariaLabel="Patient metrics"
+                  loading={customersQuery.isLoading}
+                  cards={[
+                    { label: "Total patients", value: formatNumber(customerServerPagination.total || customerRows.length), note: "Patient accounts in the directory", icon: "users" },
+                    { label: "Total orders", value: formatNumber(customerRows.reduce((total, row) => total + Number(row.orders || 0), 0)), note: "Orders from patients on this page", icon: "cart" },
+                    { label: "Patient spend", value: formatMoney(customerRows.reduce((total, row) => total + Number(row.spend || 0), 0), storeCurrency), note: "Combined spend on this page", icon: "money" },
+                    { label: "Appointments", value: formatNumber(customerRows.reduce((total, row) => total + Number(row.appointments || 0), 0)), note: "Appointments linked to these patients", icon: "calendar" },
+                  ]}
+                />
                 <section className="panel table-panel patient-directory-panel admin-flat-table-section">
-                  <div className="panel-header">
-                    <div>
-                      <p className="section-kicker">Patient list</p>
-                      
-                    </div>
-                  </div>
                   <div className="table-scroll">
                     <table>
                       <thead>
@@ -9952,11 +10081,12 @@ export function AdminStorefrontDashboard({
                           <th>Spend</th>
                           <th className="narrow-col">Appointments</th>
                           <th>Last activity</th>
+                          <th>Status</th>
                           <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {customersQuery.isLoading ? renderTableRowSkeletons(6, 6) : customerRows.length ? paginatedCustomerRows.map((row) => (
+                        {customersQuery.isLoading ? renderTableRowSkeletons(6, 7) : customerRows.length ? paginatedCustomerRows.map((row) => (
                           <tr
                             key={row.id}
                             className="table-row-button"
@@ -9980,6 +10110,11 @@ export function AdminStorefrontDashboard({
                             <td>{formatMoney(row.spend, storeCurrency)}</td>
                             <td>{formatNumber(row.appointments)}</td>
                             <td>{formatDate(row.lastActivity, true)}</td>
+                            <td>
+                              <StatusPill value={row.accountStatus || "active"}>
+                                {row.accountStatus === "approved" ? "Active" : formatStatusLabel(row.accountStatus || "active")}
+                              </StatusPill>
+                            </td>
                             <td><div className="staff-row-actions">
                               {row.accountStatus === "banned"
                                 ? patientTableActionButton(row, "unban", "Unban", "M5 12l4 4L19 6")
@@ -9989,7 +10124,7 @@ export function AdminStorefrontDashboard({
                               {patientTableActionButton(row, "reset-password", "Reset password for", "M4 12a8 8 0 111.8 5M4 17v-5h5M12 8v5l3 2")}
                             </div></td>
                           </tr>
-                        )) : <tr><td colSpan="6" className="muted">No patients match the current search.</td></tr>}
+                        )) : <tr><td colSpan="7" className="muted">No patients match the current search.</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -10009,37 +10144,19 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "consultations" && (
               <section className="page-view active">
-                <section className="operations-grid">
-                  <article className="panel compact dashboard-stats-shell mtm-stats-shell">
-                    <div className="panel-header">
-                      <div>
-
-                      </div>
-                    </div>
-                    <div className="mini-stat-grid">
-                      {[
-                        ["all", "All"],
-                        ["upcoming", "Upcoming"],
-                        ["past", "Past"],
-                        ["ongoing", "Ongoing"]
-                      ].map(([key, label]) => (
-                        <button className={`mini-stat clickable-stat ${consultationFilter === key ? "active" : ""}`} type="button" key={key} onClick={() => setConsultationFilter(key)}>
-                          <span>{label}</span>
-                          <strong>{formatNumber(consultationCounts[key] || 0)}</strong>
-                          <small>{key === "all" ? "all visible consultations" : key === "past" ? "clickable when ended" : "locked until the consultation ends"}</small>
-                        </button>
-                      ))}
-                    </div>
-                  </article>
-                </section>
+                <AdminPageHeading title={`${formatStatusLabel(consultationFilter)} consultations`} />
+                <AdminMetricCards
+                  ariaLabel="Consultation metrics and filters"
+                  loading={consultationsLoading}
+                  cards={[
+                    { key: "all", label: "All consultations", value: formatNumber(consultationCounts.all || 0), note: "All visible consultations", icon: "clipboard", active: consultationFilter === "all", onClick: () => setConsultationFilter("all") },
+                    { key: "upcoming", label: "Upcoming", value: formatNumber(consultationCounts.upcoming || 0), note: "Consultations scheduled ahead", icon: "calendar", active: consultationFilter === "upcoming", onClick: () => setConsultationFilter("upcoming") },
+                    { key: "past", label: "Past", value: formatNumber(consultationCounts.past || 0), note: "Consultations that have ended", icon: "check", active: consultationFilter === "past", onClick: () => setConsultationFilter("past") },
+                    { key: "ongoing", label: "Ongoing", value: formatNumber(consultationCounts.ongoing || 0), note: "Consultations currently in progress", icon: "activity", active: consultationFilter === "ongoing", onClick: () => setConsultationFilter("ongoing") },
+                  ]}
+                />
                 <section className="consultation-table">
                   <article className="panel table-panel consultation-directory-panel admin-flat-table-section">
-                    <div className="panel-header">
-                      <div>
-
-                        <h2>{formatStatusLabel(consultationFilter)} consultations</h2>
-                      </div>
-                    </div>
                     <div className="table-scroll consultation-table-scroll">
                       <table className="consultations-table">
                         <thead>
@@ -10100,29 +10217,19 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "mtm" && (
               <section className="page-view active">
-                <section className="operations-grid mtm-summary-row">
-                  <article className="panel compact mtm-summary-panel">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">Medical Therapy Management</p>
-                      </div>
-                    </div>
-                    <div className="mini-stat-grid mtm-summary-grid">
-                      <div className="mini-stat"><span>Total</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).length)}</strong><small>tracked MTM requests</small></div>
-                      <div className="mini-stat"><span>Submitted</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "submitted").length)}</strong><small>awaiting pharmacist review</small></div>
-                      <div className="mini-stat"><span>Scheduled</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "scheduled").length)}</strong><small>consultations booked</small></div>
-                      <div className="mini-stat"><span>Completed</span><strong>{formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "completed").length)}</strong><small>workflow closed out</small></div>
-                    </div>
-                  </article>
-                </section>
+                <AdminPageHeading title="All customer therapy requests" />
+                <AdminMetricCards
+                  ariaLabel="MTM metrics"
+                  loading={mtmLoading}
+                  cards={[
+                    { label: "Total requests", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).length), note: "Tracked MTM requests", icon: "clipboard" },
+                    { label: "Submitted", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "submitted").length), note: "Awaiting pharmacist review", icon: "fileClock" },
+                    { label: "Scheduled", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "scheduled").length), note: "MTM consultations booked", icon: "calendarCheck" },
+                    { label: "Completed", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "completed").length), note: "MTM workflows closed out", icon: "check" },
+                  ]}
+                />
                 <section className="operations-grid mtm-registry-row">
                   <section className="table-panel dashboard-table-shell mtm-table-shell mtm-table-panel">
-                    <div className="panel-header">
-                      <div>
-                        <p className="section-kicker">MTM registry</p>
-                        <h2>All customer therapy requests</h2>
-                      </div>
-                    </div>
                     <div className="table-scroll">
                       <table>
                         <thead>
@@ -10147,7 +10254,10 @@ export function AdminStorefrontDashboard({
                               }
                             }}>
                               <td>{item.request_reference || `MTM-${String(item.id || "").padStart(6, "0")}`}</td>
-                              <td>{item.patient?.name || patientLabel(item.customer_user_id)}</td>
+                              <td><div className="customer-list-profile">
+                                <span className="customer-list-avatar">{item.patient?.avatar_url ? <img src={item.patient.avatar_url} alt="" /> : getNameInitials(item.patient?.name || patientLabel(item.customer_user_id), "PT")}</span>
+                                <span><strong>{item.patient?.name || patientLabel(item.customer_user_id)}</strong><small>{item.patient?.email || "Patient"}</small></span>
+                              </div></td>
                               <td>{item.assigned_pharmacist_name || (item.assigned_pharmacist_user_id ? `Pharmacist #${item.assigned_pharmacist_user_id}` : "Pending")}</td>
                               <td><StatusPill value={item.status}>{item.status_label || item.status}</StatusPill></td>
                               <td>{formatDate(item.created_at, true)}</td>
@@ -10175,29 +10285,19 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "iv-therapy" && (
               <section className="page-view active iv-therapy-page">
-                <section className="operations-grid mtm-summary-row">
-                  <article className="panel compact mtm-summary-panel">
-                    <div className="panel-header">
-                      <div>
-                        
-                      </div>
-                    </div>
-                    <div className="mini-stat-grid mtm-summary-grid">
-                      <div className="mini-stat"><span>Total</span><strong>{formatNumber((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).length)}</strong><small>tracked IV therapy requests</small></div>
-                      <div className="mini-stat"><span>Submitted</span><strong>{formatNumber((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).filter((item) => String(item.status || "") === "submitted").length)}</strong><small>awaiting staff review</small></div>
-                      <div className="mini-stat"><span>Consented</span><strong>{formatNumber((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).filter((item) => String(item.consent || "") === "Yes").length)}</strong><small>customers approved treatment</small></div>
-                      <div className="mini-stat"><span>Therapy types</span><strong>{formatNumber(Array.from(new Set((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).flatMap((item) => Array.isArray(item.therapy_types) ? item.therapy_types : []))).length)}</strong><small>distinct request categories</small></div>
-                    </div>
-                  </article>
-                </section>
+                <AdminPageHeading title="All customer IV therapy requests" />
+                <AdminMetricCards
+                  ariaLabel="IV therapy metrics"
+                  loading={Boolean(ivTherapyListKey && !ivTherapyQuery.data?.data)}
+                  cards={[
+                    { label: "Total requests", value: formatNumber((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).length), note: "Tracked IV therapy requests", icon: "testTubes" },
+                    { label: "Submitted", value: formatNumber((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).filter((item) => String(item.status || "") === "submitted").length), note: "Requests awaiting staff review", icon: "fileClock" },
+                    { label: "Consented", value: formatNumber((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).filter((item) => String(item.consent || "") === "Yes").length), note: "Patients who approved treatment", icon: "check" },
+                    { label: "Therapy types", value: formatNumber(Array.from(new Set((Array.isArray(data.ivTherapyRequests) ? data.ivTherapyRequests : []).flatMap((item) => Array.isArray(item.therapy_types) ? item.therapy_types : []))).length), note: "Distinct requested therapy categories", icon: "testTube" },
+                  ]}
+                />
                 <section className="operations-grid mtm-registry-row">
                   <section className="table-panel dashboard-table-shell mtm-table-shell mtm-table-panel">
-                    <div className="panel-header">
-                      <div>
-                        
-                        <h2>All customer IV therapy requests</h2>
-                      </div>
-                    </div>
                     <div className="table-scroll">
                       <table>
                         <thead>
@@ -10220,7 +10320,10 @@ export function AdminStorefrontDashboard({
                               }
                             }}>
                               <td>{item.request_reference || item.requestReference || item.id}</td>
-                              <td>{item.customer_name || item.patient?.name || patientLabel(item.customer_user_id)}</td>
+                              <td><div className="customer-list-profile">
+                                <span className="customer-list-avatar">{item.patient?.avatar_url ? <img src={item.patient.avatar_url} alt="" /> : getNameInitials(item.customer_name || item.patient?.name || patientLabel(item.customer_user_id), "PT")}</span>
+                                <span><strong>{item.customer_name || item.patient?.name || patientLabel(item.customer_user_id)}</strong><small>{item.patient?.email || item.customer_email || "Patient"}</small></span>
+                              </div></td>
                               <td>{item.customer_phone || item.patient?.phoneNumber || "n/a"}</td>
                               <td>{Array.isArray(item.therapy_types) && item.therapy_types.length ? item.therapy_types.join(", ") : "Not specified"}</td>
                               <td>{item.consent || "No"}</td>
@@ -10248,45 +10351,19 @@ export function AdminStorefrontDashboard({
 
             {currentPage === "products" && (
               <section className="page-view active">
-                <section className="products-redesign-metrics">
-                  <article className="metric-card">
-                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-plus" /></span><StatusPill value="info">catalog</StatusPill></div>
-                    <span className="metric-label">In stock products</span>
-                    <strong className="metric-value">{formatNumber(productFilterCounts.in_stock || 0)}</strong>
-
-                  </article>
-                  <article className="metric-card primary">
-                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-pill" /></span><StatusPill value="success">catalog</StatusPill></div>
-                    <span className="metric-label">Published products</span>
-                    <strong className="metric-value">{formatNumber(productFilterCounts.published || 0)}</strong>
-
-                  </article>
-                  <article className="metric-card">
-                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-clipboard" /></span><StatusPill value="pending">rx</StatusPill></div>
-                    <span className="metric-label">Low stock products</span>
-                    <strong className="metric-value">{formatNumber(lowStockProducts)}</strong>
-
-                  </article>
-
-                  <article className="metric-card accent">
-                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-mail" /></span><StatusPill value="warning">watchlist</StatusPill></div>
-                    <span className="metric-label">Total inventory value</span>
-                    <strong className="metric-value">{formatCompactMoney(totalInventoryValue, storeCurrency)}</strong>
-
-                  </article>
-                  <article className="metric-card most-sold">
-                    <div className="metric-top"><span className="metric-icon"><InlineIcon id="i-cart" /></span><StatusPill value="processing">sales</StatusPill></div>
-                    <span className="metric-label">Most sold products</span>
-                    <strong className="metric-value">{mostSoldProducts[0]?.name || "No sales data"}</strong>
-
-                  </article>
-                </section>
+                <AdminPageHeading title="Pharmaceutical Products" />
+                <AdminMetricCards
+                  ariaLabel="Product metrics"
+                  loading={productsLoading}
+                  cards={[
+                    { label: "In stock products", value: formatNumber(productFilterCounts.in_stock || 0), note: "Products currently available to order", icon: "package" },
+                    { label: "Published products", value: formatNumber(productFilterCounts.published || 0), note: "Products visible in the storefront", icon: "pill" },
+                    { label: "Low stock products", value: formatNumber(lowStockProducts), note: "Products requiring inventory attention", icon: "outOfStock" },
+                    { label: "Total inventory value", value: formatCompactMoney(totalInventoryValue, storeCurrency), note: "Estimated value of current stock", icon: "moneyBag" },
+                  ]}
+                />
                 <section className="table-panel dashboard-table-shell products-table-shell">
                   <div className="panel-header products-panel-header">
-                    <div>
-                      <p className="section-kicker">All Products</p>
-                      <h2>Pharmaceutical Products</h2>
-                    </div>
                     <div className="filter-bar products-segmented-bar" aria-label="Products and categories view">
                       {[
                         ["products", "All products", formatNumber((data.products || []).length)],
@@ -10650,7 +10727,7 @@ export function AdminStorefrontDashboard({
                                   <strong>{product.name || `Product #${product.id}`}</strong>
                                   <span>{product.sku || "No SKU"} • {getProductPriceLabel(product, storeCurrency)}</span>
                                 </div>
-                                <span className={`status-pill ${getProductStatus(product) === "publish" ? "success" : "warning"}`}>{formatStatusLabel(getProductStatus(product))}</span>
+                                <StatusPill value={getProductStatus(product)}>{formatStatusLabel(getProductStatus(product))}</StatusPill>
                               </article>
                             )) : <div className="empty-card compact-empty"><div className="card-title">No products linked to this category yet.</div></div>}
                           </div>
@@ -11137,8 +11214,8 @@ export function AdminStorefrontDashboard({
                 </button>
               </div>
 
-              <div className="order-create-shell modal-body creation-popup-layout">
-                <section className="creation-main">
+              <div className="order-create-shell modal-body">
+                <section className="creation-main order-create-full-width">
                   <div className="creation-section-title">
                     <InlineIcon id="i-cart" />
                     <span>Patient and order details</span>
@@ -11166,8 +11243,9 @@ export function AdminStorefrontDashboard({
                           onFocus={() => setOrderCreateCustomerMenuOpen(true)}
                           placeholder="Search customer by name, email, or phone"
                           autoComplete="off"
+                          required
                         />
-                        {orderCreateCustomerMenuOpen ? (
+                        {orderCreateCustomerMenuOpen && orderCreateCustomerSearch.trim().length >= 2 ? (
                           <div className="consultation-search-results order-create-results">
                             {orderCreateCustomersQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading customers"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
                             {orderCustomerCandidates.length ? orderCustomerCandidates.map((customer) => {
@@ -11192,7 +11270,7 @@ export function AdminStorefrontDashboard({
                                   </span>
                                 </button>
                               );
-                            }) : <div className="order-create-empty-results">No matching patients found.</div>}
+                            }) : !orderCreateCustomersQuery.isLoading ? <div className="order-create-empty-results">No matching patients found.</div> : null}
                           </div>
                         ) : null}
                       </div>
@@ -11206,6 +11284,7 @@ export function AdminStorefrontDashboard({
                         type="email"
                         value={orderCreateForm.email}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, email: event.target.value }))}
+                        required
                       />
                     </div>
                     <div className="creation-field">
@@ -11214,6 +11293,7 @@ export function AdminStorefrontDashboard({
                         className="form-control"
                         value={orderCreateForm.phone}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, phone: event.target.value }))}
+                        required
                       />
                     </div>
                   </div>
@@ -11224,26 +11304,75 @@ export function AdminStorefrontDashboard({
                         className="form-control"
                         value={orderCreateForm.status}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, status: event.target.value }))}
+                        required
                       >
+                        <option value="" disabled>Select payment status</option>
                         {ORDER_CREATE_PAYMENT_STATUS_OPTIONS.map((status) => (
                           <option key={status} value={status}>{status}</option>
                         ))}
                       </select>
                     </div>
                   </div>
-                  <div className="creation-field-grid creation-field-grid-three">
-                    <div className="creation-field">
-                      <label>Product</label>
+                  <section className="order-create-items-column" aria-labelledby="order-create-products-title">
+                    <div className="order-create-items-header">
+                      <div>
+                        <span className="section-kicker">Order items</span>
+                        <h4 id="order-create-products-title">Products</h4>
+                      </div>
+                      <span className="order-create-line-count">{orderCreateItems.length} selected</span>
+                    </div>
+
+                    {orderCreateItems.length ? (
+                      <div className="order-create-table-scroll">
+                        <table className="order-create-items-table">
+                          <thead><tr><th>Name</th><th>Qty</th><th><span className="sr-only">Remove</span></th></tr></thead>
+                          <tbody>
+                            {orderCreateItems.map((item, index) => {
+                              const product = popupOrderProducts.find((entry) => String(entry.id) === String(item.productId))
+                                || (data.products || []).find((entry) => String(entry.id) === String(item.productId));
+                              const productName = product?.name || `Product #${item.productId}`;
+                              const productImage = getProductImage(product);
+                              return <tr key={item.key || item.productId}>
+                                <td>
+                                  <div className="order-product-cell">
+                                    <span className="order-create-selected-image">
+                                      {productImage ? <img src={productImage} alt="" /> : <InlineIcon id="i-pill" />}
+                                    </span>
+                                    <strong>{productName}</strong>
+                                  </div>
+                                </td>
+                                <td>
+                                  <input
+                                    className="order-create-quantity-input"
+                                    type="number"
+                                    min="1"
+                                    aria-label={`Quantity for ${productName}`}
+                                    value={item.quantity}
+                                    onChange={(event) => updateOrderCreateItem(index, { quantity: Math.max(1, Number(event.target.value || 1)) })}
+                                  />
+                                </td>
+                                <td><button className="icon-button order-create-remove-item" type="button" aria-label={`Remove ${productName}`} onClick={() => removeOrderCreateItem(index)}><InlineIcon id="i-x" /></button></td>
+                              </tr>;
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : <p className="order-create-empty-products">No products added yet.</p>}
+
+                    <div className="creation-field order-product-search-field">
+                      <label htmlFor="order-create-product-search">Add another product</label>
                       <div className="consultation-search-combo order-create-combo">
                         <input
+                          id="order-create-product-search"
                           className="form-control"
                           value={orderCreateSearch}
                           onChange={(event) => setOrderCreateSearch(event.target.value)}
                           placeholder="Search product by name, SKU, or brand"
                           autoComplete="off"
                         />
-                        <div className="consultation-search-results order-create-results">
-                          {(orderProductCandidates.length ? orderProductCandidates : (popupOrderProducts || []).slice(0, 8)).map((product) => {
+                        {orderCreateSearch.trim().length >= 2 ? <div className="consultation-search-results order-create-results">
+                          {orderCreateProductsQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading products"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
+                          {orderProductCandidates.map((product) => {
                             const productId = String(product.id);
                             const productName = product.name || `Product #${productId}`;
                             const productImage = getProductImage(product);
@@ -11254,10 +11383,9 @@ export function AdminStorefrontDashboard({
                               <button
                                 key={productId}
                                 type="button"
-                                className={`consultation-search-result consultation-strip-result ${String(getOrderCreateSelectedProductId()) === productId ? "active" : ""}`}
+                                className="consultation-search-result consultation-strip-result"
                                 onClick={() => {
-                                  setOrderCreateSelectedProduct(productId);
-                                  setOrderCreateSearch(productName);
+                                  addOrderCreateItem(product);
                                 }}
                               >
                                 <span className="consultation-strip-avatar order-create-product-thumb">
@@ -11270,26 +11398,22 @@ export function AdminStorefrontDashboard({
                               </button>
                             );
                           })}
-                        </div>
+                          {!orderCreateProductsQuery.isLoading && !orderProductCandidates.length ? <div className="order-create-empty-results">No matching products found.</div> : null}
+                        </div> : null}
                       </div>
                     </div>
-                    <div className="creation-field">
-                      <label>Quantity</label>
-                      <input
-                        className="form-control"
-                        type="number"
-                        min="1"
-                        value={getOrderCreateSelectedLineItem().quantity || 1}
-                        onChange={(event) => setOrderCreateSelectedQuantity(event.target.value)}
-                      />
-                    </div>
+                  </section>
+
+                  <div className="creation-field-grid">
                     <div className="creation-field">
                       <label>Delivery method</label>
                       <select
                         className="form-control"
                         value={orderCreateForm.deliveryMethod}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, deliveryMethod: event.target.value }))}
+                        required
                       >
+                        <option value="" disabled>Select delivery method</option>
                         <option>Pickup</option>
                         <option>Home delivery</option>
                         <option>Dispatch rider</option>
@@ -11308,52 +11432,6 @@ export function AdminStorefrontDashboard({
                     </div>
                   </div>
                 </section>
-
-                <aside className="creation-side">
-                  <div className="creation-product-preview">
-                    {getProductImage(selectedOrderCreateProduct) ? (
-                      <img src={getProductImage(selectedOrderCreateProduct)} alt={selectedOrderCreateProduct?.name || "Selected product"} />
-                    ) : (
-                      <InlineIcon id="i-cart" />
-                    )}
-                  </div>
-                  <div>
-                    <h4 id="order-customer">{getOrderCreateCustomerName()}</h4>
-                    <p>Manual order draft</p>
-                  </div>
-                  <div className="creation-summary-list">
-                    <div>
-                      <span>Product</span>
-                      <strong id="order-product-summary">
-                        {popupOrderProducts.find((product) => String(product.id) === String(getOrderCreateSelectedProductId()))?.name || "Paracetamol 500mg"}
-                      </strong>
-                    </div>
-                    <div>
-                      <span>Total</span>
-                      <strong id="order-total-summary">
-                        {formatMoney(
-                          (() => {
-                            const product = popupOrderProducts.find((entry) => String(entry.id) === String(getOrderCreateSelectedProductId())) || null;
-                            const quantity = Math.max(1, Number(getOrderCreateSelectedLineItem().quantity || 1));
-                            const unitPrice = product ? Number(hasActiveSalePrice(product)
-                              ? getProductPrice(product, "sale_price")
-                              : (getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0)) : 6005;
-                            return unitPrice * quantity;
-                          })(),
-                          storeCurrency
-                        )}
-                      </strong>
-                    </div>
-                    <div>
-                      <span>Payment</span>
-                      <strong id="order-payment">{orderCreateForm.status}</strong>
-                    </div>
-                  </div>
-                  <div className="creation-popup-note">
-                    <strong>Prescription preview</strong>
-                    <p>{orderCreateForm.prescription || "No prescription note entered yet."}</p>
-                  </div>
-                </aside>
               </div>
 
               {orderCreateFeedback ? <p className="muted popup-support-copy">{orderCreateFeedback}</p> : null}
@@ -11512,6 +11590,22 @@ export function AdminStorefrontDashboard({
                       </tbody>
                     </table>
                   </div>
+                  {(selectedOrderDetail.items || []).some((item) => htmlToTextMessage(item.product_prescription)) ? (
+                    <section className="order-product-prescriptions" aria-labelledby="order-product-prescriptions-title">
+                      <div>
+                        <p className="section-kicker">Prescriptions</p>
+                        <h4 id="order-product-prescriptions-title">Product prescriptions</h4>
+                      </div>
+                      <div className="order-product-prescription-list">
+                        {(selectedOrderDetail.items || []).filter((item) => htmlToTextMessage(item.product_prescription)).map((item) => (
+                          <article key={`prescription-${item.id}`}>
+                            <strong>{item.name}</strong>
+                            <p>{htmlToTextMessage(item.product_prescription)}</p>
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
                 </div>
 
                 <div className="order-detail-secondary-grid">
@@ -11696,12 +11790,13 @@ export function AdminStorefrontDashboard({
               <div className="stacked-order-popup-actions modal-actions">
                 <button className="pill-button" type="button" onClick={() => setMtmPreviewRequestId(null)}>Close</button>
                 {previewMtmRequest?.document?.available ? <a
-                  className="button-primary"
+                  className="mtm-pdf-download-button"
                   href={`/api/admin/mtm/${previewMtmRequest.id}/pdf?baseUrl=${encodeURIComponent(session.baseUrl || "")}&frontendType=${encodeURIComponent(session.frontendType || "admin_dashboard")}`}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Download Request PDF
+                  <HugeiconsIcon icon={Download04Icon} size={18} strokeWidth={1.8} />
+                  <span>Download request PDF</span>
                 </a> : <span className="admin-empty-copy" role="status">Submitted PDF unavailable</span>}
               </div>
             </section>
@@ -12005,7 +12100,7 @@ export function AdminStorefrontDashboard({
                             </div>
 
                             <div className="product-create-step-scroll">
-                            {true ? (
+                            {productCreateStep === 0 ? (
                               <div className="product-create-step-panel">
                                 <div className="creation-field-grid product-create-field-grid">
                                     <div className="creation-field-row full-width product-create-name-row">
@@ -12015,7 +12110,12 @@ export function AdminStorefrontDashboard({
                                         {productCreateStepErrors.title ? <small className="field-error">{productCreateStepErrors.title}</small> : null}
                                       </label>
                                     </div>
-                                    <div className="creation-field-row creation-field-row-two full-width">
+                                    <label className="creation-field full-width">
+                                      <span>SKU</span>
+                                      <input className="form-control" value={productEditForm.sku || "Generated when saved"} readOnly aria-readonly="true" />
+                                      <small className="field-hint">SKU is generated automatically and cannot be edited.</small>
+                                    </label>
+                                    <div className="creation-field-row creation-field-row-two full-width" hidden>
                                       <label className="creation-field">
                                         <span>Category assignment</span>
                                         <div className="select-wrap">
@@ -12094,7 +12194,7 @@ export function AdminStorefrontDashboard({
                                         {productCreateStepErrors.shortDescription || `${productEditForm.shortDescription.length}/160`}
                                       </small>
                                     </label>
-                                    <div className="creation-field-row creation-field-row-three full-width">
+                                    <div className="creation-field-row creation-field-row-three full-width" hidden>
                                       <label className="creation-field">
                                         <span>Unit price</span>
                                         <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} />
@@ -12110,7 +12210,7 @@ export function AdminStorefrontDashboard({
                                         <input className="form-control" type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
                                       </label>
                                     </div>
-                                    <div className="creation-field-row creation-field-row-three full-width product-create-secondary-fields">
+                                    <div className="creation-field-row creation-field-row-three full-width product-create-secondary-fields" hidden>
                                       <label className="creation-field"><span>Expiry date</span><input className="form-control" type="date" value={productEditForm.expiryDate || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, expiryDate: event.target.value }))} /></label>
                                       <label className="creation-field"><span>Weight</span><input className="form-control" value={productEditForm.weight || ""} placeholder="e.g. 0.08 kg" onChange={(event) => setProductEditForm((prev) => ({ ...prev, weight: event.target.value }))} /></label>
                                       <label className="creation-field"><span>Shipping class</span><div className="select-wrap"><select className="form-control" value={productEditForm.shippingClass || PRODUCT_SHIPPING_CLASS_OPTIONS[0]} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shippingClass: event.target.value, shippingInfo: event.target.value }))}>{PRODUCT_SHIPPING_CLASS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></div></label>
@@ -12119,31 +12219,88 @@ export function AdminStorefrontDashboard({
                                 </div>
                               ) : null}
 
-                              {true ? (
+                              {productCreateStep === 1 ? (
                                 <div className="product-create-step-panel">
                                   <div className="creation-field-grid product-create-field-grid">
-                                    <label className="creation-field full-width">
-                                      <span>Long description</span>
-                                      <textarea className="form-control" rows={8} placeholder="Add complete product information, dosage context and customer guidance." value={productEditForm.longDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, longDescription: event.target.value }))} />
-                                      <small className="field-hint">Optional. Use this for extended product details.</small>
-                                    </label>
-                                    <label className="creation-field full-width">
-                                      <span>Prescription note</span>
-                                      <textarea className="form-control" rows={5} placeholder="Add pharmacy workflow or prescription guidance." value={productEditForm.prescriptionNotes} onChange={(event) => setProductEditForm((prev) => ({ ...prev, prescriptionNotes: event.target.value }))} required />
-                                      <small className="field-hint">These notes are persisted by the server and can be used in downstream pharmacy workflows.</small>
-                                      {productCreateStepErrors.prescriptionNotes ? <small className="field-error">{productCreateStepErrors.prescriptionNotes}</small> : null}
-                                    </label>
-                                    <label className="creation-field full-width">
-                                      <span>Prescription rule</span>
-                                      <div className="select-wrap"><select className="form-control" value={productEditForm.prescriptionRule || "no_prescription_needed"} onChange={(event) => setProductEditForm((prev) => ({ ...prev, prescriptionRule: event.target.value }))}>
-                                        <option value="no_prescription_needed">No prescription needed</option><option value="prescription_required">Prescription required</option><option value="pharmacist_review_required">Pharmacist review required</option>
-                                      </select></div>
-                                    </label>
+                                    <div className="creation-field-row creation-field-row-three full-width">
+                                      <label className="creation-field">
+                                        <span>Unit price</span>
+                                        <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} required />
+                                        {productCreateStepErrors.regularPrice ? <small className="field-error">{productCreateStepErrors.regularPrice}</small> : null}
+                                      </label>
+                                      <label className="creation-field">
+                                        <span>Sale price</span>
+                                        <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} />
+                                        {productCreateStepErrors.salePrice ? <small className="field-error">{productCreateStepErrors.salePrice}</small> : null}
+                                      </label>
+                                      <label className="creation-field">
+                                        <span>Quantity</span>
+                                        <input className="form-control" type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
+                                      </label>
+                                    </div>
+                                    <div className="creation-field-row creation-field-row-three full-width">
+                                      <label className="creation-field">
+                                        <span>Stock status</span>
+                                        <div className="select-wrap"><select className="form-control" value={productEditForm.stockStatus || "instock"} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockStatus: event.target.value }))}><option value="instock">In stock</option><option value="outofstock">Out of stock</option><option value="onbackorder">On backorder</option></select></div>
+                                      </label>
+                                      <label className="creation-field">
+                                        <span>Brand</span>
+                                        <div className="select-wrap"><select className="form-control" value={productEditForm.brands?.[0] || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, brands: event.target.value ? [event.target.value] : [] }))}><option value="">Select brand</option>{productBrandOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></div>
+                                      </label>
+                                      <label className="creation-field">
+                                        <span>Shipping class</span>
+                                        <div className="select-wrap"><select className="form-control" value={productEditForm.shippingClass || PRODUCT_SHIPPING_CLASS_OPTIONS[0]} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shippingClass: event.target.value, shippingInfo: event.target.value }))}>{PRODUCT_SHIPPING_CLASS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></div>
+                                      </label>
+                                    </div>
+                                    <div className="creation-field-row creation-field-row-two full-width">
+                                      <div className="creation-field">
+                                        <span>Categories</span>
+                                        <div className="product-create-tag-picker">
+                                          <input className="form-control" list="product-create-category-options" value={productEditSearch.categories || ""} placeholder="Type to search categories" onChange={(event) => setProductEditSearch((prev) => ({ ...prev, categories: event.target.value }))} />
+                                          <datalist id="product-create-category-options">{productCategoryOptions.filter((option) => !productEditForm.categories.includes(option)).map((option) => <option key={option} value={option} />)}</datalist>
+                                          <button className="pill-button" type="button" disabled={!productCategoryOptions.includes(productEditSearch.categories)} onClick={() => addProductTerm("categories")}>Add</button>
+                                        </div>
+                                        <div className="product-create-chip-row">{productEditForm.categories.map((category) => <button key={category} className="product-create-chip" type="button" aria-label={`Remove category ${category}`} onClick={() => toggleProductTerm("categories", category)}><span>{category}</span><InlineIcon id="i-x" /></button>)}</div>
+                                        {productCreateStepErrors.category ? <small className="field-error">{productCreateStepErrors.category}</small> : null}
+                                      </div>
+                                      <div className="creation-field">
+                                        <span>Tags</span>
+                                        <div className="product-create-tag-picker">
+                                          <input className="form-control" list="product-create-tag-options" value={productEditSearch.tags || ""} placeholder="Type to search tags" onChange={(event) => setProductEditSearch((prev) => ({ ...prev, tags: event.target.value }))} />
+                                          <datalist id="product-create-tag-options">{productTagOptions.filter((option) => !productEditForm.tags.includes(option)).map((option) => <option key={option} value={option} />)}</datalist>
+                                          <button className="pill-button" type="button" disabled={!productTagOptions.includes(productEditSearch.tags)} onClick={() => addProductTerm("tags")}>Add</button>
+                                        </div>
+                                        <div className="product-create-chip-row">{productEditForm.tags.map((tag) => <button key={tag} className="product-create-chip" type="button" aria-label={`Remove tag ${tag}`} onClick={() => toggleProductTerm("tags", tag)}><span>{tag}</span><InlineIcon id="i-x" /></button>)}</div>
+                                      </div>
+                                    </div>
                                   </div>
                                 </div>
                               ) : null}
 
-                              {true ? (
+                              {productCreateStep === 2 ? (
+                                <div className="product-create-step-panel">
+                                  <div className="creation-field-grid product-create-field-grid">
+                                    <div className="creation-field full-width">
+                                      <span>Prescription</span>
+                                      <div className="product-rich-editor-card">
+                                        <div className="product-rich-toolbar" role="toolbar" aria-label="Prescription formatting">
+                                          <button type="button" onClick={() => formatProductDescription("bold")}><strong>B</strong></button>
+                                          <button type="button" onClick={() => formatProductDescription("underline")}><span className="text-underline">U</span></button>
+                                          <button type="button" onClick={() => formatProductDescription("insertUnorderedList")}>List</button>
+                                          <button type="button" onClick={() => formatProductDescription("fontSize", "2")}>Small</button>
+                                          <button type="button" onClick={() => formatProductDescription("fontSize", "3")}>Normal</button>
+                                          <button type="button" onClick={() => formatProductDescription("fontSize", "5")}>Large</button>
+                                        </div>
+                                        <div ref={productDescriptionEditorRef} className="product-rich-surface product-prescription-editor" contentEditable suppressContentEditableWarning onInput={handleProductDescriptionInput} aria-label="Product prescription" />
+                                      </div>
+                                      <small className="field-hint">A sanitized snapshot is stored with every purchased order item and included in customer emails.</small>
+                                      {productCreateStepErrors.longDescription ? <small className="field-error">{productCreateStepErrors.longDescription}</small> : null}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {productCreateStep === 0 ? (
                                 <div className="product-create-step-panel">
                                   <div className="product-create-media-grid">
                                     <section className="product-create-media-card">
@@ -12224,7 +12381,7 @@ export function AdminStorefrontDashboard({
                           </div>
                         </div>
 
-                        <aside className="product-editor-media-column product-create-preview-column">
+                        {false ? <aside className="product-editor-media-column product-create-preview-column">
                           <div className="detail-section product-editor-panel product-media-panel product-create-preview-panel creation-side">
                             <div className="creation-summary-card product-create-summary-card">
                               <div className={`product-photo-stage product-featured-photo-stage product-create-featured-stage ${featuredProductMedia ? "has-media" : "is-empty"}`}>
@@ -12296,7 +12453,7 @@ export function AdminStorefrontDashboard({
                               </div>
                             ) : null}
                           </div>
-                        </aside>
+                        </aside> : null}
                       </>
                     ) : (
                     <>
@@ -12585,18 +12742,18 @@ export function AdminStorefrontDashboard({
                 </div>
 
                 <div className="product-editor-footer modal-actions">
-                  {productEditorMode === "create" ? <label className="product-create-multiple"><input type="checkbox" checked={createMultiple} disabled={productEditLoading} onChange={(event) => setCreateMultiple(event.target.checked)} /><span>Create Multiple</span><small>Stay on page after I create</small></label> : <button className="pill-button danger product-delete-button" type="button" onClick={deleteSelectedProduct} disabled={productEditLoading}>Delete Product</button>}
+                  {productEditorMode === "create" ? <div /> : <button className="pill-button danger product-delete-button" type="button" onClick={deleteSelectedProduct} disabled={productEditLoading}>Delete Product</button>}
                   <div className="product-editor-footer-end">
                       <div className="stacked-order-popup-actions product-editor-actions">
                         {productEditorMode === "create" ? (
                           <>
                             {productCreateStep > 0 ? (
-                              <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={() => setProductCreateStep((prev) => Math.max(0, prev - 1))}>Go back</button>
+                              <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={() => setProductCreateStep((prev) => Math.max(0, prev - 1))}>Back</button>
                             ) : <div />}
                             <button className="pill-button product-draft-button" type="submit" data-intent="draft" disabled={productEditLoading}>{productEditLoading ? "Saving..." : "Save draft"}</button>
                             {productCreateStep < PRODUCT_CREATE_STEPS.length - 1 ? (
                               <button className="button-primary product-save-button" type="button" disabled={productEditLoading} onClick={() => goToProductCreateStep(productCreateStep + 1, { validateCurrentStep: true })}>
-                                Continue
+                                Next
                               </button>
                             ) : (
                               <button className="button-primary product-save-button" type="submit" data-intent="publish" data-popup-submit="Product created" disabled={productEditLoading}>{productEditLoading ? "Saving..." : "Publish"}</button>
@@ -12626,14 +12783,14 @@ export function AdminStorefrontDashboard({
                 <div className="panel-header stacked-order-popup-header modal-head">
                   <div>
                     {createModalType === "consultation" ? null : <p className="section-kicker">Create record</p>}
-                    <h3>{createModalType === "consultation" ? "New appointment" : `New ${formatStatusLabel(createModalType)}`}</h3>
+                    <h3>{createModalType === "consultation" ? "New appointment" : (createModalType === "user" ? "New user account" : `New ${formatStatusLabel(createModalType)}`)}</h3>
                     {createModalType === "consultation" ? <p>Book a consultation using patient details, doctor availability, appointment type and time slot.</p> : null}
                   </div>
                   <button className="icon-button" type="button" aria-label="Close create form" onClick={closeCreateModal}><InlineIcon id="i-x" /></button>
                 </div>
 
                 {createModalType === "consultation" ? (
-                  <div className="consultation-create-shell consultation-design-shell modal-body creation-popup-layout">
+                  <div className="consultation-create-shell consultation-design-shell modal-body">
                     {(consultationCreateDoctorsQuery.isLoading || consultationCreatePatientsQuery.isLoading || consultationCreateAppointmentsQuery.isLoading) ? (
                       <p className="muted popup-support-copy detail-field-wide">Loading consultation dependencies...</p>
                     ) : null}
@@ -12728,38 +12885,29 @@ export function AdminStorefrontDashboard({
                           </div>
                         </label>
 
-                        <label className="consultation-design-field">
-                          <span>Date</span>
-                          <input
-                            type="date"
-                            value={consultationSelectedDateKey}
-                            min={localDateKey()}
-                            onChange={(event) => {
-                              const nextDate = event.target.value;
-                              if (!nextDate) {
-                                clearConsultationBookingDate();
-                                return;
+                        <div className="consultation-design-calendar">
+                          <BookingCalendarWidget
+                            title="Choose appointment time"
+                            subtitle="Select an available date and time for this doctor."
+                            datePanelSubtitle="Select any available day."
+                            appointments={consultationDoctorAppointments}
+                            selectedDate={consultationSelectedDateKey}
+                            selectedStartAt={consultationCreateForm.startAt}
+                            viewDate={consultationCreateCalendarViewDate}
+                            duration={consultationDuration}
+                            loading={consultationCreateAppointmentsQuery.isLoading}
+                            onViewDateChange={setConsultationCreateCalendarViewDate}
+                            onClearDate={clearConsultationBookingDate}
+                            onDateSelect={selectConsultationBookingDate}
+                            onSlotSelect={(dateKey, time) => selectConsultationCalendarSlot(dateKey, time, consultationDuration)}
+                            onDurationChange={(minutes) => {
+                              setConsultationDuration(minutes);
+                              if (consultationCreateForm.startAt) {
+                                selectConsultationCalendarSlot(localDateKey(consultationCreateForm.startAt), localTimeKey(consultationCreateForm.startAt), minutes);
                               }
-                              selectConsultationBookingDate(nextDate, new Date(`${nextDate}T00:00:00`));
                             }}
+                            showStepsHeader={false}
                           />
-                        </label>
-
-                        <div className="consultation-design-field consultation-design-slots">
-                          <span>Available time slots</span>
-                          <div className="consultation-design-slot-row">
-                            {consultationSelectedDateKey ? consultationSlotOptions.map((slot) => (
-                              <button
-                                type="button"
-                                key={slot.time}
-                                className={`consultation-design-slot ${slot.selected ? "active" : ""}`}
-                                disabled={slot.disabled}
-                                onClick={() => selectConsultationCalendarSlot(consultationSelectedDateKey, slot.time, consultationDuration)}
-                              >
-                                {formatSlotLabel(slot.time)}
-                              </button>
-                            )) : <span className="consultation-design-empty-note">Choose a date to view available slots.</span>}
-                          </div>
                         </div>
 
                         <label className="consultation-design-field consultation-design-reason">
@@ -12775,19 +12923,120 @@ export function AdminStorefrontDashboard({
                       {!consultationCanSubmit ? <p className="consultation-validation-message">Select a doctor, patient, booking day, booking time, and consultation type to continue.</p> : null}
                     </section>
 
-                    <aside className="consultation-design-card consultation-design-summary">
-                      <div className="consultation-design-summary-icon">
-                        <InlineIcon id="i-calendar" />
+                  </div>
+                ) : createModalType === "user" ? (
+                  <div className="user-account-create modal-body">
+                    <section className="user-account-avatar-section" aria-label="User avatar">
+                      <div className="user-account-avatar">
+                        {userAccountCreateForm.avatar?.data ? (
+                          <img src={userAccountCreateForm.avatar.data} alt="Selected user avatar" />
+                        ) : (
+                          <span>{getNameInitials(`${userAccountCreateForm.firstName} ${userAccountCreateForm.lastName}`, "NU")}</span>
+                        )}
                       </div>
-                      <h4>{consultationSelectedPatient?.name || "Patient not selected"}</h4>
-                      <p>{formatStatusLabel(consultationCreateForm.type || "consultation")} consultation</p>
-                      <div className="consultation-design-summary-list">
-                        <div><span>Doctor</span><strong>{consultationDoctorProfile?.display_name || "Choose doctor"}</strong></div>
-                        <div><span>Date</span><strong>{consultationSummaryDate}</strong></div>
-                        <div><span>Time</span><strong>{consultationSummaryTime}</strong></div>
+                      <div className="user-account-avatar-copy">
+                        <span className="user-account-field-title">User avatar</span>
+                        <span>JPG, PNG, or WebP. Maximum 2 MB.</span>
+                        <div className="user-account-inline-actions">
+                          <label className="pill-button user-avatar-upload">
+                            {userAccountCreateForm.avatar ? "Replace" : "Upload avatar"}
+                            <input type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={selectUserAccountAvatar} />
+                          </label>
+                          {userAccountCreateForm.avatar ? (
+                            <button className="pill-button danger-subtle" type="button" onClick={() => setUserAccountCreateForm((previous) => ({ ...previous, avatar: null }))}>Remove</button>
+                          ) : null}
+                        </div>
+                        {userAccountCreateForm.avatar ? <span className="user-avatar-filename" title={userAccountCreateForm.avatar.name}>{userAccountCreateForm.avatar.name}</span> : null}
                       </div>
-                      <div className="consultation-design-note">This popup connects the booking calendar, consultation list and doctor availability components.</div>
-                    </aside>
+                    </section>
+
+                    <div className="detail-form-grid user-account-grid">
+                      <label className="detail-field">
+                        <span>First name</span>
+                        <input value={userAccountCreateForm.firstName} maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, firstName: event.target.value }))} required />
+                      </label>
+                      <label className="detail-field">
+                        <span>Last name</span>
+                        <input value={userAccountCreateForm.lastName} maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, lastName: event.target.value }))} required />
+                      </label>
+                      <label className="detail-field">
+                        <span>Email address</span>
+                        <input type="email" value={userAccountCreateForm.email} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, email: event.target.value }))} required />
+                      </label>
+                      <label className="detail-field">
+                        <span>Role</span>
+                        <div className="select-wrap">
+                          <select value={userAccountCreateForm.role} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...EMPTY_USER_ACCOUNT_FORM, firstName: previous.firstName, lastName: previous.lastName, email: previous.email, password: previous.password, avatar: previous.avatar, role: event.target.value }))}>
+                            {USER_ACCOUNT_ROLES.filter(([role]) => role !== "administrator" || (session.user?.roles || []).includes("administrator")).map(([role, label]) => <option key={role} value={role}>{label}</option>)}
+                          </select>
+                        </div>
+                      </label>
+                      <label className="detail-field">
+                        <span>Phone number{["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role) ? "" : " (optional)"}</span>
+                        <input type="tel" value={userAccountCreateForm.phone} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, phone: event.target.value }))} required={["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role)} />
+                      </label>
+                      <label className="detail-field">
+                        <span>Password</span>
+                        <div className="user-password-control">
+                          <input type="text" value={userAccountCreateForm.password} minLength={12} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, password: event.target.value }))} required />
+                          <button className="pill-button" type="button" onClick={generateUserAccountPassword}>Generate password</button>
+                        </div>
+                        <small>At least 12 characters with upper/lowercase, a number, and a symbol.</small>
+                      </label>
+
+                      {["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role) ? (
+                        <label className="detail-field">
+                          <span>License number</span>
+                          <input value={userAccountCreateForm.licenseNumber} maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, licenseNumber: event.target.value }))} />
+                        </label>
+                      ) : null}
+                      {["doctor", "nurse"].includes(userAccountCreateForm.role) ? (
+                        <label className="detail-field">
+                          <span>Specialty</span>
+                          <input value={userAccountCreateForm.specialty} maxLength={100} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, specialty: event.target.value }))} />
+                        </label>
+                      ) : null}
+                      {userAccountCreateForm.role === "doctor" ? (
+                        <>
+                          <label className="detail-field"><span>Location</span><input value={userAccountCreateForm.location} maxLength={120} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, location: event.target.value }))} /></label>
+                          <label className="detail-field"><span>Weekly capacity</span><input type="number" min="1" max="168" value={userAccountCreateForm.weeklyCapacity} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, weeklyCapacity: event.target.value }))} /></label>
+                          <label className="detail-field"><span>Available for assignment</span><div className="select-wrap"><select value={userAccountCreateForm.isAvailable ? "yes" : "no"} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, isAvailable: event.target.value === "yes" }))}><option value="yes">Yes</option><option value="no">No</option></select></div></label>
+                        </>
+                      ) : null}
+                      {userAccountCreateForm.role === "patient" ? (
+                        <label className="detail-field detail-field-wide"><span>Address</span><textarea rows={3} maxLength={300} value={userAccountCreateForm.address} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, address: event.target.value }))} /></label>
+                      ) : null}
+                    </div>
+
+                    {["administrator", "store_admin"].includes(userAccountCreateForm.role) ? (
+                      <section className="user-account-permissions">
+                        <div>
+                          <span className="user-account-field-title">Role-based dashboard access</span>
+                          <p>{userAccountCreateForm.role === "administrator" ? "Administrators receive every dashboard permission." : "Choose the dashboard areas available to this Store Manager."}</p>
+                        </div>
+                        <div className="user-permission-grid">
+                          {USER_PERMISSION_OPTIONS.map(([permission, label]) => {
+                            const administratorRole = userAccountCreateForm.role === "administrator";
+                            const selected = administratorRole || userAccountCreateForm.permissions.includes(permission);
+                            return (
+                              <label className={`user-permission-option ${selected ? "selected" : ""}`} key={permission}>
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  disabled={administratorRole || !(session.user?.roles || []).includes("administrator")}
+                                  onChange={() => setUserAccountCreateForm((previous) => ({
+                                    ...previous,
+                                    permissions: selected ? previous.permissions.filter((item) => item !== permission) : [...previous.permissions, permission]
+                                  }))}
+                                />
+                                <span>{label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ) : null}
+                    {createFeedback ? <p className="create-feedback" role="status">{createFeedback}</p> : null}
                   </div>
                 ) : (
                   <div className="profile-create-shell modal-body creation-popup-layout">
@@ -12931,7 +13180,7 @@ export function AdminStorefrontDashboard({
                 )}
                 <div className="stacked-order-popup-actions modal-actions">
                   <button className="pill-button" type="button" onClick={closeCreateModal}>Cancel</button>
-                  <button className="button-primary" type="submit" disabled={createLoading || !consultationCanSubmit}>{createLoading ? (createModalType === "consultation" ? "Booking..." : "Submitting...") : (createModalType === "consultation" ? "Book appointment" : "Create")}</button>
+                  <button className="button-primary" type="submit" disabled={createLoading || (createModalType === "consultation" && !consultationCanSubmit)}>{createLoading ? (createModalType === "consultation" ? "Booking..." : "Creating...") : (createModalType === "consultation" ? "Book appointment" : (createModalType === "user" ? "Create user" : "Create"))}</button>
                 </div>
               </form>
             </section>

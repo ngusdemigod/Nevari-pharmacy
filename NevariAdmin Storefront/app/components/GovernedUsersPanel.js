@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
+import { adminStatusTone } from "./admin-status";
 
 export default function GovernedUsersPanel({ session }) {
   const [page, setPage] = useState(1);
@@ -43,7 +44,7 @@ export default function GovernedUsersPanel({ session }) {
     {error ? <p className="form-error" role="alert">{error.message}</p> : null}
     <div className="table-scroll"><table><thead><tr><th>Staff</th><th>Role</th><th>Date joined</th><th>Status</th><th>Linked Patients</th><th>Actions</th></tr></thead><tbody>
       {isLoading ? <tr><td colSpan="5">Loading users…</td></tr> : users.length ? users.map((user) => <tr key={user.user_id}>
-        <td><strong>{user.display_name}</strong><br/><small>{user.user_email}</small></td><td>{user.managed_role}</td><td>{user.license_number || "—"}</td><td><span className={`status-pill ${user.account_status === "approved" ? "success" : user.account_status === "pending_review" ? "warning" : "danger"}`}>{String(user.account_status).replaceAll("_", " ")}</span></td>
+        <td><strong>{user.display_name}</strong><br/><small>{user.user_email}</small></td><td>{user.managed_role}</td><td>{user.license_number || "—"}</td><td><span className={`status-pill ${adminStatusTone(user.account_status)}`}>{String(user.account_status).replaceAll("_", " ")}</span></td>
         <td><div className="governed-user-actions">
           {user.managed_role === "nurse" && user.account_status !== "approved" ? <button type="button" className="pill-button" disabled={busy} onClick={() => act(user, "approve")}>{busy === `${user.user_id}:approve` ? "Saving…" : "Approve"}</button> : null}
           {user.managed_role === "nurse" && user.account_status === "pending_review" ? <button type="button" className="pill-button" disabled={busy} onClick={() => act(user, "decline")}>Decline</button> : null}

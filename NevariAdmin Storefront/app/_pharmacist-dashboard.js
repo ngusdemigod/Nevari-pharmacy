@@ -9,6 +9,7 @@ import { setDocumentMetadata } from "./components/page-metadata";
 import { RoleShell, SkeletonBox } from "./components/role-shell";
 import { apiFileRequest, apiRequest, hydrateStoredSession, isSessionUsable, shortDate, titleCase } from "./components/role-dashboard-utils";
 import { performGlobalLogout } from "./components/role-session";
+import { BrandedSpinner } from "./components/BrandedSpinner";
 import {
   WEEKDAYS,
   DEFAULT_SLOT_INTERVAL_MINUTES,
@@ -482,6 +483,7 @@ function MtmWorkspace({ session, items, query, onNotice, onOpenNav }) {
   const [selectedId, setSelectedId] = useState(null);
   const [busy, setBusy] = useState("");
   const [notes, setNotes] = useState("");
+  const [declineValidation, setDeclineValidation] = useState("");
   const [productSearch, setProductSearch] = useState("");
   const [attached, setAttached] = useState([]);
   const selected = items.find((item) => String(item.id) === String(selectedId)) || null;
@@ -495,6 +497,7 @@ function MtmWorkspace({ session, items, query, onNotice, onOpenNav }) {
     const plan = selected?.action_plan && typeof selected.action_plan === "object" && !Array.isArray(selected.action_plan) ? selected.action_plan : {};
     const draftProducts = Array.isArray(plan.products) ? plan.products : selected?.attached_products;
     setNotes(String(plan.note || ""));
+    setDeclineValidation("");
     setAttached(Array.isArray(draftProducts) ? draftProducts.map((item) => ({ product_id: Number(item.product_id), name: String(item.name || "") })).filter((item) => item.product_id) : []);
     setProductSearch("");
     // Draft state is reloaded when a different case is opened, not on every background refresh.
@@ -521,6 +524,16 @@ function MtmWorkspace({ session, items, query, onNotice, onOpenNav }) {
     } finally {
       setBusy("");
     }
+  }
+
+  function declineRequest() {
+    const reason = notes.trim();
+    if (!reason) {
+      setDeclineValidation("Add a clinical note explaining why this request is being declined.");
+      return;
+    }
+    setDeclineValidation("");
+    void action("decline", { reason }, { close: true, message: "Request declined." });
   }
 
   async function completeConsultation() {
@@ -608,20 +621,20 @@ function MtmWorkspace({ session, items, query, onNotice, onOpenNav }) {
       {isReviewStage ? <>
         <label className="doctor-mobile-form-field"><span>Clinical note or action plan</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={5000} placeholder="Record a concise clinical note." /></label>
         <div className="doctor-mobile-card-actions pharmacist-action-row">
-          <button className="doctor-mobile-action-button primary" type="button" disabled={Boolean(busy)} onClick={() => action("approve", {}, { message: "Request approved and scheduled." })}>Approve</button>
-          <button className="doctor-mobile-action-button danger" type="button" disabled={Boolean(busy) || !notes.trim()} onClick={() => action("decline", { reason: notes }, { close: true, message: "Request declined." })}>Decline</button>
+          <button className="doctor-mobile-action-button primary" type="button" disabled={Boolean(busy)} onClick={() => action("approve", {}, { message: "Request approved and scheduled." })}>{busy === "approve" ? <BrandedSpinner label="Approving request" /> : "Approve"}</button>
+          <button className="doctor-mobile-action-button danger" type="button" disabled={Boolean(busy)} onClick={declineRequest}>{busy === "decline" ? <BrandedSpinner label="Declining request" /> : "Decline"}</button>
         </div>
-        {!notes.trim() ? <p className="pharmacist-action-hint">Add a clinical note to record a decline reason.</p> : null}
+        {declineValidation ? <p className="pharmacist-action-error" role="alert">{declineValidation}</p> : !notes.trim() ? <p className="pharmacist-action-hint">Add a clinical note to record a decline reason.</p> : null}
       </> : null}
 
       {isScheduled ? <>
         <div className="doctor-mobile-card-actions pharmacist-action-row">
           {consultationStarted
-            ? <button className="doctor-mobile-action-button primary" type="button" disabled={Boolean(busy)} onClick={completeConsultation}>Complete consultation</button>
+            ? <button className="doctor-mobile-action-button primary" type="button" disabled={Boolean(busy)} onClick={completeConsultation}>{busy === "consultation-complete" ? <BrandedSpinner label="Completing consultation" /> : "Complete consultation"}</button>
             : <a className="doctor-mobile-action-button primary pharmacist-join-link" href={selected.pharmacist_join_url || "#"} target="_blank" rel="noopener noreferrer" aria-disabled={!selected.pharmacist_join_url}>Join meeting</a>}
           {consultationStarted
-            ? <button className="doctor-mobile-action-button secondary" type="button" disabled={Boolean(busy)} onClick={() => action("action-plan", { action_plan: { note: notes, products: attached } }, { close: true, message: "Saved as draft." })}>Save action plan</button>
-            : <button className="doctor-mobile-action-button secondary" type="button" disabled={Boolean(busy)} onClick={() => action("reschedule", {}, { close: true, message: "The patient has been asked to pick a new slot." })}>Reschedule</button>}
+            ? <button className="doctor-mobile-action-button secondary" type="button" disabled={Boolean(busy)} onClick={() => action("action-plan", { action_plan: { note: notes, products: attached } }, { close: true, message: "Saved as draft." })}>{busy === "action-plan" ? <BrandedSpinner label="Saving action plan" /> : "Save action plan"}</button>
+            : <button className="doctor-mobile-action-button secondary" type="button" disabled={Boolean(busy)} onClick={() => action("reschedule", {}, { close: true, message: "The patient has been asked to pick a new slot." })}>{busy === "reschedule" ? <BrandedSpinner label="Requesting reschedule" /> : "Reschedule"}</button>}
         </div>
         {consultationStarted ? <>
           <label className="doctor-mobile-form-field"><span>Clinical note or action plan</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={5000} placeholder="Record a concise clinical note." /></label>

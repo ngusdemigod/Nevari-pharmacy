@@ -96,6 +96,18 @@ function titleCase(value) {
   return String(value || "").replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function invoiceDateTime(value, timezone = "UTC") {
+  if (!value) return "Not selected";
+  const normalized = String(value).includes("T") ? String(value) : `${String(value).replace(" ", "T")}Z`;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en-NG", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: timezone || "UTC"
+  }).format(date);
+}
+
 function ordinal(index) {
   return ["1st", "2nd", "3rd"][index] || `${index + 1}th`;
 }
@@ -315,18 +327,24 @@ function PaywallPageContent() {
           <span>Balance due</span><strong>{money(data?.totals?.balance_due, data.currency)}</strong>
         </div>
         <div className="paywall-items">
-          <h2>{data?.entity_type === "appointment" ? "Appointment details" : mtmRequest ? "MTM request" : "Order items"}</h2>
+          <h2>{data?.entity_type === "appointment" ? "Appointment details" : "Order details"}</h2>
           {mtmRequest ? (
-            <>
+            <div className="paywall-mtm-details">
               <div className="paywall-item"><span>Request ID</span><strong>{mtmRequest.reference || `MTM-${mtmRequest.id}`}</strong></div>
               <div className="paywall-item"><span>Patient name</span><strong>{mtmRequest.patient_name || data.customer?.name || "Patient"}</strong></div>
-            </>
-          ) : items.length ? items.map((item, index) => (
+              <div className="paywall-item"><span>Status</span><strong>{titleCase(mtmRequest.status)}</strong></div>
+              <div className="paywall-item"><span>Assigned pharmacist</span><strong>{mtmRequest.pharmacist_name || "Pending assignment"}</strong></div>
+              <div className="paywall-item"><span>Selected availability</span><strong>{invoiceDateTime(mtmRequest.selected_availability, mtmRequest.timezone)}</strong></div>
+              <div className="paywall-item"><span>Duration</span><strong>{mtmRequest.duration_minutes || 30} minutes</strong></div>
+              <div className="paywall-item"><span>Consultation method</span><strong>{mtmRequest.consultation_method || "Google Meet"}</strong></div>
+            </div>
+          ) : null}
+          {items.length ? items.map((item, index) => (
             <div className="paywall-item" key={`${item.name || "item"}-${index}`}>
               <span>{item.name || "Item"} x {item.qty || item.quantity || 1}</span>
               <strong>{money(item.total ?? item.rate ?? item.price, data.currency)}</strong>
             </div>
-            )) : <p className="paywall-muted">No line items were returned for this invoice.</p>}
+            )) : !mtmRequest ? <p className="paywall-muted">No line items were returned for this invoice.</p> : null}
         </div>
         <div className="gateway-list">
           {gateways.map((gateway, index) => (
@@ -362,7 +380,8 @@ function PaywallPageContent() {
         .paywall-items h2 { margin: 0 0 10px; color: #0E2955; font-size: 24px; font-weight: 300; line-height: 1.2; }
         .paywall-item { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; color: #1f2a37; }
         .paywall-item span { min-width: 0; overflow-wrap: anywhere; }
-        .paywall-item strong { white-space: nowrap; }
+        .paywall-item strong { text-align: right; overflow-wrap: anywhere; }
+        .paywall-mtm-details { border-bottom: 1px solid #e4eaf2; margin-bottom: 8px; padding-bottom: 8px; }
         .paywall-muted { margin: 0; color: #7c8796; }
         .gateway-list { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 18px; }
         .gateway-button { border: 1px solid #0E2955; background: #0E2955; color: #fff; padding: 14px 18px; font-weight: 400; border-radius: 999px; font-size: 15px; }

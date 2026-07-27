@@ -19,7 +19,7 @@ async function resolveSessionUser(baseUrl, accessToken, request, frontendType = 
   }
   const proxyUrl = new URL("/api/nevari-proxy", request.url);
   proxyUrl.searchParams.set("baseUrl", baseUrl);
-  proxyUrl.searchParams.set("path", "/me");
+  proxyUrl.searchParams.set("path", "/auth/me");
   const response = await fetch(proxyUrl, {
     headers: {
       Accept: "application/json",

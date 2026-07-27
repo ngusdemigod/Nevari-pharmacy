@@ -5,11 +5,21 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { setDocumentMetadata } from "./page-metadata";
 import { buildTwoStepVerificationRequest, loadAuthSecuritySettings } from "./auth-security-settings";
 import { buildUrl, defaultSession, frontendContext, isPairingRequiredPayload, loadSession, resetToPairingState, saveSession } from "./role-session";
+import { captureAnalyticsEvent } from "../lib/analytics-events";
+import { requireRecaptchaToken } from "../lib/recaptcha-client";
+import RecaptchaDisclosure from "./RecaptchaDisclosure";
 
 function isSessionUsable(session) {
   const hasAccessToken = Boolean(String(session?.accessToken || "").trim());
   const expiresAt = Number(session?.expiresAt || 0);
   return hasAccessToken && Number.isFinite(expiresAt) && Date.now() < (expiresAt - 30_000);
+}
+
+async function publicFormHeaders(headers = {}) {
+  return {
+    ...headers,
+    "X-Nevari-Recaptcha-Token": await requireRecaptchaToken("public_submit")
+  };
 }
 
 function AuthButtonContent({ loading, loadingText, idleText }) {
@@ -410,12 +420,12 @@ export default function RoleLoginPage({ config }) {
     try {
       const response = await fetch(buildUrl(session, "/auth/login"), {
         method: "POST",
-        headers: {
+        headers: await publicFormHeaders({
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
-        },
+        }),
         body: JSON.stringify(buildAuthRequestBody({
           username,
           password,
@@ -437,6 +447,8 @@ export default function RoleLoginPage({ config }) {
         return;
       }
       completeAuthenticatedResponse(payload, queryNextPath || config.dashboardPath);
+    } catch {
+      showNotice("Spam protection could not be loaded. Check your connection and try again.", "error");
     } finally {
       setLoadingAction("");
     }
@@ -451,12 +463,12 @@ export default function RoleLoginPage({ config }) {
     try {
       const response = await fetch(buildUrl(session, "/auth/google-login"), {
         method: "POST",
-        headers: {
+        headers: await publicFormHeaders({
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
-        },
+        }),
         body: JSON.stringify(buildAuthRequestBody({
           credential,
           ...buildTwoStepVerificationRequest(authSecuritySettings)
@@ -487,12 +499,12 @@ export default function RoleLoginPage({ config }) {
     try {
       const response = await fetch(buildUrl(session, "/auth/verify-code"), {
         method: "POST",
-        headers: {
+        headers: await publicFormHeaders({
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
-        },
+        }),
         body: JSON.stringify(buildAuthRequestBody({
           challenge_id: verification.challengeId,
           code: verification.code,
@@ -523,12 +535,12 @@ export default function RoleLoginPage({ config }) {
     try {
       const response = await fetch(buildUrl(session, "/auth/resend-code"), {
         method: "POST",
-        headers: {
+        headers: await publicFormHeaders({
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
-        },
+        }),
         body: JSON.stringify({
           challenge_id: verification.challengeId,
           ...frontendContext(session)
@@ -570,12 +582,12 @@ export default function RoleLoginPage({ config }) {
     try {
       const response = await fetch(buildUrl(session, "/auth/password-reset"), {
         method: "POST",
-        headers: {
+        headers: await publicFormHeaders({
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
-        },
+        }),
         body: JSON.stringify({ username: resetUsername, ...frontendContext(session) })
       });
       if (!response.ok) {
@@ -601,15 +613,16 @@ export default function RoleLoginPage({ config }) {
       return;
     }
     setLoadingAction("register");
+    captureAnalyticsEvent("registration_started", { role: "patient", outcome: "started", source_area: "registration" });
     try {
       const response = await fetch(buildUrl(session, "/auth/register-customer"), {
         method: "POST",
-        headers: {
+        headers: await publicFormHeaders({
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-Nevari-Frontend-Type": session.frontendType,
           "X-Nevari-Frontend-Origin": window.location.origin
-        },
+        }),
         body: JSON.stringify(buildAuthRequestBody({
           first_name: registration.firstName,
           last_name: registration.lastName,
@@ -627,11 +640,13 @@ export default function RoleLoginPage({ config }) {
         return;
       }
       if (payload.data?.verification_required) {
+        captureAnalyticsEvent("registration_completed", { role: "patient", outcome: "completed", source_area: "registration" });
         startVerification(payload.data);
         setUsername(registration.email);
         return;
       }
       if (payload.data?.access_token) {
+        captureAnalyticsEvent("registration_completed", { role: "patient", outcome: "completed", source_area: "registration" });
         completeAuthenticatedResponse(payload, queryNextPath || config.dashboardPath);
         return;
       }
@@ -730,6 +745,7 @@ export default function RoleLoginPage({ config }) {
                 {googleAuth.enabled ? <GoogleAuthPanel buttonRef={googleButtonRef} loading={loadingAction === "google"} /> : null}
               </form>
             ) : null}
+            <RecaptchaDisclosure />
             {notice?.message ? (
               <div className={`snackbar auth-snackbar ${notice.tone}`}>
                 <span className="snackbar-title">{notice.tone === "error" ? "Error" : notice.tone === "success" ? "Success" : "Notice"}</span>

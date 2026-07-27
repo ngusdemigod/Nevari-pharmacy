@@ -1,5 +1,17 @@
 # Nevari Pharmacy Core - Security Vulnerability Audit Report
 
+## 2026-07-27 dashboard permission assignment scope
+
+- Custom storefront permission assignment is limited to Administrator, Store Admin, and legacy Shop Manager target roles. Doctor, Pharmacist, and Nurse targets are forced back to their fixed role defaults server-side, even if a client submits additional valid permission keys.
+- Analytics remains protected by `nevari_storefront_analytics` and is included in Administrator, Store Admin, and legacy Shop Manager defaults.
+- The Staff Details interface mirrors the server rule, but WordPress capability enforcement remains the authorization boundary.
+
+## 2026-07-25 public-write abuse protection and analytics review
+
+- Unauthenticated writes passing through the dashboard proxy now fail closed in production unless Google reCAPTCHA v3 verification succeeds for the expected action, configured hostname, and score threshold. CAPTCHA tokens are neither forwarded to WordPress nor logged.
+- Existing authenticated session, CSRF, role, and resource-ownership enforcement is unchanged.
+- PostHog common properties are limited to environment, application area/role, route group, viewport category, and release. Its existing payload sanitizer and disabled autocapture/session-recording configuration remain in force.
+
 **Plugin:** Nevari Pharmacy Core  
 **Version:** 0.1.0  
 **Scan Date:** May 13, 2026
@@ -581,3 +593,17 @@ The admin staff action proxy now validates the double-submit CSRF token before f
 - **Added:** `POST /pharmacist/mtm-requests/{id}/reschedule` releases the Google Meet space, join tokens, check-in timestamps and reserved slot, and returns the case to `approved` so the patient can select a new slot. Ownership is enforced by the same `pharmacist_request_permission` callback used by the other case actions; the body accepts only an optional `reason` and rejects any other field. Payment state is deliberately not modified, so a reschedule cannot be used to re-charge or to release a paid consultation credit.
 - **Unchanged boundary:** neither route widens what a pharmacist can read or mutate beyond cases already assigned to them; both return the standard sanitized MTM payload.
 - **Email link fix:** MTM join links were built as `<dashboard>/dashboard/therapy/join/<token>`, which is not a route and returned 404. They now point at `<dashboard>/therapy/join/<token>`, the tokenized join screen that re-validates the signed token, the meeting window and the stored token hash server-side on every load. The token itself, its HMAC signature, hash comparison and validity window are unchanged.
+# 2026-07-27 — Product prescription snapshots and manual order creation
+
+- Product prescriptions accept only the approved formatting subset: paragraphs, line breaks, bold, underline, ordered/unordered lists, and preset font sizes.
+- The WordPress API sanitizes the prescription independently of the dashboard and stores the same sanitized value in protected product meta.
+- Checkout and dashboard-created orders copy an immutable prescription snapshot into each WooCommerce order item. Later product edits cannot alter historical order instructions.
+- Prescription sections are added only to customer WooCommerce emails; admin emails remain unchanged.
+- Manual order creation requires an explicitly selected existing patient, at least one explicit product, and an explicit payment status. No customer, product, or payment defaults are trusted.
+# 2026-07-27 unified user creation review
+
+- Added explicit authenticated permission enforcement to `POST /admin/users`.
+- Confirmed role escalation is rejected server-side: only Administrators can create Administrator accounts.
+- Confirmed dashboard permissions are normalized server-side and cannot be granted to roles with fixed defaults.
+- Added body-size, exact-field, email, phone, password, image MIME/extension/content/size, and bounded role-field validation.
+- The browser continues to call WordPress only through the signed Next.js proxy; no new client secret or bearer-token storage was introduced.

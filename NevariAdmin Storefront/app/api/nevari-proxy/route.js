@@ -5,6 +5,7 @@ import {
   sanitizeText
 } from "../../lib/inputValidation";
 import { DEFAULT_NEVARI_BASE_URL } from "../../components/frontend-config";
+import { verifyRecaptchaToken } from "../../lib/recaptcha-server";
 
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
@@ -239,6 +240,21 @@ async function proxyRequest(request, { params } = {}) {
   assertFrontendPathAccess(frontendType, targetUrl);
   assertCsrf(request, frontendType);
   const accessToken = requestCookie(request, cookieName("access", frontendType));
+  const isMutating = !["GET", "HEAD", "OPTIONS"].includes(String(request.method || "GET").toUpperCase());
+  if (isMutating && !accessToken) {
+    const remoteIp = String(request.headers.get("x-forwarded-for") || "").split(",")[0].trim();
+    const verification = await verifyRecaptchaToken(
+      request.headers.get("x-nevari-recaptcha-token") || "",
+      "public_submit",
+      remoteIp
+    );
+    if (!verification.ok) {
+      return Response.json(
+        { success: false, error: { code: verification.code, message: "Spam protection verification failed. Please try again." } },
+        { status: 403, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+  }
 
   const forwardedHeaders = [
     "accept",

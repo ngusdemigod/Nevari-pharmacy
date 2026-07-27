@@ -1143,6 +1143,11 @@ final class Nevari_Auth {
         $first_name = (string) get_user_meta((int) $user->ID, 'first_name', true);
         $last_name = (string) get_user_meta((int) $user->ID, 'last_name', true);
         $display_name = trim((string) $user->display_name);
+        $analytics_uuid = sanitize_text_field((string) get_user_meta((int) $user->ID, 'nevari_analytics_uuid', true));
+        if (!preg_match('/^[a-f0-9-]{36}$/i', $analytics_uuid)) {
+            $analytics_uuid = wp_generate_uuid4();
+            update_user_meta((int) $user->ID, 'nevari_analytics_uuid', $analytics_uuid);
+        }
         if ($display_name === '' || strtolower($display_name) === 'customer') {
             $display_name = self::preferred_customer_display_name($first_name, $last_name, (string) $user->user_email);
         }
@@ -1160,6 +1165,7 @@ final class Nevari_Auth {
             'storefront_permissions' => class_exists('Nevari_User_Governance')
                 ? Nevari_User_Governance::permission_keys_for_user((int) $user->ID)
                 : [],
+            'analytics_uuid' => $analytics_uuid,
         ];
     }
 

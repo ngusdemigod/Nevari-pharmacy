@@ -1082,7 +1082,7 @@ final class Nevari_Plugin {
             'single' => true,
             'type' => 'string',
             'show_in_rest' => false,
-            'sanitize_callback' => 'sanitize_textarea_field',
+            'sanitize_callback' => [__CLASS__, 'sanitize_product_prescription_html'],
             'auth_callback' => static function () {
                 return current_user_can('edit_products') || current_user_can('nevari_manage_products');
             },
@@ -1113,7 +1113,7 @@ final class Nevari_Plugin {
         }
 
         $prescription = isset($_POST['_nevari_product_prescription'])
-            ? sanitize_textarea_field(wp_unslash($_POST['_nevari_product_prescription']))
+            ? self::sanitize_product_prescription_html(wp_unslash($_POST['_nevari_product_prescription']))
             : '';
 
         if ($prescription !== '') {
@@ -1122,6 +1122,20 @@ final class Nevari_Plugin {
         }
 
         $product->delete_meta_data(self::PRODUCT_PRESCRIPTION_TEXT_META);
+    }
+
+    public static function sanitize_product_prescription_html(string $value): string {
+        return wp_kses($value, [
+            'p' => [],
+            'br' => [],
+            'strong' => [],
+            'b' => [],
+            'u' => [],
+            'ul' => [],
+            'ol' => [],
+            'li' => [],
+            'font' => ['size' => true],
+        ]);
     }
 
     public function register_order_statuses(): void {
@@ -1351,7 +1365,7 @@ final class Nevari_Plugin {
         foreach ($entries as $entry) {
             echo '<div style="margin:0 0 14px;padding:14px 16px;border:1px solid #e6ecf2;border-radius:12px;background:#f8fafc;">';
             echo '<strong style="display:block;margin-bottom:8px;">' . esc_html((string) $entry['product_name']) . '</strong>';
-            echo '<div style="white-space:pre-line;color:#334155;">' . esc_html((string) $entry['prescription']) . '</div>';
+            echo '<div style="color:#334155;">' . self::sanitize_product_prescription_html((string) $entry['prescription']) . '</div>';
             echo '</div>';
         }
         echo '</section>';

@@ -677,6 +677,207 @@ final class Nevari_Rest {
             'callback' => [__CLASS__, 'audit_summary'],
             'permission_callback' => [__CLASS__, 'store_admin_required'],
         ]);
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/dashboard/store-admin/analytics', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [__CLASS__, 'dashboard_analytics'],
+            'permission_callback' => static function () {
+                $user_id = Nevari_Auth::api_session_user_id();
+                return Nevari_Auth::api_session_required()
+                    && $user_id > 0
+                    && Nevari_Helpers::is_store_admin($user_id)
+                    && (
+                        in_array('administrator', Nevari_Helpers::current_user_roles($user_id), true)
+                        || (class_exists('Nevari_User_Governance') && Nevari_User_Governance::user_has_permission($user_id, 'analytics'))
+                    );
+            },
+            'args' => [
+                'range' => [
+                    'default' => '30d',
+                    'sanitize_callback' => 'sanitize_key',
+                    'validate_callback' => static function ($value) {
+                        return in_array($value, ['7d', '30d', '90d'], true);
+                    },
+                ],
+                'compare' => [
+                    'default' => '1',
+                    'sanitize_callback' => 'sanitize_text_field',
+                    'validate_callback' => static function ($value) {
+                        return in_array((string) $value, ['0', '1'], true);
+                    },
+                ],
+                'sort' => [
+                    'default' => 'sales',
+                    'sanitize_callback' => 'sanitize_key',
+                    'validate_callback' => static function ($value) {
+                        return in_array($value, ['sales', 'purchases'], true);
+                    },
+                ],
+                'page' => ['default' => 1, 'sanitize_callback' => 'absint'],
+                'per_page' => ['default' => 10, 'sanitize_callback' => 'absint'],
+            ],
+        ]);
+    }
+
+    public static function dashboard_analytics(WP_REST_Request $request): WP_REST_Response {
+        if (!self::woo_available()) {
+            return Nevari_Helpers::error('woocommerce_missing', 'Commerce analytics is temporarily unavailable.', 503);
+        }
+
+        $range = sanitize_key((string) $request->get_param('range'));
+        $days = ['7d' => 7, '30d' => 30, '90d' => 90][$range] ?? 30;
+        $compare = (string) $request->get_param('compare') !== '0';
+        $sort = sanitize_key((string) $request->get_param('sort'));
+        $page = max(1, absint($request->get_param('page')));
+        $per_page = min(25, max(5, absint($request->get_param('per_page'))));
+        $cache_key = 'nevari_analytics_' . md5(implode('|', [$range, $compare ? '1' : '0', $sort, $page, $per_page]));
+        $cached = get_transient($cache_key);
+        if (is_array($cached)) {
+            $cached['data_status'] = 'ready';
+            return Nevari_Helpers::success($cached);
+        }
+
+        $now = new DateTimeImmutable('now', wp_timezone());
+        $current_start = $now->modify('-' . $days . ' days');
+        $previous_start = $current_start->modify('-' . $days . ' days');
+        $current = self::analytics_order_period($current_start, $now);
+        $previous = $compare ? self::analytics_order_period($previous_start, $current_start) : null;
+
+        $products = wc_get_products([
+            'status' => ['publish', 'draft'],
+            'limit' => 500,
+            'return' => 'objects',
+        ]);
+        $inventory = ['in_stock' => 0, 'low_stock' => 0, 'out_of_stock' => 0, 'total' => count($products), 'attention' => []];
+        $product_rows = [];
+        foreach ($products as $product) {
+            if (!$product instanceof WC_Product) {
+                continue;
+            }
+            $stock_status = $product->get_stock_status();
+            $quantity = $product->get_stock_quantity();
+            $threshold = $product->get_low_stock_amount();
+            if ($threshold === '' || $threshold === null) {
+                $threshold = (int) get_option('woocommerce_notify_low_stock_amount', 2);
+            }
+            $is_out = $stock_status === 'outofstock';
+            $is_low = !$is_out && $quantity !== null && $quantity <= (int) $threshold;
+            $bucket = $is_out ? 'out_of_stock' : ($is_low ? 'low_stock' : 'in_stock');
+            $inventory[$bucket]++;
+            if (($is_out || $is_low) && count($inventory['attention']) < 10) {
+                $inventory['attention'][] = [
+                    'product_id' => $product->get_id(),
+                    'name' => wp_strip_all_tags($product->get_name()),
+                    'sku' => sanitize_text_field($product->get_sku()),
+                    'status' => $bucket,
+                    'quantity' => $quantity,
+                ];
+            }
+            $sales = $current['products'][$product->get_id()] ?? ['quantity' => 0, 'sales' => 0.0];
+            $product_rows[] = [
+                'product_id' => $product->get_id(),
+                'variation_id' => 0,
+                'name' => wp_strip_all_tags($product->get_name()),
+                'sku' => sanitize_text_field($product->get_sku()),
+                'quantity' => (int) $sales['quantity'],
+                'sales' => round((float) $sales['sales'], 2),
+                'stock_status' => $bucket,
+            ];
+        }
+        usort($product_rows, static function ($left, $right) use ($sort) {
+            $key = $sort === 'purchases' ? 'quantity' : 'sales';
+            return $right[$key] <=> $left[$key];
+        });
+        $total_products = count($product_rows);
+        $product_rows = array_slice($product_rows, ($page - 1) * $per_page, $per_page);
+
+        $payload = [
+            'range' => $range,
+            'generated_at' => gmdate('c'),
+            'currency' => get_woocommerce_currency(),
+            'commerce' => [
+                'gross_sales' => round($current['gross_sales'], 2),
+                'completed_orders' => $current['completed_orders'],
+                'average_order_value' => $current['completed_orders'] > 0 ? round($current['gross_sales'] / $current['completed_orders'], 2) : null,
+                'on_time_fulfillment_percent' => $current['fulfilled_orders'] > 0 ? round(($current['on_time_orders'] / $current['fulfilled_orders']) * 100, 1) : null,
+                'previous' => $previous ? [
+                    'gross_sales' => round($previous['gross_sales'], 2),
+                    'completed_orders' => $previous['completed_orders'],
+                ] : null,
+            ],
+            'products' => [
+                'items' => $product_rows,
+                'page' => $page,
+                'per_page' => $per_page,
+                'total' => $total_products,
+            ],
+            'inventory' => [
+                'in_stock' => $inventory['in_stock'],
+                'low_stock' => $inventory['low_stock'],
+                'out_of_stock' => $inventory['out_of_stock'],
+                'available_percent' => $inventory['total'] > 0 ? round((($inventory['in_stock'] + $inventory['low_stock']) / $inventory['total']) * 100, 1) : null,
+                'attention' => $inventory['attention'],
+            ],
+            'order_outcomes' => $current['statuses'],
+            'data_status' => 'ready',
+        ];
+        set_transient($cache_key, $payload, 5 * MINUTE_IN_SECONDS);
+        return Nevari_Helpers::success($payload);
+    }
+
+    private static function analytics_order_period(DateTimeImmutable $start, DateTimeImmutable $end): array {
+        $orders = wc_get_orders([
+            'limit' => 500,
+            'date_created' => $start->format('Y-m-d H:i:s') . '...' . $end->format('Y-m-d H:i:s'),
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'return' => 'objects',
+        ]);
+        $result = [
+            'gross_sales' => 0.0,
+            'completed_orders' => 0,
+            'fulfilled_orders' => 0,
+            'on_time_orders' => 0,
+            'statuses' => [],
+            'products' => [],
+        ];
+        foreach ($orders as $order) {
+            if (!$order instanceof WC_Order) {
+                continue;
+            }
+            $status = sanitize_key($order->get_status());
+            $result['statuses'][$status] = ($result['statuses'][$status] ?? 0) + 1;
+            if ($status !== 'completed') {
+                continue;
+            }
+            $result['completed_orders']++;
+            $result['gross_sales'] += (float) $order->get_total() + (float) $order->get_total_refunded();
+            $created = $order->get_date_created();
+            $completed = $order->get_date_completed();
+            if ($created && $completed) {
+                $result['fulfilled_orders']++;
+                if (($completed->getTimestamp() - $created->getTimestamp()) <= 48 * HOUR_IN_SECONDS) {
+                    $result['on_time_orders']++;
+                }
+            }
+            foreach ($order->get_items('line_item') as $item) {
+                if (!$item instanceof WC_Order_Item_Product) {
+                    continue;
+                }
+                $product_id = $item->get_variation_id() ?: $item->get_product_id();
+                if (!$product_id) {
+                    continue;
+                }
+                $existing = $result['products'][$product_id] ?? ['quantity' => 0, 'sales' => 0.0];
+                $existing['quantity'] += (int) $item->get_quantity();
+                $existing['sales'] += (float) $item->get_total() + (float) $item->get_total_tax();
+                $result['products'][$product_id] = $existing;
+            }
+        }
+        $total = array_sum($result['statuses']);
+        $result['statuses'] = array_map(static function ($status, $count) use ($total) {
+            return ['status' => $status, 'count' => $count, 'percent' => $total > 0 ? round(($count / $total) * 100, 1) : 0];
+        }, array_keys($result['statuses']), array_values($result['statuses']));
+        return $result;
     }
 
     private static function audit_routes(): void {
@@ -1468,7 +1669,15 @@ final class Nevari_Rest {
             if (!$product) {
                 return Nevari_Helpers::error('validation_error', 'One or more items reference an invalid product_id.', 422);
             }
-            $order->add_product($product, (int) $item['quantity']);
+            $order_item_id = $order->add_product($product, (int) $item['quantity']);
+            if ($order_item_id) {
+                $order_item = $order->get_item($order_item_id);
+                $prescription = self::sanitize_product_prescription_html((string) get_post_meta((int) $product->get_id(), '_nevari_product_prescription', true));
+                if ($order_item && $prescription !== '') {
+                    $order_item->add_meta_data('_nevari_product_prescription', $prescription, true);
+                    $order_item->save();
+                }
+            }
         }
         $order->set_billing_first_name($first_name);
         $order->set_billing_last_name($last_name);
@@ -2175,6 +2384,7 @@ final class Nevari_Rest {
                         'image_url' => $image_url,
                         'rx_required' => $item->get_meta('_nevari_rx_required') === 'yes',
                         'prescription_id' => $item->get_meta('_nevari_prescription_id') ? (int) $item->get_meta('_nevari_prescription_id') : null,
+                        'product_prescription' => self::sanitize_product_prescription_html((string) $item->get_meta('_nevari_product_prescription', true)),
                     ];
                 } catch (Throwable $exception) {
                     error_log(sprintf( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
@@ -2437,6 +2647,9 @@ final class Nevari_Rest {
         $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
         $customer_name = $customer_name ?: $order->get_formatted_billing_full_name();
         $mtm_request_id = absint($order->get_meta('_nevari_mtm_request_id', true));
+        $mtm_request = $mtm_request_id > 0 && class_exists('Nevari_Mtm')
+            ? Nevari_Mtm::invoice_summary($mtm_request_id, (int) $order->get_id())
+            : null;
         if (!$customer_name && $mtm_request_id > 0) {
             $customer = get_userdata((int) $order->get_customer_id());
             $customer_name = $customer instanceof WP_User ? $customer->display_name : '';
@@ -2465,11 +2678,9 @@ final class Nevari_Rest {
                 'email' => (string) $order->get_billing_email(),
                 'phone' => (string) $order->get_billing_phone(),
             ],
-            'mtm_request' => $mtm_request_id > 0 ? [
-                'id' => $mtm_request_id,
-                'reference' => sprintf('MTM-%06d', $mtm_request_id),
+            'mtm_request' => $mtm_request ? array_merge($mtm_request, [
                 'patient_name' => $customer_name ?: 'Patient',
-            ] : null,
+            ]) : null,
             'items' => $line_items,
             'totals' => [
                 'subtotal' => self::order_subtotal($order, $items),
@@ -3470,12 +3681,26 @@ final class Nevari_Rest {
                         : 'no_prescription_needed';
                     break;
                 case 'prescription_notes':
-                    $safe[$key] = sanitize_textarea_field((string) $value);
+                    $safe[$key] = self::sanitize_product_prescription_html((string) $value);
                     break;
             }
         }
 
         return $safe;
+    }
+
+    private static function sanitize_product_prescription_html(string $value): string {
+        return wp_kses($value, [
+            'p' => [],
+            'br' => [],
+            'strong' => [],
+            'b' => [],
+            'u' => [],
+            'ul' => [],
+            'ol' => [],
+            'li' => [],
+            'font' => ['size' => true],
+        ]);
     }
 
     private static function apply_product_custom_meta(int $product_id, array $params): void {
@@ -3486,6 +3711,15 @@ final class Nevari_Rest {
                 continue;
             }
             update_post_meta($product_id, $key, $value);
+        }
+
+        if (array_key_exists('prescription_notes', $meta_payload)) {
+            $prescription = (string) $meta_payload['prescription_notes'];
+            if ($prescription === '') {
+                delete_post_meta($product_id, '_nevari_product_prescription');
+            } else {
+                update_post_meta($product_id, '_nevari_product_prescription', $prescription);
+            }
         }
 
         if (array_key_exists('shipping_information', $params)) {

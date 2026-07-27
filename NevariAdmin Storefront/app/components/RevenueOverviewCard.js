@@ -3,7 +3,6 @@
 import {
   Area,
   AreaChart,
-  CartesianGrid,
   Line,
   ResponsiveContainer,
   Tooltip,
@@ -106,7 +105,6 @@ export default function RevenueOverviewCard({
                 <stop offset="100%" stopColor={chartAccent} stopOpacity={0.01} />
               </linearGradient>
             </defs>
-            <CartesianGrid stroke="rgba(148, 163, 184, 0.18)" vertical={false} />
             <XAxis
               dataKey="month"
               axisLine={false}

@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { isAllowedUrl, rejectUnknownFields, sanitizeText } from "../../lib/inputValidation";
+import { verifyRecaptchaToken } from "../../lib/recaptcha-server";
 
 const API_NAMESPACE = "nevari/v1";
 
@@ -19,6 +20,17 @@ export async function POST(request) {
     const requestOrigin = new URL(request.url).origin;
     if (normalizeUrl(request.headers.get("origin")) !== requestOrigin) {
       return Response.json({ success: false, error: { message: "Same-origin request required." } }, { status: 403 });
+    }
+    const captcha = await verifyRecaptchaToken(
+      request.headers.get("x-nevari-recaptcha-token") || "",
+      "public_submit",
+      String(request.headers.get("x-forwarded-for") || "").split(",")[0].trim()
+    );
+    if (!captcha.ok) {
+      return Response.json(
+        { success: false, error: { code: captcha.code, message: "Spam protection verification failed. Please try again." } },
+        { status: 403 }
+      );
     }
     const body = await request.json();
     const unknown = rejectUnknownFields(body, ["baseUrl", "first_name", "last_name", "email", "phone", "license_number", "password", "consent"]);
