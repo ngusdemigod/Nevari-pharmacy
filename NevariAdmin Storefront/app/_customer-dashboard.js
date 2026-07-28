@@ -1427,6 +1427,18 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   }, [router]);
 
   useEffect(() => {
+    function restoreSession(event) {
+      if (event.detail?.frontendType !== FRONTENDS.patient.type) return;
+      const restored = hydrateStoredSession("patient");
+      setSession(restored);
+      const cacheUserKey = restored.user?.id || restored.user?.email || restored.user?.username || null;
+      setCacheKey(cacheUserKey ? buildDashboardCacheKey("patient", CUSTOMER_DASHBOARD_CACHE_SCOPE, String(cacheUserKey)) : null);
+    }
+    window.addEventListener("nevari:session-restored", restoreSession);
+    return () => window.removeEventListener("nevari:session-restored", restoreSession);
+  }, []);
+
+  useEffect(() => {
     if (!authResolved || guestConsultationDraftHandledRef.current || typeof window === "undefined") {
       return;
     }

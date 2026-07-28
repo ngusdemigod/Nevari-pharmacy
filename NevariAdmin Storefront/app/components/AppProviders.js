@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
 import { SWRConfig } from "swr";
 import { requireRecaptchaToken } from "../lib/recaptcha-client";
+import { FRONTENDS } from "./frontend-config";
+import SessionReauthModal from "./SessionReauthModal";
 
 function PostHogPageView() {
   const pathname = usePathname();
@@ -41,7 +43,33 @@ function PostHogPageView() {
 export default function AppProviders({ children }) {
   const activeModalRef = useRef(null);
   const previousFocusRef = useRef(null);
-  const authRedirectStartedRef = useRef(false);
+  const reauthPromiseRef = useRef(null);
+  const reauthResolveRef = useRef(null);
+  const [reauthConfig, setReauthConfig] = useState(null);
+
+  function frontendForPath(pathname) {
+    if (pathname.startsWith("/admin/doctor")) return FRONTENDS.doctor;
+    if (pathname.startsWith("/admin/pharmacist")) return FRONTENDS.pharmacist;
+    if (pathname.startsWith("/admin")) return FRONTENDS.admin;
+    return FRONTENDS.patient;
+  }
+
+  function requestReauthentication() {
+    if (reauthPromiseRef.current) return reauthPromiseRef.current;
+    setReauthConfig(frontendForPath(window.location.pathname));
+    reauthPromiseRef.current = new Promise((resolve) => {
+      reauthResolveRef.current = resolve;
+    });
+    return reauthPromiseRef.current;
+  }
+
+  function completeReauthentication(session) {
+    window.dispatchEvent(new CustomEvent("nevari:session-restored", { detail: { session, frontendType: reauthConfig?.type || "" } }));
+    reauthResolveRef.current?.(session);
+    reauthResolveRef.current = null;
+    reauthPromiseRef.current = null;
+    setReauthConfig(null);
+  }
 
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
@@ -83,22 +111,15 @@ export default function AppProviders({ children }) {
       const isAuthRoute = requestUrl.pathname.startsWith("/api/auth/")
         || requestUrl.pathname === "/api/nevari-proxy" && /\/auth\//.test(requestUrl.search);
       const isLoginPage = /\/login\/?$/.test(window.location.pathname);
-      if (isSameOriginApi && response.status === 401 && !isAuthRoute && !isLoginPage && !authRedirectStartedRef.current) {
-        authRedirectStartedRef.current = true;
-        const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-        const loginPath = window.location.pathname.startsWith("/admin/doctor")
-          ? "/admin/doctor/login"
-          : window.location.pathname.startsWith("/admin/pharmacist")
-            ? "/admin/pharmacist/login"
-            : window.location.pathname.startsWith("/admin")
-              ? "/admin/storefront/login"
-              : "/login";
-        await originalFetch("/api/auth/continuation", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ path: currentPath })
-        }).catch(() => null);
-        window.location.replace(`${loginPath}?expired=1`);
+      if (isSameOriginApi && response.status === 401 && !isAuthRoute && !isLoginPage) {
+        const reauthenticated = requestReauthentication();
+        if (!isMutating) {
+          await reauthenticated;
+          const retryHeaders = new Headers(headers);
+          const refreshedCsrf = readCookie("nevari_csrf");
+          if (refreshedCsrf) retryHeaders.set("x-nevari-csrf", refreshedCsrf);
+          return originalFetch(input, { ...init, headers: retryHeaders });
+        }
       }
       return response;
     };
@@ -304,6 +325,7 @@ export default function AppProviders({ children }) {
     focusThrottleInterval: 60_000
     }}>
       {children}
+      <SessionReauthModal open={Boolean(reauthConfig)} config={reauthConfig} onAuthenticated={completeReauthentication} />
     </SWRConfig>
   </PostHogProvider>;
 }

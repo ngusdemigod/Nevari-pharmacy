@@ -478,6 +478,19 @@ export default function DoctorDashboard() {
     setAuthResolved(true);
   }, [router]);
 
+  useEffect(() => {
+    function restoreSession(event) {
+      if (event.detail?.frontendType !== FRONTENDS.doctor.type) return;
+      const restored = hydrateStoredSession("doctor");
+      const restoredDoctorId = restored.user?.id;
+      setSession(restored);
+      setDoctorId(restoredDoctorId);
+      setCacheKey(restoredDoctorId ? buildDashboardCacheKey("doctor", DOCTOR_DASHBOARD_CACHE_SCOPE, restoredDoctorId) : null);
+    }
+    window.addEventListener("nevari:session-restored", restoreSession);
+    return () => window.removeEventListener("nevari:session-restored", restoreSession);
+  }, []);
+
   const cachedDoctorState = (cacheKey && isSessionUsable(session))
     ? readDashboardCache(cacheKey, DASHBOARD_CACHE_TTL_MS)?.state
     : null;

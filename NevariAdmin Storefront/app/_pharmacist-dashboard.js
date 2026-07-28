@@ -127,6 +127,15 @@ export default function PharmacistDashboard() {
     setAuthResolved(true);
   }, [router]);
 
+  useEffect(() => {
+    function restoreSession(event) {
+      if (event.detail?.frontendType !== FRONTENDS.pharmacist.type) return;
+      setSession(hydrateStoredSession("pharmacist"));
+    }
+    window.addEventListener("nevari:session-restored", restoreSession);
+    return () => window.removeEventListener("nevari:session-restored", restoreSession);
+  }, []);
+
   const mtmQuery = useSWR(
     session ? ["pharmacist-mtm", session.user?.id] : null,
     () => apiRequest(session, "/pharmacist/mtm-requests", { params: { per_page: 100, page: 1 } }),

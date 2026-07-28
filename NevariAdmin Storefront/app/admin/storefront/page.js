@@ -3265,6 +3265,16 @@ function AdminStorefrontDashboard({
   }, [isEmbeddedDashboard, resolvedEmbeddedPage]);
 
   useEffect(() => {
+    if (isEmbeddedDashboard) return undefined;
+    function restoreSession(event) {
+      if (event.detail?.frontendType !== FRONTEND_TYPE) return;
+      setSession((current) => ({ ...current, ...event.detail.session }));
+    }
+    window.addEventListener("nevari:session-restored", restoreSession);
+    return () => window.removeEventListener("nevari:session-restored", restoreSession);
+  }, [isEmbeddedDashboard]);
+
+  useEffect(() => {
     if (isEmbeddedDashboard) {
       return;
     }

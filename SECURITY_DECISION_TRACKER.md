@@ -1,5 +1,12 @@
 # Frontend and Plugin Security Decision Tracker
 
+## 2026-07-28 — In-page session reauthentication
+
+- Expired dashboard sessions pause the current page behind a blocking, role-aware login dialog instead of navigating away and unmounting unsaved form state.
+- Successful reauthentication updates the HttpOnly session and the active dashboard session marker without persisting form drafts or credentials.
+- Interrupted read requests retry once after authentication. State-changing requests are never replayed automatically; the preserved form remains available for deliberate resubmission.
+- The dialog supports the existing CAPTCHA and two-step verification requirements and cannot be dismissed while the page is unauthenticated.
+
 ## 2026-07-28 — Deployed CAPTCHA configuration and complete public-form coverage
 
 - All public authentication, registration, password-reset, verification-code, and nurse-registration submissions require a reCAPTCHA v3 token in `X-Nevari-Recaptcha-Token`.

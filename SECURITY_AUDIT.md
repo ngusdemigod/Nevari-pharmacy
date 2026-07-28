@@ -1,5 +1,11 @@
 # Nevari Pharmacy Core - Security Vulnerability Audit Report
 
+## 2026-07-28 in-page session reauthentication
+
+- A non-auth API `401` no longer navigates away from the active dashboard page. A blocking login dialog keeps the existing React tree and unsaved draft state mounted.
+- Reauthentication credentials remain transient component state, CAPTCHA and optional OTP are enforced, and the restored bearer/refresh credentials remain in HttpOnly cookies.
+- Safe read requests retry once after authentication. POST, PUT, PATCH, and DELETE requests are not replayed, preventing duplicate payment, clinical, order, or account mutations.
+
 ## 2026-07-28 deployed CAPTCHA configuration and coverage
 
 - Public login (password and Google), registration, password reset request/confirmation, verification-code submit/resend, and nurse registration all obtain a short-lived reCAPTCHA v3 token and send it in `X-Nevari-Recaptcha-Token`.
