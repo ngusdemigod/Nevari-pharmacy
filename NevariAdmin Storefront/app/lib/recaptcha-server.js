@@ -29,6 +29,9 @@ export async function verifyRecaptchaToken(token, expectedAction, remoteIp = "")
       cache: "no-store",
       signal: AbortSignal.timeout(5000),
     });
+    if (!response.ok) {
+      return { ok: false, code: "captcha_failed" };
+    }
     const result = await response.json();
     const minimumScore = Math.min(1, Math.max(0, Number(process.env.RECAPTCHA_MIN_SCORE || 0.5)));
     const allowedHostnames = String(process.env.RECAPTCHA_ALLOWED_HOSTNAMES || "")

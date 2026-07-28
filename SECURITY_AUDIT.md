@@ -1,5 +1,12 @@
 # Nevari Pharmacy Core - Security Vulnerability Audit Report
 
+## 2026-07-28 deployed CAPTCHA configuration and coverage
+
+- Public login (password and Google), registration, password reset request/confirmation, verification-code submit/resend, and nurse registration all obtain a short-lived reCAPTCHA v3 token and send it in `X-Nevari-Recaptcha-Token`.
+- Verification fails closed for absent configuration, missing/invalid tokens, low scores, action mismatches, hostname mismatches, verification-service errors, and timeouts. Failure responses are not cacheable.
+- The token is consumed at the same-origin Next.js boundary and is not forwarded to WordPress, analytics, or application logs.
+- Authenticated forms intentionally use session, CSRF, authorization, and ownership controls rather than CAPTCHA.
+
 ## 2026-07-27 dashboard permission assignment scope
 
 - Custom storefront permission assignment is limited to Administrator, Store Admin, and legacy Shop Manager target roles. Doctor, Pharmacist, and Nurse targets are forced back to their fixed role defaults server-side, even if a client submits additional valid permission keys.

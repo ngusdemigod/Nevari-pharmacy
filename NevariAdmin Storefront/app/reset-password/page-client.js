@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { BrandedSpinner } from "../components/BrandedSpinner";
 import { FRONTEND_BY_TYPE, FRONTENDS } from "../components/frontend-config";
 import { buildUrl, defaultSession, frontendContext, loadSession } from "../components/role-session";
-import { requireRecaptchaToken } from "../lib/recaptcha-client";
+import { recaptchaErrorMessage, requireRecaptchaToken } from "../lib/recaptcha-client";
 import RecaptchaDisclosure from "../components/RecaptchaDisclosure";
 
 function passwordError(value) {
@@ -96,7 +96,9 @@ export default function ResetPasswordPageClient() {
       setConfirmPassword("");
       setNotice({ message: "Password reset successful. You can now log in.", tone: "success" });
     } catch (error) {
-      const nextMessage = String(error?.message || "Unable to reset password.");
+      const nextMessage = error?.code?.startsWith("captcha_")
+        ? recaptchaErrorMessage(error)
+        : String(error?.message || "Unable to reset password.");
       setFieldError(nextMessage);
       setNotice({ message: nextMessage, tone: "error" });
     } finally {

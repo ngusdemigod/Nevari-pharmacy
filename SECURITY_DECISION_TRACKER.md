@@ -1,5 +1,12 @@
 # Frontend and Plugin Security Decision Tracker
 
+## 2026-07-28 — Deployed CAPTCHA configuration and complete public-form coverage
+
+- All public authentication, registration, password-reset, verification-code, and nurse-registration submissions require a reCAPTCHA v3 token in `X-Nevari-Recaptcha-Token`.
+- The Next.js boundary verifies success, `public_submit` action, minimum score, and an allowlisted hostname, then removes the token instead of forwarding or logging it.
+- Missing public or secret keys fail closed in deployed environments. The public key must be present at build time; changing it requires redeployment.
+- Authenticated patient, clinical, and administrative writes remain protected by the HttpOnly session, double-submit CSRF token, role checks, and resource ownership without CAPTCHA.
+
 ## 2026-07-27 — Custom dashboard permission scope
 
 - Decision: only Administrator, Store Admin, and legacy Shop Manager target roles may receive customized storefront permission sets.

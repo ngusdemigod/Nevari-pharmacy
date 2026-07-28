@@ -113,6 +113,32 @@ data to custom analytics events.
 - Session Replay is intentionally not enabled.
 - Request bodies, cookies, auth headers, and common patient/customer fields are scrubbed before events are sent.
 
+### reCAPTCHA v3
+
+Public unauthenticated writes through the signed proxy use invisible Google reCAPTCHA v3.
+Set the public site key and keep the verification secret server-only:
+
+```powershell
+$env:NEXT_PUBLIC_RECAPTCHA_SITE_KEY="<site-key>"
+$env:RECAPTCHA_SECRET_KEY="<server-secret>"
+$env:RECAPTCHA_MIN_SCORE="0.5"
+$env:RECAPTCHA_ALLOWED_HOSTNAMES="dash.nevarihealth.com,dev-dash-nevarihealth.vercel.app"
+```
+
+Production requests fail closed when the secret is missing. Never expose
+`RECAPTCHA_SECRET_KEY`, store CAPTCHA tokens, or include them in analytics and logs.
+
+Protected unauthenticated submissions are password and Google login, customer
+registration, password-reset request and confirmation, verification-code submit
+and resend, and nurse registration. The browser sends the short-lived token only
+to the same-origin Next.js route in `X-Nevari-Recaptcha-Token`; the route verifies
+and removes it before forwarding to WordPress. Authenticated writes use the
+HttpOnly session, CSRF validation, role checks, and resource ownership instead.
+
+Because `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` is compiled into the browser bundle, add
+or change it in the intended Vercel environment before building and redeploying.
+The server secret must never use the `NEXT_PUBLIC_` prefix.
+
 ## Cross-origin note
 
 The plugin now sends CORS headers for Nevari REST routes when the request origin matches the allowed list.

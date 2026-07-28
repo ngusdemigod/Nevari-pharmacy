@@ -29,7 +29,7 @@ export async function POST(request) {
     if (!captcha.ok) {
       return Response.json(
         { success: false, error: { code: captcha.code, message: "Spam protection verification failed. Please try again." } },
-        { status: 403 }
+        { status: 403, headers: { "Cache-Control": "no-store" } }
       );
     }
     const body = await request.json();

@@ -6,7 +6,7 @@ import { setDocumentMetadata } from "./page-metadata";
 import { buildTwoStepVerificationRequest, loadAuthSecuritySettings } from "./auth-security-settings";
 import { buildUrl, defaultSession, frontendContext, isPairingRequiredPayload, loadSession, resetToPairingState, saveSession } from "./role-session";
 import { captureAnalyticsEvent } from "../lib/analytics-events";
-import { requireRecaptchaToken } from "../lib/recaptcha-client";
+import { recaptchaErrorMessage, requireRecaptchaToken } from "../lib/recaptcha-client";
 import RecaptchaDisclosure from "./RecaptchaDisclosure";
 
 function isSessionUsable(session) {
@@ -447,8 +447,13 @@ export default function RoleLoginPage({ config }) {
         return;
       }
       completeAuthenticatedResponse(payload, queryNextPath || config.dashboardPath);
-    } catch {
-      showNotice("Spam protection could not be loaded. Check your connection and try again.", "error");
+    } catch (error) {
+      showNotice(
+        error?.code?.startsWith("captcha_")
+          ? recaptchaErrorMessage(error)
+          : "Sign in is temporarily unavailable. Please try again.",
+        "error"
+      );
     } finally {
       setLoadingAction("");
     }
@@ -488,6 +493,13 @@ export default function RoleLoginPage({ config }) {
         return;
       }
       completeAuthenticatedResponse(payload, queryNextPath || config.dashboardPath);
+    } catch (error) {
+      showNotice(
+        error?.code?.startsWith("captcha_")
+          ? recaptchaErrorMessage(error)
+          : "Google sign in is temporarily unavailable. Please try again.",
+        "error"
+      );
     } finally {
       setLoadingAction("");
     }
@@ -521,6 +533,13 @@ export default function RoleLoginPage({ config }) {
         return;
       }
       completeAuthenticatedResponse(payload, verification.returnPath || config.dashboardPath);
+    } catch (error) {
+      showNotice(
+        error?.code?.startsWith("captcha_")
+          ? recaptchaErrorMessage(error)
+          : "Verification is temporarily unavailable. Please try again.",
+        "error"
+      );
     } finally {
       setLoadingAction("");
     }
@@ -567,6 +586,13 @@ export default function RoleLoginPage({ config }) {
       }));
       setResendCooldown(Number(payload.data.resend_cooldown || RESEND_CODE_COOLDOWN_SECONDS));
       showNotice(`A new code was sent to ${payload.data.masked_email || verification.maskedEmail || "your email"}.`, "success");
+    } catch (error) {
+      showNotice(
+        error?.code?.startsWith("captcha_")
+          ? recaptchaErrorMessage(error)
+          : "The verification code could not be resent. Please try again.",
+        "error"
+      );
     } finally {
       setResendLoading(false);
     }
@@ -600,6 +626,13 @@ export default function RoleLoginPage({ config }) {
         return;
       }
       showNotice("If that account exists, password reset instructions have been sent.", "success");
+    } catch (error) {
+      showNotice(
+        error?.code?.startsWith("captcha_")
+          ? recaptchaErrorMessage(error)
+          : "The reset request is temporarily unavailable. Please try again.",
+        "error"
+      );
     } finally {
       setLoadingAction("");
     }
@@ -654,6 +687,13 @@ export default function RoleLoginPage({ config }) {
       setUsername(registration.email);
       setPassword("");
       setView("login");
+    } catch (error) {
+      showNotice(
+        error?.code?.startsWith("captcha_")
+          ? recaptchaErrorMessage(error)
+          : "Account creation is temporarily unavailable. Please try again.",
+        "error"
+      );
     } finally {
       setLoadingAction("");
     }

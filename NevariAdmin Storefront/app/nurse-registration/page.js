@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { DEFAULT_NEVARI_BASE_URL } from "../components/frontend-config";
 import RecaptchaDisclosure from "../components/RecaptchaDisclosure";
-import { requireRecaptchaToken } from "../lib/recaptcha-client";
+import { recaptchaErrorMessage, requireRecaptchaToken } from "../lib/recaptcha-client";
 
 const EMPTY_FORM = {
   first_name: "",
@@ -60,7 +60,10 @@ export default function NurseRegistrationPage() {
       setComplete(true);
       setForm(EMPTY_FORM);
     } catch (error) {
-      setErrors((current) => ({ ...current, form: error.message }));
+      const message = error?.code?.startsWith("captcha_")
+        ? recaptchaErrorMessage(error)
+        : String(error?.message || "Unable to submit your application.");
+      setErrors((current) => ({ ...current, form: message }));
     } finally {
       setSubmitting(false);
     }
