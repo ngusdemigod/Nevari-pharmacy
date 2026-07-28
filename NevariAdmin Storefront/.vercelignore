@@ -1,9 +1,2 @@
 .next*
-temp
-test-results
-app/*.debug.txt
-app/*.trace.txt
-app/*.unresolved.txt
-app/*.fixed
-.env*.local
-npm-debug.log*
+temp/
