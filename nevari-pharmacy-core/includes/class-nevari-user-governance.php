@@ -334,7 +334,18 @@ final class Nevari_User_Governance {
         $wpdb->query('START TRANSACTION');
         try {
             self::ensure_directory_row($target, $before_role);
-            $target->set_role($target_role);
+            $role_update = wp_update_user([
+                'ID' => $target_id,
+                'role' => $target_role,
+            ]);
+            if (is_wp_error($role_update)) {
+                throw new RuntimeException('The WordPress user role could not be updated.');
+            }
+            clean_user_cache($target_id);
+            $target = get_user_by('id', $target_id);
+            if (!$target instanceof WP_User || !in_array($target_role, (array) $target->roles, true)) {
+                throw new RuntimeException('The WordPress user role update could not be verified.');
+            }
             foreach (self::PERMISSIONS as $key => $capability) {
                 if (in_array($key, $permissions, true)) {
                     $target->add_cap($capability);
@@ -715,7 +726,18 @@ final class Nevari_User_Governance {
         $before_role = self::primary_role($target);
         $before_permissions = self::permission_keys_for_user($target_id);
         if ($role !== $before_role) {
-            $target->set_role($role);
+            $role_update = wp_update_user([
+                'ID' => $target_id,
+                'role' => $role,
+            ]);
+            if (is_wp_error($role_update)) {
+                return Nevari_Helpers::error('role_change_failed', 'The WordPress user role could not be updated.', 409);
+            }
+            clean_user_cache($target_id);
+            $target = get_user_by('id', $target_id);
+            if (!$target instanceof WP_User || !in_array($role, (array) $target->roles, true)) {
+                return Nevari_Helpers::error('role_change_failed', 'The WordPress user role update could not be verified.', 409);
+            }
         }
         foreach (self::PERMISSIONS as $key => $capability) {
             if (in_array($key, $permissions, true)) {
@@ -741,7 +763,9 @@ final class Nevari_User_Governance {
                 'reason' => substr(sanitize_text_field((string) ($body['reason'] ?? '')), 0, 500),
             ],
         ]);
-        $notification = self::notify_access_change($target, $role, $permissions);
+        $notification = $role !== $before_role
+            ? self::notify_role_change($target, $before_role, $role)
+            : self::notify_access_change($target, $role, $permissions);
         return Nevari_Helpers::success([
             'user' => array_merge(Nevari_Helpers::user_summary($target_id) ?: [], [
                 'user_id' => $target_id,
@@ -926,17 +950,18 @@ final class Nevari_User_Governance {
         if (!$target instanceof WP_User) {
             return ['queued' => false, 'warning' => 'Role changed, but the notification recipient was unavailable.'];
         }
-        $message = sprintf(
-            'Your Nevari account role changed from %s to %s.',
-            ucwords(str_replace('_', ' ', $before_role)),
-            ucwords(str_replace('_', ' ', $target_role))
-        );
+        $previous_role = ucwords(str_replace('_', ' ', $before_role));
+        $new_role = ucwords(str_replace('_', ' ', $target_role));
         $target_result = Nevari_Emails::queue_or_send([
+            'template_key' => 'account_role_updated',
             'recipient_user_id' => (int) $target->ID,
             'recipient_email' => $target->user_email,
-            'subject' => 'Your Nevari account role was updated',
-            'body_html' => '<p>' . esc_html($message) . '</p>',
-            'body_text' => $message,
+            'variables' => [
+                'display_name' => $target->display_name ?: $target->user_login,
+                'previous_role' => $previous_role,
+                'new_role' => $new_role,
+                'support_email' => sanitize_email((string) get_option('admin_email')),
+            ],
             'related_object_type' => 'user_governance',
             'related_object_id' => (int) $target->ID,
         ], false);

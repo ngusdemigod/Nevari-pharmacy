@@ -2552,7 +2552,8 @@ function AdminStorefrontDashboard({
   const [audit, setAudit] = useState({ category: "orders", status: "all", source: "all" });
   const [search, setSearch] = useState("");
   const [liveSnapshots, setLiveSnapshots] = useState([]);
-  const deferredSearch = useDeferredValue(search);
+  const deferredSearchValue = useDeferredValue(search);
+  const deferredSearch = search === deferredSearchValue ? deferredSearchValue : "";
   const [selectedAuditIndex, setSelectedAuditIndex] = useState(0);
   const [auditDetailModalOpen, setAuditDetailModalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -2891,12 +2892,28 @@ function AdminStorefrontDashboard({
   }, [subscriptionSettings]);
 
   const subscriptionPlans = Array.isArray(subscriptionState.data?.plans) ? subscriptionState.data.plans : [];
-  const subscriptionTablePageCount = Math.max(1, Math.ceil(subscriptionPlans.length / SUBSCRIPTION_TABLE_PAGE_SIZE));
+  const filteredSubscriptionPlans = useMemo(() => {
+    const searchQuery = currentPage === "subscriptions" ? normalizeText(deferredSearch) : "";
+    if (!searchQuery) return subscriptionPlans;
+    return subscriptionPlans.filter((plan) => normalizeText([
+      plan?.name,
+      plan?.description,
+      plan?.plan_key,
+      plan?.slug,
+      plan?.billing,
+      plan?.interval,
+      plan?.status,
+      plan?.checkout_type,
+      plan?.price,
+      plan?.amount,
+    ].join(" ")).includes(searchQuery));
+  }, [currentPage, deferredSearch, subscriptionPlans]);
+  const subscriptionTablePageCount = Math.max(1, Math.ceil(filteredSubscriptionPlans.length / SUBSCRIPTION_TABLE_PAGE_SIZE));
   const currentSubscriptionTablePage = Math.min(subscriptionTablePage, subscriptionTablePageCount);
   const subscriptionTablePlans = useMemo(() => {
     const start = (currentSubscriptionTablePage - 1) * SUBSCRIPTION_TABLE_PAGE_SIZE;
-    return subscriptionPlans.slice(start, start + SUBSCRIPTION_TABLE_PAGE_SIZE);
-  }, [currentSubscriptionTablePage, subscriptionPlans]);
+    return filteredSubscriptionPlans.slice(start, start + SUBSCRIPTION_TABLE_PAGE_SIZE);
+  }, [currentSubscriptionTablePage, filteredSubscriptionPlans]);
   const selectedSubscriptionPlan = subscriptionPlans.find((plan) => String(plan?.id ?? plan?.plan_key ?? plan?.slug ?? "") === String(selectedSubscriptionPlanId))
     || subscriptionPlans.find((plan) => normalizeText(String(plan?.plan_key || plan?.slug || plan?.planKey || "")) === normalizeText(selectedSubscriptionPlanKey))
     || subscriptionPlans.find((plan) => Boolean(plan?.featured))
@@ -2927,19 +2944,36 @@ function AdminStorefrontDashboard({
       return !["active", "trialing"].includes(status);
     };
 
+    let planUsers;
     if (subscriptionPlanSelectionKey === "free") {
-      return users.filter(isFreeUser);
+      planUsers = users.filter(isFreeUser);
+    } else if (subscriptionPlanSelectionKey === activePlanKey || normalizeText(String(selectedSubscriptionPlan?.name || "")) === normalizeText("Nevari Access Pro")) {
+      planUsers = users.filter(isActiveProUser);
+    } else {
+      planUsers = users.filter((row) => {
+        const subscription = getSubscription(row);
+        const rowPlanKey = normalizeText(String(subscription?.plan_key || row?.plan_key || row?.planKey || row?.plan_slug || row?.planSlug || row?.plan || row?.plan_name || ""));
+        return rowPlanKey === subscriptionPlanSelectionKey;
+      });
     }
-    if (subscriptionPlanSelectionKey === activePlanKey || normalizeText(String(selectedSubscriptionPlan?.name || "")) === normalizeText("Nevari Access Pro")) {
-      return users.filter(isActiveProUser);
-    }
-
-    return users.filter((row) => {
+    const searchQuery = currentPage === "subscriptions" ? normalizeText(deferredSearch) : "";
+    if (!searchQuery) return planUsers;
+    return planUsers.filter((row) => {
       const subscription = getSubscription(row);
-      const rowPlanKey = normalizeText(String(subscription?.plan_key || row?.plan_key || row?.planKey || row?.plan_slug || row?.planSlug || row?.plan || row?.plan_name || ""));
-      return rowPlanKey === subscriptionPlanSelectionKey;
+      return normalizeText([
+        row?.name,
+        row?.full_name,
+        row?.display_name,
+        row?.email,
+        row?.user_email,
+        row?.status,
+        row?.subscription_status,
+        row?.reference,
+        subscription?.plan_key,
+        subscription?.status,
+      ].join(" ")).includes(searchQuery);
     });
-  }, [selectedSubscriptionPlan?.name, subscriptionPlanSelectionKey, subscriptionState.data?.users]);
+  }, [currentPage, deferredSearch, selectedSubscriptionPlan?.name, subscriptionPlanSelectionKey, subscriptionState.data?.users]);
 
   useEffect(() => {
     if (!subscriptionPlans.length) {
@@ -3522,6 +3556,11 @@ function AdminStorefrontDashboard({
   useEffect(() => {
     setPaymentPage(1);
   }, [paymentFilter, deferredSearch, data.orderDetails]);
+
+  useEffect(() => {
+    setSubscriptionTablePage(1);
+    setSubscriptionUserPage(1);
+  }, [deferredSearch]);
 
   useEffect(() => {
     setOrderPage(1);
@@ -4399,6 +4438,7 @@ function AdminStorefrontDashboard({
     if (!sessionRoles.includes("administrator") && requiredPermission && !permissions.includes(requiredPermission)) {
       return;
     }
+    setSearch("");
     setCurrentPage(nextPage);
     setSidebarOpen(false);
     persistSessionSnapshot(latestSessionRef.current || session, nextPage);
@@ -7617,7 +7657,8 @@ function AdminStorefrontDashboard({
   const selectedConsultationPrescriptions = selectedConsultation
     ? (data.prescriptionDetails || []).filter((item) => Number(item.patient_user_id) === Number(selectedConsultation.patient_user_id))
     : [];
-  const showPageSearch = currentPage !== "analytics";
+  const showPageSearch = Object.hasOwn(SEARCH_PLACEHOLDERS, currentPage)
+    && !["analytics", "settings", "profile"].includes(currentPage);
   const searchPlaceholder = SEARCH_PLACEHOLDERS[currentPage] || "Search this page";
   const siteName = session.siteName || DEFAULT_SITE_NAME;
   const siteLogo = session.siteLogo || "/ne.webp";
@@ -7705,7 +7746,10 @@ function AdminStorefrontDashboard({
   const emailTemplateSearchQuery = normalizeText(emailTemplateSearch);
   const filteredEmailTemplates = emailTemplates.filter((template) => {
     const matchesCategory = emailTemplateCategory === "all" || template.category === emailTemplateCategory;
-    const matchesTemplateSearch = !emailTemplateSearchQuery || normalizeText(`${template.name} ${template.category} ${template.subject}`).includes(emailTemplateSearchQuery);
+    const globalEmailSearchQuery = currentPage === "emails" ? normalizeText(deferredSearch) : "";
+    const templateText = normalizeText(`${template.name} ${template.category} ${template.subject} ${template.status} ${template.id}`);
+    const matchesTemplateSearch = (!emailTemplateSearchQuery || templateText.includes(emailTemplateSearchQuery))
+      && (!globalEmailSearchQuery || templateText.includes(globalEmailSearchQuery));
     return matchesCategory && matchesTemplateSearch;
   });
   const selectedEmailTemplateUnsupportedHooks = unsupportedEmailHooks(selectedEmailTemplate);
@@ -8038,7 +8082,9 @@ function AdminStorefrontDashboard({
       });
     });
 
-    return [...categoryMap.values()].sort((left, right) => left.name.localeCompare(right.name));
+    return [...categoryMap.values()]
+      .filter((category) => matchesSearch(`${category.name} ${category.slug} ${category.productCount} ${category.price}`, currentPage === "products"))
+      .sort((left, right) => left.name.localeCompare(right.name));
   })();
   const selectedCategory = productCategoryRows.find((category) => category.name === selectedProductCategoryName) || productCategoryRows[0] || null;
   const selectedCategoryRecord = selectedCategory
@@ -9071,7 +9117,7 @@ function AdminStorefrontDashboard({
                         </tr>
                       </thead>
                       <tbody>
-                        {subscriptionState.loading ? renderTableRowSkeletons(6, 7) : subscriptionTablePlans.map((plan) => {
+                        {subscriptionState.loading ? renderTableRowSkeletons(6, 7) : subscriptionTablePlans.length ? subscriptionTablePlans.map((plan) => {
                           const planId = String(plan?.id ?? plan?.plan_key ?? plan?.slug ?? "").trim();
                           const planKey = String(plan?.plan_key || plan?.slug || plan?.planKey || generateSlug(plan?.name || "") || "free").trim();
                           const isSelected = Boolean(String(selectedSubscriptionPlanId || selectedSubscriptionPlan?.id || selectedSubscriptionPlan?.plan_key || "") === planId);
@@ -9115,7 +9161,7 @@ function AdminStorefrontDashboard({
                               </td>
                             </tr>
                           );
-                        })}
+                        }) : <tr><td colSpan="7" className="muted">No subscription plans match the current search.</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -10865,11 +10911,11 @@ function AdminStorefrontDashboard({
 
             {currentPage === "doctors" && (
               <section className="page-view active">
-                <StaffDirectory session={session} />
+                <StaffDirectory session={session} search={deferredSearch} />
               </section>
             )}
 
-            {currentPage === "nurse-requests" && <NurseRequestAdminPanel session={session} />}
+            {currentPage === "nurse-requests" && <NurseRequestAdminPanel session={session} search={deferredSearch} />}
 
             {currentPage === "emails" && (
               <section className="page-view active">

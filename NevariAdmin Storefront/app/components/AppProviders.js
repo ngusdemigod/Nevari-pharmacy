@@ -316,12 +316,14 @@ export default function AppProviders({ children }) {
   return <PostHogProvider client={posthog}>
     <PostHogPageView />
     <SWRConfig value={{
+    revalidateOnMount: true,
+    revalidateIfStale: true,
     revalidateOnFocus: false,
     revalidateOnReconnect: true,
     refreshWhenHidden: false,
     shouldRetryOnError: false,
     keepPreviousData: true,
-    dedupingInterval: 30_000,
+    dedupingInterval: 0,
     focusThrottleInterval: 60_000
     }}>
       {children}

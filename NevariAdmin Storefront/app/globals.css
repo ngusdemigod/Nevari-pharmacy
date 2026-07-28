@@ -45627,6 +45627,32 @@ body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-pa
   gap: 16px;
 }
 
+.session-reauth-form > .auth-primary-button {
+  order: 3;
+}
+
+.session-reauth-divider {
+  order: 4;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #7b8ba5;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.session-reauth-form > .auth-google-panel {
+  order: 5;
+}
+
+.session-reauth-divider::before,
+.session-reauth-divider::after {
+  height: 1px;
+  flex: 1;
+  background: #dce4ef;
+  content: "";
+}
+
 .session-reauth-form label {
   display: grid;
   gap: 7px;

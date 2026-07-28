@@ -924,6 +924,14 @@ final class Nevari_Activator {
                 'body_text' => 'Hello {{display_name}}, your verification code is {{verification_code}}. This code expires in {{expires_minutes}} minutes.',
                 'variables' => ['display_name', 'verification_code', 'expires_minutes'],
             ],
+            [
+                'template_key' => 'account_role_updated',
+                'name' => 'Account Role Updated',
+                'subject' => 'Your Nevari account role was updated',
+                'body_html' => '<p>Hello {{display_name}},</p><p>Your Nevari account role has changed from <strong>{{previous_role}}</strong> to <strong>{{new_role}}</strong>.</p><p>Your previous sessions have been securely closed. Sign in again to access the dashboard for your new role.</p><p>If you did not expect this change, contact {{support_email}}.</p>',
+                'body_text' => 'Hello {{display_name}}, your Nevari account role changed from {{previous_role}} to {{new_role}}. Your previous sessions were securely closed. Sign in again to access the dashboard for your new role. If you did not expect this change, contact {{support_email}}.',
+                'variables' => ['display_name', 'previous_role', 'new_role', 'support_email'],
+            ],
         ];
 
         foreach ($templates as $template) {

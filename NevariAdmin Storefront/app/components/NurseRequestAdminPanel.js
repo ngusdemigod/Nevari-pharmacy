@@ -14,7 +14,7 @@ async function getJson(url, session) {
   return result.data;
 }
 
-export default function NurseRequestAdminPanel({ session }) {
+export default function NurseRequestAdminPanel({ session, search = "" }) {
   const [selectedId, setSelectedId] = useState("");
   const [nurseId, setNurseId] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
@@ -22,10 +22,22 @@ export default function NurseRequestAdminPanel({ session }) {
   const [message, setMessage] = useState("");
   const [documentError, setDocumentError] = useState("");
   const [documentBusy, setDocumentBusy] = useState(false);
-  const query = new URLSearchParams({ baseUrl: session.baseUrl || "", per_page: "50" });
+  const normalizedSearch = String(search || "").trim().toLowerCase().slice(0, 100);
+  const query = new URLSearchParams({ baseUrl: session.baseUrl || "", per_page: "50", search: normalizedSearch });
   const requestsQuery = useSWR(session?.baseUrl ? `/api/admin/care-nurse?${query}` : null, (url) => getJson(url, session), { revalidateOnMount: true, revalidateIfStale: true, dedupingInterval: 0 });
   const nursesQuery = useSWR(session?.baseUrl ? `/api/admin/nurses?${query}` : null, (url) => getJson(url, session), { revalidateOnMount: true, revalidateIfStale: true, dedupingInterval: 0 });
   const requests = requestsQuery.data?.items || [];
+  const filteredRequests = normalizedSearch
+    ? requests.filter((item) => [
+      item.reference,
+      item.status,
+      item.status_label,
+      item.patient?.name,
+      item.patient?.email,
+      item.assignee?.name,
+      item.scheduled_at,
+    ].join(" ").toLowerCase().includes(normalizedSearch))
+    : requests;
   const nurses = nursesQuery.data?.items || [];
   const selected = requests.find((item) => String(item.id) === String(selectedId));
   const documentsPath = selected ? `/nurse-requests/${selected.id}/documents` : "";
@@ -33,10 +45,10 @@ export default function NurseRequestAdminPanel({ session }) {
   const documentsQuery = useSWR(documentsUrl, (url) => getJson(url, session));
   const documents = documentsQuery.data?.items || [];
   const nurseMetrics = [
-    { label: "Total requests", value: requests.length, note: "Nurse requests in the current view", icon: "clipboard" },
-    { label: "Awaiting review", value: requests.filter((item) => ["submitted", "under_review"].includes(String(item.status || ""))).length, note: "Requests needing an operational review", icon: "clockAlert" },
-    { label: "Assigned", value: requests.filter((item) => Boolean(item.assignee?.id)).length, note: "Requests with an approved nurse", icon: "userCheck" },
-    { label: "Scheduled", value: requests.filter((item) => Boolean(item.scheduled_at)).length, note: "Visits with a confirmed date and time", icon: "calendarCheck" },
+    { label: "Total requests", value: filteredRequests.length, note: "Nurse requests in the current view", icon: "clipboard" },
+    { label: "Awaiting review", value: filteredRequests.filter((item) => ["submitted", "under_review"].includes(String(item.status || ""))).length, note: "Requests needing an operational review", icon: "clockAlert" },
+    { label: "Assigned", value: filteredRequests.filter((item) => Boolean(item.assignee?.id)).length, note: "Requests with an approved nurse", icon: "userCheck" },
+    { label: "Scheduled", value: filteredRequests.filter((item) => Boolean(item.scheduled_at)).length, note: "Visits with a confirmed date and time", icon: "calendarCheck" },
   ];
 
   function csrfToken() {
@@ -109,7 +121,7 @@ export default function NurseRequestAdminPanel({ session }) {
     {message ? <p className="receipt-feedback" role="status">{message}</p> : null}
     {requestsQuery.error ? <p className="form-error">{requestsQuery.error.message}</p> : null}
     <div className="table-scroll"><table><thead><tr><th>Reference</th><th>Patient</th><th>Status</th><th>Assignee</th><th>Schedule</th><th>Action</th></tr></thead><tbody>
-      {requestsQuery.isLoading ? Array.from({length:6},(_,row)=><tr className="table-skeleton-row" key={`nurse-skeleton-${row}`}>{Array.from({length:6},(_,column)=><td key={column}><span className={`skeleton skeleton-line ${column%2?"skeleton-line-md":"skeleton-line-lg"}`} /></td>)}</tr>) : requests.length ? requests.map((item) => <tr key={item.id} className="table-row-button" tabIndex={0} onClick={() => { setSelectedId(String(item.id)); setNurseId(String(item.assignee?.id || "")); }}><td>{item.reference}</td><td><div className="customer-list-profile"><span className="customer-list-avatar">{item.patient?.avatar_url ? <img src={item.patient.avatar_url} alt="" /> : String(item.patient?.name || "Patient").split(/\s+/).slice(0,2).map((part)=>part[0]).join("").toUpperCase()}</span><span><strong>{item.patient?.name || "Patient"}</strong><small>{item.patient?.email || "Patient"}</small></span></div></td><td><span className={`status-pill ${adminStatusTone(item.status || item.status_label)}`}>{item.status_label}</span></td><td>{item.assignee?.name || "Unassigned"}</td><td>{item.scheduled_at ? new Date(item.scheduled_at).toLocaleString() : "Not scheduled"}</td><td><button className="pill-button" type="button" onClick={(event) => { event.stopPropagation(); setSelectedId(String(item.id)); setNurseId(String(item.assignee?.id || "")); }}>Manage</button></td></tr>) : <tr><td colSpan="6">No Nurse Requests.</td></tr>}
+      {requestsQuery.isLoading ? Array.from({length:6},(_,row)=><tr className="table-skeleton-row" key={`nurse-skeleton-${row}`}>{Array.from({length:6},(_,column)=><td key={column}><span className={`skeleton skeleton-line ${column%2?"skeleton-line-md":"skeleton-line-lg"}`} /></td>)}</tr>) : filteredRequests.length ? filteredRequests.map((item) => <tr key={item.id} className="table-row-button" tabIndex={0} onClick={() => { setSelectedId(String(item.id)); setNurseId(String(item.assignee?.id || "")); }}><td>{item.reference}</td><td><div className="customer-list-profile"><span className="customer-list-avatar">{item.patient?.avatar_url ? <img src={item.patient.avatar_url} alt="" /> : String(item.patient?.name || "Patient").split(/\s+/).slice(0,2).map((part)=>part[0]).join("").toUpperCase()}</span><span><strong>{item.patient?.name || "Patient"}</strong><small>{item.patient?.email || "Patient"}</small></span></div></td><td><span className={`status-pill ${adminStatusTone(item.status || item.status_label)}`}>{item.status_label}</span></td><td>{item.assignee?.name || "Unassigned"}</td><td>{item.scheduled_at ? new Date(item.scheduled_at).toLocaleString() : "Not scheduled"}</td><td><button className="pill-button" type="button" onClick={(event) => { event.stopPropagation(); setSelectedId(String(item.id)); setNurseId(String(item.assignee?.id || "")); }}>Manage</button></td></tr>) : <tr><td colSpan="6">No Nurse Requests match the current search.</td></tr>}
     </tbody></table></div>
   </section>
   {selected && typeof document !== "undefined" ? createPortal(<div className="app-modal-layer app-modal-layer-top is-open"><button className="app-modal-backdrop" type="button" aria-label="Close Nurse Request details" onClick={() => setSelectedId("")} /><section className="modal-frame nurse-assignment-panel nurse-request-details-modal detail-flat-modal" role="dialog" aria-modal="true" aria-label="Nurse Request details"><div className="modal-head"><div><p className="section-kicker">{selected.reference}</p><h2>Nurse Request details</h2></div><button className="icon-button" type="button" aria-label="Close Nurse Request details" onClick={() => setSelectedId("")}>×</button></div><div className="modal-body">

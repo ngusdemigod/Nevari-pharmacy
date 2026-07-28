@@ -37,14 +37,15 @@ function numberedPages(page, pages) {
   return Array.from({ length: Math.min(5, pages) }, (_, index) => start + index);
 }
 
-export default function StaffDirectory({ session }) {
+export default function StaffDirectory({ session, search = "" }) {
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState("");
   const [selected, setSelected] = useState(null);
   const [notice, setNotice] = useState(null);
   const closeRef = useRef(null);
   const isAdministrator = (session.user?.roles || []).includes("administrator");
-  const key = session.baseUrl ? swrKeys.admin.users(withBaseUrl(session, { scope: "staff", page, per_page: 10 })) : null;
+  const normalizedSearch = String(search || "").trim().slice(0, 100);
+  const key = session.baseUrl ? swrKeys.admin.users(withBaseUrl(session, { scope: "staff", page, per_page: 10, search: normalizedSearch })) : null;
   const { data, error, isLoading, mutate } = useSWR(key, async (url) => {
     const response = await fetch(url, {
       cache: "no-store",
@@ -63,6 +64,10 @@ export default function StaffDirectory({ session }) {
   useEffect(() => {
     mutate();
   }, [page, mutate]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [normalizedSearch]);
 
   useEffect(() => {
     if (!selected) return undefined;
