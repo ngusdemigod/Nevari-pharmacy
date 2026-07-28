@@ -58,7 +58,7 @@ async function authHeaders(config) {
 
 export default function SessionReauthModal({ open, config, onAuthenticated }) {
   const dialogRef = useRef(null);
-  const emailRef = useRef(null);
+  const identifierRef = useRef(null);
   const googleButtonRef = useRef(null);
   const [stage, setStage] = useState("login");
   const [username, setUsername] = useState("");
@@ -75,7 +75,7 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
     setPassword("");
     setChallenge({ id: "", code: "", maskedEmail: "" });
     setError("");
-    window.setTimeout(() => emailRef.current?.focus(), 0);
+    window.setTimeout(() => identifierRef.current?.focus(), 0);
   }, [open]);
 
   useEffect(() => {
@@ -287,7 +287,7 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
         </p>
         {stage === "login" ? (
           <form className="session-reauth-form" onSubmit={submitLogin}>
-            <label><span>Email</span><input ref={emailRef} type="email" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label>
+            <label><span>Username or email</span><input ref={identifierRef} type="text" inputMode="email" autoCapitalize="none" spellCheck="false" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label>
             <label><span>Password</span><input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
             {googleAuth.enabled ? (
               <>

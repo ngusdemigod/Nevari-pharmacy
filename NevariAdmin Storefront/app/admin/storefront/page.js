@@ -8558,6 +8558,7 @@ function AdminStorefrontDashboard({
   const paginatedOrders = filteredOrders.slice((activeOrderPage - 1) * ordersPerPage, activeOrderPage * ordersPerPage);
   const customersPerPage = 10;
   const customerServerPagination = customersQuery.data?.data?.pagination || {};
+  const customerMetrics = customersQuery.data?.data?.metrics || {};
   const customerPageCount = Math.max(1, Number(customerServerPagination.pages || Math.ceil(customerRows.length / customersPerPage)));
   const activeCustomerPage = Math.min(customerPage, customerPageCount);
   const paginatedCustomerRows = customerRows;
@@ -8567,6 +8568,7 @@ function AdminStorefrontDashboard({
   const paginatedConsultationRows = consultationList.slice((activeConsultationPage - 1) * consultationsPerPage, activeConsultationPage * consultationsPerPage);
   const mtmPerPage = 10;
   const mtmServerPagination = mtmQuery.data?.data?.pagination || {};
+  const mtmMetrics = mtmQuery.data?.data?.metrics || {};
   const mtmPageCount = Math.max(1, Number(mtmServerPagination.pages || Math.ceil(filteredMtmRequests.length / mtmPerPage)));
   const activeMtmPage = Math.min(mtmPage, mtmPageCount);
   const paginatedMtmRequests = filteredMtmRequests;
@@ -10225,10 +10227,10 @@ function AdminStorefrontDashboard({
                   ariaLabel="Patient metrics"
                   loading={customersQuery.isLoading}
                   cards={[
-                    { label: "Total patients", value: formatNumber(customerServerPagination.total || customerRows.length), note: "Patient accounts in the directory", icon: "users" },
-                    { label: "Total orders", value: formatNumber(customerRows.reduce((total, row) => total + Number(row.orders || 0), 0)), note: "Orders from patients on this page", icon: "cart" },
-                    { label: "Patient spend", value: formatMetricNaira(customerRows.reduce((total, row) => total + Number(row.spend || 0), 0)), note: "Combined spend on this page", icon: "money" },
-                    { label: "Appointments", value: formatNumber(customerRows.reduce((total, row) => total + Number(row.appointments || 0), 0)), note: "Appointments linked to these patients", icon: "calendar" },
+                    { label: "Total patients", value: formatNumber(customerMetrics.total ?? customerServerPagination.total ?? customerRows.length), note: "Patient accounts in the filtered directory", icon: "users" },
+                    { label: "Total orders", value: formatNumber(customerMetrics.orders ?? customerRows.reduce((total, row) => total + Number(row.orders || 0), 0)), note: "Orders across the filtered directory", icon: "cart" },
+                    { label: "Patient spend", value: formatMetricNaira(customerMetrics.spend ?? customerRows.reduce((total, row) => total + Number(row.spend || 0), 0)), note: "Combined spend across the filtered directory", icon: "money" },
+                    { label: "Appointments", value: formatNumber(customerMetrics.appointments ?? customerRows.reduce((total, row) => total + Number(row.appointments || 0), 0)), note: "Appointments across the filtered directory", icon: "calendar" },
                   ]}
                 />
                 <section className="panel table-panel patient-directory-panel admin-flat-table-section">
@@ -10382,10 +10384,10 @@ function AdminStorefrontDashboard({
                   ariaLabel="MTM metrics"
                   loading={mtmLoading}
                   cards={[
-                    { label: "Total requests", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).length), note: "Tracked MTM requests", icon: "clipboard" },
-                    { label: "Submitted", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "submitted").length), note: "Awaiting pharmacist review", icon: "fileClock" },
-                    { label: "Scheduled", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "scheduled").length), note: "MTM consultations booked", icon: "calendarCheck" },
-                    { label: "Completed", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "completed").length), note: "MTM workflows closed out", icon: "check" },
+                    { label: "Total requests", value: formatNumber(mtmMetrics.total ?? (Array.isArray(data.mtmRequests) ? data.mtmRequests : []).length), note: "Tracked MTM requests", icon: "clipboard" },
+                    { label: "Submitted", value: formatNumber(mtmMetrics.submitted ?? (Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "submitted").length), note: "Awaiting pharmacist review", icon: "fileClock" },
+                    { label: "Scheduled", value: formatNumber(mtmMetrics.scheduled ?? (Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "scheduled").length), note: "MTM consultations booked", icon: "calendarCheck" },
+                    { label: "Completed", value: formatNumber(mtmMetrics.completed ?? (Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "completed").length), note: "MTM workflows closed out", icon: "check" },
                   ]}
                 />
                 <section className="operations-grid mtm-registry-row">
