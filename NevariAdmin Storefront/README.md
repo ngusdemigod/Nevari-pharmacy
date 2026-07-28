@@ -137,6 +137,9 @@ HttpOnly session, CSRF validation, role checks, and resource ownership instead.
 
 Because `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` is compiled into the browser bundle, add
 or change it in the intended Vercel environment before building and redeploying.
+The client and server retry through Google's supported `recaptcha.net` domain
+when `google.com` is unavailable. Localhost development uses a development-only
+same-origin marker; production continues to require provider verification.
 The server secret must never use the `NEXT_PUBLIC_` prefix.
 
 ## Cross-origin note

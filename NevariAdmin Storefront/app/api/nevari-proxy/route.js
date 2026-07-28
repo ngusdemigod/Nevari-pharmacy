@@ -246,7 +246,8 @@ async function proxyRequest(request, { params } = {}) {
     const verification = await verifyRecaptchaToken(
       request.headers.get("x-nevari-recaptcha-token") || "",
       "public_submit",
-      remoteIp
+      remoteIp,
+      ["localhost", "127.0.0.1", "::1"].includes(new URL(request.url).hostname)
     );
     if (!verification.ok) {
       return Response.json(
@@ -352,6 +353,25 @@ async function proxyRequest(request, { params } = {}) {
   if (contentType.toLowerCase().includes("application/json")
       && ["/auth/login", "/auth/google-login", "/auth/register-customer", "/auth/verify-code", "/auth/refresh", "/auth/logout", "/sso/logout"].some((path) => targetUrl.pathname.endsWith(path))) {
     const payload = await response.json().catch(() => null);
+    const payloadIsEmpty = !payload
+      || (typeof payload === "object" && !Array.isArray(payload) && Object.keys(payload).length === 0);
+    if (!response.ok && payloadIsEmpty) {
+      return Response.json(
+        {
+          success: false,
+          error: {
+            code: response.status === 503 ? "upstream_unavailable" : "upstream_empty_response",
+            message: response.status === 503
+              ? "The pharmacy sign-in service is temporarily unavailable. Please try again shortly."
+              : "The pharmacy sign-in service returned an invalid response. Please try again."
+          }
+        },
+        {
+          status: response.status || 502,
+          headers: { "Cache-Control": "no-store" }
+        }
+      );
+    }
     const outgoing = Response.json(payload || {}, {
       status: withSoftFailStatus(response.status, softFail),
       headers: responseHeaders

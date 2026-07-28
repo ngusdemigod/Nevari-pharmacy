@@ -13,6 +13,7 @@ import { useCreateProduct, useDeleteProduct, useUpdateProduct } from "../../../h
 import { useUpdateOrderStatus } from "../../../hooks/orders/useUpdateOrderStatus";
 import { setDocumentMetadata } from "../../components/page-metadata";
 import ModalScrim from "../../components/ModalScrim";
+import CreationModalLayer from "../../components/CreationModalLayer";
 import RevenueOverviewCard from "../../components/RevenueOverviewCard";
 import { buildTwoStepVerificationRequest, loadAuthSecuritySettings, persistAuthSecuritySettings } from "../../components/auth-security-settings";
 import { getOrderTypeMeta } from "../../components/role-dashboard-utils";
@@ -259,18 +260,20 @@ const EMPTY_PRODUCT_DRAFT = {
   status: "draft"
 };
 
+
+
 const PRODUCT_CREATE_STEPS = [
   {
     key: "identity",
     eyebrow: "Step 1",
-    label: "Identity",
-    description: "Add the product image, name, short description, generated SKU, and gallery."
+    label: "Product details",
+    description: "Add the product image, name, description, and prices."
   },
   {
     key: "commerce",
     eyebrow: "Step 2",
-    label: "Pricing and inventory",
-    description: "Set pricing, quantity, stock, shipping, brand, tags, and categories."
+    label: "Stock & shipping",
+    description: "Set stock, shipping, category, and tags."
   },
   {
     key: "prescription",
@@ -834,15 +837,15 @@ function formatMoney(value, currency = storedStoreCurrency()) {
   }).format(Number(value || 0));
 }
 
-function formatCompactMoney(value, currency = storedStoreCurrency()) {
-  const resolvedCurrency = normalizeCurrency(currency) || storedStoreCurrency();
-  return new Intl.NumberFormat("en-US", {
+function formatMetricNaira(value) {
+  const numericValue = Number(value || 0);
+  return new Intl.NumberFormat("en-NG", {
     style: "currency",
-    currency: resolvedCurrency,
-    currencyDisplay: "code",
-    notation: "compact",
+    currency: "NGN",
+    currencyDisplay: "narrowSymbol",
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2
-  }).format(Number(value || 0));
+  }).format(Number.isFinite(numericValue) ? numericValue : 0);
 }
 
 function formatNumber(value) {
@@ -2090,7 +2093,9 @@ function BookingCalendarWidget({
   onSlotSelect,
   onDurationChange,
   showStepsHeader = true,
-  showTimeSlots = true
+  showTimeSlots = true,
+  compactAppointmentLayout = false,
+  consultationTypeLabel = "Video consultation"
 }) {
   const currentView = viewDate instanceof Date && !Number.isNaN(viewDate.getTime()) ? viewDate : new Date();
   const selectedDateKey = selectedStartAt ? localDateKey(selectedStartAt) : (selectedDate || "");
@@ -2146,6 +2151,69 @@ function BookingCalendarWidget({
     const today = new Date();
     onViewDateChange?.(today);
     onDateSelect?.(localDateKey(today), today);
+  }
+
+  if (compactAppointmentLayout) {
+    const weekStart = new Date(currentView);
+    weekStart.setHours(0, 0, 0, 0);
+    weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+    const weekDays = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(weekStart);
+      date.setDate(weekStart.getDate() + index);
+      return date;
+    });
+    const selectedSlotLabel = selectedTimeKey
+      ? new Date(`2000-01-01T${selectedTimeKey}:00`).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
+      : "";
+
+    return (
+      <div className="booking-widget admin-booking-widget consultation-reference-calendar">
+        <div className="consultation-reference-heading">
+          <div className="booking-widget-title"><InlineIcon id="i-calendar" />{title}</div>
+          <div className="booking-widget-subtitle">{subtitle}</div>
+        </div>
+        <div className="consultation-week-controls">
+          <button type="button" className="booking-calendar-nav" aria-label="Previous month" onClick={() => changeMonth(-1)} disabled={!canGoPrevious}>‹</button>
+          <strong>{monthLabel}</strong>
+          <button type="button" className="booking-pill-btn" onClick={selectToday}>Today</button>
+          <button type="button" className="booking-calendar-nav" aria-label="Next month" onClick={() => changeMonth(1)}>›</button>
+        </div>
+        <div className="consultation-week-days">
+          {weekDays.map((date) => {
+            const key = localDateKey(date);
+            const status = statusForDay(date);
+            return (
+              <button
+                type="button"
+                key={key}
+                className={`consultation-week-day ${key === selectedDateKey ? "selected" : ""}`}
+                disabled={status === "past" || status === "full"}
+                onClick={() => onDateSelect?.(key, date)}
+                aria-pressed={key === selectedDateKey}
+              >
+                <span>{date.toLocaleDateString("en-US", { weekday: "short" })}</span>
+                <strong>{date.getDate()}</strong>
+                <i aria-label={status === "full" ? "Unavailable" : "Available"} />
+              </button>
+            );
+          })}
+        </div>
+        <div className="booking-section-label">Available slots</div>
+        <div className="booking-slots-grid">
+          {loading ? Array.from({ length: 10 }, (_, index) => <SkeletonBox className="booking-t-slot-skeleton" key={index} />) : slotOptions.slice(0, 10).map((slot) => (
+            <button className={`booking-t-slot ${slot.disabled ? "taken" : ""} ${slot.selected ? "chosen" : ""}`} type="button" key={slot.time} disabled={slot.disabled} onClick={() => onSlotSelect?.(selectedDateKey, slot.time)} aria-pressed={Boolean(slot.selected)}>
+              {new Date(`2000-01-01T${slot.time}:00`).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+            </button>
+          ))}
+        </div>
+        {selectedDateKey && selectedSlotLabel ? (
+          <div className="consultation-booking-summary">
+            <span><InlineIcon id="i-calendar" />{selectedDateObject.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} · {selectedSlotLabel}</span>
+            <span><InlineIcon id="i-stethoscope" />{consultationTypeLabel}</span>
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -2375,6 +2443,13 @@ function IconSprite() {
         <circle cx="12" cy="8" r="4" />
         <path d="M5 20a7 7 0 0 1 14 0" />
       </symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24">
+        <path d="M5 4h4l2 5-2.5 1.8a16 16 0 0 0 4.7 4.7L15 13l5 2v4c0 1.1-.9 2-2 2C9.7 21 3 14.3 3 6c0-1.1.9-2 2-2Z" />
+      </symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24">
+        <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+        <circle cx="12" cy="12" r="2.5" />
+      </symbol>
       <symbol id="i-lock" viewBox="0 0 24 24">
         <rect x="5" y="11" width="14" height="10" rx="2" />
         <path d="M8 11V8a4 4 0 1 1 8 0v3" />
@@ -2562,6 +2637,7 @@ function AdminStorefrontDashboard({
   const [doctorCreateCategorySearch, setDoctorCreateCategorySearch] = useState("");
   const [customerCreateForm, setCustomerCreateForm] = useState(EMPTY_CUSTOMER_FORM);
   const [userAccountCreateForm, setUserAccountCreateForm] = useState(EMPTY_USER_ACCOUNT_FORM);
+  const [userAccountPasswordVisible, setUserAccountPasswordVisible] = useState(false);
   const [orderCreateItems, setOrderCreateItems] = useState([]);
   const [selectedProductEdit, setSelectedProductEdit] = useState(null);
   const [productEditForm, setProductEditForm] = useState(null);
@@ -5513,17 +5589,27 @@ function AdminStorefrontDashboard({
     const nextForm = form || {};
     if (stepKey === "identity") {
       return {
+        image: productEditMedia.length ? "" : "Add a product image.",
         title: nextForm.title?.trim() ? "" : "Product name is required.",
-        shortDescription: nextForm.shortDescription?.trim() ? "" : "Add a short description."
+        shortDescription: nextForm.shortDescription?.trim() ? "" : "Add a short description.",
+        regularPrice: String(nextForm.regularPrice || "").trim() === "" || Number(nextForm.regularPrice) < 0
+          ? "Enter a valid unit price."
+          : "",
+        salePrice: String(nextForm.salePrice || "").trim() === ""
+          ? "Enter a sales price."
+          : (Number(nextForm.salePrice) < 0 || Number(nextForm.salePrice) > Number(nextForm.regularPrice)
+            ? "Enter a valid sales price no greater than the unit price."
+            : "")
       };
     }
     if (stepKey === "commerce") {
       return {
         category: nextForm.categories?.[0] ? "" : "Select a category.",
-        regularPrice: String(nextForm.regularPrice || "").trim() !== "" ? "" : "Enter a unit price.",
-        salePrice: Number(nextForm.salePrice || 0) > Number(nextForm.regularPrice || 0)
-          ? "Sale price cannot be greater than unit price."
-          : ""
+        tags: nextForm.tags?.length ? "" : "Select at least one tag.",
+        stockQuantity: String(nextForm.stockQuantity ?? "").trim() === "" || Number(nextForm.stockQuantity) < 0
+          ? "Enter a valid stock quantity."
+          : "",
+        shippingClass: nextForm.shippingClass?.trim() ? "" : "Select a shipping class."
       };
     }
     if (stepKey === "prescription") {
@@ -5598,8 +5684,12 @@ function AdminStorefrontDashboard({
   }
 
   async function handleProductMediaUpload(event) {
-    const files = Array.from(event.target.files || []);
+    const availableSlots = Math.max(0, 6 - productEditMedia.length);
+    const files = Array.from(event.target.files || []).slice(0, availableSlots);
     if (!files.length) {
+      if (productEditMedia.length >= 6) {
+        showSnackbar("You can upload up to 6 product images.", "warning");
+      }
       return;
     }
     setProductMediaUploading(true);
@@ -5731,6 +5821,20 @@ function AdminStorefrontDashboard({
       ? (submitIntent === "draft" ? "draft" : "publish")
       : productEditForm.status;
 
+    if (productEditorMode === "create" && nextProductStatus === "publish") {
+      for (let index = 0; index < PRODUCT_CREATE_STEPS.length; index += 1) {
+        const step = PRODUCT_CREATE_STEPS[index];
+        const errors = getProductCreateStepErrors(step.key);
+        const firstError = Object.values(errors).find(Boolean);
+        if (firstError) {
+          setProductCreateStep(index);
+          setProductCreateValidationStep(step.key);
+          showSnackbar(firstError, "warning");
+          return;
+        }
+      }
+    }
+
       setProductEditLoading(true);
       setProductEditFeedback("");
         try {
@@ -5758,7 +5862,7 @@ function AdminStorefrontDashboard({
               { key: "prescription_notes", value: productEditorMode === "create" ? productEditForm.longDescription : (productEditForm.prescriptionNotes || "") }
             ],
             purchase_note: productEditForm.purchaseNotes,
-            shipping_information: productEditForm.shippingInfo,
+            shipping_information: productEditForm.shippingInfo || productEditForm.shippingClass,
             linked_products: productEditForm.linkedProducts,
             images: productEditMedia.map((item, index) => ({ id: item.attachmentId, src: item.src, position: index }))
           };
@@ -5780,14 +5884,14 @@ function AdminStorefrontDashboard({
             ...prev,
             products: [nextProduct, ...(prev.products || [])]
           }));
-        if (createMultiple) {
+        if (createMultiple && nextProductStatus === "publish") {
           setProductEditForm(buildEmptyProductDraft());
           setProductEditMedia([]);
           setActiveProductMediaId("");
           setProductCreateStep(0);
           showSnackbar("Product created. Ready to create another.", "success");
         } else {
-          showSnackbar("Product created.", "success");
+          showSnackbar(nextProductStatus === "draft" ? "Product draft saved." : "Product created.", "success");
           closeProductEditModal();
         }
       } else {
@@ -9713,7 +9817,7 @@ function AdminStorefrontDashboard({
                   maxCards={4}
                   ariaLabel="Overview metrics"
                   cards={[
-                    { label: "Total revenue", value: formatCompactMoney(sales.month || 0, storeCurrency), note: `${formatCompactMoney(sales.today || 0, storeCurrency)} processed today`, icon: "moneyBag", tone: "blue" },
+                    { label: "Total revenue", value: formatMetricNaira(sales.month || 0), note: `${formatMetricNaira(sales.today || 0)} processed today`, icon: "moneyBag", tone: "blue" },
                     { label: "Consultations today", value: formatNumber(todayAppointments.length), note: `${formatNumber(consultations.confirmed || 0)} confirmed, ${formatNumber(consultations.requested || 0)} requested`, icon: "calendarCheck", tone: "blue" },
                     { label: "Active products", value: formatNumber((data.products || []).length), note: `${formatNumber(overviewInventoryAlertCount)} stock flags`, icon: "pill", tone: "mint" },
                     { label: "Orders in progress", value: formatNumber(overviewOrderRows.filter((order) => ["pending", "processing", "on-hold"].includes(String(order.status || "").toLowerCase())).length), note: `${formatNumber(overviewOrderRows.filter((order) => String(order.status || "").toLowerCase() === "completed").length)} completed recently`, icon: "cart", tone: "lavender" },
@@ -9850,8 +9954,8 @@ function AdminStorefrontDashboard({
                         </div>
                       </div>
                       <div className="overview-v2-finance-grid">
-                        <div><span>Verified today</span><strong>{formatCompactMoney(sales.today || 0, storeCurrency)}</strong><small>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "completed").length)} successful payments</small></div>
-                        <div><span>Pending review</span><strong>{formatCompactMoney(sales.pending || 0, storeCurrency)}</strong><small>{formatNumber(overviewPendingPaymentCount)} pending payments</small></div>
+                        <div><span>Verified today</span><strong>{formatMetricNaira(sales.today || 0)}</strong><small>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "completed").length)} successful payments</small></div>
+                        <div><span>Pending review</span><strong>{formatMetricNaira(sales.pending || 0)}</strong><small>{formatNumber(overviewPendingPaymentCount)} pending payments</small></div>
                         <div><span>Refund requests</span><strong>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "refunded").length)}</strong><small>Requires finance follow-up</small></div>
                         <div><span>Failed payments</span><strong>{formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "failed").length)}</strong><small>Patient retry needed</small></div>
                       </div>
@@ -9979,8 +10083,8 @@ function AdminStorefrontDashboard({
                   ariaLabel="Payment metrics"
                   loading={paymentsLoading}
                   cards={[
-                    { label: "Month revenue", value: formatMoney(sales.month || 0, storeCurrency), note: "WooCommerce revenue this month", icon: "moneyBag" },
-                    { label: "Today revenue", value: formatMoney(sales.today || 0, storeCurrency), note: "Verified payments processed today", icon: "moneyReceive" },
+                    { label: "Month revenue", value: formatMetricNaira(sales.month || 0), note: "WooCommerce revenue this month", icon: "moneyBag" },
+                    { label: "Today revenue", value: formatMetricNaira(sales.today || 0), note: "Verified payments processed today", icon: "moneyReceive" },
                     { label: "Completed payments", value: formatNumber(paymentRows.filter((row) => row.paymentStatus === "completed").length), note: "Successfully processed payments", icon: "check" },
                     { label: "Payment exceptions", value: formatNumber(paymentRows.filter((row) => ["failed", "refunded"].includes(row.paymentStatus)).length), note: "Failed or refunded payments", icon: "alert" },
                   ]}
@@ -10077,7 +10181,7 @@ function AdminStorefrontDashboard({
                   cards={[
                     { label: "Total patients", value: formatNumber(customerServerPagination.total || customerRows.length), note: "Patient accounts in the directory", icon: "users" },
                     { label: "Total orders", value: formatNumber(customerRows.reduce((total, row) => total + Number(row.orders || 0), 0)), note: "Orders from patients on this page", icon: "cart" },
-                    { label: "Patient spend", value: formatMoney(customerRows.reduce((total, row) => total + Number(row.spend || 0), 0), storeCurrency), note: "Combined spend on this page", icon: "money" },
+                    { label: "Patient spend", value: formatMetricNaira(customerRows.reduce((total, row) => total + Number(row.spend || 0), 0)), note: "Combined spend on this page", icon: "money" },
                     { label: "Appointments", value: formatNumber(customerRows.reduce((total, row) => total + Number(row.appointments || 0), 0)), note: "Appointments linked to these patients", icon: "calendar" },
                   ]}
                 />
@@ -10369,7 +10473,7 @@ function AdminStorefrontDashboard({
                     { label: "In stock products", value: formatNumber(productFilterCounts.in_stock || 0), note: "Products currently available to order", icon: "package" },
                     { label: "Published products", value: formatNumber(productFilterCounts.published || 0), note: "Products visible in the storefront", icon: "pill" },
                     { label: "Low stock products", value: formatNumber(lowStockProducts), note: "Products requiring inventory attention", icon: "outOfStock" },
-                    { label: "Total inventory value", value: formatCompactMoney(totalInventoryValue, storeCurrency), note: "Estimated value of current stock", icon: "moneyBag" },
+                    { label: "Total inventory value", value: formatMetricNaira(totalInventoryValue), note: "Estimated value of current stock", icon: "moneyBag" },
                   ]}
                 />
                 <section className="table-panel dashboard-table-shell products-table-shell">
@@ -11209,15 +11313,18 @@ function AdminStorefrontDashboard({
       </div>
 
       {orderCreateModalOpen ? (
-      <div className="app-modal-stack">
-        <div className="app-modal-layer">
-          <ModalScrim className="app-modal-backdrop" label="Close order creation" onDismiss={closeOrderCreateModal} />
-          <section className="detail-section stacked-order-popup order-create-popup admin-surface-modal modal-frame creation-frame modal-design-system-parity" role="dialog" aria-modal="true" aria-label="Create order">
+        <CreationModalLayer
+          dismissLabel="Close order creation"
+          onDismiss={closeOrderCreateModal}
+          restoreFocusSelector='[aria-label="Create new record"]'
+          submissionPending={orderCreateLoading}
+        >
+          <section className="detail-section stacked-order-popup order-create-popup admin-surface-modal modal-frame creation-frame modal-design-system-parity" role="dialog" aria-modal="true" aria-labelledby="create-order-title" aria-describedby="create-order-subtitle">
             <form className="order-create-form" onSubmit={createOrderFromForm}>
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
-                  <h3>Create order</h3>
-                  <p className="popup-support-copy modal-intro-copy">Create a manual storefront order, link products, define payment state and prepare fulfilment.</p>
+                  <h3 id="create-order-title">Create order</h3>
+                  <p id="create-order-subtitle" className="popup-support-copy modal-intro-copy">Create a manual storefront order, link products, define payment state and prepare fulfilment.</p>
                 </div>
                 <button className="icon-button" type="button" aria-label="Close order creation" onClick={closeOrderCreateModal}>
                   <InlineIcon id="i-x" />
@@ -11226,11 +11333,12 @@ function AdminStorefrontDashboard({
 
               <div className="order-create-shell modal-body">
                 <section className="creation-main order-create-full-width">
-                  <div className="creation-section-title">
-                    <InlineIcon id="i-cart" />
-                    <span>Patient and order details</span>
+                  <div className="order-create-left-column">
+                  <div className="creation-section-title order-create-customer-heading">
+                    <InlineIcon id="i-user" />
+                    <span>Customer details</span>
                   </div>
-                  <div className="creation-field-grid">
+                  <div className="creation-field-grid order-create-patient-name">
                     <div className="creation-field">
                       <label>Patient name</label>
                       <div className="consultation-search-combo order-create-combo">
@@ -11286,12 +11394,13 @@ function AdminStorefrontDashboard({
                       </div>
                     </div>
                   </div>
-                  <div className="creation-field-grid creation-field-grid-two">
+                  <div className="creation-field-grid creation-field-grid-two order-create-contact-fields">
                     <div className="creation-field">
                       <label>Email address</label>
                       <input
                         className="form-control"
                         type="email"
+                        placeholder="customer@email.com"
                         value={orderCreateForm.email}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, email: event.target.value }))}
                         required
@@ -11301,13 +11410,18 @@ function AdminStorefrontDashboard({
                       <label>Phone number</label>
                       <input
                         className="form-control"
+                        placeholder="Enter phone number"
                         value={orderCreateForm.phone}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, phone: event.target.value }))}
                         required
                       />
                     </div>
                   </div>
-                  <div className="creation-field-grid">
+                  <div className="creation-section-title order-create-payment-heading">
+                    <InlineIcon id="i-credit-card" />
+                    <span>Payment</span>
+                  </div>
+                  <div className="creation-field-grid order-create-payment-field">
                     <div className="creation-field">
                       <label>Payment status</label>
                       <select
@@ -11323,11 +11437,13 @@ function AdminStorefrontDashboard({
                       </select>
                     </div>
                   </div>
+                  </div>
+                  <div className="order-create-right-column">
                   <section className="order-create-items-column" aria-labelledby="order-create-products-title">
                     <div className="order-create-items-header">
                       <div>
-                        <span className="section-kicker">Order items</span>
-                        <h4 id="order-create-products-title">Products</h4>
+                        <h4 id="order-create-products-title"><InlineIcon id="i-cart" />Order items</h4>
+                        <span>Add products to this order</span>
                       </div>
                       <span className="order-create-line-count">{orderCreateItems.length} selected</span>
                     </div>
@@ -11335,7 +11451,7 @@ function AdminStorefrontDashboard({
                     {orderCreateItems.length ? (
                       <div className="order-create-table-scroll">
                         <table className="order-create-items-table">
-                          <thead><tr><th>Name</th><th>Qty</th><th><span className="sr-only">Remove</span></th></tr></thead>
+                          <thead><tr><th>Name</th><th>Qty</th><th>Price</th><th><span className="sr-only">Remove</span></th></tr></thead>
                           <tbody>
                             {orderCreateItems.map((item, index) => {
                               const product = popupOrderProducts.find((entry) => String(entry.id) === String(item.productId))
@@ -11348,19 +11464,27 @@ function AdminStorefrontDashboard({
                                     <span className="order-create-selected-image">
                                       {productImage ? <img src={productImage} alt="" /> : <InlineIcon id="i-pill" />}
                                     </span>
-                                    <strong>{productName}</strong>
+                                    <span className="order-product-copy">
+                                      <strong>{productName}</strong>
+                                      <small>{product?.sku ? `SKU: ${product.sku}` : "Product catalog item"}</small>
+                                    </span>
                                   </div>
                                 </td>
                                 <td>
-                                  <input
-                                    className="order-create-quantity-input"
-                                    type="number"
-                                    min="1"
-                                    aria-label={`Quantity for ${productName}`}
-                                    value={item.quantity}
-                                    onChange={(event) => updateOrderCreateItem(index, { quantity: Math.max(1, Number(event.target.value || 1)) })}
-                                  />
+                                  <div className="order-create-quantity-control">
+                                    <button type="button" aria-label={`Decrease quantity for ${productName}`} disabled={Number(item.quantity) <= 1} onClick={() => updateOrderCreateItem(index, { quantity: Math.max(1, Number(item.quantity || 1) - 1) })}>−</button>
+                                    <input
+                                      className="order-create-quantity-input"
+                                      type="number"
+                                      min="1"
+                                      aria-label={`Quantity for ${productName}`}
+                                      value={item.quantity}
+                                      onChange={(event) => updateOrderCreateItem(index, { quantity: Math.max(1, Number(event.target.value || 1)) })}
+                                    />
+                                    <button className="order-create-quantity-add" type="button" aria-label={`Increase quantity for ${productName}`} onClick={() => updateOrderCreateItem(index, { quantity: Number(item.quantity || 1) + 1 })}>+</button>
+                                  </div>
                                 </td>
+                                <td className="order-create-item-price">{formatMoney((getProductPrice(product, "sale_price") || getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0) * Number(item.quantity || 1), storeCurrency)}</td>
                                 <td><button className="icon-button order-create-remove-item" type="button" aria-label={`Remove ${productName}`} onClick={() => removeOrderCreateItem(index)}><InlineIcon id="i-x" /></button></td>
                               </tr>;
                             })}
@@ -11369,8 +11493,20 @@ function AdminStorefrontDashboard({
                       </div>
                     ) : <p className="order-create-empty-products">No products added yet.</p>}
 
+                    {orderCreateItems.length ? (
+                      <div className="order-create-line-summary">
+                        <span>{`${orderCreateItems.length} item${orderCreateItems.length === 1 ? "" : "s"} selected`}</span>
+                        <span>Subtotal <strong>{formatMoney(orderCreateItems.reduce((total, item) => {
+                          const product = popupOrderProducts.find((entry) => String(entry.id) === String(item.productId))
+                            || (data.products || []).find((entry) => String(entry.id) === String(item.productId));
+                          const price = getProductPrice(product, "sale_price") || getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0;
+                          return total + (Number(price) * Number(item.quantity || 1));
+                        }, 0), storeCurrency)}</strong></span>
+                      </div>
+                    ) : null}
+
                     <div className="creation-field order-product-search-field">
-                      <label htmlFor="order-create-product-search">Add another product</label>
+                      <label className="sr-only" htmlFor="order-create-product-search">Search products</label>
                       <div className="consultation-search-combo order-create-combo">
                         <input
                           id="order-create-product-search"
@@ -11414,7 +11550,7 @@ function AdminStorefrontDashboard({
                     </div>
                   </section>
 
-                  <div className="creation-field-grid">
+                  <div className="creation-field-grid order-create-delivery-field" key={`order-delivery-${orderCreateItems.length}`}>
                     <div className="creation-field">
                       <label>Delivery method</label>
                       <select
@@ -11430,16 +11566,18 @@ function AdminStorefrontDashboard({
                       </select>
                     </div>
                   </div>
-                  <div className="creation-field-grid creation-field-grid-two">
+                  <div className="creation-field-grid creation-field-grid-two order-create-note-field">
                     <div className="creation-field">
                       <label>Prescription note</label>
                       <textarea
                         className="form-control"
                         rows={4}
+                        placeholder="Add an optional prescription or fulfilment note"
                         value={orderCreateForm.prescription}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, prescription: event.target.value }))}
                       />
                     </div>
+                  </div>
                   </div>
                 </section>
               </div>
@@ -11447,14 +11585,14 @@ function AdminStorefrontDashboard({
               {orderCreateFeedback ? <p className="muted popup-support-copy">{orderCreateFeedback}</p> : null}
               <div className="stacked-order-popup-actions modal-actions">
                 <button className="pill-button" type="button" onClick={closeOrderCreateModal}>Cancel</button>
+                <span className="order-create-footer-note">You can review the order before fulfilment</span>
                 <button className="button-primary" type="submit" disabled={orderCreateLoading}>
-                  {orderCreateLoading ? "Creating..." : "Create Order"}
+                  {orderCreateLoading ? "Creating..." : "Create order"}
                 </button>
               </div>
             </form>
           </section>
-        </div>
-      </div>
+        </CreationModalLayer>
       ) : null}
 
       {orderModalOpen ? (
@@ -12077,27 +12215,6 @@ function AdminStorefrontDashboard({
                       <>
                         <div className="product-editor-form-column">
                           <div className="product-editor-form-card creation-main product-create-form-layout">
-                            <div className="product-create-stepper" role="tablist" aria-label="Create product steps" aria-hidden="true">
-                              {PRODUCT_CREATE_STEPS.map((step, index) => (
-                                <button
-                                  key={step.key}
-                                  className={`product-create-step-pill ${productCreateStep === index ? "active" : ""} ${index < productCreateStep ? "complete" : ""}`}
-                                  type="button"
-                                  role="tab"
-                                  aria-selected={productCreateStep === index}
-                                  aria-current={productCreateStep === index ? "step" : undefined}
-                                  onClick={() => {
-                                    setProductEditFeedback("");
-                                    setProductCreateValidationStep("");
-                                    setProductCreateStep(index);
-                                  }}
-                                >
-                                  <span>{step.eyebrow}{index < productCreateStep ? <b className="product-create-step-check" aria-label="Completed">{"\u2713"}</b> : null}</span>
-                                  <strong>{step.label}</strong>
-                                </button>
-                              ))}
-                            </div>
-
                             <div className="product-create-step-head">
                               <div>
                                 <span className="customer-section-kicker">{activeProductCreateStep.eyebrow}</span>
@@ -12113,113 +12230,100 @@ function AdminStorefrontDashboard({
                             {productCreateStep === 0 ? (
                               <div className="product-create-step-panel">
                                 <div className="creation-field-grid product-create-field-grid">
-                                    <div className="creation-field-row full-width product-create-name-row">
-                                      <label className="creation-field">
-                                        <span>Product name</span>
-                                        <input className="form-control" value={productEditForm.title} placeholder="e.g. Loratadine 10mg" onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} required />
-                                        {productCreateStepErrors.title ? <small className="field-error">{productCreateStepErrors.title}</small> : null}
+                                    <div className="creation-field product-create-primary-image-field product-create-images-widget">
+                                      <div className="product-create-images-heading">
+                                        <span>Product images</span>
+                                        <small>Add up to 6 images. The first image will be used as the cover.</small>
+                                      </div>
+                                      <div className="product-create-images-list" aria-label="Product images">
+                                        {productEditMedia.map((item, index) => (
+                                          <div
+                                            className={`product-create-image-tile ${index === 0 ? "is-cover" : ""}`}
+                                            key={item.id}
+                                            draggable={!productMediaUploading}
+                                            onDragStart={() => {
+                                              productMediaDragIndexRef.current = index;
+                                            }}
+                                            onDragOver={(event) => event.preventDefault()}
+                                            onDrop={() => {
+                                              moveProductMediaItem(productMediaDragIndexRef.current, index);
+                                              productMediaDragIndexRef.current = null;
+                                            }}
+                                          >
+                                            <span className="product-create-image-drag" aria-hidden="true" />
+                                            <img src={item.src} alt={item.alt} />
+                                            <button
+                                              className="product-create-image-remove"
+                                              type="button"
+                                              disabled={productMediaUploading || productEditLoading}
+                                              onClick={() => removeProductMediaItem(index)}
+                                              aria-label={`Remove ${item.alt}`}
+                                            >
+                                              <InlineIcon id="i-x" />
+                                            </button>
+                                            <button
+                                              className="product-create-image-cover"
+                                              type="button"
+                                              disabled={productMediaUploading || productEditLoading || index === 0}
+                                              onClick={() => featureProductMediaItem(index)}
+                                              aria-label={index === 0 ? `${item.alt} is the cover image` : `Make ${item.alt} the cover image`}
+                                            >
+                                              Cover
+                                            </button>
+                                          </div>
+                                        ))}
+                                        {productEditMedia.length < 6 ? (
+                                          <button
+                                            className="product-create-images-add"
+                                            type="button"
+                                            disabled={productMediaUploading || productEditLoading}
+                                            onClick={() => triggerProductMediaUpload("append")}
+                                          >
+                                            <InlineIcon id="i-upload" />
+                                            <span>Add images</span>
+                                          </button>
+                                        ) : null}
+                                        {productMediaUploading ? (
+                                          <span className="product-create-images-loading" role="status" aria-label="Uploading product images">
+                                            <span className="nevari-branded-spinner" aria-hidden="true" />
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <small className={productCreateStepErrors.image ? "field-error" : "field-hint"}>{productCreateStepErrors.image || "PNG or JPG, up to 10MB each."}</small>
+                                    </div>
+                                    <div className="product-create-details-columns full-width">
+                                      <div className="product-create-details-primary">
+                                        <label className="creation-field product-create-name-row">
+                                          <span>Product name</span>
+                                          <input className="form-control" value={productEditForm.title} placeholder="e.g. Loratadine 10mg" onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} />
+                                          {productCreateStepErrors.title ? <small className="field-error">{productCreateStepErrors.title}</small> : null}
+                                        </label>
+                                        <div className="product-create-price-row">
+                                          <label className="creation-field">
+                                            <span>Unit price</span>
+                                            <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} />
+                                            {productCreateStepErrors.regularPrice ? <small className="field-error">{productCreateStepErrors.regularPrice}</small> : null}
+                                          </label>
+                                          <label className="creation-field">
+                                            <span>Sales price</span>
+                                            <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} />
+                                            {productCreateStepErrors.salePrice ? <small className="field-error">{productCreateStepErrors.salePrice}</small> : null}
+                                          </label>
+                                        </div>
+                                      </div>
+                                      <label className="creation-field product-create-description-column">
+                                        <span>Short description</span>
+                                        <textarea className="form-control" rows={4} maxLength={160} placeholder="Add a short customer friendly description" value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} />
+                                        <small className={productCreateStepErrors.shortDescription ? "field-error" : "field-hint"}>
+                                          {productCreateStepErrors.shortDescription || `${productEditForm.shortDescription.length}/160`}
+                                        </small>
                                       </label>
                                     </div>
-                                    <label className="creation-field full-width">
+                                    <label className="creation-field full-width product-create-generated-sku">
                                       <span>SKU</span>
                                       <input className="form-control" value={productEditForm.sku || "Generated when saved"} readOnly aria-readonly="true" />
                                       <small className="field-hint">SKU is generated automatically and cannot be edited.</small>
                                     </label>
-                                    <div className="creation-field-row creation-field-row-two full-width" hidden>
-                                      <label className="creation-field">
-                                        <span>Category assignment</span>
-                                        <div className="select-wrap">
-                                          <select
-                                            className="form-control"
-                                            value={productEditForm.categories?.[0] || ""}
-                                            onChange={(event) => setProductEditForm((prev) => ({ ...prev, categories: event.target.value ? [event.target.value] : [] }))}
-                                            required
-                                          >
-                                            <option value="">Select category</option>
-                                            {productCategoryOptions.map((option) => (
-                                              <option key={option} value={option}>{option}</option>
-                                            ))}
-                                          </select>
-                                        </div>
-                                        {productCreateStepErrors.category ? <small className="field-error">{productCreateStepErrors.category}</small> : null}
-                                      </label>
-                                    <div className="creation-field">
-                                      <span>Tags assignment</span>
-                                      <div className="product-create-tag-picker">
-                                          <div className="select-wrap">
-                                            <select
-                                              className="form-control"
-                                              value={pendingProductTag}
-                                              onChange={(event) => setProductEditSearch((prev) => ({ ...prev, tags: event.target.value }))}
-                                            >
-                                              <option value="">Select tag</option>
-                                              {productTagOptions.map((option) => (
-                                                <option key={option} value={option}>{option}</option>
-                                              ))}
-                                            </select>
-                                          </div>
-                                          <button
-                                            className="pill-button"
-                                            type="button"
-                                            disabled={!pendingProductTag}
-                                            onClick={() => {
-                                              if (!pendingProductTag) {
-                                                return;
-                                              }
-                                              setProductEditForm((prev) => (
-                                                prev && prev.tags.includes(pendingProductTag)
-                                                  ? prev
-                                                  : { ...prev, tags: [...(prev?.tags || []), pendingProductTag] }
-                                              ));
-                                              setProductEditSearch((prev) => ({ ...prev, tags: "" }));
-                                            }}
-                                          >
-                                            Add tag
-                                          </button>
-                                        </div>
-                                        {productEditForm.tags?.length ? (
-                                          <div className="product-create-chip-row">
-                                            {productEditForm.tags.map((tag) => (
-                                              <button
-                                                key={tag}
-                                                className="product-create-chip"
-                                                type="button"
-                                                aria-label={`Remove tag ${tag}`}
-                                                onClick={() => setProductEditForm((prev) => ({ ...prev, tags: prev.tags.filter((item) => item !== tag) }))}
-                                              >
-                                                <span>{tag}</span>
-                                                <InlineIcon id="i-x" />
-                                              </button>
-                                            ))}
-                                          </div>
-                                        ) : (
-                                          <small className="field-hint">Selected tags will appear here.</small>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <label className="creation-field full-width">
-                                      <span>Short description</span>
-                                      <textarea className="form-control" rows={4} maxLength={160} placeholder="Add a short customer friendly description" value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} />
-                                      <small className={productCreateStepErrors.shortDescription ? "field-error" : "field-hint"}>
-                                        {productCreateStepErrors.shortDescription || `${productEditForm.shortDescription.length}/160`}
-                                      </small>
-                                    </label>
-                                    <div className="creation-field-row creation-field-row-three full-width" hidden>
-                                      <label className="creation-field">
-                                        <span>Unit price</span>
-                                        <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} />
-                                        {productCreateStepErrors.regularPrice ? <small className="field-error">{productCreateStepErrors.regularPrice}</small> : null}
-                                      </label>
-                                      <label className="creation-field">
-                                        <span>Sales price</span>
-                                        <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} />
-                                        {productCreateStepErrors.salePrice ? <small className="field-error">{productCreateStepErrors.salePrice}</small> : null}
-                                      </label>
-                                      <label className="creation-field">
-                                        <span>Stock quantity</span>
-                                        <input className="form-control" type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
-                                      </label>
-                                    </div>
                                     <div className="creation-field-row creation-field-row-three full-width product-create-secondary-fields" hidden>
                                       <label className="creation-field"><span>Expiry date</span><input className="form-control" type="date" value={productEditForm.expiryDate || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, expiryDate: event.target.value }))} /></label>
                                       <label className="creation-field"><span>Weight</span><input className="form-control" value={productEditForm.weight || ""} placeholder="e.g. 0.08 kg" onChange={(event) => setProductEditForm((prev) => ({ ...prev, weight: event.target.value }))} /></label>
@@ -12232,37 +12336,19 @@ function AdminStorefrontDashboard({
                               {productCreateStep === 1 ? (
                                 <div className="product-create-step-panel">
                                   <div className="creation-field-grid product-create-field-grid">
-                                    <div className="creation-field-row creation-field-row-three full-width">
-                                      <label className="creation-field">
-                                        <span>Unit price</span>
-                                        <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} required />
-                                        {productCreateStepErrors.regularPrice ? <small className="field-error">{productCreateStepErrors.regularPrice}</small> : null}
-                                      </label>
-                                      <label className="creation-field">
-                                        <span>Sale price</span>
-                                        <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} />
-                                        {productCreateStepErrors.salePrice ? <small className="field-error">{productCreateStepErrors.salePrice}</small> : null}
-                                      </label>
-                                      <label className="creation-field">
-                                        <span>Quantity</span>
-                                        <input className="form-control" type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
-                                      </label>
-                                    </div>
-                                    <div className="creation-field-row creation-field-row-three full-width">
-                                      <label className="creation-field">
-                                        <span>Stock status</span>
-                                        <div className="select-wrap"><select className="form-control" value={productEditForm.stockStatus || "instock"} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockStatus: event.target.value }))}><option value="instock">In stock</option><option value="outofstock">Out of stock</option><option value="onbackorder">On backorder</option></select></div>
-                                      </label>
-                                      <label className="creation-field">
-                                        <span>Brand</span>
-                                        <div className="select-wrap"><select className="form-control" value={productEditForm.brands?.[0] || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, brands: event.target.value ? [event.target.value] : [] }))}><option value="">Select brand</option>{productBrandOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></div>
-                                      </label>
-                                      <label className="creation-field">
-                                        <span>Shipping class</span>
-                                        <div className="select-wrap"><select className="form-control" value={productEditForm.shippingClass || PRODUCT_SHIPPING_CLASS_OPTIONS[0]} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shippingClass: event.target.value, shippingInfo: event.target.value }))}>{PRODUCT_SHIPPING_CLASS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></div>
-                                      </label>
-                                    </div>
                                     <div className="creation-field-row creation-field-row-two full-width">
+                                      <label className="creation-field">
+                                        <span>Stock quantity</span>
+                                        <input className="form-control" type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
+                                        {productCreateStepErrors.stockQuantity ? <small className="field-error">{productCreateStepErrors.stockQuantity}</small> : null}
+                                      </label>
+                                      <label className="creation-field">
+                                        <span>Shipping</span>
+                                        <div className="select-wrap"><select className="form-control" value={productEditForm.shippingClass || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shippingClass: event.target.value, shippingInfo: event.target.value }))}><option value="">Select shipping class</option>{PRODUCT_SHIPPING_CLASS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></div>
+                                        {productCreateStepErrors.shippingClass ? <small className="field-error">{productCreateStepErrors.shippingClass}</small> : null}
+                                      </label>
+                                    </div>
+                                    <div className="creation-field-row creation-field-row-two full-width product-create-taxonomy-row">
                                       <div className="creation-field">
                                         <span>Categories</span>
                                         <div className="product-create-tag-picker">
@@ -12281,6 +12367,7 @@ function AdminStorefrontDashboard({
                                           <button className="pill-button" type="button" disabled={!productTagOptions.includes(productEditSearch.tags)} onClick={() => addProductTerm("tags")}>Add</button>
                                         </div>
                                         <div className="product-create-chip-row">{productEditForm.tags.map((tag) => <button key={tag} className="product-create-chip" type="button" aria-label={`Remove tag ${tag}`} onClick={() => toggleProductTerm("tags", tag)}><span>{tag}</span><InlineIcon id="i-x" /></button>)}</div>
+                                        {productCreateStepErrors.tags ? <small className="field-error">{productCreateStepErrors.tags}</small> : null}
                                       </div>
                                     </div>
                                   </div>
@@ -12310,7 +12397,7 @@ function AdminStorefrontDashboard({
                                 </div>
                               ) : null}
 
-                              {productCreateStep === 0 ? (
+                              {false && productCreateStep === 0 ? (
                                 <div className="product-create-step-panel">
                                   <div className="product-create-media-grid">
                                     <section className="product-create-media-card">
@@ -12753,12 +12840,22 @@ function AdminStorefrontDashboard({
 
                 <div className="product-editor-footer modal-actions">
                   {productEditorMode === "create" ? <div /> : <button className="pill-button danger product-delete-button" type="button" onClick={deleteSelectedProduct} disabled={productEditLoading}>Delete Product</button>}
-                  <div className="product-editor-footer-end">
+                  <div className="product-editor-footer-layout">
+                    {productEditorMode === "create" && productCreateStep === PRODUCT_CREATE_STEPS.length - 1 ? (
+                      <div className="product-editor-footer-multiple">
+                        <label className="product-create-multiple">
+                          <input type="checkbox" checked={createMultiple} onChange={(event) => setCreateMultiple(event.target.checked)} />
+                          <span>Create multiple</span>
+                          <small>Publish and start a new product</small>
+                        </label>
+                      </div>
+                    ) : <div className="product-editor-footer-multiple" aria-hidden="true" />}
+                    <div className="product-editor-footer-end">
                       <div className="stacked-order-popup-actions product-editor-actions">
                         {productEditorMode === "create" ? (
                           <>
                             {productCreateStep > 0 ? (
-                              <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={() => setProductCreateStep((prev) => Math.max(0, prev - 1))}>Back</button>
+                              <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={() => setProductCreateStep((prev) => Math.max(0, prev - 1))}>Go back</button>
                             ) : <div />}
                             <button className="pill-button product-draft-button" type="submit" data-intent="draft" disabled={productEditLoading}>{productEditLoading ? "Saving..." : "Save draft"}</button>
                             {productCreateStep < PRODUCT_CREATE_STEPS.length - 1 ? (
@@ -12778,6 +12875,7 @@ function AdminStorefrontDashboard({
                     </div>
                   </div>
                 </div>
+                </div>
               </form>
             </section>
           </div>
@@ -12785,16 +12883,20 @@ function AdminStorefrontDashboard({
       ) : null}
 
       {createModalType ? (
-        <div className="app-modal-stack">
-          <div className="app-modal-layer app-modal-layer-top is-open">
-            <ModalScrim className="app-modal-backdrop" label="Close create form" onDismiss={closeCreateModal} />
-            <section className={`detail-section stacked-order-popup create-record-popup admin-surface-modal modal-frame creation-frame modal-design-system-parity ${createModalType === "consultation" ? "consultation-create-popup consultation-design-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-label={`Create ${createModalType}`}>
+        <CreationModalLayer
+          dismissLabel="Close create form"
+          layerClassName="app-modal-layer-top"
+          onDismiss={closeCreateModal}
+          restoreFocusSelector='[aria-label="Create new record"]'
+          submissionPending={createLoading}
+        >
+            <section className={`detail-section stacked-order-popup create-record-popup admin-surface-modal modal-frame creation-frame modal-design-system-parity ${createModalType === "consultation" ? "consultation-create-popup consultation-design-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-labelledby="create-record-title" aria-describedby="create-record-subtitle">
               <form className="create-record-form" onSubmit={submitGenericCreate}>
                 <div className="panel-header stacked-order-popup-header modal-head">
                   <div>
                     {createModalType === "consultation" ? null : <p className="section-kicker">Create record</p>}
-                    <h3>{createModalType === "consultation" ? "New appointment" : (createModalType === "user" ? "New user account" : `New ${formatStatusLabel(createModalType)}`)}</h3>
-                    {createModalType === "consultation" ? <p>Book a consultation using patient details, doctor availability, appointment type and time slot.</p> : null}
+                    <h3 id="create-record-title">{createModalType === "consultation" ? "New appointment" : (createModalType === "user" ? "New user account" : `New ${formatStatusLabel(createModalType)}`)}</h3>
+                    {createModalType === "consultation" ? <p id="create-record-subtitle">Book a consultation using patient details, doctor availability, appointment type and time slot.</p> : createModalType === "user" ? <p id="create-record-subtitle">Create an account, assign a role and set secure login details.</p> : null}
                   </div>
                   <button className="icon-button" type="button" aria-label="Close create form" onClick={closeCreateModal}><InlineIcon id="i-x" /></button>
                 </div>
@@ -12859,9 +12961,27 @@ function AdminStorefrontDashboard({
                           </div>
                         </label>
 
-                        <label className="consultation-design-field">
+                        <div className="consultation-design-field">
                           <span>Doctor</span>
-                          <div className="consultation-search-combo consultation-design-combo">
+                          {consultationDoctorProfile ? (
+                            <div className="consultation-selected-doctor">
+                              <span className="consultation-strip-avatar">
+                                {firstNonEmpty(consultationDoctorProfile.avatar_url, consultationDoctorProfile.avatar, consultationDoctorProfile.image_url, consultationDoctorProfile.photo_url)
+                                  ? <img src={firstNonEmpty(consultationDoctorProfile.avatar_url, consultationDoctorProfile.avatar, consultationDoctorProfile.image_url, consultationDoctorProfile.photo_url)} alt="" />
+                                  : getNameInitials(consultationDoctorProfile.display_name || consultationDoctorProfile.email, "DR")}
+                              </span>
+                              <span className="consultation-strip-copy">
+                                <strong>{consultationDoctorProfile.display_name || "Selected doctor"}</strong>
+                                <span>{consultationDoctorProfile.specialty || consultationDoctorProfile.specialties?.[0] || "Doctor"}</span>
+                                <small><i />Available today</small>
+                              </span>
+                              <button type="button" onClick={() => {
+                                setConsultationCreateForm((prev) => ({ ...prev, doctorUserId: "", startAt: "", endAt: "" }));
+                                setConsultationDoctorSearch("");
+                                setConsultationBookingDate("");
+                              }}>Change</button>
+                            </div>
+                          ) : <div className="consultation-search-combo consultation-design-combo">
                             <input
                               value={consultationDoctorSearch}
                               onChange={(event) => {
@@ -12892,13 +13012,13 @@ function AdminStorefrontDashboard({
                                 );
                               }) : <div className="consultation-search-empty">No matching doctors.</div>}
                             </div>
-                          </div>
-                        </label>
+                          </div>}
+                        </div>
 
                         <div className="consultation-design-calendar">
                           <BookingCalendarWidget
                             title="Choose appointment time"
-                            subtitle="Select an available date and time for this doctor."
+                            subtitle="Select an available date and time slot."
                             datePanelSubtitle="Select any available day."
                             appointments={consultationDoctorAppointments}
                             selectedDate={consultationSelectedDateKey}
@@ -12917,6 +13037,8 @@ function AdminStorefrontDashboard({
                               }
                             }}
                             showStepsHeader={false}
+                            compactAppointmentLayout
+                            consultationTypeLabel={consultationCreateForm.type === "audio" ? "Audio consultation" : "Video consultation"}
                           />
                         </div>
 
@@ -12928,6 +13050,7 @@ function AdminStorefrontDashboard({
                             onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, reason: event.target.value }))}
                             placeholder="Add the patient's reason for this consultation."
                           />
+                          <small>This information will be shared with the doctor.</small>
                         </label>
                       </div>
                       {!consultationCanSubmit ? <p className="consultation-validation-message">Select a doctor, patient, booking day, booking time, and consultation type to continue.</p> : null}
@@ -12936,6 +13059,7 @@ function AdminStorefrontDashboard({
                   </div>
                 ) : createModalType === "user" ? (
                   <div className="user-account-create modal-body">
+                    <div className="user-account-reference-top">
                     <section className="user-account-avatar-section" aria-label="User avatar">
                       <div className="user-account-avatar">
                         {userAccountCreateForm.avatar?.data ? (
@@ -12949,6 +13073,7 @@ function AdminStorefrontDashboard({
                         <span>JPG, PNG, or WebP. Maximum 2 MB.</span>
                         <div className="user-account-inline-actions">
                           <label className="pill-button user-avatar-upload">
+                            <InlineIcon id="i-upload" />
                             {userAccountCreateForm.avatar ? "Replace" : "Upload avatar"}
                             <input type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={selectUserAccountAvatar} />
                           </label>
@@ -12959,39 +13084,48 @@ function AdminStorefrontDashboard({
                         {userAccountCreateForm.avatar ? <span className="user-avatar-filename" title={userAccountCreateForm.avatar.name}>{userAccountCreateForm.avatar.name}</span> : null}
                       </div>
                     </section>
+                    <label className="detail-field user-account-role">
+                      <span>Role</span>
+                      <div className="select-wrap">
+                        <select value={userAccountCreateForm.role} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...EMPTY_USER_ACCOUNT_FORM, firstName: previous.firstName, lastName: previous.lastName, email: previous.email, password: previous.password, avatar: previous.avatar, role: event.target.value }))}>
+                          {USER_ACCOUNT_ROLES.filter(([role]) => role !== "administrator" || (session.user?.roles || []).includes("administrator")).map(([role, label]) => <option key={role} value={role}>{label}</option>)}
+                        </select>
+                      </div>
+                    </label>
+                    </div>
 
                     <div className="detail-form-grid user-account-grid">
                       <label className="detail-field">
                         <span>First name</span>
-                        <input value={userAccountCreateForm.firstName} maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, firstName: event.target.value }))} required />
+                        <input value={userAccountCreateForm.firstName} placeholder="Enter first name" maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, firstName: event.target.value }))} required />
                       </label>
                       <label className="detail-field">
                         <span>Last name</span>
-                        <input value={userAccountCreateForm.lastName} maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, lastName: event.target.value }))} required />
+                        <input value={userAccountCreateForm.lastName} placeholder="Enter last name" maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, lastName: event.target.value }))} required />
                       </label>
                       <label className="detail-field">
                         <span>Email address</span>
-                        <input type="email" value={userAccountCreateForm.email} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, email: event.target.value }))} required />
-                      </label>
-                      <label className="detail-field">
-                        <span>Role</span>
-                        <div className="select-wrap">
-                          <select value={userAccountCreateForm.role} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...EMPTY_USER_ACCOUNT_FORM, firstName: previous.firstName, lastName: previous.lastName, email: previous.email, password: previous.password, avatar: previous.avatar, role: event.target.value }))}>
-                            {USER_ACCOUNT_ROLES.filter(([role]) => role !== "administrator" || (session.user?.roles || []).includes("administrator")).map(([role, label]) => <option key={role} value={role}>{label}</option>)}
-                          </select>
-                        </div>
+                        <div className="modal-icon-field"><InlineIcon id="i-mail" /><input type="email" placeholder="name@example.com" value={userAccountCreateForm.email} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, email: event.target.value }))} required /></div>
                       </label>
                       <label className="detail-field">
                         <span>Phone number{["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role) ? "" : " (optional)"}</span>
-                        <input type="tel" value={userAccountCreateForm.phone} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, phone: event.target.value }))} required={["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role)} />
+                        <div className="modal-icon-field"><InlineIcon id="i-phone" /><input type="tel" placeholder="Enter phone number" value={userAccountCreateForm.phone} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, phone: event.target.value }))} required={["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role)} /></div>
                       </label>
-                      <label className="detail-field">
+                      <label className="detail-field detail-field-wide">
                         <span>Password</span>
                         <div className="user-password-control">
-                          <input type="text" value={userAccountCreateForm.password} minLength={12} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, password: event.target.value }))} required />
+                          <div className="modal-icon-field user-password-input">
+                            <InlineIcon id="i-lock" />
+                            <input type={userAccountPasswordVisible ? "text" : "password"} value={userAccountCreateForm.password} minLength={12} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, password: event.target.value }))} required />
+                            <button type="button" aria-label={userAccountPasswordVisible ? "Hide password" : "Show password"} onClick={() => setUserAccountPasswordVisible((visible) => !visible)}><InlineIcon id="i-eye" /></button>
+                          </div>
                           <button className="pill-button" type="button" onClick={generateUserAccountPassword}>Generate password</button>
                         </div>
                         <small>At least 12 characters with upper/lowercase, a number, and a symbol.</small>
+                        <div className="user-password-strength" aria-label="Password strength">
+                          {[1, 2, 3, 4].map((level) => <i className={userAccountCreateForm.password.length >= level * 3 ? "active" : ""} key={level} />)}
+                          <span>{userAccountCreateForm.password.length >= 12 ? "Strong" : userAccountCreateForm.password.length >= 8 ? "Good" : "Weak"}</span>
+                        </div>
                       </label>
 
                       {["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role) ? (
@@ -13014,7 +13148,7 @@ function AdminStorefrontDashboard({
                         </>
                       ) : null}
                       {userAccountCreateForm.role === "patient" ? (
-                        <label className="detail-field detail-field-wide"><span>Address</span><textarea rows={3} maxLength={300} value={userAccountCreateForm.address} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, address: event.target.value }))} /></label>
+                        <label className="detail-field detail-field-wide"><span>Address</span><textarea rows={3} placeholder="Enter residential address" maxLength={300} value={userAccountCreateForm.address} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, address: event.target.value }))} /></label>
                       ) : null}
                     </div>
 
@@ -13189,13 +13323,13 @@ function AdminStorefrontDashboard({
                   </div>
                 )}
                 <div className="stacked-order-popup-actions modal-actions">
+                  {createModalType === "user" ? <span className="user-account-footer-note">Required fields must be completed before creating the account.</span> : null}
                   <button className="pill-button" type="button" onClick={closeCreateModal}>Cancel</button>
                   <button className="button-primary" type="submit" disabled={createLoading || (createModalType === "consultation" && !consultationCanSubmit)}>{createLoading ? (createModalType === "consultation" ? "Booking..." : "Creating...") : (createModalType === "consultation" ? "Book appointment" : (createModalType === "user" ? "Create user" : "Create"))}</button>
                 </div>
               </form>
             </section>
-          </div>
-        </div>
+        </CreationModalLayer>
       ) : null}
 
       {selectedConsultation ? (

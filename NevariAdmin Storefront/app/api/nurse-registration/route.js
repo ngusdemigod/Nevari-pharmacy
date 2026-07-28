@@ -24,7 +24,8 @@ export async function POST(request) {
     const captcha = await verifyRecaptchaToken(
       request.headers.get("x-nevari-recaptcha-token") || "",
       "public_submit",
-      String(request.headers.get("x-forwarded-for") || "").split(",")[0].trim()
+      String(request.headers.get("x-forwarded-for") || "").split(",")[0].trim(),
+      ["localhost", "127.0.0.1", "::1"].includes(new URL(request.url).hostname)
     );
     if (!captcha.ok) {
       return Response.json(

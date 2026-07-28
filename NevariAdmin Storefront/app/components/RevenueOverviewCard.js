@@ -11,12 +11,15 @@ import {
 } from "recharts";
 import { motion } from "motion/react";
 
-function formatCurrency(value, currency) {
-  return new Intl.NumberFormat("en-US", {
+function formatNaira(value) {
+  const numericValue = Number(value || 0);
+  return new Intl.NumberFormat("en-NG", {
     style: "currency",
-    currency: currency || "USD",
+    currency: "NGN",
+    currencyDisplay: "narrowSymbol",
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(Number(value || 0));
+  }).format(Number.isFinite(numericValue) ? numericValue : 0);
 }
 
 function formatChange(value) {
@@ -25,7 +28,7 @@ function formatChange(value) {
   return `${prefix}${numericValue.toFixed(1)}%`;
 }
 
-function RevenueOverviewTooltip({ active, payload, label, currency }) {
+function RevenueOverviewTooltip({ active, payload, label }) {
   if (!active || !payload?.length) {
     return null;
   }
@@ -38,11 +41,11 @@ function RevenueOverviewTooltip({ active, payload, label, currency }) {
       <strong>{label}</strong>
       <div>
         <span>Revenue</span>
-        <b>{formatCurrency(currentPoint?.value || 0, currency)}</b>
+        <b>{formatNaira(currentPoint?.value || 0)}</b>
       </div>
       <div>
         <span>Previous</span>
-        <b>{formatCurrency(previousPoint?.value || 0, currency)}</b>
+        <b>{formatNaira(previousPoint?.value || 0)}</b>
       </div>
     </div>
   );
@@ -50,7 +53,6 @@ function RevenueOverviewTooltip({ active, payload, label, currency }) {
 
 export default function RevenueOverviewCard({
   title = "All revenue",
-  currency,
   value,
   changePct,
   data,
@@ -84,7 +86,7 @@ export default function RevenueOverviewCard({
             </select>
           </label>
           <div className="revenue-overview-kpi-row">
-            <strong>{formatCurrency(value, currency)}</strong>
+            <strong>{formatNaira(value)}</strong>
             <span className={`revenue-overview-change ${isPositiveChange ? "positive" : "negative"}`}>
               {formatChange(changePct)}
             </span>
@@ -115,7 +117,7 @@ export default function RevenueOverviewCard({
             <YAxis hide domain={[0, "dataMax + 1000"]} />
             <Tooltip
               cursor={{ stroke: "rgba(37, 99, 235, 0.14)", strokeWidth: 1 }}
-              content={<RevenueOverviewTooltip currency={currency} />}
+              content={<RevenueOverviewTooltip />}
             />
             <Line
               type="monotone"

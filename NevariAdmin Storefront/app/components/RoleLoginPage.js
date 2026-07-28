@@ -432,13 +432,19 @@ export default function RoleLoginPage({ config }) {
           ...buildTwoStepVerificationRequest(authSecuritySettings)
         }))
       });
-      const payload = await response.json();
+      const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
         if (isPairingRequiredPayload(payload)) {
           resetToPairingState();
           return;
         }
-        showNotice(payload?.error?.message || "Sign in failed.", "error");
+        showNotice(
+          payload?.error?.message
+          || (response.status === 503
+            ? "The pharmacy sign-in service is temporarily unavailable. Please try again shortly."
+            : "Sign in failed."),
+          "error"
+        );
         return;
       }
       if (payload.data.verification_required) {

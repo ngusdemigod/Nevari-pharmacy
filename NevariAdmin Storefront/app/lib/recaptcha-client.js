@@ -2,6 +2,8 @@
 
 let scriptPromise = null;
 const SCRIPT_SELECTOR = 'script[data-nevari-recaptcha="true"]';
+const SCRIPT_HOSTS = ["https://www.google.com", "https://www.recaptcha.net"];
+const LOCAL_DEVELOPMENT_TOKEN = "nevari-local-development";
 
 function captchaError(code, message) {
   const error = new Error(message);
@@ -13,6 +15,11 @@ function siteKey() {
   return String(process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || "").trim();
 }
 
+function isLocalDevelopment() {
+  if (process.env.NODE_ENV === "production" || typeof window === "undefined") return false;
+  return ["localhost", "127.0.0.1", "::1"].includes(String(window.location.hostname || "").toLowerCase());
+}
+
 function loadRecaptcha() {
   const key = siteKey();
   if (!key) return Promise.reject(captchaError("captcha_not_configured", "Spam protection is not configured."));
@@ -22,21 +29,32 @@ function loadRecaptcha() {
   if (window.grecaptcha) return Promise.resolve(window.grecaptcha);
   if (!scriptPromise) {
     scriptPromise = new Promise((resolve, reject) => {
-      const existing = document.querySelector(SCRIPT_SELECTOR);
-      const script = existing || document.createElement("script");
-      script.src = `https://www.google.com/recaptcha/api.js?render=${encodeURIComponent(key)}`;
-      script.async = true;
-      script.defer = true;
-      script.dataset.nevariRecaptcha = "true";
-      script.onload = () => {
-        if (window.grecaptcha) {
-          resolve(window.grecaptcha);
+      function tryHost(index) {
+        if (index >= SCRIPT_HOSTS.length) {
+          reject(captchaError("captcha_load_failed", "Spam protection could not be loaded."));
           return;
         }
-        reject(captchaError("captcha_unavailable", "Spam protection is unavailable."));
-      };
-      script.onerror = () => reject(captchaError("captcha_load_failed", "Spam protection could not be loaded."));
-      if (!existing) document.head.appendChild(script);
+        document.querySelector(SCRIPT_SELECTOR)?.remove();
+        const script = document.createElement("script");
+        script.src = `${SCRIPT_HOSTS[index]}/recaptcha/api.js?render=${encodeURIComponent(key)}`;
+        script.async = true;
+        script.defer = true;
+        script.dataset.nevariRecaptcha = "true";
+        script.onload = () => {
+          if (window.grecaptcha) {
+            resolve(window.grecaptcha);
+            return;
+          }
+          script.remove();
+          tryHost(index + 1);
+        };
+        script.onerror = () => {
+          script.remove();
+          tryHost(index + 1);
+        };
+        document.head.appendChild(script);
+      }
+      tryHost(0);
     }).catch((error) => {
       scriptPromise = null;
       document.querySelector(SCRIPT_SELECTOR)?.remove();
@@ -47,6 +65,7 @@ function loadRecaptcha() {
 }
 
 export async function executeRecaptcha(action) {
+  if (isLocalDevelopment()) return LOCAL_DEVELOPMENT_TOKEN;
   const key = siteKey();
   if (!key) return "";
   const grecaptcha = await loadRecaptcha();

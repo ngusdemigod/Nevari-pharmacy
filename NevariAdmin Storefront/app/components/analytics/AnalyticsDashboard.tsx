@@ -49,6 +49,17 @@ function formatMoney(value: number | null | undefined, currency: string) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "USD", maximumFractionDigits: 0 }).format(value);
 }
 
+function formatMetricNaira(value: number | null | undefined) {
+  if (value === null || value === undefined) return "—";
+  return new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    currencyDisplay: "narrowSymbol",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
 function Change({ metric }: { metric?: MetricValue }) {
   if (metric?.change === null || metric?.change === undefined) return null;
   const positive = metric.change >= 0;
@@ -184,9 +195,9 @@ export default function AnalyticsDashboard({ baseUrl }: Props) {
       <section className="analytics-section-heading"><p className="analytics-eyebrow">Store performance</p><h2>Commerce overview</h2><p>Completed WooCommerce orders for the selected period.</p></section>
       <section className="analytics-commerce-grid">
         {[
-          ["Gross sales", formatMoney(commerce?.commerce.gross_sales, commerce?.currency || "USD"), "Before refunds and adjustments"],
+          ["Gross sales", formatMetricNaira(commerce?.commerce.gross_sales), "Before refunds and adjustments"],
           ["Completed orders", formatNumber(commerce?.commerce.completed_orders), "Orders with completed status"],
-          ["Average order value", formatMoney(commerce?.commerce.average_order_value, commerce?.currency || "USD"), "Gross sales per completed order"],
+          ["Average order value", formatMetricNaira(commerce?.commerce.average_order_value), "Gross sales per completed order"],
           ["On-time fulfillment", formatPercent(commerce?.commerce.on_time_fulfillment_percent), "Completed within 48 hours"],
         ].map(([label, value, note]) => <article className="analytics-commerce-card" key={label}><span>{label}</span><strong>{isLoading ? "···" : value}</strong><small>{note}</small></article>)}
       </section>
