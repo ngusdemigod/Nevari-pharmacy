@@ -1,5 +1,13 @@
 # Frontend and Plugin Security Decision Tracker
 
+## 2026-07-29 — Creation order and media boundaries
+
+- Decision: manual/guest customer data is accepted only for Store Admin order creation. Doctor order creation still requires a server-verified owned or linked `customer_id`.
+- Decision: `delivery_method` is a closed enum (`pickup`, `local_delivery`, `shipping`); non-pickup orders require a sanitized address before order creation.
+- Decision: the server validates the complete product set and requested managed-stock quantities before calling `wc_create_order`, so validation failures cannot leave a partial order.
+- Decision: fulfilment notes use WooCommerce's sanitized `customer_note`; delivery choice is persisted in `_nevari_delivery_method` and exposed through the existing authorized order formatter.
+- Decision: product media accepts only verified JPEG/PNG data up to 10 MB. Declared MIME, extension, decoded image bytes, and actual image MIME must agree; malformed data and unexpected request fields fail closed.
+
 ## 2026-07-28 — In-page session reauthentication
 
 - Expired dashboard sessions pause the current page behind a blocking, role-aware login dialog instead of navigating away and unmounting unsaved form state.
@@ -11,6 +19,8 @@
 
 - All public authentication, registration, password-reset, verification-code, and nurse-registration submissions require a reCAPTCHA v3 token in `X-Nevari-Recaptcha-Token`.
 - The Next.js boundary verifies success, `public_submit` action, minimum score, and an allowlisted hostname, then removes the token instead of forwarding or logging it.
+- CAPTCHA loading and verification retry through `recaptcha.net` if `google.com` is unavailable; verification remains fail-closed if neither endpoint succeeds.
+- A localhost-only development marker avoids external CAPTCHA dependency during local work. It requires non-production mode and a localhost request hostname, so it cannot bypass deployed verification.
 - Missing public or secret keys fail closed in deployed environments. The public key must be present at build time; changing it requires redeployment.
 - Authenticated patient, clinical, and administrative writes remain protected by the HttpOnly session, double-submit CSRF token, role checks, and resource ownership without CAPTCHA.
 

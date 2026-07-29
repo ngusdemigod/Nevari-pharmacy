@@ -80,9 +80,9 @@ export default function RevenueOverviewCard({
               onChange={(event) => onGranularityChange?.(event.target.value)}
               aria-label={`${title} granularity`}
             >
-              <option value="monthly">{title} · Monthly</option>
-              <option value="weekly">{title} · Weekly</option>
-              <option value="daily">{title} · Daily</option>
+              <option value="monthly">{title} · This year</option>
+              <option value="weekly">{title} · Last 12 weeks</option>
+              <option value="daily">{title} · Last 14 days</option>
             </select>
           </label>
           <div className="revenue-overview-kpi-row">

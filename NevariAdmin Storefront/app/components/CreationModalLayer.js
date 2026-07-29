@@ -14,7 +14,9 @@ const FOCUSABLE_SELECTOR = [
 
 export default function CreationModalLayer({
   children,
+  confirmDismissMessage = "Discard unsaved changes?",
   dismissLabel,
+  hasUnsavedChanges = false,
   layerClassName = "",
   onDismiss,
   restoreFocusSelector = "",
@@ -23,10 +25,24 @@ export default function CreationModalLayer({
   const layerRef = useRef(null);
   const restoreFocusRef = useRef(null);
   const dismissRef = useRef(onDismiss);
+  const dirtyRef = useRef(hasUnsavedChanges);
+  const confirmMessageRef = useRef(confirmDismissMessage);
   const pendingRef = useRef(submissionPending);
 
   dismissRef.current = onDismiss;
+  dirtyRef.current = hasUnsavedChanges;
+  confirmMessageRef.current = confirmDismissMessage;
   pendingRef.current = submissionPending;
+
+  function requestDismiss() {
+    if (pendingRef.current) {
+      return;
+    }
+    if (dirtyRef.current && !window.confirm(confirmMessageRef.current)) {
+      return;
+    }
+    dismissRef.current?.();
+  }
 
   useEffect(() => {
     restoreFocusRef.current = document.activeElement;
@@ -39,10 +55,8 @@ export default function CreationModalLayer({
 
     function handleKeyDown(event) {
       if (event.key === "Escape") {
-        if (!pendingRef.current) {
-          event.preventDefault();
-          dismissRef.current?.();
-        }
+        event.preventDefault();
+        requestDismiss();
         return;
       }
 
@@ -77,7 +91,7 @@ export default function CreationModalLayer({
     };
   }, [restoreFocusSelector]);
 
-  const guardedDismiss = submissionPending ? undefined : onDismiss;
+  const guardedDismiss = submissionPending ? undefined : requestDismiss;
 
   return (
     <div className="app-modal-stack creation-modal-stack">

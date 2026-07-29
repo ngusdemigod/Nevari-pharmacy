@@ -1587,12 +1587,26 @@ final class Nevari_Rest {
         }
 
         $params = Nevari_Helpers::get_json_params($request);
+        $allowed_keys = [
+            'product_id', 'quantity', 'items', 'status',
+            'notify_status_change', 'notify_doctor', 'notify_admin', 'notify_customer',
+            'doctor_user_id', 'customer_id', 'appointment_id', 'prescription_id',
+            'custom_email_only', 'delivery_method', 'customer_note', 'billing',
+        ];
+        if (array_diff(array_keys($params), $allowed_keys)) {
+            return Nevari_Helpers::error('validation_error', 'Unexpected order fields were supplied.', 422);
+        }
+        if (isset($params['items']) && !is_array($params['items'])) {
+            return Nevari_Helpers::error('validation_error', 'Order items must be an array.', 422);
+        }
         $items = [];
         if (!empty($params['items']) && is_array($params['items'])) {
-            $items = array_values(array_filter(array_map(static function ($item) {
-                if (!is_array($item)) {
-                    return null;
+            foreach ($params['items'] as $item) {
+                if (!is_array($item) || array_diff(array_keys($item), ['product_id', 'quantity'])) {
+                    return Nevari_Helpers::error('validation_error', 'Unexpected order item fields were supplied.', 422);
                 }
+            }
+            $items = array_values(array_filter(array_map(static function ($item) {
                 $product_id = isset($item['product_id']) ? (int) $item['product_id'] : 0;
                 $quantity = isset($item['quantity']) ? max(1, (int) $item['quantity']) : 0;
                 return ($product_id > 0 && $quantity > 0) ? ['product_id' => $product_id, 'quantity' => $quantity] : null;
@@ -1608,10 +1622,26 @@ final class Nevari_Rest {
         if (!$items) {
             return Nevari_Helpers::error('validation_error', 'At least one valid item is required.', 422);
         }
+        $combined_items = [];
+        foreach ($items as $item) {
+            $product_id = (int) $item['product_id'];
+            if (!isset($combined_items[$product_id])) {
+                $combined_items[$product_id] = ['product_id' => $product_id, 'quantity' => 0];
+            }
+            $combined_items[$product_id]['quantity'] += (int) $item['quantity'];
+        }
+        $items = array_values($combined_items);
 
         $billing = isset($params['billing']) && is_array($params['billing']) ? $params['billing'] : [];
+        $allowed_billing_keys = [
+            'first_name', 'last_name', 'email', 'phone', 'address_1',
+            'city', 'state', 'postcode', 'country',
+        ];
+        if (array_diff(array_keys($billing), $allowed_billing_keys)) {
+            return Nevari_Helpers::error('validation_error', 'Unexpected billing fields were supplied.', 422);
+        }
         $email = isset($billing['email']) ? sanitize_email((string) $billing['email']) : '';
-        if (!$email) {
+        if (!$email || !is_email($email)) {
             return Nevari_Helpers::error('validation_error', 'Customer email is required.', 422);
         }
 
@@ -1631,6 +1661,11 @@ final class Nevari_Rest {
         $prescription_id = isset($params['prescription_id']) ? max(0, (int) $params['prescription_id']) : 0;
         $custom_email_only = !empty($params['custom_email_only']);
         $linked_prescription = $prescription_id ? self::get_prescription_row($prescription_id) : null;
+        $delivery_method = isset($params['delivery_method']) ? sanitize_key((string) $params['delivery_method']) : '';
+        $allowed_delivery_methods = ['', 'pickup', 'local_delivery', 'shipping'];
+        if (!in_array($delivery_method, $allowed_delivery_methods, true)) {
+            return Nevari_Helpers::error('validation_error', 'Select a valid delivery method.', 422);
+        }
 
         if ($is_doctor) {
             if (!$customer_id) {
@@ -1646,13 +1681,8 @@ final class Nevari_Rest {
                 return Nevari_Helpers::error('forbidden_prescription_scope', 'Prescription does not belong to this doctor-patient pair.', 403);
             }
         }
-
-        $order = wc_create_order([
-            'customer_id' => $customer_id,
-            'created_via' => 'nevari_dashboard',
-        ]);
-        if (is_wp_error($order)) {
-            return Nevari_Helpers::error('order_create_failed', $order->get_error_message(), 400);
+        if ($customer_id && !get_user_by('id', $customer_id)) {
+            return Nevari_Helpers::error('customer_not_found', 'Customer not found.', 404);
         }
 
         $first_name = isset($billing['first_name']) ? sanitize_text_field((string) $billing['first_name']) : '';
@@ -1663,13 +1693,55 @@ final class Nevari_Rest {
         $state = isset($billing['state']) ? sanitize_text_field((string) $billing['state']) : '';
         $postcode = isset($billing['postcode']) ? sanitize_text_field((string) $billing['postcode']) : '';
         $country = isset($billing['country']) ? sanitize_text_field((string) $billing['country']) : '';
+        if (!$customer_id && ($first_name === '' || $phone === '')) {
+            return Nevari_Helpers::error('validation_error', 'Customer name, email, and phone are required for a manual order.', 422);
+        }
+        if (in_array($delivery_method, ['local_delivery', 'shipping'], true) && $address_1 === '') {
+            return Nevari_Helpers::error('validation_error', 'A delivery address is required for this delivery method.', 422);
+        }
+        $order_status = !empty($params['status']) ? sanitize_key((string) $params['status']) : 'pending';
+        if (!in_array($order_status, ['pending', 'completed', 'on-hold', 'refunded'], true)) {
+            return Nevari_Helpers::error('validation_error', 'Select a valid payment status.', 422);
+        }
 
+        $validated_items = [];
         foreach ($items as $item) {
             $product = wc_get_product((int) $item['product_id']);
-            if (!$product) {
-                return Nevari_Helpers::error('validation_error', 'One or more items reference an invalid product_id.', 422);
+            if (!$product || !$product->is_purchasable()) {
+                return Nevari_Helpers::error('validation_error', 'One or more products are unavailable.', 422);
             }
-            $order_item_id = $order->add_product($product, (int) $item['quantity']);
+            if (!$product->is_in_stock()) {
+                return Nevari_Helpers::error('product_out_of_stock', 'One or more products are out of stock.', 409);
+            }
+            if (
+                $product->managing_stock()
+                && !$product->backorders_allowed()
+                && $product->get_stock_quantity() !== null
+                && (int) $product->get_stock_quantity() < (int) $item['quantity']
+            ) {
+                return Nevari_Helpers::error('insufficient_stock', 'The requested quantity is not available.', 409);
+            }
+            $validated_items[] = [
+                'product' => $product,
+                'quantity' => (int) $item['quantity'],
+            ];
+        }
+
+        $order = wc_create_order([
+            'customer_id' => $customer_id,
+            'created_via' => 'nevari_dashboard',
+        ]);
+        if (is_wp_error($order)) {
+            return Nevari_Helpers::error('order_create_failed', 'The order could not be created.', 400);
+        }
+
+        foreach ($validated_items as $item) {
+            $product = $item['product'];
+            $order_item_id = $order->add_product($product, $item['quantity']);
+            if (!$order_item_id) {
+                $order->delete(true);
+                return Nevari_Helpers::error('order_create_failed', 'The order could not be created.', 400);
+            }
             if ($order_item_id) {
                 $order_item = $order->get_item($order_item_id);
                 $prescription = self::sanitize_product_prescription_html((string) get_post_meta((int) $product->get_id(), '_nevari_product_prescription', true));
@@ -1699,6 +1771,9 @@ final class Nevari_Rest {
         if (!empty($params['customer_note'])) {
             $order->set_customer_note(sanitize_textarea_field((string) $params['customer_note']));
         }
+        if ($delivery_method !== '') {
+            $order->update_meta_data('_nevari_delivery_method', $delivery_method);
+        }
 
         if ($doctor_id) {
             $order->update_meta_data('_nevari_assigned_doctor_user_id', $doctor_id);
@@ -1712,7 +1787,7 @@ final class Nevari_Rest {
                 $order->set_status('awaiting-prescription');
             }
         } else {
-            $order->set_status(!empty($params['status']) ? sanitize_key((string) $params['status']) : 'pending');
+            $order->set_status($order_status);
         }
 
         if ($appointment_id) {
@@ -2290,6 +2365,7 @@ final class Nevari_Rest {
             'customer_first_name' => $billing_first ?: $account_first ?: null,
             'customer_last_name' => $billing_last ?: $account_last ?: null,
             'customer_email' => $order->get_billing_email() ?: null,
+            'delivery_method' => sanitize_key((string) $order->get_meta('_nevari_delivery_method')) ?: null,
             'billing' => [
                 'first_name' => $billing_first,
                 'last_name' => $billing_last,
@@ -3966,29 +4042,54 @@ final class Nevari_Rest {
             return $response;
         }
         $params = Nevari_Helpers::get_json_params($request);
+        $allowed_keys = ['filename', 'mime_type', 'data_base64'];
+        if (array_diff(array_keys($params), $allowed_keys)) {
+            return Nevari_Helpers::error('validation_error', 'Unexpected media fields were supplied.', 422);
+        }
         $filename = isset($params['filename']) ? sanitize_file_name((string) $params['filename']) : '';
-        $mime_type = isset($params['mime_type']) ? sanitize_text_field((string) $params['mime_type']) : '';
-        $data_base64 = isset($params['data_base64']) ? (string) $params['data_base64'] : '';
-        if (!$filename || !$mime_type || !$data_base64 || strpos($mime_type, 'image/') !== 0) {
-            return Nevari_Helpers::error('validation_error', 'A valid image upload is required.', 422);
+        $mime_type = isset($params['mime_type']) ? sanitize_mime_type((string) $params['mime_type']) : '';
+        $data_base64 = isset($params['data_base64']) ? preg_replace('/\s+/', '', (string) $params['data_base64']) : '';
+        $allowed_mimes = [
+            'image/jpeg' => ['jpg', 'jpeg'],
+            'image/png' => ['png'],
+        ];
+        $extension = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+        if (
+            $filename === ''
+            || $data_base64 === ''
+            || !isset($allowed_mimes[$mime_type])
+            || !in_array($extension, $allowed_mimes[$mime_type], true)
+            || strlen($data_base64) > 13981016
+        ) {
+            return Nevari_Helpers::error('validation_error', 'Select a valid JPG or PNG image no larger than 10 MB.', 422);
         }
 
         $bytes = base64_decode($data_base64, true);
-        if ($bytes === false || !$bytes) {
-            return Nevari_Helpers::error('validation_error', 'Image data is invalid.', 422);
+        $image_info = $bytes !== false ? @getimagesizefromstring($bytes) : false;
+        if (
+            $bytes === false
+            || strlen($bytes) < 1
+            || strlen($bytes) > 10 * 1024 * 1024
+            || !is_array($image_info)
+            || !isset($image_info['mime'])
+            || !hash_equals($mime_type, (string) $image_info['mime'])
+        ) {
+            return Nevari_Helpers::error('validation_error', 'Select a valid JPG or PNG image no larger than 10 MB.', 422);
         }
 
         $upload = wp_upload_bits($filename, null, $bytes);
         if (!empty($upload['error'])) {
-            return Nevari_Helpers::error('media_upload_failed', sanitize_text_field((string) $upload['error']), 500);
+            return Nevari_Helpers::error('media_upload_failed', 'The product image could not be uploaded.', 500);
         }
 
         $attachment_id = wp_insert_attachment([
             'post_mime_type' => $mime_type,
             'post_title' => sanitize_text_field(pathinfo($filename, PATHINFO_FILENAME)),
             'post_status' => 'inherit',
+            'post_author' => get_current_user_id(),
         ], $upload['file']);
         if (is_wp_error($attachment_id) || !$attachment_id) {
+            wp_delete_file($upload['file']);
             return Nevari_Helpers::error('media_upload_failed', 'The image attachment could not be created.', 500);
         }
 
@@ -6984,13 +7085,17 @@ final class Nevari_Rest {
     }
 
     private static function sales_summary(): array {
-        if (!self::woo_available()) { return ['today' => '0', 'month' => '0', 'orders_today' => 0, 'currency' => self::store_currency()]; }
+        if (!self::woo_available()) { return ['today' => '0', 'week' => '0', 'month' => '0', 'orders_today' => 0, 'currency' => self::store_currency()]; }
+        $week_start = gmdate('Y-m-d 00:00:00', strtotime('monday this week'));
         $today_orders = wc_get_orders(['limit' => -1, 'date_created' => '>' . gmdate('Y-m-d 00:00:00'), 'status' => ['processing','completed']]);
+        $week_orders = wc_get_orders(['limit' => -1, 'date_created' => '>' . $week_start, 'status' => ['processing','completed']]);
         $month_orders = wc_get_orders(['limit' => -1, 'date_created' => '>' . gmdate('Y-m-01 00:00:00'), 'status' => ['processing','completed']]);
         $today_total = 0; foreach ($today_orders as $o) { $today_total += (float) $o->get_total(); }
+        $week_total = 0; foreach ($week_orders as $o) { $week_total += (float) $o->get_total(); }
         $month_total = 0; foreach ($month_orders as $o) { $month_total += (float) $o->get_total(); }
         return [
             'today' => wc_format_decimal($today_total, 2),
+            'week' => wc_format_decimal($week_total, 2),
             'month' => wc_format_decimal($month_total, 2),
             'orders_today' => count($today_orders),
             'currency' => self::store_currency(),
