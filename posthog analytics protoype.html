@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Nevari growth overview prototype using PostHog-style product metrics." />
+  <title>Nevari · Growth overview</title>
+  <style>
+    :root {
+      --primary: #0A2A5E;
+      --primary-900: #061B3F;
+      --primary-700: #11396F;
+      --primary-100: #E8EEF7;
+      --primary-50: #F4F7FB;
+      --accent: #E3D7C6;
+      --accent-900: #4B3D2B;
+      --accent-100: #F4EEE6;
+      --accent-50: #FBF8F3;
+      --success: #1F8A5B;
+      --success-bg: #DDF4E8;
+      --warning: #B46A12;
+      --warning-bg: #FFF0D1;
+      --danger: #B23B3B;
+      --danger-bg: #FCE3E3;
+      --info: #2C6EB7;
+      --info-bg: #E2EFFC;
+      --purple: #7656A5;
+      --purple-bg: #EEE6FA;
+      --ink: #102039;
+      --muted: #667085;
+      --subtle: #98A2B3;
+      --line: rgba(10,42,94,.14);
+      --line-strong: rgba(10,42,94,.24);
+      --white: #FFFFFF;
+      --page: #F4F1EA;
+      --font: Inter, Manrope, Product Sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --radius-sm: 12px;
+      --radius-md: 18px;
+      --radius-lg: 24px;
+      --pill: 999px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background: var(--page);
+      font-family: var(--font);
+      font-size: 14px;
+      font-weight: 400;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    button, select, input { font: inherit; }
+    button { cursor: pointer; }
+    svg { display: block; }
+    .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 236px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 24px 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      color: var(--white);
+      background: var(--primary);
+      border-right: 1px solid var(--primary-700);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 0 8px 24px;
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: var(--primary);
+      background: var(--accent);
+      font-size: 15px;
+      font-weight: 500;
+    }
+
+    .brand-name { font-size: 15px; }
+    .brand-sub { margin-top: 1px; color: rgba(255,255,255,.62); font-size: 11px; }
+    .nav-label { margin: 20px 10px 8px; color: rgba(255,255,255,.48); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+    .nav { display: grid; gap: 5px; }
+    .nav-item {
+      width: 100%;
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 0 12px;
+      border: 1px solid transparent;
+      border-radius: var(--pill);
+      color: rgba(255,255,255,.72);
+      background: transparent;
+      font-size: 13px;
+      text-align: left;
+      transition: background-color .18s ease, color .18s ease, border-color .18s ease, transform .18s ease;
+    }
+    .nav-item:hover { color: var(--white); background: rgba(255,255,255,.08); transform: translateX(2px); }
+    .nav-item.active { color: var(--primary); background: var(--accent); }
+
+    .data-note {
+      padding: 14px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: var(--radius-md);
+      color: rgba(255,255,255,.72);
+      font-size: 12px;
+    }
+    .data-note .status-row { display: flex; align-items: center; gap: 8px; color: var(--white); margin-bottom: 6px; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #77D5AB; animation: breathe 2.6s ease-in-out infinite; }
+
+    .main { min-width: 0; padding: 24px 28px 48px; }
+    .mobile-header { display: none; }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 22px;
+    }
+    .eyebrow { margin: 0 0 5px; color: var(--muted); font-size: 12px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 0; font-size: clamp(28px, 3vw, 38px); line-height: 1.08; letter-spacing: -.045em; font-weight: 400; color: var(--primary); }
+    h2 { margin-bottom: 0; font-size: 21px; line-height: 1.2; letter-spacing: -.025em; font-weight: 400; color: var(--primary); }
+    h3 { margin-bottom: 0; font-size: 15px; line-height: 1.3; font-weight: 400; color: var(--primary); }
+
+    .top-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
+    .control, .toggle-control, .icon-button {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: var(--pill);
+      color: var(--primary);
+      background: var(--white);
+      transition: background-color .18s ease, border-color .18s ease, transform .18s ease;
+    }
+    .control { padding: 0 14px; outline: none; }
+    .control:hover, .control:focus, .toggle-control:hover, .icon-button:hover { border-color: var(--line-strong); }
+    .icon-button { width: 40px; display: grid; place-items: center; }
+    .icon-button:hover { transform: rotate(8deg); }
+
+    .toggle-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 13px 0 9px;
+      white-space: nowrap;
+    }
+    .switch {
+      width: 34px;
+      height: 20px;
+      padding: 2px;
+      border-radius: var(--pill);
+      background: var(--primary-100);
+      transition: background-color .2s ease;
+    }
+    .switch::after {
+      content: "";
+      display: block;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--primary);
+      transform: translateX(0);
+      transition: transform .2s ease, background-color .2s ease;
+    }
+    .toggle-control.active .switch { background: var(--primary); }
+    .toggle-control.active .switch::after { background: var(--white); transform: translateX(14px); }
+
+    .context-bar {
+      margin-bottom: 18px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--accent-50);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .context-left { display: flex; align-items: center; gap: 9px; }
+    .context-left .icon { color: var(--info); }
+    .updated { white-space: nowrap; color: var(--primary); }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .metric-card {
+      min-height: 158px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--white);
+      overflow: hidden;
+      position: relative;
+      transition: transform .18s ease, border-color .18s ease, background-color .18s ease;
+    }
+    .metric-card:hover { transform: translateY(-2px); border-color: var(--line-strong); background: #FFFEFC; }
+    .metric-card[data-tone="blue"] { background: var(--primary-50); }
+    .metric-card[data-tone="sand"] { background: var(--accent-100); }
+    .metric-card[data-tone="green"] { background: var(--success-bg); }
+    .metric-card[data-tone="purple"] { background: var(--purple-bg); }
+    .metric-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+    .metric-label { color: var(--muted); font-size: 12px; }
+    .metric-icon { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--primary); background: rgba(255,255,255,.62); }
+    .metric-value { margin-top: 17px; color: var(--primary); font-size: clamp(28px, 3vw, 38px); line-height: 1; letter-spacing: -.045em; font-weight: 400; font-variant-numeric: tabular-nums; }
+    .metric-foot { margin-top: 10px; display: flex; justify-content: space-between; gap: 10px; align-items: end; }
+    .metric-help { max-width: 68%; color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .change { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 8px; border-radius: var(--pill); font-size: 11px; white-space: nowrap; }
+    .change.up { color: var(--success); background: rgba(255,255,255,.68); }
+    .change.down { color: var(--danger); background: rgba(255,255,255,.68); }
+    .change.hidden { visibility: hidden; }
+
+    .section-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr); gap: 14px; margin-bottom: 14px; }
+    .panel {
+      min-width: 0;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: var(--white);
+      transition: border-color .18s ease;
+    }
+    .panel:hover { border-color: var(--line-strong); }
+    .panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+    .panel-copy { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .pill-note { min-height: 28px; padding: 0 10px; display: inline-flex; align-items: center; border-radius: var(--pill); color: var(--primary); background: var(--primary-50); font-size: 11px; white-space: nowrap; }
+
+    .funnel-list { display: grid; gap: 13px; }
+    .funnel-row { display: grid; grid-template-columns: 170px minmax(100px, 1fr) 90px; gap: 14px; align-items: center; }
+    .stage-name { color: var(--primary); font-size: 13px; }
+    .stage-note { display: block; margin-top: 3px; color: var(--muted); font-size: 10.5px; }
+    .funnel-track { height: 36px; border-radius: var(--radius-sm); background: var(--primary-50); overflow: hidden; }
+    .funnel-fill { height: 100%; width: 0; display: flex; align-items: center; padding-left: 11px; color: var(--white); background: var(--primary); border-radius: inherit; font-size: 11px; transition: width .72s cubic-bezier(.2,.8,.2,1), background-color .18s ease; white-space: nowrap; }
+    .funnel-row:nth-child(2) .funnel-fill { background: var(--primary-700); }
+    .funnel-row:nth-child(3) .funnel-fill { background: var(--info); }
+    .funnel-row:nth-child(4) .funnel-fill { background: var(--purple); }
+    .funnel-row:nth-child(5) .funnel-fill { background: var(--warning); }
+    .funnel-row:nth-child(6) .funnel-fill { background: var(--success); }
+    .funnel-row:nth-child(7) .funnel-fill { background: var(--accent-900); }
+    .stage-drop { text-align: right; font-variant-numeric: tabular-nums; }
+    .stage-drop strong { display: block; color: var(--danger); font-size: 12px; font-weight: 400; }
+    .stage-drop span { color: var(--muted); font-size: 10px; }
+
+    .trend-chart { height: 245px; display: grid; grid-template-rows: 1fr auto; gap: 8px; }
+    .chart-area { position: relative; min-height: 0; border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .grid-line { position: absolute; left: 0; right: 0; height: 1px; background: rgba(10,42,94,.08); }
+    .chart-svg { position: absolute; inset: 8px 8px 8px 0; width: calc(100% - 8px); height: calc(100% - 16px); overflow: visible; }
+    .trend-path, .compare-path { fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 800; stroke-dashoffset: 800; animation: drawLine .9s ease forwards; }
+    .trend-path { stroke: var(--primary); }
+    .compare-path { stroke: var(--accent-900); stroke-dasharray: 5 5; stroke-dashoffset: 0; opacity: .65; animation: none; }
+    .chart-dot { fill: var(--white); stroke: var(--primary); stroke-width: 2; }
+    .chart-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; }
+    .chart-legend { display: flex; gap: 14px; align-items: center; color: var(--muted); font-size: 11px; }
+    .legend-line { width: 22px; height: 2px; background: var(--primary); }
+    .legend-line.previous { height: 0; border-top: 2px dashed var(--accent-900); background: transparent; }
+
+    .lower-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .retention-block { display: grid; gap: 18px; }
+    .retention-item { display: grid; grid-template-columns: 78px 1fr 52px; gap: 12px; align-items: center; }
+    .retention-label { color: var(--primary); font-size: 13px; }
+    .retention-label span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .progress { height: 13px; border-radius: var(--pill); background: var(--primary-50); overflow: hidden; }
+    .progress span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--info); transition: width .72s cubic-bezier(.2,.8,.2,1); }
+    .retention-item:nth-child(2) .progress span { background: var(--purple); }
+    .retention-value { text-align: right; color: var(--primary); font-size: 20px; font-variant-numeric: tabular-nums; }
+    .plain-insight { margin-top: 18px; padding: 13px; border-radius: var(--radius-md); background: var(--accent-50); color: var(--muted); font-size: 12px; }
+    .plain-insight span { color: var(--primary); }
+
+    .breakdown { display: grid; gap: 14px; }
+    .stacked-bar { height: 18px; display: flex; border-radius: var(--pill); overflow: hidden; background: var(--primary-50); }
+    .stacked-segment { width: 0; height: 100%; transition: width .72s cubic-bezier(.2,.8,.2,1); }
+    .stacked-segment:nth-child(1) { background: var(--primary); }
+    .stacked-segment:nth-child(2) { background: var(--info); }
+    .stacked-segment:nth-child(3) { background: var(--accent-900); }
+    .stacked-segment:nth-child(4) { background: var(--purple); }
+    .legend-list { display: grid; gap: 10px; }
+    .legend-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; }
+    .legend-dot { width: 9px; height: 9px; border-radius: 50%; }
+    .legend-item:nth-child(1) .legend-dot { background: var(--primary); }
+    .legend-item:nth-child(2) .legend-dot { background: var(--info); }
+    .legend-item:nth-child(3) .legend-dot { background: var(--accent-900); }
+    .legend-item:nth-child(4) .legend-dot { background: var(--purple); }
+    .legend-percent { color: var(--primary); font-variant-numeric: tabular-nums; }
+
+    .role-bars { display: grid; gap: 13px; }
+    .role-row { display: grid; grid-template-columns: 92px 1fr 40px; gap: 10px; align-items: center; color: var(--muted); font-size: 12px; }
+    .role-track { height: 9px; border-radius: var(--pill); background: var(--primary-50); overflow: hidden; }
+    .role-track span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--primary); transition: width .72s cubic-bezier(.2,.8,.2,1); }
+    .role-row:nth-child(2) .role-track span { background: var(--info); }
+    .role-row:nth-child(3) .role-track span { background: var(--success); }
+    .role-row:nth-child(4) .role-track span { background: var(--accent-900); }
+    .role-value { text-align: right; color: var(--primary); font-variant-numeric: tabular-nums; }
+
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      max-width: 320px;
+      padding: 13px 15px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-md);
+      color: var(--primary);
+      background: var(--white);
+      opacity: 0;
+      transform: translateY(12px);
+      pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+      z-index: 20;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast p { margin: 0; font-size: 12px; color: var(--muted); }
+
+    .fade-refresh { animation: refresh .38s ease; }
+    @keyframes refresh { 0% { opacity: .45; transform: translateY(3px); } 100% { opacity: 1; transform: translateY(0); } }
+    @keyframes drawLine { to { stroke-dashoffset: 0; } }
+    @keyframes breathe { 0%,100% { opacity: .55; transform: scale(.9); } 50% { opacity: 1; transform: scale(1.12); } }
+
+    @media (max-width: 1200px) {
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .lower-grid { grid-template-columns: 1fr 1fr; }
+      .lower-grid .panel:last-child { grid-column: 1 / -1; }
+    }
+
+    @media (max-width: 960px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .main { padding: 18px 18px 40px; }
+      .mobile-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+      .mobile-header .brand { padding: 0; color: var(--primary); }
+      .mobile-header .brand-sub { color: var(--muted); }
+      .section-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .top-actions { width: 100%; justify-content: flex-start; }
+      .control, .toggle-control { flex: 1; }
+      .context-bar { align-items: flex-start; flex-direction: column; }
+      .metric-grid, .lower-grid { grid-template-columns: 1fr; }
+      .lower-grid .panel:last-child { grid-column: auto; }
+      .funnel-row { grid-template-columns: 1fr; gap: 7px; }
+      .stage-drop { text-align: left; display: flex; gap: 5px; align-items: baseline; }
+      .metric-help { max-width: 72%; }
+      .panel { padding: 15px; border-radius: var(--radius-md); }
+    }
+
+    @media (max-width: 440px) {
+      .main { padding: 14px 12px 34px; }
+      .top-actions { display: grid; grid-template-columns: 1fr 40px; }
+      .toggle-control { grid-column: 1 / -1; }
+      .control { min-width: 0; width: 100%; }
+      .metric-value { font-size: 34px; }
+      .retention-item { grid-template-columns: 70px 1fr 45px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
+    <symbol id="i-overview" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+    <symbol id="i-funnel" viewBox="0 0 24 24"><path d="M4 5h16l-6.2 7.2v5.1l-3.6 1.8v-6.9z"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M17 11a4 4 0 0 1 4 4v2"/><path d="M16.5 3.2a4 4 0 0 1 0 7.6"/></symbol>
+    <symbol id="i-retention" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+    <symbol id="i-device" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.5 9a7 7 0 0 0-12-2.5L4 11M20 13l-2.5 4.5A7 7 0 0 1 5.5 15"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></symbol>
+    <symbol id="i-card" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></symbol>
+  </svg>
+
+  <div class="app">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div>
+        <div class="brand">
+          <div class="brand-mark">N</div>
+          <div><div class="brand-name">Nevari</div><div class="brand-sub">Product intelligence</div></div>
+        </div>
+        <div class="nav-label">Workspace</div>
+        <nav class="nav">
+          <button class="nav-item active" type="button"><svg class="icon"><use href="#i-overview"/></svg>Overview</button>
+          <button class="nav-item" type="button"><svg class="icon"><use href="#i-funnel"/></svg>Conversion journey</button>
+          <button class="nav-item" type="button"><svg class="icon"><use href="#i-retention"/></svg>Retention</button>
+          <button class="nav-item" type="button"><svg class="icon"><use href="#i-users"/></svg>Audience</button>
+        </nav>
+        <div class="nav-label">Reports</div>
+        <nav class="nav">
+          <button class="nav-item" type="button"><svg class="icon"><use href="#i-calendar"/></svg>Saved views</button>
+        </nav>
+      </div>
+      <div class="data-note">
+        <div class="status-row"><span class="status-dot"></span><span>PostHog connected</span></div>
+        Prototype values are sample data. The UI is ready to map to saved insights or API queries.
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="mobile-header">
+        <div class="brand">
+          <div class="brand-mark">N</div>
+          <div><div class="brand-name">Nevari</div><div class="brand-sub">Product intelligence</div></div>
+        </div>
+      </div>
+
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Product health</p>
+          <h1>Growth overview</h1>
+        </div>
+        <div class="top-actions" aria-label="Dashboard controls">
+          <select class="control" id="dateRange" aria-label="Choose date range">
+            <option value="7d">Last 7 days</option>
+            <option value="30d" selected>Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+          </select>
+          <button class="toggle-control active" id="compareToggle" type="button" aria-pressed="true">
+            <span class="switch" aria-hidden="true"></span>
+            Previous period
+          </button>
+          <button class="icon-button" id="refreshButton" type="button" aria-label="Refresh dashboard">
+            <svg class="icon"><use href="#i-refresh"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="context-bar">
+        <div class="context-left">
+          <svg class="icon"><use href="#i-info"/></svg>
+          <span>Every percentage explains the step it measures, so teams can read this page without analytics jargon.</span>
+        </div>
+        <span class="updated" id="updatedText">Updated just now</span>
+      </div>
+
+      <section class="metric-grid" id="metricGrid" aria-label="Key product metrics"></section>
+
+      <section class="section-grid">
+        <article class="panel" aria-labelledby="funnelTitle">
+          <div class="panel-header">
+            <div>
+              <h2 id="funnelTitle">Customer journey</h2>
+              <p class="panel-copy">How people move from a first visit to a subscription.</p>
+            </div>
+            <span class="pill-note" id="funnelSummary">4.5% reach subscription</span>
+          </div>
+          <div class="funnel-list" id="funnelList"></div>
+        </article>
+
+        <article class="panel" aria-labelledby="trendTitle">
+          <div class="panel-header">
+            <div>
+              <h2 id="trendTitle">Visitors over time</h2>
+              <p class="panel-copy">Daily unique people, not page views.</p>
+            </div>
+            <div class="chart-legend">
+              <span class="legend-line"></span><span>Current</span>
+              <span class="legend-line previous compare-only"></span><span class="compare-only">Previous</span>
+            </div>
+          </div>
+          <div class="trend-chart">
+            <div class="chart-area" id="chartArea">
+              <span class="grid-line" style="top:25%"></span>
+              <span class="grid-line" style="top:50%"></span>
+              <span class="grid-line" style="top:75%"></span>
+              <svg class="chart-svg" viewBox="0 0 600 200" preserveAspectRatio="none" aria-label="Visitors trend chart">
+                <polyline class="compare-path compare-only" id="previousLine" points="0,168 75,150 150,160 225,115 300,130 375,92 450,100 525,60 600,72" />
+                <polyline class="trend-path" id="currentLine" points="0,160 75,145 150,150 225,102 300,120 375,76 450,88 525,42 600,52" />
+              </svg>
+            </div>
+            <div class="chart-labels" id="chartLabels"><span>Day 1</span><span>Day 8</span><span>Day 15</span><span>Day 22</span><span>Day 30</span></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="lower-grid">
+        <article class="panel" aria-labelledby="retentionTitle">
+          <div class="panel-header">
+            <div>
+              <h2 id="retentionTitle">People who return</h2>
+              <p class="panel-copy">Visitors who came back after their first meaningful action.</p>
+            </div>
+          </div>
+          <div class="retention-block" id="retentionBlock"></div>
+          <div class="plain-insight" id="retentionInsight"><span>Plain-English read:</span> about 4 in 10 people return within a week.</div>
+        </article>
+
+        <article class="panel" aria-labelledby="deviceTitle">
+          <div class="panel-header">
+            <div>
+              <h2 id="deviceTitle">Devices used</h2>
+              <p class="panel-copy">Where visitors access the service.</p>
+            </div>
+            <svg class="icon" style="color:var(--info)"><use href="#i-device"/></svg>
+          </div>
+          <div class="breakdown">
+            <div class="stacked-bar" id="deviceBar" aria-label="Device share"></div>
+            <div class="legend-list" id="deviceLegend"></div>
+          </div>
+        </article>
+
+        <article class="panel" aria-labelledby="roleTitle">
+          <div class="panel-header">
+            <div>
+              <h2 id="roleTitle">Who is using Nevari</h2>
+              <p class="panel-copy">Breakdown by the role selected during registration.</p>
+            </div>
+            <svg class="icon" style="color:var(--purple)"><use href="#i-person"/></svg>
+          </div>
+          <div class="role-bars" id="roleBars"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite">
+    <svg class="icon" style="color:var(--success)"><use href="#i-check"/></svg>
+    <div><strong style="font-weight:400">Dashboard refreshed</strong><p>Sample metrics were reloaded successfully.</p></div>
+  </div>
+
+  <script>
+    const DATA = {
+      "7d": {
+        label: "Last 7 days",
+        metrics: [
+          { id:"visitors", label:"Unique visitors", value:6180, type:"number", help:"Different people who visited", change:7.2, tone:"blue", icon:"i-users" },
+          { id:"registration", label:"Registration completion", value:73.4, type:"percent", help:"Of people who started registration", change:3.1, tone:"sand", icon:"i-check" },
+          { id:"consultation", label:"Consultation submission", value:66.1, type:"percent", help:"Of registered people who submitted", change:1.8, tone:"blue", icon:"i-chat" },
+          { id:"booking", label:"Appointment booking", value:53.8, type:"percent", help:"Of submitted consultations booked", change:-1.2, tone:"sand", icon:"i-calendar" },
+          { id:"payment", label:"Payment completion", value:76.4, type:"percent", help:"Of booked appointments paid", change:4.6, tone:"green", icon:"i-card" },
+          { id:"subscription", label:"Subscription conversion", value:50.2, type:"percent", help:"Of completed payments subscribed", change:2.4, tone:"purple", icon:"i-star" },
+          { id:"retention7", label:"Seven-day retention", value:43.7, type:"percent", help:"Returned within seven days", change:2.0, tone:"blue", icon:"i-retention" },
+          { id:"retention30", label:"Thirty-day retention", value:25.9, type:"percent", help:"Returned within thirty days", change:1.1, tone:"sand", icon:"i-retention" }
+        ],
+        funnel:[6180,3150,2312,1528,822,628,315],
+        previousFunnel:[5765,2960,2160,1390,768,567,277],
+        trend:[42,48,46,55,58,62,67,64,72],
+        previousTrend:[38,42,40,48,51,56,58,57,62],
+        retention:[43.7,25.9],
+        devices:[65,28,7],
+        roles:[69,16,10,5]
+      },
+      "30d": {
+        label: "Last 30 days",
+        metrics: [
+          { id:"visitors", label:"Unique visitors", value:24680, type:"number", help:"Different people who visited", change:8.6, tone:"blue", icon:"i-users" },
+          { id:"registration", label:"Registration completion", value:72.0, type:"percent", help:"Of people who started registration", change:2.8, tone:"sand", icon:"i-check" },
+          { id:"consultation", label:"Consultation submission", value:65.0, type:"percent", help:"Of registered people who submitted", change:1.5, tone:"blue", icon:"i-chat" },
+          { id:"booking", label:"Appointment booking", value:51.6, type:"percent", help:"Of submitted consultations booked", change:-0.9, tone:"sand", icon:"i-calendar" },
+          { id:"payment", label:"Payment completion", value:74.7, type:"percent", help:"Of booked appointments paid", change:4.1, tone:"green", icon:"i-card" },
+          { id:"subscription", label:"Subscription conversion", value:49.0, type:"percent", help:"Of completed payments subscribed", change:2.2, tone:"purple", icon:"i-star" },
+          { id:"retention7", label:"Seven-day retention", value:42.0, type:"percent", help:"Returned within seven days", change:1.7, tone:"blue", icon:"i-retention" },
+          { id:"retention30", label:"Thirty-day retention", value:25.0, type:"percent", help:"Returned within thirty days", change:0.8, tone:"sand", icon:"i-retention" }
+        ],
+        funnel:[24680,12440,8960,5824,3008,2248,1102],
+        previousFunnel:[22728,11740,8420,5450,2860,2045,988],
+        trend:[42,55,50,72,63,88,79,111,101],
+        previousTrend:[38,48,46,61,58,77,70,95,88],
+        retention:[42,25],
+        devices:[62,31,7],
+        roles:[68,17,10,5]
+      },
+      "90d": {
+        label: "Last 90 days",
+        metrics: [
+          { id:"visitors", label:"Unique visitors", value:68940, type:"number", help:"Different people who visited", change:12.4, tone:"blue", icon:"i-users" },
+          { id:"registration", label:"Registration completion", value:70.8, type:"percent", help:"Of people who started registration", change:1.9, tone:"sand", icon:"i-check" },
+          { id:"consultation", label:"Consultation submission", value:63.2, type:"percent", help:"Of registered people who submitted", change:0.7, tone:"blue", icon:"i-chat" },
+          { id:"booking", label:"Appointment booking", value:50.4, type:"percent", help:"Of submitted consultations booked", change:1.2, tone:"sand", icon:"i-calendar" },
+          { id:"payment", label:"Payment completion", value:72.8, type:"percent", help:"Of booked appointments paid", change:3.0, tone:"green", icon:"i-card" },
+          { id:"subscription", label:"Subscription conversion", value:46.8, type:"percent", help:"Of completed payments subscribed", change:1.6, tone:"purple", icon:"i-star" },
+          { id:"retention7", label:"Seven-day retention", value:40.8, type:"percent", help:"Returned within seven days", change:1.1, tone:"blue", icon:"i-retention" },
+          { id:"retention30", label:"Thirty-day retention", value:23.7, type:"percent", help:"Returned within thirty days", change:0.4, tone:"sand", icon:"i-retention" }
+        ],
+        funnel:[68940,35450,25100,15863,7995,5820,2724],
+        previousFunnel:[61335,32400,22760,14280,7030,5080,2384],
+        trend:[44,52,59,61,72,78,82,94,106],
+        previousTrend:[39,46,51,57,64,69,73,83,91],
+        retention:[40.8,23.7],
+        devices:[59,34,7],
+        roles:[66,18,11,5]
+      }
+    };
+
+    const STAGES = [
+      ["Visited the service", "Unique visitors"],
+      ["Started registration", "Began creating an account"],
+      ["Completed registration", "Finished account setup"],
+      ["Submitted consultation", "Sent their health request"],
+      ["Booked appointment", "Chose an appointment time"],
+      ["Completed payment", "Successfully paid"],
+      ["Started subscription", "Became a subscriber"]
+    ];
+    const DEVICE_NAMES = ["Mobile", "Desktop", "Tablet"];
+    const ROLE_NAMES = ["Patients", "Doctors", "Pharmacy staff", "Other"];
+
+    const metricGrid = document.getElementById("metricGrid");
+    const funnelList = document.getElementById("funnelList");
+    const retentionBlock = document.getElementById("retentionBlock");
+    const deviceBar = document.getElementById("deviceBar");
+    const deviceLegend = document.getElementById("deviceLegend");
+    const roleBars = document.getElementById("roleBars");
+    const compareToggle = document.getElementById("compareToggle");
+    const dateRange = document.getElementById("dateRange");
+    const toast = document.getElementById("toast");
+    let compareEnabled = true;
+    let currentRange = "30d";
+
+    function formatNumber(value) {
+      return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+    }
+
+    function animateValue(element, endValue, type) {
+      const start = performance.now();
+      const duration = 520;
+      const begin = 0;
+      function frame(now) {
+        const progress = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const value = begin + (endValue - begin) * eased;
+        element.textContent = type === "percent" ? `${value.toFixed(1)}%` : formatNumber(Math.round(value));
+        if (progress < 1) requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    }
+
+    function renderMetrics(data) {
+      metricGrid.innerHTML = "";
+      data.metrics.forEach(metric => {
+        const direction = metric.change >= 0 ? "up" : "down";
+        const arrow = metric.change >= 0 ? "↑" : "↓";
+        const card = document.createElement("article");
+        card.className = "metric-card";
+        card.dataset.tone = metric.tone;
+        card.innerHTML = `
+          <div class="metric-head">
+            <span class="metric-label">${metric.label}</span>
+            <span class="metric-icon"><svg class="icon"><use href="#${metric.icon}"/></svg></span>
+          </div>
+          <div class="metric-value" data-value="${metric.value}" data-type="${metric.type}">0</div>
+          <div class="metric-foot">
+            <span class="metric-help">${metric.help}</span>
+            <span class="change ${direction} ${compareEnabled ? "" : "hidden"}">${arrow} ${Math.abs(metric.change).toFixed(1)}%</span>
+          </div>`;
+        metricGrid.appendChild(card);
+        animateValue(card.querySelector(".metric-value"), metric.value, metric.type);
+      });
+    }
+
+    function renderFunnel(data) {
+      funnelList.innerHTML = "";
+      const max = data.funnel[0];
+      data.funnel.forEach((value, index) => {
+        const width = Math.max(14, (value / max) * 100);
+        const previousStep = index === 0 ? value : data.funnel[index - 1];
+        const drop = index === 0 ? 0 : ((previousStep - value) / previousStep) * 100;
+        const row = document.createElement("div");
+        row.className = "funnel-row";
+        row.innerHTML = `
+          <div><span class="stage-name">${STAGES[index][0]}</span><span class="stage-note">${STAGES[index][1]}</span></div>
+          <div class="funnel-track"><div class="funnel-fill" data-width="${width}">${formatNumber(value)}</div></div>
+          <div class="stage-drop">${index === 0 ? '<strong style="color:var(--muted)">Starting point</strong>' : `<strong>−${drop.toFixed(1)}%</strong><span>from prior step</span>`}</div>`;
+        funnelList.appendChild(row);
+      });
+      requestAnimationFrame(() => funnelList.querySelectorAll(".funnel-fill").forEach(fill => fill.style.width = `${fill.dataset.width}%`));
+      const overall = (data.funnel.at(-1) / data.funnel[0]) * 100;
+      document.getElementById("funnelSummary").textContent = `${overall.toFixed(1)}% reach subscription`;
+    }
+
+    function renderRetention(data) {
+      retentionBlock.innerHTML = `
+        <div class="retention-item">
+          <div class="retention-label">7 days<span>Early return</span></div>
+          <div class="progress"><span data-width="${data.retention[0]}"></span></div>
+          <div class="retention-value">${data.retention[0].toFixed(1)}%</div>
+        </div>
+        <div class="retention-item">
+          <div class="retention-label">30 days<span>Longer-term return</span></div>
+          <div class="progress"><span data-width="${data.retention[1]}"></span></div>
+          <div class="retention-value">${data.retention[1].toFixed(1)}%</div>
+        </div>`;
+      requestAnimationFrame(() => retentionBlock.querySelectorAll(".progress span").forEach(bar => bar.style.width = `${bar.dataset.width}%`));
+      document.getElementById("retentionInsight").innerHTML = `<span>Plain-English read:</span> about ${Math.round(data.retention[0] / 10)} in 10 people return within a week.`;
+    }
+
+    function renderDevices(data) {
+      deviceBar.innerHTML = data.devices.map((value, index) => `<span class="stacked-segment" data-width="${value}" aria-label="${DEVICE_NAMES[index]} ${value}%"></span>`).join("");
+      deviceLegend.innerHTML = data.devices.map((value, index) => `<div class="legend-item"><span class="legend-dot"></span><span>${DEVICE_NAMES[index]}</span><span class="legend-percent">${value}%</span></div>`).join("");
+      requestAnimationFrame(() => deviceBar.querySelectorAll(".stacked-segment").forEach(segment => segment.style.width = `${segment.dataset.width}%`));
+    }
+
+    function renderRoles(data) {
+      roleBars.innerHTML = data.roles.map((value, index) => `
+        <div class="role-row">
+          <span>${ROLE_NAMES[index]}</span>
+          <div class="role-track"><span data-width="${value}"></span></div>
+          <span class="role-value">${value}%</span>
+        </div>`).join("");
+      requestAnimationFrame(() => roleBars.querySelectorAll(".role-track span").forEach(bar => bar.style.width = `${bar.dataset.width}%`));
+    }
+
+    function linePoints(values) {
+      const max = Math.max(...values) * 1.08;
+      const min = Math.min(...values) * .86;
+      return values.map((value, index) => {
+        const x = (index / (values.length - 1)) * 600;
+        const y = 190 - ((value - min) / (max - min)) * 170;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(" ");
+    }
+
+    function renderTrend(data) {
+      const currentLine = document.getElementById("currentLine");
+      const previousLine = document.getElementById("previousLine");
+      currentLine.setAttribute("points", linePoints(data.trend));
+      previousLine.setAttribute("points", linePoints(data.previousTrend));
+      currentLine.style.animation = "none";
+      currentLine.getBoundingClientRect();
+      currentLine.style.animation = "drawLine .9s ease forwards";
+      const labels = currentRange === "7d" ? ["Mon","Tue","Wed","Thu","Fri"] : currentRange === "90d" ? ["Week 1","Week 4","Week 7","Week 10","Week 13"] : ["Day 1","Day 8","Day 15","Day 22","Day 30"];
+      document.getElementById("chartLabels").innerHTML = labels.map(label => `<span>${label}</span>`).join("");
+    }
+
+    function renderAll(range) {
+      currentRange = range;
+      const data = DATA[range];
+      const content = document.querySelector(".main");
+      content.classList.remove("fade-refresh");
+      content.getBoundingClientRect();
+      content.classList.add("fade-refresh");
+      renderMetrics(data);
+      renderFunnel(data);
+      renderRetention(data);
+      renderDevices(data);
+      renderRoles(data);
+      renderTrend(data);
+      document.querySelectorAll(".compare-only").forEach(element => element.style.display = compareEnabled ? "" : "none");
+    }
+
+    dateRange.addEventListener("change", event => {
+      renderAll(event.target.value);
+      document.getElementById("updatedText").textContent = `${DATA[event.target.value].label} selected`;
+    });
+
+    compareToggle.addEventListener("click", () => {
+      compareEnabled = !compareEnabled;
+      compareToggle.classList.toggle("active", compareEnabled);
+      compareToggle.setAttribute("aria-pressed", String(compareEnabled));
+      document.querySelectorAll(".change").forEach(change => change.classList.toggle("hidden", !compareEnabled));
+      document.querySelectorAll(".compare-only").forEach(element => element.style.display = compareEnabled ? "" : "none");
+    });
+
+    document.getElementById("refreshButton").addEventListener("click", () => {
+      renderAll(currentRange);
+      document.getElementById("updatedText").textContent = "Updated just now";
+      toast.classList.add("show");
+      window.setTimeout(() => toast.classList.remove("show"), 2300);
+    });
+
+    document.querySelectorAll(".nav-item").forEach(item => item.addEventListener("click", () => {
+      document.querySelectorAll(".nav-item").forEach(link => link.classList.remove("active"));
+      item.classList.add("active");
+    }));
+
+    renderAll(currentRange);
+  </script>
+</body>
+</html>

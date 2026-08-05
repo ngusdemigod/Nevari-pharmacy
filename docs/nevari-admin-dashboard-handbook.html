@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nevari Pharmacy — Administrator Dashboard Handbook</title>
+  <style>
+    @page { size: A4; margin: 14mm 13mm 16mm; }
+    :root {
+      --navy: #092e67;
+      --blue: #1769e0;
+      --ink: #10213e;
+      --muted: #60708b;
+      --line: #dce5f2;
+      --soft: #f4f7fb;
+      --mint: #e9f8f1;
+      --amber: #fff4dc;
+      --red: #9c1c28;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); font-family: Arial, Helvetica, sans-serif; font-size: 10pt; line-height: 1.48; }
+    h1, h2, h3 { color: var(--navy); margin: 0; line-height: 1.15; }
+    h1 { font-size: 29pt; letter-spacing: -1px; }
+    h2 { font-size: 20pt; margin-bottom: 5mm; }
+    h3 { font-size: 12.5pt; margin-bottom: 2mm; }
+    p { margin: 0 0 3mm; }
+    ul, ol { margin: 2mm 0 3mm; padding-left: 5mm; }
+    li { margin-bottom: 1.5mm; }
+    .page { break-after: page; min-height: 257mm; position: relative; }
+    .page:last-child { break-after: auto; }
+    .cover { height: 267mm; margin: -14mm -13mm -16mm; padding: 25mm 20mm 18mm; color: white; overflow: hidden; background: radial-gradient(circle at 85% 15%, #3c76be 0 10%, transparent 34%), linear-gradient(145deg, #061d45, #0a3673 65%, #0f5697); }
+    .brand { display: flex; align-items: center; gap: 4mm; font-size: 13pt; font-weight: 700; letter-spacing: .2px; }
+    .brand-mark { width: 22mm; height: 22mm; padding: 2.5mm; border: 1px solid rgba(255,255,255,.4); border-radius: 5mm; object-fit: contain; background: white; }
+    .cover-copy { margin-top: 48mm; max-width: 140mm; }
+    .cover h1 { color: white; max-width: 135mm; }
+    .cover .subtitle { margin-top: 7mm; font-size: 15pt; color: #dbeafe; max-width: 126mm; }
+    .cover .edition { position: absolute; left: 20mm; bottom: 20mm; color: #c8ddf8; font-size: 9.5pt; }
+    .cover-card { position: absolute; right: -26mm; bottom: 28mm; width: 115mm; height: 68mm; padding: 10mm; border: 1px solid rgba(255,255,255,.25); border-radius: 9mm; background: rgba(255,255,255,.09); transform: rotate(-4deg); }
+    .eyebrow { color: var(--blue); font-size: 8.5pt; font-weight: 700; letter-spacing: 1.1px; text-transform: uppercase; margin-bottom: 2mm; }
+    .lead { color: #364a69; font-size: 12pt; max-width: 165mm; }
+    .section-rule { width: 18mm; height: 1.5mm; border-radius: 2mm; background: var(--blue); margin-bottom: 5mm; }
+    .callout { padding: 4mm 5mm; margin: 4mm 0; border-left: 1.2mm solid var(--blue); background: #eef5ff; border-radius: 0 3mm 3mm 0; }
+    .callout.warning { border-color: #d88b00; background: var(--amber); }
+    .callout.security { border-color: var(--red); background: #fff0f1; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
+    .card { padding: 4mm; border: .35mm solid var(--line); border-radius: 4mm; background: white; break-inside: avoid; }
+    .card p:last-child { margin-bottom: 0; }
+    .step { display: grid; grid-template-columns: 8mm 1fr; gap: 3mm; margin: 3mm 0; break-inside: avoid; }
+    .step-no { width: 7mm; height: 7mm; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--navy); font-weight: 700; font-size: 8.5pt; }
+    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2mm; margin: 7mm 0; align-items: stretch; }
+    .flow div { position: relative; padding: 4mm 2.5mm; text-align: center; border: .35mm solid #c9d8ed; border-radius: 3mm; color: var(--navy); background: var(--soft); font-weight: 700; font-size: 8.5pt; }
+    .flow div:not(:last-child)::after { content: "›"; position: absolute; right: -2.3mm; top: 50%; transform: translateY(-50%); z-index: 2; width: 3mm; color: var(--blue); background: white; font-size: 15pt; }
+    figure { margin: 5mm 0 3mm; break-inside: avoid; }
+    figure img { display: block; width: 100%; max-height: 143mm; object-fit: contain; object-position: top; border: .35mm solid var(--line); border-radius: 3mm; background: #f7f9fc; }
+    figcaption { margin-top: 2mm; color: var(--muted); font-size: 8.5pt; }
+    .shot-short img { max-height: 105mm; }
+    .shot-tall img { max-height: 165mm; }
+    .toc { display: grid; grid-template-columns: 12mm 1fr auto; gap: 2mm; padding: 3mm 0; border-bottom: .3mm solid var(--line); }
+    .toc b { color: var(--blue); }
+    .mini-table { width: 100%; border-collapse: collapse; margin: 3mm 0; font-size: 9pt; }
+    .mini-table th, .mini-table td { padding: 2.5mm; border-bottom: .3mm solid var(--line); vertical-align: top; text-align: left; }
+    .mini-table th { color: var(--navy); background: var(--soft); }
+    .tag { display: inline-block; padding: .8mm 2mm; border-radius: 6mm; font-size: 8pt; font-weight: 700; color: #11633f; background: var(--mint); }
+    .footer { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; color: #77859b; font-size: 8pt; border-top: .3mm solid var(--line); padding-top: 2mm; }
+    .checklist { list-style: none; padding-left: 0; }
+    .checklist li::before { content: "□"; color: var(--blue); font-weight: 700; margin-right: 2mm; }
+    .small { font-size: 8.5pt; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <section class="page cover">
+    <div class="brand"><img class="brand-mark" src="../ne.webp" alt="Nevari Pharmacy logo"> Nevari Pharmacy</div>
+    <div class="cover-copy">
+      <div style="color:#9fc9ff;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;margin-bottom:5mm">Operations handbook</div>
+      <h1>Administrator Dashboard Guide</h1>
+      <p class="subtitle">A simple, practical guide to understanding and operating the Nevari Pharmacy platform.</p>
+    </div>
+    <div class="cover-card"><strong style="font-size:15pt">One dashboard.</strong><br><span style="color:#dbeafe">Orders, products, patients, payments, clinical requests, staff, subscriptions and oversight.</span></div>
+    <div class="edition">Administrator edition · July 2026 · Internal operations document</div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">About this guide</div><div class="section-rule"></div>
+    <h2>Purpose and contents</h2>
+    <p class="lead">This handbook explains how Nevari works from an administrator’s point of view and shows the routine operations performed in the Admin Storefront.</p>
+    <div class="callout"><strong>In simple terms:</strong> customers use Nevari to buy pharmacy products and request healthcare services. The administrator uses one dashboard to monitor those activities, coordinate the appropriate staff, and keep every request moving safely to completion.</div>
+    <div style="margin-top:7mm">
+      <div class="toc"><b>01</b><span>System overview</span><span>3</span></div>
+      <div class="toc"><b>02</b><span>Dashboard orientation and daily routine</span><span>4–5</span></div>
+      <div class="toc"><b>03</b><span>Products, orders and payments</span><span>6–8</span></div>
+      <div class="toc"><b>04</b><span>Patients, subscriptions and staff</span><span>9–10</span></div>
+      <div class="toc"><b>05</b><span>Consultations, MTM, IV therapy and nurse requests</span><span>11–13</span></div>
+      <div class="toc"><b>06</b><span>Analytics, audit and settings</span><span>14–15</span></div>
+      <div class="toc"><b>07</b><span>Safety, troubleshooting and checklists</span><span>16</span></div>
+    </div>
+    <div class="callout warning" style="margin-top:8mm"><strong>Important:</strong> screenshots are illustrative. Names, figures, labels, and available buttons may vary with live data, permissions, and later product updates.</div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>2</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">01 · System overview</div><div class="section-rule"></div>
+    <h2>How the whole system works</h2>
+    <p class="lead">Nevari connects the online pharmacy storefront, healthcare workflows, payments, and staff dashboards. The administrator sees the operational picture and coordinates exceptions.</p>
+    <div class="flow"><div>Customer places an order or request</div><div>Nevari records and validates it</div><div>Payment or clinical review occurs</div><div>Assigned staff completes the work</div><div>Status and records are updated</div></div>
+    <div class="grid-2">
+      <div class="card"><h3>Pharmacy commerce</h3><p>Products, stock, orders, prescription requirements, delivery status, invoices, and verified payments are managed together. WooCommerce stores the core commerce records.</p></div>
+      <div class="card"><h3>Healthcare services</h3><p>Consultations, medication therapy management (MTM), IV therapy, and nurse requests follow their own review and scheduling workflows.</p></div>
+      <div class="card"><h3>People and access</h3><p>Patients create requests. Doctors, pharmacists, nurses, and administrators see only the information and actions permitted for their role.</p></div>
+      <div class="card"><h3>Operational control</h3><p>The dashboard gathers summaries, queues, activity history, and settings so administrators can find work that needs attention.</p></div>
+    </div>
+    <div class="callout security"><strong>Security implication:</strong> the platform contains patient, prescription, and payment information. Use only your own account, share the minimum necessary information, verify records before changing them, and never copy sensitive data into unapproved tools or messages.</div>
+    <h3 style="margin-top:6mm">What the administrator is responsible for</h3>
+    <ul>
+      <li>Maintain a correct product catalog and respond to stock alerts.</li>
+      <li>Move orders forward only after prescription and payment requirements are satisfied.</li>
+      <li>Monitor care-service queues and coordinate the correct staff member.</li>
+      <li>Review staff access, unusual activity, failures, refunds, and operational exceptions.</li>
+      <li>Keep settings accurate without weakening security controls.</li>
+    </ul>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>3</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">02 · Orientation</div><div class="section-rule"></div>
+    <h2>Your dashboard at a glance</h2>
+    <p>The Overview page is the administrator’s starting point. The left navigation opens each work area; the top search finds records; the cards and panels show current performance and items that need attention.</p>
+    <figure class="shot-tall"><img src="../temp/admin-walkthrough-updated/overview.png" alt="Current Nevari administrator dashboard overview"><figcaption>Current Administrator Overview: navigation, headline metrics, inventory attention, finance summary, and orders requiring action.</figcaption></figure>
+    <div class="grid-2">
+      <div class="card"><h3>Navigation</h3><p>Areas are grouped into Pharmacy, Health, and Security. The dark blue item is the page currently open.</p></div>
+      <div class="card"><h3>Search and filters</h3><p>Use search and page filters before scanning long lists. Clear filters if a record appears to be missing.</p></div>
+      <div class="card"><h3>Metrics</h3><p>Cards summarize live operational data. Click through to the relevant page before acting on an aggregate number.</p></div>
+      <div class="card"><h3>Account menu</h3><p>Use the profile control to confirm the signed-in account and end the session when using a shared device.</p></div>
+    </div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>4</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">02 · Daily routine</div><div class="section-rule"></div>
+    <h2>A simple daily operating rhythm</h2>
+    <div class="step"><span class="step-no">1</span><div><h3>Start with Overview</h3><p>Check revenue/payment exceptions, consultations due today, inventory warnings, and orders needing action.</p></div></div>
+    <div class="step"><span class="step-no">2</span><div><h3>Clear urgent order blockers</h3><p>Open Orders and prioritize prescription holds, failed or unverified payments, clinical follow-up, and delivery exceptions.</p></div></div>
+    <div class="step"><span class="step-no">3</span><div><h3>Review healthcare queues</h3><p>Check Consultations, MTM, IV Therapy, and Nurse Requests for new, unassigned, overdue, or rescheduled work.</p></div></div>
+    <div class="step"><span class="step-no">4</span><div><h3>Review inventory and staff</h3><p>Resolve low stock, verify new staff accounts, and confirm that responsible team members are available.</p></div></div>
+    <div class="step"><span class="step-no">5</span><div><h3>Close with oversight</h3><p>Review payment exceptions and the Audit Center. Record or escalate anything that cannot be safely resolved.</p></div></div>
+    <table class="mini-table">
+      <thead><tr><th>Priority</th><th>Examples</th><th>Response</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag">Urgent</span></td><td>Security alert, payment discrepancy, incorrect patient linkage, unsafe prescription release</td><td>Stop the affected action and escalate immediately.</td></tr>
+        <tr><td>High</td><td>Today’s appointment problem, order blocked after payment, urgent care request</td><td>Verify the record and coordinate the responsible staff member.</td></tr>
+        <tr><td>Routine</td><td>Catalog updates, completed-record review, standard subscription questions</td><td>Process in the normal queue and document changes.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout warning"><strong>Do not use dashboard totals as proof.</strong> Open the individual order, payment, patient, or care request and verify its details before changing a status or contacting someone.</div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>5</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">03 · Pharmacy operations</div><div class="section-rule"></div>
+    <h2>Products and inventory</h2>
+    <p>Use Products to create and maintain items sold through the pharmacy. Each record can include pricing, stock, visibility, categories, shipping information, and prescription rules.</p>
+    <figure><img src="../temp/admin-walkthrough-updated/product-create.png" alt="Current product creation editor in the administrator dashboard"><figcaption>The current product editor guides administrators through images, product details, pricing, stock, prescription rules, and publishing. The same editor is used when an existing product is opened for editing.</figcaption></figure>
+    <div class="grid-2">
+      <div><h3>Create a product</h3><ol><li>Select <strong>Products</strong>, then <strong>Create product</strong>.</li><li>Enter the name, description, price, and image.</li><li>Set category, stock, SKU, visibility, shipping, and prescription rule.</li><li>Review the complete record, then save as draft or publish.</li></ol></div>
+      <div><h3>Maintain inventory</h3><ol><li>Search for the product and open it.</li><li>Confirm the correct strength/variant and SKU.</li><li>Update quantity or stock status.</li><li>Save and confirm the new value in the list.</li></ol></div>
+    </div>
+    <div class="callout security"><strong>Prescription safety:</strong> never change a product from “prescription required” to unrestricted merely to allow an order to proceed. Confirm the clinical rule with an authorized pharmacist.</div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>6</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">03 · Pharmacy operations</div><div class="section-rule"></div>
+    <h2>Orders and fulfilment</h2>
+    <p>The Orders area is the main work queue for purchases and service-related orders. Filters highlight records needing prescriptions, payment, or doctor follow-up.</p>
+    <figure class="shot-short"><img src="../temp/admin-walkthrough-updated/orders.png" alt="Current orders page"><figcaption>The current Orders page combines queue metrics, filters, order status, and the next operational action.</figcaption></figure>
+    <div class="step"><span class="step-no">1</span><div><h3>Open and identify</h3><p>Confirm the order number, patient, items, order type, date, and current status.</p></div></div>
+    <div class="step"><span class="step-no">2</span><div><h3>Check blockers</h3><p>Review payment status, prescription status, assigned doctor/pharmacist, stock, notes, and delivery method.</p></div></div>
+    <div class="step"><span class="step-no">3</span><div><h3>Take the next permitted action</h3><p>Assign clinical follow-up, add an operational note, prepare fulfilment, or move the order to its next valid state.</p></div></div>
+    <div class="step"><span class="step-no">4</span><div><h3>Confirm the result</h3><p>Refresh or return to the queue and verify that the status and audit history reflect the action.</p></div></div>
+    <div class="callout warning"><strong>Never mark an order paid because a customer presents a screenshot.</strong> Use the verified payment record in Nevari. Never release a prescription order until its prescription requirements are satisfied.</div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>7</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">03 · Pharmacy operations</div><div class="section-rule"></div>
+    <h2>Payments, invoices, and refunds</h2>
+    <p>The Payments page shows payment-linked orders and distinguishes completed, pending, failed, and refunded transactions. Payment processing is handled through Paystack; the dashboard reflects the server-verified result.</p>
+    <figure><img src="../temp/admin-walkthrough-updated/payments.png" alt="Current payments page"><figcaption>The current Payments page organizes transactions by verification state. Open a payment to check its order, amount, reference, status, and timeline.</figcaption></figure>
+    <div class="grid-2">
+      <div class="card"><h3>Verify a payment</h3><p>Match the patient/order, amount, currency, payment reference, and status. Use only the result recorded by the platform.</p></div>
+      <div class="card"><h3>Send a document</h3><p>Open the order or payment record, confirm recipient and totals, then generate or send the available invoice/receipt.</p></div>
+      <div class="card"><h3>Handle a failure</h3><p>Do not manually convert a failed payment to successful. Confirm whether a later verified attempt exists and guide the patient to retry when appropriate.</p></div>
+      <div class="card"><h3>Handle a refund</h3><p>Confirm authority, reason, amount, and original transaction. Follow the approved refund process and verify the final recorded state.</p></div>
+    </div>
+    <div class="callout security"><strong>Payment data:</strong> never request or store a customer’s full card number, CVV, PIN, OTP, secret key, or raw payment token. Escalate mismatched totals or duplicate charges.</div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>8</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">04 · People and plans</div><div class="section-rule"></div>
+    <h2>Patients and subscriptions</h2>
+    <p>Patients links customer identity to orders, appointments, clinical requests, and spending summaries. Subscriptions shows plan enrolment and lifecycle states such as active, past due, or cancelled.</p>
+    <figure><img src="../temp/admin-walkthrough-updated/user-accounts.png" alt="Current patient user accounts page in the administrator dashboard"><figcaption>The current Patients page is the main user-account directory. Open a record to review account details, orders, subscriptions, and permitted account actions.</figcaption></figure>
+    <div class="grid-2">
+      <div><h3>Patient lookup</h3><ol><li>Open <strong>Patients</strong>.</li><li>Search by a known identifier.</li><li>Confirm at least two details before discussing or editing the record.</li><li>Open the relevant order, appointment, or request from the profile.</li></ol></div>
+      <div><h3>Subscription review</h3><ol><li>Open <strong>Subscriptions</strong>.</li><li>Search for the patient or plan.</li><li>Check current status and payment/history entries.</li><li>Use only the available approved action; confirm the result afterward.</li></ol></div>
+    </div>
+    <div class="callout security"><strong>Identity matters:</strong> similar names are not proof of identity. Confirm the correct patient record before viewing, changing, or disclosing health or payment-related information.</div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>9</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">04 · People and plans</div><div class="section-rule"></div>
+    <h2>Staff accounts and access</h2>
+    <p>The Staffs area covers doctors, pharmacists, nurses, and other governed accounts. Administrators review pending registrations, approval status, assigned role, and relevant operational information.</p>
+    <figure><img src="../temp/admin-walkthrough-updated/staff.png" alt="Current staff accounts page"><figcaption>Use the current Staffs page to review identity, role, approval state, and relevant profile information before granting or changing access.</figcaption></figure>
+    <h3>Approving or updating staff</h3>
+    <ol>
+      <li>Open <strong>Staffs</strong> and filter for pending review.</li>
+      <li>Verify identity, professional details, role, and supporting information through the approved process.</li>
+      <li>Approve, reject, or request correction using the correct account action.</li>
+      <li>Confirm the account appears under the intended role and status.</li>
+    </ol>
+    <div class="callout security"><strong>Least privilege:</strong> assign only the role required for the person’s work. Never share administrator credentials, approve an unverified professional account, or grant a broader role as a temporary workaround.</div>
+    <h3 style="margin-top:5mm">When someone leaves or changes duties</h3>
+    <p>Promptly suspend or adjust access according to the approved process, reassign open work, and use Audit Center to confirm that the change was recorded.</p>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>10</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">05 · Health operations</div><div class="section-rule"></div>
+    <h2>Consultations</h2>
+    <p>Consultations tracks requested, upcoming, ongoing, and past appointments. Administrators coordinate scheduling and operational readiness; clinical decisions remain with authorized clinicians.</p>
+    <figure><img src="../temp/consultation-modal-1440.png" alt="Consultation detail view"><figcaption>The consultation record brings together timing, patient, assigned clinician, status, and joining information.</figcaption></figure>
+    <div class="grid-2">
+      <div class="card"><h3>Before the appointment</h3><p>Confirm date/time and timezone, assigned doctor, patient contact, payment where required, and that the joining link is available.</p></div>
+      <div class="card"><h3>For a schedule change</h3><p>Open the correct appointment, use the reschedule/cancel action, confirm the new status, and ensure notifications are sent.</p></div>
+      <div class="card"><h3>During the appointment</h3><p>Help with access or operational issues. Do not enter the consultation or disclose details unless your role and the situation require it.</p></div>
+      <div class="card"><h3>Afterward</h3><p>Confirm that completion and any follow-up workflow are recorded. Do not write clinical conclusions on behalf of the doctor.</p></div>
+    </div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>11</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">05 · Health operations</div><div class="section-rule"></div>
+    <h2>MTM and IV therapy requests</h2>
+    <p><strong>Medication Therapy Management (MTM)</strong> helps patients review medication use with pharmacy professionals. <strong>IV Therapy</strong> requests collect service selections, consent, and workflow information for staff review.</p>
+    <div class="grid-2">
+      <figure><img src="../temp/admin-walkthrough-updated/mtm.png" alt="Current MTM request queue"><figcaption>The current MTM request queue and its workflow totals.</figcaption></figure>
+      <figure><img src="../temp/admin-walkthrough-updated/iv-therapy.png" alt="Current IV therapy request queue"><figcaption>The current IV therapy request queue and its workflow totals.</figcaption></figure>
+    </div>
+    <h3>Administrator workflow</h3>
+    <ol>
+      <li>Open the relevant queue and find new or outstanding requests.</li>
+      <li>Confirm the patient, request type, consent/status, payment state if applicable, and assigned professional.</li>
+      <li>Coordinate scheduling or assignment using the available dashboard action.</li>
+      <li>Monitor progress until the responsible clinician closes or advances the request.</li>
+    </ol>
+    <div class="callout security"><strong>Clinical boundary:</strong> administrators coordinate the workflow but must not diagnose, alter medication advice, approve clinical suitability, or mark clinical work complete on behalf of an authorized practitioner.</div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>12</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">05 · Health operations</div><div class="section-rule"></div>
+    <h2>Nurse requests</h2>
+    <p>Nurse Requests is the operations queue for patient requests that require nursing support. Typical stages include submitted, under review, assigned, scheduled, and completed.</p>
+    <figure><img src="../temp/admin-walkthrough-updated/nurse-requests.png" alt="Current nurse request queue"><figcaption>Use the current Nurse Requests page to review the request, assigned nurse, scheduled time, and status before taking action.</figcaption></figure>
+    <div class="step"><span class="step-no">1</span><div><h3>Review</h3><p>Confirm the patient, requested service, location/contact information, timing, and current status.</p></div></div>
+    <div class="step"><span class="step-no">2</span><div><h3>Assign</h3><p>Select only an approved and appropriate nurse. Confirm availability through the approved operational process.</p></div></div>
+    <div class="step"><span class="step-no">3</span><div><h3>Schedule</h3><p>Record the agreed date and time, then confirm that the request and notifications reflect it.</p></div></div>
+    <div class="step"><span class="step-no">4</span><div><h3>Monitor and close</h3><p>Follow up on exceptions. Completion should reflect the work actually performed and the responsible staff record.</p></div></div>
+    <div class="callout warning"><strong>Escalate immediately</strong> if the request suggests an emergency. The dashboard is an operations tool and is not a substitute for emergency services.</div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>13</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">06 · Oversight</div><div class="section-rule"></div>
+    <h2>Analytics</h2>
+    <p>Analytics helps administrators understand trends across sales, orders, customers, products, and operations. Use date and comparison controls to make like-for-like comparisons.</p>
+    <figure><img src="../temp/admin-walkthrough-updated/analytics.png" alt="Current administrator analytics dashboard"><figcaption>The current Analytics page converts operational records into trends and summaries for planning and review.</figcaption></figure>
+    <div class="grid-2">
+      <div class="card"><h3>Ask a precise question</h3><p>For example: “Did completed order value improve compared with the previous 30 days?”</p></div>
+      <div class="card"><h3>Check filters</h3><p>Confirm date range, currency, status, and segment before interpreting the numbers.</p></div>
+      <div class="card"><h3>Investigate changes</h3><p>Use the relevant operational page to inspect the records behind an unusual increase or decrease.</p></div>
+      <div class="card"><h3>Export carefully</h3><p>Treat exports as sensitive. Store, share, and dispose of them only through approved channels.</p></div>
+    </div>
+    <div class="callout"><strong>Remember:</strong> analytics supports decisions but does not replace record-level verification, financial reconciliation, or clinical judgment.</div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>14</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">06 · Oversight</div><div class="section-rule"></div>
+    <h2>Audit Center and settings</h2>
+    <p>Audit Center provides an activity history across important operational and security events. Settings controls store behavior such as automation, reminders, pricing, security, currency, and timezone.</p>
+    <figure class="shot-short"><img src="../temp/admin-walkthrough-updated/login.png" alt="Current administrator secure sign-in screen"><figcaption>Administrator access begins at the current role-specific sign-in screen; account security and dashboard settings must both be managed deliberately.</figcaption></figure>
+    <div class="grid-2">
+      <div><h3>Use Audit Center when</h3><ul><li>A status changed unexpectedly.</li><li>A payment or order action is disputed.</li><li>You need to confirm who performed an action.</li><li>A security or access issue is suspected.</li></ul></div>
+      <div><h3>Before changing settings</h3><ul><li>Understand who and what the setting affects.</li><li>Record the reason and obtain approval where required.</li><li>Change one thing at a time.</li><li>Test and confirm the intended result.</li></ul></div>
+    </div>
+    <div class="callout security"><strong>Do not weaken safeguards to fix a workflow problem.</strong> Never disable verification, broaden access, expose a secret, or bypass payment/prescription checks as a shortcut. Escalate the underlying issue.</div>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>15</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">07 · Safe operation</div><div class="section-rule"></div>
+    <h2>Checklists and troubleshooting</h2>
+    <div class="grid-2">
+      <div class="card"><h3>Start of day</h3><ul class="checklist"><li>Overview and urgent alerts checked</li><li>Payment exceptions reviewed</li><li>Prescription/order holds reviewed</li><li>Today’s care appointments checked</li><li>New health-service requests triaged</li><li>Low-stock items reviewed</li></ul></div>
+      <div class="card"><h3>End of day</h3><ul class="checklist"><li>Urgent work resolved or handed over</li><li>Failed payments and refunds followed up</li><li>Unassigned requests escalated</li><li>Unexpected audit events reviewed</li><li>Sensitive exports securely stored/removed</li><li>Session closed on shared devices</li></ul></div>
+    </div>
+    <h3 style="margin-top:7mm">If something does not work</h3>
+    <table class="mini-table">
+      <thead><tr><th>Problem</th><th>Safe first response</th></tr></thead>
+      <tbody>
+        <tr><td>A record is missing</td><td>Clear filters, verify spelling/identifier, refresh once, and check the correct page and date range.</td></tr>
+        <tr><td>An action is unavailable</td><td>Check status and role. The action may be invalid for that stage. Do not seek broader access as a shortcut.</td></tr>
+        <tr><td>Data appears stale</td><td>Refresh and reopen the record. Avoid repeating a payment or status-changing action until its outcome is known.</td></tr>
+        <tr><td>A payment is disputed</td><td>Record the order and provider reference, preserve the current state, and escalate for reconciliation.</td></tr>
+        <tr><td>Wrong patient or clinical data is visible</td><td>Stop, do not copy or share it, note the record/time, sign out if necessary, and report the privacy incident immediately.</td></tr>
+        <tr><td>A technical error appears</td><td>Capture a screenshot without unnecessary patient data, record the page/time/action, and send it through the approved support channel.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout"><strong>Good escalation information:</strong> page name, record ID (not a full sensitive payload), time, action attempted, expected result, actual result, and a carefully cropped screenshot.</div>
+    <p class="small">End of handbook. This document explains normal administrator operations; local policies, clinical procedures, financial controls, and privacy obligations always take precedence.</p>
+    <div class="footer"><span>Nevari Pharmacy Administrator Handbook</span><span>16</span></div>
+  </section>
+</body>
+</html>

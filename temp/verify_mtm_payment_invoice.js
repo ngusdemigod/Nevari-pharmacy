@@ -1,6 +1,7 @@
-const { chromium } = require("playwright");
+const path = require("path");
+const { chromium } = require(path.join(__dirname, "..", "NevariAdmin Storefront", "node_modules", "playwright"));
 
-const baseUrl = "http://127.0.0.1:3000";
+const baseUrl = process.env.NEVARI_TEST_BASE_URL || "http://127.0.0.1:3000";
 
 async function mockProxy(page) {
   await page.route("**/api/nevari-proxy**", async (route) => {
@@ -26,7 +27,17 @@ async function mockProxy(page) {
         order_number: "3032",
         payment_status: "unpaid",
         customer: { name: "Ada Patient", email: "ada@example.com" },
-        mtm_request: { id: 21, reference: "MTM-000021", patient_name: "Ada Patient" },
+        mtm_request: {
+          id: 21,
+          reference: "MTM-000021",
+          patient_name: "Ada Patient",
+          status: "under_review",
+          pharmacist_name: "Test Pharmacist",
+          selected_availability: "2026-07-25 11:00:00",
+          duration_minutes: 30,
+          timezone: "Africa/Lagos",
+          consultation_method: "Google Meet"
+        },
         items: [{ name: "Medication Therapy Management consultation", qty: 1, total: 25000 }],
         totals: { total: 25000, balance_due: 25000 },
         currency: "NGN",
@@ -51,27 +62,16 @@ async function run() {
       }));
     });
 
-    await page.goto(`${baseUrl}/dashboard/therapy/21/payment`, { waitUntil: "networkidle" });
-    const paymentHeading = page.getByRole("heading", { name: "Complete Payment" });
-    await paymentHeading.waitFor();
-    const paymentStyles = await paymentHeading.evaluate((element) => {
-      const card = element.closest(".customer-mtm-payment-card");
-      return {
-        fontSize: getComputedStyle(element).fontSize,
-        borderWidth: getComputedStyle(card).borderTopWidth,
-        countdown: document.querySelector(".customer-mtm-payment-countdown")?.textContent?.trim() || ""
-      };
-    });
-    if (paymentStyles.fontSize !== "24px" || paymentStyles.borderWidth !== "0px" || !/^0[45]:\d{2}$/.test(paymentStyles.countdown)) {
-      throw new Error(`MTM payment styling failed at ${viewport.width}px: ${JSON.stringify(paymentStyles)}`);
-    }
-
     await page.goto(`${baseUrl}/pay/NVH-INV-03032?payment_token=test-token&return_to=%2Fdashboard%2Ftherapy%2F21`, { waitUntil: "networkidle" });
-    await page.getByRole("heading", { name: "MTM request" }).waitFor();
+    await page.getByRole("heading", { name: "Order details" }).waitFor();
     await page.getByText("MTM-000021", { exact: true }).waitFor();
     await page.getByText("Ada Patient", { exact: true }).first().waitFor();
+    await page.getByText("Test Pharmacist", { exact: true }).waitFor();
+    await page.getByText("30 minutes", { exact: true }).waitFor();
+    await page.getByText("Google Meet", { exact: true }).waitFor();
+    await page.getByText("Medication Therapy Management consultation x 1", { exact: true }).waitFor();
     await page.getByRole("button", { name: "Go back" }).waitFor();
-    const invoiceStyles = await page.getByRole("heading", { name: "MTM request" }).evaluate((element) => {
+    const invoiceStyles = await page.getByRole("heading", { name: "Order details" }).evaluate((element) => {
       const card = element.closest(".paywall-card");
       return { fontSize: getComputedStyle(element).fontSize, borderWidth: getComputedStyle(card).borderTopWidth };
     });

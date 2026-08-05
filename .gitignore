@@ -24,8 +24,10 @@ composer.lock
 # Node/build dependencies
 node_modules/
 .next/
+.next-validation*/
 dist/
 build/
+temp/next-cache-*/
 
 # WordPress local/runtime files
 wp-config.php
@@ -40,3 +42,6 @@ wp-content/debug.log
 *.tar
 *.tar.gz
 *.tgz
+
+.vercel
+.env*

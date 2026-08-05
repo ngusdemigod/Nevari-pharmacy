@@ -168,6 +168,10 @@ All tabbed controls in the admin storefront use the Nevari segmented-tab pattern
 - use semantic `tablist`/`tab`/`tabpanel` roles, `aria-selected`, keyboard-visible focus, and no layout-shifting hover effects.
 
 Reuse the shared `.segmented-mini` / `.nevari-storefront-tabs` styling for Payments, Orders, Products, subscription details, patient-profile details, and future admin-storefront tabs. Do not build a page-specific replacement.
+
+### Product creator redesign specification
+
+The create-product modal uses flat white surfaces only: no gradients, drop shadows, or decorative card treatments. Use font size and spacing for hierarchy instead of bold text; button labels may retain their existing emphasis. Do not show a step-navigation strip above the active section. Product and gallery empty states use the approved raster placeholder image, never interface icons. Keep the media column anchored to the left with upload controls stacked beneath it. The create-multiple control sits in its own left-aligned footer area, separate from the right-aligned CTA group. The prescription editor expands to fill the available content area. Keep these rules scoped to the product creator and do not change unrelated features.
 ---
 ## Styling Rules
 This project uses plain CSS, not a utility framework. Global styles
@@ -352,6 +356,11 @@ Authentication is custom: WordPress users/roles + a plugin-issued JWT
 third-party auth provider (Clerk, Auth0, NextAuth, etc.) without
 approval — the existing role model (patient, doctor, store_admin,
 pharmacist) and session-cookie handling depend on the current flow.
+---
+## Playwright Verification
+Always use port `3002` for Playwright verification and browser automation.
+Any local development or test server launched for Playwright must listen on
+port `3002`; do not use port `3000` or `3001` for Playwright.
 ---
 ## Communication
 Be concise. Explain what changed, which component(s) it touched, and
