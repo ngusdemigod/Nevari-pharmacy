@@ -45541,92 +45541,122 @@ body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-pa
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(4, 22, 52, 0.68);
-  backdrop-filter: blur(7px);
+  background: linear-gradient(180deg, #fbfbfc 0%, #fbfbfc 62%, #dce8ff 100%);
 }
 
 .session-reauth-dialog {
-  width: min(440px, 100%);
+  width: min(526px, 100%);
   max-height: calc(100vh - 48px);
   overflow: auto;
-  padding: 32px;
-  border: 1px solid #dce5f2;
-  border-radius: 24px;
+  padding: 24px 26px 32px;
+  border: 1px solid #e1e6ef;
+  border-radius: 34px;
   background: #fff;
-  box-shadow: 0 28px 80px rgba(4, 30, 72, 0.28);
-}
-
-.session-reauth-logo {
-  width: 48px;
-  height: 48px;
-  margin-bottom: 18px;
-  object-fit: contain;
+  box-shadow: none;
 }
 
 .session-reauth-dialog h1 {
-  margin: 0 0 10px;
-  color: #062c65;
-  font-size: 28px;
+  margin: 0 0 22px;
+  color: #050505;
+  font-family: "Product Sans", "Google Sans", Arial, sans-serif;
+  font-size: 42px;
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
 }
 
 .session-reauth-copy {
-  margin: 0 0 22px;
-  color: #60708b;
-  line-height: 1.55;
+  margin: -8px 0 22px;
+  color: #4d5665;
+  line-height: 1.5;
 }
 
 .session-reauth-form {
   display: grid;
-  gap: 16px;
+  gap: 20px;
 }
 
 .session-reauth-form > .auth-primary-button {
-  order: 3;
-}
-
-.session-reauth-divider {
-  order: 4;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: #7b8ba5;
-  font-size: 13px;
-  text-transform: uppercase;
+  width: 100%;
+  min-height: 61px;
+  margin-top: 14px;
+  border-radius: 999px;
+  font-size: 15px;
 }
 
 .session-reauth-form > .auth-google-panel {
-  order: 5;
-}
-
-.session-reauth-divider::before,
-.session-reauth-divider::after {
-  height: 1px;
-  flex: 1;
-  background: #dce4ef;
-  content: "";
+  width: min(400px, calc(100% - 72px));
+  margin: 18px auto 0;
 }
 
 .session-reauth-form label {
   display: grid;
-  gap: 7px;
-  color: #17335e;
-  font-weight: 600;
+  gap: 12px;
+  color: #3e3e3e;
+  font-size: 17px;
+  font-weight: 400;
 }
 
 .session-reauth-form input {
   width: 100%;
-  min-height: 48px;
-  padding: 0 14px;
-  border: 1px solid #cfdbea;
-  border-radius: 12px;
-  color: #10213e;
-  background: #fff;
+  min-height: 51px;
+  padding: 0 18px;
+  border: 1px solid #bdcdea;
+  border-radius: 10px;
+  color: #111;
+  background: #edf3fc;
   font: inherit;
 }
 
 .session-reauth-form input:focus {
-  border-color: #1769e0;
-  outline: 3px solid rgba(23, 105, 224, 0.14);
+  border-color: #7da9ea;
+  outline: 3px solid rgba(55, 125, 230, 0.15);
+}
+
+.session-reauth-password-field {
+  position: relative;
+  display: block;
+}
+
+.session-reauth-password-field input {
+  padding-right: 72px;
+}
+
+.session-reauth-password-field button {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  color: #647089;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.session-reauth-links {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 1px;
+}
+
+.session-reauth-links a {
+  color: #111;
+  font-size: 15px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.session-reauth-dialog .recaptcha-disclosure {
+  max-width: 450px;
+  margin: 20px auto 0;
+  color: #5f718e;
+  text-align: center;
 }
 
 .session-reauth-error {
@@ -45639,8 +45669,9 @@ body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-pa
 
 @media (max-width: 520px) {
   .session-reauth-layer { padding: 14px; }
-  .session-reauth-dialog { padding: 24px 20px; border-radius: 20px; }
-  .session-reauth-dialog h1 { font-size: 24px; }
+  .session-reauth-dialog { padding: 24px 25px 30px; border-radius: 32px; }
+  .session-reauth-dialog h1 { font-size: 40px; }
+  .session-reauth-form > .auth-google-panel { width: calc(100% - 36px); }
 }
 
 .nevari-admin-storefront .admin-page-heading h1 {

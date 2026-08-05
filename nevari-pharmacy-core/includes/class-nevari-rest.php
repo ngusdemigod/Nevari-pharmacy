@@ -4454,6 +4454,7 @@ final class Nevari_Rest {
         }
 
         $params = Nevari_Helpers::get_json_params($request);
+        $previous_settings = self::customer_settings_payload($user_id);
         $settings = self::sanitize_customer_settings_payload($params, $user_id);
         if (is_wp_error($settings)) {
             return Nevari_Helpers::error(
@@ -4474,6 +4475,19 @@ final class Nevari_Rest {
         update_user_meta($user_id, self::CUSTOMER_SETTINGS_META_KEY, $settings);
         update_user_meta($user_id, 'billing_phone', (string) ($settings['phone'] ?? ''));
         update_user_meta($user_id, 'billing_address_1', (string) ($settings['address'] ?? ''));
+
+        $previous_two_factor = !empty($previous_settings['twoFactorEnabled']);
+        $next_two_factor = !empty($settings['twoFactorEnabled']);
+        if ($previous_two_factor !== $next_two_factor) {
+            Nevari_Audit::log('security', 'nevari', 'customer.two_factor_preference_updated', 'success', [
+                'actor_user_id' => (int) $user_id,
+                'related_user_id' => (int) $user_id,
+                'message' => $next_two_factor
+                    ? 'Customer enabled email two-factor authentication.'
+                    : 'Customer disabled email two-factor authentication.',
+                'metadata' => ['enabled' => $next_two_factor],
+            ]);
+        }
 
         return Nevari_Helpers::success(self::customer_settings_payload($user_id));
     }

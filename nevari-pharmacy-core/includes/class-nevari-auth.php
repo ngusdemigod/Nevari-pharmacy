@@ -5,6 +5,7 @@ if (!defined('ABSPATH')) {
 
 final class Nevari_Auth {
     private const RESEND_CODE_COOLDOWN_SECONDS = 60;
+    private const CUSTOMER_SETTINGS_META_KEY = '_nevari_customer_dashboard_settings';
 
     private static int $api_session_resolution_depth = 0;
 
@@ -847,7 +848,7 @@ final class Nevari_Auth {
     }
 
     private static function complete_authenticated_session(WP_User $user, array $frontend, array $params, array $options = []): WP_REST_Response {
-        if (self::login_requires_email_verification($frontend)) {
+        if (self::login_requires_email_verification($user, $frontend)) {
             $challenge = self::create_login_challenge($user, $frontend);
             if (is_wp_error($challenge)) {
                 return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
@@ -940,27 +941,17 @@ final class Nevari_Auth {
         $support_email = sanitize_email((string) get_option('admin_email'));
 
         $result = Nevari_Emails::queue_or_send([
+            'template_key' => 'dashboard_login_notification',
             'recipient_user_id' => (int) $user->ID,
             'recipient_email' => $user->user_email,
-            'subject' => 'New sign-in to your Nevari dashboard',
-            'body_html' => sprintf(
-                '<p>Hello %1$s,</p><p>A successful sign-in to your %2$s was recorded.</p><p><strong>Time:</strong> %3$s<br><strong>IP address:</strong> %4$s<br><strong>Device:</strong> %5$s</p><p>If this was not you, reset your password immediately%6$s.</p>',
-                esc_html($display_name),
-                esc_html($dashboard_label),
-                esc_html($login_time),
-                esc_html($ip_address ?: 'Unavailable'),
-                esc_html($user_agent),
-                $support_email ? ' and contact us at ' . esc_html($support_email) : ''
-            ),
-            'body_text' => sprintf(
-                "Hello %1$s,\n\nA successful sign-in to your %2$s was recorded.\n\nTime: %3$s\nIP address: %4$s\nDevice: %5$s\n\nIf this was not you, reset your password immediately%6$s.",
-                $display_name,
-                $dashboard_label,
-                $login_time,
-                $ip_address ?: 'Unavailable',
-                $user_agent,
-                $support_email ? ' and contact us at ' . $support_email : ''
-            ),
+            'variables' => [
+                'display_name' => $display_name,
+                'dashboard_name' => $dashboard_label,
+                'login_time' => $login_time,
+                'ip_address' => $ip_address ?: 'Unavailable',
+                'device' => $user_agent,
+                'support_email' => $support_email,
+            ],
             'related_object_type' => 'dashboard_login',
             'related_object_id' => (int) $user->ID,
         ], true);
@@ -979,8 +970,16 @@ final class Nevari_Auth {
         return $frontend_type === 'storefront';
     }
 
-    private static function login_requires_email_verification(array $frontend): bool {
+    public static function user_requires_email_verification(WP_User $user, array $frontend): bool {
+        return self::login_requires_email_verification($user, $frontend);
+    }
+
+    private static function login_requires_email_verification(WP_User $user, array $frontend): bool {
         $frontend_type = (string) ($frontend['frontend_type'] ?? '');
+        if ($frontend_type === 'patient_dashboard' && self::customer_two_factor_enabled((int) $user->ID)) {
+            return true;
+        }
+
         if (!self::frontend_requires_email_verification($frontend_type)) {
             return false;
         }
@@ -999,6 +998,19 @@ final class Nevari_Auth {
         }
 
         return true;
+    }
+
+    private static function customer_two_factor_enabled(int $user_id): bool {
+        if ($user_id <= 0 || !Nevari_Helpers::is_patient($user_id)) {
+            return false;
+        }
+
+        $settings = get_user_meta($user_id, self::CUSTOMER_SETTINGS_META_KEY, true);
+        if (!is_array($settings) || !array_key_exists('twoFactorEnabled', $settings)) {
+            return false;
+        }
+
+        return (bool) Nevari_Helpers::bool_param($settings['twoFactorEnabled']);
     }
 
     public static function create_login_challenge(WP_User $user, array $frontend) {
@@ -1224,7 +1236,7 @@ final class Nevari_Auth {
                 esc_html($display_name),
                 esc_url($reset_url)
             ),
-            'body_text' => sprintf("Hello %1$s,\n\nUse this link to reset your password:\n%2$s\n\nIf you did not request this, you can ignore this email.", $display_name, $reset_url),
+            'body_text' => sprintf("Hello %1\$s,\n\nUse this link to reset your password:\n%2\$s\n\nIf you did not request this, you can ignore this email.", $display_name, $reset_url),
             'related_object_type' => 'password_reset',
             'related_object_id' => (int) $user->ID,
         ], true);
@@ -1245,7 +1257,7 @@ final class Nevari_Auth {
                 $support_email ? ' at ' . esc_html($support_email) : ''
             ),
             'body_text' => sprintf(
-                "Hello %1$s,\n\nYour Nevari dashboard password was changed on %2$s.\n\nIf you did not make this change, contact us immediately%3$s.",
+                "Hello %1\$s,\n\nYour Nevari dashboard password was changed on %2\$s.\n\nIf you did not make this change, contact us immediately%3\$s.",
                 $display_name,
                 $changed_at,
                 $support_email ? ' at ' . $support_email : ''

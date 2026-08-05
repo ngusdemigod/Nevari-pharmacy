@@ -572,7 +572,7 @@ final class Nevari_SSO {
             ],
         ]);
 
-        if (!Nevari_Auth::frontend_requires_email_verification((string) $frontend['frontend_type'])) {
+        if (!Nevari_Auth::user_requires_email_verification($user, $frontend)) {
             $issue_context = self::consume_dashboard_verification_context($transaction_uuid, (int) $user->ID, $frontend);
             if (is_wp_error($issue_context)) {
                 return Nevari_Helpers::error($issue_context->get_error_code(), $issue_context->get_error_message(), 403);

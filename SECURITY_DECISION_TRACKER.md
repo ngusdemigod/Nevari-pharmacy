@@ -2,9 +2,12 @@
 
 ## 2026-08-05 — Dashboard account-security email notifications
 
+- A customer's persisted `twoFactorEnabled` profile preference is now enforced for that specific WordPress user during patient-dashboard password, Google, and SSO authentication. The preference is resolved server-side from authenticated user metadata; no client-supplied user ID controls the decision.
+- Enabling or disabling customer email two-factor authentication is recorded in the security audit log without storing OTPs or authentication secrets.
 - Successful dashboard authentication now queues a login notification to the authenticated user's WordPress email for patient, doctor, pharmacist, nurse, store-admin, shop-manager, and administrator access paths, including direct, Google, verification-code, and dashboard SSO completion.
 - Password-reset requests retain their generic anti-enumeration response. Delivery failures are recorded server-side without revealing whether an account exists.
 - Successful password changes queue a separate confirmation email. Login and password-change notifications never contain credentials, reset keys, session tokens, or raw authentication payloads.
+- Login notifications use the managed `dashboard_login_notification` template and the default branded Nevari email wrapper; only the display name, dashboard label, login time, IP address, device description, and support email are supplied as escaped template variables.
 - Email queue persistence failures now fail explicitly instead of returning a false-success log identifier.
 - Dashboard reset URLs are derived only from the configured shared frontend origin. Native WordPress lost-password emails for Nevari dashboard roles are rewritten to the Next.js `/reset-password` route, and the flow fails closed rather than linking to `wp-login.php` when the dashboard destination is unavailable.
 
