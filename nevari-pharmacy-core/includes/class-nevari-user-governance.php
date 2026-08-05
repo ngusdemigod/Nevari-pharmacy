@@ -651,9 +651,31 @@ final class Nevari_User_Governance {
         unset($row);
         $count = "SELECT COUNT(*) FROM " . self::table() . " g INNER JOIN {$wpdb->users} u ON u.ID = g.user_id WHERE {$clause}";
         $total = (int) ($args ? $wpdb->get_var($wpdb->prepare($count, $args)) : $wpdb->get_var($count));
+        $metrics = ['total' => $total];
+        if ($scope === 'patients') {
+            $commerce_sql = "SELECT
+                    COALESCE(SUM(CAST(order_count.meta_value AS UNSIGNED)), 0) AS orders,
+                    COALESCE(SUM(CAST(total_spent.meta_value AS DECIMAL(18,2))), 0) AS spend
+                FROM " . self::table() . " g
+                INNER JOIN {$wpdb->users} u ON u.ID = g.user_id
+                LEFT JOIN {$wpdb->usermeta} order_count ON order_count.user_id = g.user_id AND order_count.meta_key = '_order_count'
+                LEFT JOIN {$wpdb->usermeta} total_spent ON total_spent.user_id = g.user_id AND total_spent.meta_key = '_money_spent'
+                WHERE {$clause}";
+            $commerce = $args
+                ? $wpdb->get_row($wpdb->prepare($commerce_sql, $args), ARRAY_A)
+                : $wpdb->get_row($commerce_sql, ARRAY_A);
+            $patient_ids_sql = "SELECT g.user_id FROM " . self::table() . " g INNER JOIN {$wpdb->users} u ON u.ID = g.user_id WHERE {$clause}";
+            $appointments_sql = 'SELECT COUNT(*) FROM ' . Nevari_Helpers::table('appointments') . " WHERE patient_user_id IN ({$patient_ids_sql})";
+            $metrics['orders'] = (int) ($commerce['orders'] ?? 0);
+            $metrics['spend'] = (float) ($commerce['spend'] ?? 0);
+            $metrics['appointments'] = (int) ($args
+                ? $wpdb->get_var($wpdb->prepare($appointments_sql, $args))
+                : $wpdb->get_var($appointments_sql));
+        }
         return Nevari_Helpers::success([
             'items' => $rows,
             'pagination' => ['page' => $page, 'per_page' => $per_page, 'total' => $total, 'pages' => (int) ceil($total / $per_page)],
+            'metrics' => $metrics,
         ]);
     }
 

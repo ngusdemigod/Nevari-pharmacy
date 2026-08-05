@@ -1,5 +1,13 @@
 # Nevari Pharmacy Core - Security Vulnerability Audit Report
 
+## 2026-07-29 order creation and product-media hardening
+
+- `POST /orders` now rejects unexpected fields, allowlists `pickup`, `local_delivery`, and `shipping`, and requires a delivery address for delivery and shipping orders.
+- Store administrators may create explicitly identified guest/manual-customer orders. Doctors remain limited to an existing customer linked to their own care relationship; the role grant does not bypass customer ownership.
+- Every requested product is resolved and checked for purchasability, stock state, and managed-stock quantity before WooCommerce creates the order. This prevents partial/orphan orders and direct-API out-of-stock bypasses.
+- Fulfilment notes are sanitized into WooCommerce `customer_note`; the delivery method is stored as order metadata and returned by the formatter.
+- `POST /products/media` rejects extra fields, malformed base64, files over 10 MB, invalid image bytes, MIME/extension mismatches, and all formats except JPEG and PNG before permanent attachment storage.
+
 ## 2026-07-28 in-page session reauthentication
 
 - A non-auth API `401` no longer navigates away from the active dashboard page. A blocking login dialog keeps the existing React tree and unsaved draft state mounted.
@@ -10,6 +18,8 @@
 
 - Public login (password and Google), registration, password reset request/confirmation, verification-code submit/resend, and nurse registration all obtain a short-lived reCAPTCHA v3 token and send it in `X-Nevari-Recaptcha-Token`.
 - Verification fails closed for absent configuration, missing/invalid tokens, low scores, action mismatches, hostname mismatches, verification-service errors, and timeouts. Failure responses are not cacheable.
+- Browser loading and server verification retry through Google's supported `recaptcha.net` domain when `google.com` is unavailable. Both endpoints failing still fails closed.
+- Local development uses a fixed non-secret marker only when both the browser and same-origin Next.js request hostname are localhost and `NODE_ENV` is not production; deployed environments can never accept it.
 - The token is consumed at the same-origin Next.js boundary and is not forwarded to WordPress, analytics, or application logs.
 - Authenticated forms intentionally use session, CSRF, authorization, and ownership controls rather than CAPTCHA.
 

@@ -159,7 +159,7 @@ final class Nevari_Emails {
         }
 
         $now = Nevari_Helpers::now();
-        $wpdb->insert(Nevari_Helpers::table('email_logs'), [
+        $inserted = $wpdb->insert(Nevari_Helpers::table('email_logs'), [
             'template_key' => $template ? $template->template_key : null,
             'template_version' => $template ? (int) $template->version : null,
             'recipient_email' => $recipient_email,
@@ -176,14 +176,33 @@ final class Nevari_Emails {
             'created_at' => $now,
         ], ['%s', '%d', '%s', '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%d', '%s', '%s']);
 
+        if ($inserted === false || (int) $wpdb->insert_id < 1) {
+            Nevari_Audit::log('emails', 'nevari', 'email.queue_failed', 'error', [
+                'related_user_id' => $recipient_user_id ?: null,
+                'message' => 'Email could not be added to the delivery queue.',
+                'error_code' => 'email_log_insert_failed',
+            ]);
+            return new WP_Error('email_queue_failed', 'Email could not be queued for delivery.');
+        }
+
         $log_id = (int) $wpdb->insert_id;
-        update_option('_nevari_email_payload_' . $log_id, [
+        $payload_saved = update_option('_nevari_email_payload_' . $log_id, [
             'body_html' => $body_html,
             'body_text' => isset($body_text) ? $body_text : '',
             'attachments' => isset($args['attachments']) && is_array($args['attachments']) ? array_values($args['attachments']) : [],
             'attempts' => 0,
             'max_attempts' => isset($args['max_attempts']) ? max(1, (int) $args['max_attempts']) : self::MAX_ATTEMPTS,
         ], false);
+        if (!$payload_saved && get_option('_nevari_email_payload_' . $log_id, null) === null) {
+            $wpdb->update(
+                Nevari_Helpers::table('email_logs'),
+                ['status' => 'failed', 'error_code' => 'email_payload_save_failed', 'error_message' => 'Email payload could not be stored.'],
+                ['id' => $log_id],
+                ['%s', '%s', '%s'],
+                ['%d']
+            );
+            return new WP_Error('email_queue_failed', 'Email could not be queued for delivery.');
+        }
 
         Nevari_Audit::log('emails', 'nevari', 'email.queued', 'success', [
             'email_log_id' => $log_id,

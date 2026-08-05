@@ -3,7 +3,7 @@
 import { createPortal } from "react-dom";
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download04Icon, GalleryThumbnailsIcon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
+import { Clock01Icon, Download04Icon, GalleryThumbnailsIcon, PencilEdit02Icon, Search01Icon, Video01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import useSWR, { useSWRConfig } from "swr";
 import { DEFAULT_NEVARI_BASE_URL } from "../../components/frontend-config";
@@ -238,8 +238,7 @@ const PRODUCT_EDITOR_PANEL_IDS = {
 const EMPTY_PRODUCT_DRAFT = {
   title: "",
   shortDescription: "",
-  longDescription: "",
-  prescriptionNotes: "",
+  prescriptionContent: "",
   regularPrice: "",
   salePrice: "",
   strengthDosage: "",
@@ -267,7 +266,7 @@ const PRODUCT_CREATE_STEPS = [
     key: "identity",
     eyebrow: "Step 1",
     label: "Product details",
-    description: "Add the product image, name, description, and prices."
+    description: "Add the product image, name, summary, and prices."
   },
   {
     key: "commerce",
@@ -837,6 +836,16 @@ function formatMoney(value, currency = storedStoreCurrency()) {
   }).format(Number(value || 0));
 }
 
+function currencySymbol(currency = storedStoreCurrency()) {
+  const resolvedCurrency = normalizeCurrency(currency) || storedStoreCurrency();
+  const symbol = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: resolvedCurrency,
+    currencyDisplay: "narrowSymbol",
+  }).formatToParts(0).find((part) => part.type === "currency");
+  return symbol?.value || resolvedCurrency;
+}
+
 function formatMetricNaira(value) {
   const numericValue = Number(value || 0);
   return new Intl.NumberFormat("en-NG", {
@@ -906,6 +915,15 @@ function normalizeRevenueValue(value) {
   return Number.isFinite(numericValue) ? numericValue : 0;
 }
 
+function isProcessedRevenueOrder(order) {
+  const status = String(order?.status || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^wc-/, "")
+    .replace(/_/g, "-");
+  return status === "processing" || status === "completed";
+}
+
 function dayKey(date) {
   return startOfDay(date).toISOString().slice(0, 10);
 }
@@ -934,6 +952,10 @@ function bucketRevenueOverviewMetrics(options) {
   }
 
   orders.forEach((order) => {
+    if (!isProcessedRevenueOrder(order)) {
+      return;
+    }
+
     const createdAt = new Date(order?.created_at || order?.date_created || "");
     if (Number.isNaN(createdAt.getTime()) || createdAt < previousPeriodStart || createdAt >= nextCurrentPeriodStart) {
       return;
@@ -1008,9 +1030,9 @@ function buildRevenueOverviewMetrics(orders = [], granularity = "monthly") {
     });
   }
 
-  const currentPeriodStart = startOfMonth(addMonths(now, -11));
-  const previousPeriodStart = startOfMonth(addMonths(now, -23));
-  const nextCurrentPeriodStart = startOfMonth(addMonths(now, 1));
+  const currentPeriodStart = new Date(now.getFullYear(), 0, 1);
+  const previousPeriodStart = new Date(now.getFullYear() - 1, 0, 1);
+  const nextCurrentPeriodStart = new Date(now.getFullYear() + 1, 0, 1);
   return bucketRevenueOverviewMetrics({
     orders,
     bucketCount: 12,
@@ -1829,8 +1851,10 @@ function buildProductEditDraft(product) {
     id: product?.id || null,
     title: product?.name || "",
     shortDescription: product?.short_description || product?.excerpt || "",
-    longDescription: product?.description || product?.content || "",
-    prescriptionNotes: metaValue(product, ["prescription_notes", "rx_notes"]),
+    prescriptionContent: product?.description
+      || product?.content
+      || metaValue(product, ["prescription_notes", "rx_notes"])
+      || "",
     regularPrice: String(getProductPrice(product, "regular_price") || product?.price || ""),
     salePrice: String(product?.sale_price || ""),
     strengthDosage: metaValue(product, ["strength_dosage", "strength", "dosage"]),
@@ -1885,6 +1909,21 @@ function getProductStockQuantity(product) {
   }
   const nextValue = Number(quantity);
   return Number.isFinite(nextValue) ? nextValue : null;
+}
+
+function getProductStockDisplay(product) {
+  const stockQuantity = getProductStockQuantity(product);
+  const normalizedStatus = String(product?.stock_status || "instock")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  const isOutOfStock = normalizedStatus === "outofstock"
+    || (stockQuantity !== null && stockQuantity <= 0);
+
+  return {
+    label: isOutOfStock ? "Out of stock" : "In stock",
+    tone: isOutOfStock ? "out_of_stock" : "in_stock",
+  };
 }
 
 function buildProductActionLinks(product, session) {
@@ -2094,8 +2133,7 @@ function BookingCalendarWidget({
   onDurationChange,
   showStepsHeader = true,
   showTimeSlots = true,
-  compactAppointmentLayout = false,
-  consultationTypeLabel = "Video consultation"
+  compactAppointmentLayout = false
 }) {
   const currentView = viewDate instanceof Date && !Number.isNaN(viewDate.getTime()) ? viewDate : new Date();
   const selectedDateKey = selectedStartAt ? localDateKey(selectedStartAt) : (selectedDate || "");
@@ -2157,7 +2195,7 @@ function BookingCalendarWidget({
     const weekStart = new Date(currentView);
     weekStart.setHours(0, 0, 0, 0);
     weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
-    const weekDays = Array.from({ length: 7 }, (_, index) => {
+    const weekDays = Array.from({ length: 5 }, (_, index) => {
       const date = new Date(weekStart);
       date.setDate(weekStart.getDate() + index);
       return date;
@@ -2169,7 +2207,7 @@ function BookingCalendarWidget({
     return (
       <div className="booking-widget admin-booking-widget consultation-reference-calendar">
         <div className="consultation-reference-heading">
-          <div className="booking-widget-title"><InlineIcon id="i-calendar" />{title}</div>
+          <div className="booking-widget-title"><HugeiconsIcon icon={Clock01Icon} />{title}</div>
           <div className="booking-widget-subtitle">{subtitle}</div>
         </div>
         <div className="consultation-week-controls">
@@ -2198,9 +2236,23 @@ function BookingCalendarWidget({
             );
           })}
         </div>
+        <div className="booking-section-label">Session duration</div>
+        <div className="booking-duration-row">
+          {BOOKING_DURATION_OPTIONS.map((minutes) => (
+            <button
+              className={`booking-dur-pill ${Number(duration) === minutes ? "active" : ""}`}
+              type="button"
+              key={minutes}
+              onClick={() => onDurationChange?.(minutes)}
+              aria-pressed={Number(duration) === minutes}
+            >
+              {minutes < 60 ? `${minutes} min` : minutes === 60 ? "1 hr" : `${minutes / 60} hr`}
+            </button>
+          ))}
+        </div>
         <div className="booking-section-label">Available slots</div>
         <div className="booking-slots-grid">
-          {loading ? Array.from({ length: 10 }, (_, index) => <SkeletonBox className="booking-t-slot-skeleton" key={index} />) : slotOptions.slice(0, 10).map((slot) => (
+          {loading ? Array.from({ length: 9 }, (_, index) => <SkeletonBox className="booking-t-slot-skeleton" key={index} />) : slotOptions.slice(0, 9).map((slot) => (
             <button className={`booking-t-slot ${slot.disabled ? "taken" : ""} ${slot.selected ? "chosen" : ""}`} type="button" key={slot.time} disabled={slot.disabled} onClick={() => onSlotSelect?.(selectedDateKey, slot.time)} aria-pressed={Boolean(slot.selected)}>
               {new Date(`2000-01-01T${slot.time}:00`).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
             </button>
@@ -2208,8 +2260,7 @@ function BookingCalendarWidget({
         </div>
         {selectedDateKey && selectedSlotLabel ? (
           <div className="consultation-booking-summary">
-            <span><InlineIcon id="i-calendar" />{selectedDateObject.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} · {selectedSlotLabel}</span>
-            <span><InlineIcon id="i-stethoscope" />{consultationTypeLabel}</span>
+            <span><InlineIcon id="i-calendar" />{selectedDateObject.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} · {selectedSlotLabel} · {duration < 60 ? `${duration} min` : duration === 60 ? "1 hr" : `${duration / 60} hr`}</span>
           </div>
         ) : null}
       </div>
@@ -2623,6 +2674,7 @@ function AdminStorefrontDashboard({
   const [orderCreateSearch, setOrderCreateSearch] = useState("");
   const [orderCreateCustomerSearch, setOrderCreateCustomerSearch] = useState("");
   const [orderCreateCustomerMenuOpen, setOrderCreateCustomerMenuOpen] = useState(false);
+  const [orderCreateManualCustomer, setOrderCreateManualCustomer] = useState(false);
   const deferredOrderCreateSearch = useDeferredValue(orderCreateSearch.trim());
   const deferredOrderCreateCustomerSearch = useDeferredValue(orderCreateCustomerSearch.trim());
   const [productEditorMode, setProductEditorMode] = useState("edit");
@@ -2639,6 +2691,9 @@ function AdminStorefrontDashboard({
   const [customerCreateForm, setCustomerCreateForm] = useState(EMPTY_CUSTOMER_FORM);
   const [userAccountCreateForm, setUserAccountCreateForm] = useState(EMPTY_USER_ACCOUNT_FORM);
   const [userAccountPasswordVisible, setUserAccountPasswordVisible] = useState(false);
+  const [userAccountPasswordFocused, setUserAccountPasswordFocused] = useState(false);
+  const [userAccountTouched, setUserAccountTouched] = useState({});
+  const [userAccountAvatarError, setUserAccountAvatarError] = useState("");
   const [orderCreateItems, setOrderCreateItems] = useState([]);
   const [selectedProductEdit, setSelectedProductEdit] = useState(null);
   const [productEditForm, setProductEditForm] = useState(null);
@@ -3427,6 +3482,9 @@ function AdminStorefrontDashboard({
       }
       return undefined;
     }
+    if (productEditorMode === "create") {
+      return undefined;
+    }
 
     const dialog = productEditorDialogRef.current;
     const closeButton = productEditorCloseButtonRef.current;
@@ -3775,8 +3833,8 @@ function AdminStorefrontDashboard({
     if (!productDescriptionEditorRef.current || !productEditForm) {
       return;
     }
-    if (productDescriptionEditorRef.current.innerHTML !== productEditForm.longDescription) {
-      productDescriptionEditorRef.current.innerHTML = productEditForm.longDescription || "";
+    if (productDescriptionEditorRef.current.innerHTML !== productEditForm.prescriptionContent) {
+      productDescriptionEditorRef.current.innerHTML = productEditForm.prescriptionContent || "";
     }
   }, [productEditForm]);
 
@@ -4151,6 +4209,7 @@ function AdminStorefrontDashboard({
     setOrderCreateSearch("");
     setOrderCreateCustomerSearch("");
     setOrderCreateCustomerMenuOpen(false);
+    setOrderCreateManualCustomer(false);
     setOrderCreateFeedback("");
     setOrderCreateModalOpen(true);
   }
@@ -4167,16 +4226,12 @@ function AdminStorefrontDashboard({
       return;
     }
     if (type === "consultation") {
-      const firstDoctor = (data.doctors || [])[0] || null;
-      setConsultationCreateForm({
-        ...EMPTY_CONSULTATION_FORM,
-        doctorUserId: String(firstDoctor?.user_id || firstDoctor?.id || "")
-      });
+      setConsultationCreateForm(EMPTY_CONSULTATION_FORM);
       setConsultationCalendarMode("week");
       setConsultationDuration(30);
       setConsultationBookingDate("");
       setConsultationCreateCalendarViewDate(new Date());
-      setConsultationDoctorSearch(firstDoctor?.display_name || firstDoctor?.email || "");
+      setConsultationDoctorSearch("");
       setConsultationPatientSearch("");
       setCreateModalType("consultation");
       return;
@@ -4186,6 +4241,9 @@ function AdminStorefrontDashboard({
         ...EMPTY_USER_ACCOUNT_FORM,
         role: type === "doctor" ? "doctor" : "patient"
       });
+      setUserAccountTouched({});
+      setUserAccountAvatarError("");
+      setUserAccountPasswordFocused(false);
       setCreateModalType("user");
     }
   }
@@ -4204,6 +4262,9 @@ function AdminStorefrontDashboard({
     setConsultationBookingDate("");
     setConsultationPatientSearch("");
     setConsultationDoctorSearch("");
+    setUserAccountTouched({});
+    setUserAccountAvatarError("");
+    setUserAccountPasswordFocused(false);
   }
 
   function closeOrderCreateModal() {
@@ -4213,6 +4274,31 @@ function AdminStorefrontDashboard({
     setOrderCreateSearch("");
     setOrderCreateCustomerSearch("");
     setOrderCreateCustomerMenuOpen(false);
+    setOrderCreateManualCustomer(false);
+  }
+
+  function requestCloseCreateModal() {
+    if (createLoading) return;
+    if ((consultationCreateDirty || userAccountCreateDirty) && !window.confirm("Discard unsaved changes?")) {
+      return;
+    }
+    closeCreateModal();
+  }
+
+  function requestCloseOrderCreateModal() {
+    if (orderCreateLoading) return;
+    if (orderCreateDirty && !window.confirm("Discard unsaved changes?")) {
+      return;
+    }
+    closeOrderCreateModal();
+  }
+
+  function requestCloseProductEditModal() {
+    if (productEditLoading || productMediaUploading) return;
+    if (productCreateDirty && !window.confirm("Discard unsaved changes?")) {
+      return;
+    }
+    closeProductEditModal();
   }
 
   function generateUserAccountPassword() {
@@ -4243,6 +4329,7 @@ function AdminStorefrontDashboard({
     const allowedExtensions = ["jpg", "jpeg", "png", "webp"];
     if (!allowedTypes.includes(file.type) || !allowedExtensions.includes(extension) || file.size > 2 * 1024 * 1024) {
       const message = "Choose one JPG, PNG, or WebP avatar no larger than 2 MB.";
+      setUserAccountAvatarError(message);
       setCreateFeedback(message);
       showSnackbar(message, "warning");
       return;
@@ -4253,9 +4340,14 @@ function AdminStorefrontDashboard({
         ...previous,
         avatar: { name: file.name, type: file.type, data: String(reader.result || "") }
       }));
+      setUserAccountAvatarError("");
       setCreateFeedback("");
     };
-    reader.onerror = () => setCreateFeedback("The selected avatar could not be read.");
+    reader.onerror = () => {
+      const message = "The selected avatar could not be read.";
+      setUserAccountAvatarError(message);
+      setCreateFeedback(message);
+    };
     reader.readAsDataURL(file);
   }
 
@@ -4306,6 +4398,7 @@ function AdminStorefrontDashboard({
     }));
     setOrderCreateCustomerSearch(customerName);
     setOrderCreateCustomerMenuOpen(false);
+    setOrderCreateManualCustomer(false);
   }
 
   function getOrderCreateSelectedLineItem() {
@@ -4692,8 +4785,33 @@ function AdminStorefrontDashboard({
       return;
     }
 
-    if (!orderCreateForm.customerId) {
-      const message = "Select an existing patient from the search results.";
+    if (!orderCreateForm.customerId && !orderCreateManualCustomer) {
+      const message = "Select an existing customer or enter customer details manually.";
+      setOrderCreateFeedback(message);
+      showSnackbar(message, "warning");
+      return;
+    }
+    if (
+      orderCreateManualCustomer
+      && (
+        ![orderCreateForm.firstName, orderCreateForm.lastName].some((value) => String(value || "").trim())
+        || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(orderCreateForm.email.trim())
+        || !orderCreateForm.phone.trim()
+      )
+    ) {
+      const message = "Enter the customer's name, email address, and phone number.";
+      setOrderCreateFeedback(message);
+      showSnackbar(message, "warning");
+      return;
+    }
+    if (!orderCreateForm.deliveryMethod) {
+      const message = "Select a delivery method.";
+      setOrderCreateFeedback(message);
+      showSnackbar(message, "warning");
+      return;
+    }
+    if (["local_delivery", "shipping"].includes(orderCreateForm.deliveryMethod) && !orderCreateForm.address.trim()) {
+      const message = "Enter a delivery address.";
       setOrderCreateFeedback(message);
       showSnackbar(message, "warning");
       return;
@@ -4730,7 +4848,7 @@ function AdminStorefrontDashboard({
           doctor_user_id: selectedDoctorId ? Number(selectedDoctorId) : 0,
           customer_id: orderCreateForm.customerId ? Number(orderCreateForm.customerId) : 0,
           delivery_method: orderCreateForm.deliveryMethod,
-          prescription: orderCreateForm.prescription,
+          customer_note: orderCreateForm.prescription,
           billing: {
             first_name: billingParts[0] || "",
             last_name: billingParts.slice(1).join(" "),
@@ -4748,10 +4866,10 @@ function AdminStorefrontDashboard({
       setOrderCreateForm(EMPTY_ORDER_FORM);
       setOrderCreateItems([]);
       setOrderCreateSearch("");
+      setOrderCreateManualCustomer(false);
       setOrderCreateFeedback("Order created.");
-      showSnackbar("Order created.", "success");
+      showSnackbar("Order created", "success");
       setOrderCreateModalOpen(false);
-      setOrderModalOpen(true);
     } catch (error) {
       const message = parseCreateError(error, "customer");
       setOrderCreateFeedback(message);
@@ -4763,6 +4881,18 @@ function AdminStorefrontDashboard({
 
   async function submitGenericCreate(event) {
     event.preventDefault();
+    if (createModalType === "user" && !userAccountCanSubmit) {
+      setUserAccountTouched({
+        role: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        password: true,
+      });
+      setCreateFeedback("Check the highlighted account details.");
+      return;
+    }
     setCreateLoading(true);
     setCreateFeedback("");
     try {
@@ -4789,7 +4919,7 @@ function AdminStorefrontDashboard({
         closeCreateModal();
       } else if (createModalType === "consultation") {
         if (!consultationCreateForm.doctorUserId || !consultationCreateForm.patientUserId || !consultationCreateForm.startAt || !consultationCreateForm.endAt || !consultationCreateForm.type) {
-          const message = "Select a doctor, patient, date, time, and consultation type before creating the consultation.";
+          const message = "Select a patient, doctor, date, duration, and available time.";
           setCreateFeedback(message);
           showSnackbar(message, "warning");
           setCreateLoading(false);
@@ -4845,8 +4975,8 @@ function AdminStorefrontDashboard({
           patchAppointmentCache(payload.data);
           revalidateCacheGroups(isAppointmentListKey, isAdminSummaryKey);
         }
-        setCreateFeedback("Consultation created.");
-        showSnackbar("Consultation created.", "success");
+        setCreateFeedback("Appointment booked.");
+        showSnackbar("Appointment booked", "success");
         closeCreateModal();
       } else if (createModalType === "user") {
         const payload = await apiRequest("/admin/users", {
@@ -4878,7 +5008,7 @@ function AdminStorefrontDashboard({
             if (userAccountCreateForm.role === "doctor") revalidateCacheGroups(isDoctorListKey);
           }
         }
-        showSnackbar("User account created.", "success");
+        showSnackbar("User account created", "success");
         closeCreateModal();
       } else if (createModalType === "doctor") {
         const payload = await apiRequest("/doctors", {
@@ -5654,7 +5784,7 @@ function AdminStorefrontDashboard({
     }
     if (stepKey === "prescription") {
       return {
-        longDescription: nextForm.longDescription?.replace(/<[^>]*>/g, "").trim() ? "" : "Add a prescription."
+        prescriptionContent: htmlToTextMessage(nextForm.prescriptionContent) ? "" : "Add a prescription."
       };
     }
     return {};
@@ -5725,7 +5855,27 @@ function AdminStorefrontDashboard({
 
   async function handleProductMediaUpload(event) {
     const availableSlots = Math.max(0, 6 - productEditMedia.length);
-    const files = Array.from(event.target.files || []).slice(0, availableSlots);
+    const selectedFiles = Array.from(event.target.files || []);
+    const allowedTypes = ["image/jpeg", "image/png"];
+    const allowedExtensions = ["jpg", "jpeg", "png"];
+    const invalidFile = selectedFiles.find((file) => {
+      const extension = file.name.split(".").pop()?.toLowerCase();
+      return !allowedTypes.includes(file.type)
+        || !allowedExtensions.includes(extension)
+        || file.size > 10 * 1024 * 1024;
+    });
+    if (invalidFile) {
+      const message = "Select JPG or PNG images no larger than 10 MB each.";
+      setProductEditFeedback(message);
+      setProductCreateValidationStep("identity");
+      showSnackbar(message, "warning");
+      event.target.value = "";
+      return;
+    }
+    if (selectedFiles.length > availableSlots) {
+      showSnackbar("You can upload up to 6 product images.", "warning");
+    }
+    const files = selectedFiles.slice(0, availableSlots);
     if (!files.length) {
       if (productEditMedia.length >= 6) {
         showSnackbar("You can upload up to 6 product images.", "warning");
@@ -5733,6 +5883,7 @@ function AdminStorefrontDashboard({
       return;
     }
     setProductMediaUploading(true);
+    setProductEditFeedback("");
     try {
       const nextItems = await Promise.all(files.map(uploadProductMediaFile));
       const uploadMode = productMediaUploadModeRef.current;
@@ -5749,9 +5900,14 @@ function AdminStorefrontDashboard({
         }
         return merged;
       });
-      showSnackbar("Image uploaded.", "success");
+      showSnackbar(files.length === 1 ? "Image uploaded." : "Images uploaded.", "success");
     } catch (error) {
-      showSnackbar(describeRequestError(error), "error");
+      const message = describeRequestError(error);
+      setProductEditFeedback(message);
+      showSnackbar(message, "error", {
+        actionLabel: "Retry",
+        onAction: () => triggerProductMediaUpload("append"),
+      });
     } finally {
       setProductMediaUploading(false);
       event.target.value = "";
@@ -5798,7 +5954,7 @@ function AdminStorefrontDashboard({
 
   function handleProductDescriptionInput(event) {
     const html = event.currentTarget.innerHTML;
-    setProductEditForm((prev) => (prev ? { ...prev, longDescription: html } : prev));
+    setProductEditForm((prev) => (prev ? { ...prev, prescriptionContent: html } : prev));
   }
 
   function formatProductDescription(command, value = null) {
@@ -5808,7 +5964,7 @@ function AdminStorefrontDashboard({
     productDescriptionEditorRef.current?.focus();
     document.execCommand(command, false, value);
     const html = productDescriptionEditorRef.current?.innerHTML || "";
-    setProductEditForm((prev) => (prev ? { ...prev, longDescription: html } : prev));
+    setProductEditForm((prev) => (prev ? { ...prev, prescriptionContent: html } : prev));
   }
 
   function formatProductBlock(tagName) {
@@ -5881,7 +6037,7 @@ function AdminStorefrontDashboard({
           const productPayload = {
             name: productEditForm.title,
             short_description: productEditForm.shortDescription,
-            description: productEditForm.longDescription,
+            description: productEditForm.prescriptionContent,
             status: nextProductStatus,
             regular_price: productEditForm.regularPrice,
             sale_price: productEditForm.salePrice,
@@ -5899,7 +6055,7 @@ function AdminStorefrontDashboard({
               { key: "strength_dosage", value: productEditForm.strengthDosage || "" },
               { key: "expiry_date", value: productEditForm.expiryDate || "" },
               { key: "prescription_rule", value: productEditForm.prescriptionRule || "no_prescription_needed" },
-              { key: "prescription_notes", value: productEditorMode === "create" ? productEditForm.longDescription : (productEditForm.prescriptionNotes || "") }
+              { key: "prescription_notes", value: productEditForm.prescriptionContent }
             ],
             purchase_note: productEditForm.purchaseNotes,
             shipping_information: productEditForm.shippingInfo || productEditForm.shippingClass,
@@ -5929,9 +6085,9 @@ function AdminStorefrontDashboard({
           setProductEditMedia([]);
           setActiveProductMediaId("");
           setProductCreateStep(0);
-          showSnackbar("Product created. Ready to create another.", "success");
+          showSnackbar("Product published", "success");
         } else {
-          showSnackbar(nextProductStatus === "draft" ? "Product draft saved." : "Product created.", "success");
+          showSnackbar(nextProductStatus === "draft" ? "Draft saved" : "Product published", "success");
           closeProductEditModal();
         }
       } else {
@@ -7968,8 +8124,8 @@ function AdminStorefrontDashboard({
     all: (data.products || []).length,
     published: (data.products || []).filter((product) => getProductStatus(product) === "publish").length,
     draft: (data.products || []).filter((product) => getProductStatus(product) === "draft").length,
-    in_stock: (data.products || []).filter((product) => (product.stock_status || "in stock") === "in stock").length,
-    out_of_stock: (data.products || []).filter((product) => (product.stock_status || "in stock") === "out of stock").length,
+    in_stock: (data.products || []).filter((product) => getProductStockDisplay(product).tone === "in_stock").length,
+    out_of_stock: (data.products || []).filter((product) => getProductStockDisplay(product).tone === "out_of_stock").length,
     on_sale: (data.products || []).filter((product) => hasActiveSalePrice(product)).length
   };
   const getLowStockThreshold = (product) => {
@@ -7982,9 +8138,7 @@ function AdminStorefrontDashboard({
     return Number.isFinite(threshold) && threshold > 0 ? threshold : 5;
   };
   const outOfStockProducts = (data.products || []).filter((product) => {
-    const stockQuantity = getProductStockQuantity(product);
-    const status = String(product.stock_status || "").toLowerCase();
-    return status === "out of stock" || (stockQuantity !== null && stockQuantity <= 0);
+    return getProductStockDisplay(product).tone === "out_of_stock";
   }).length;
   const lowStockProducts = (data.products || []).filter((product) => {
     const stockQuantity = getProductStockQuantity(product);
@@ -8028,10 +8182,10 @@ function AdminStorefrontDashboard({
       return getProductStatus(product) === "draft";
     }
     if (productListFilter === "in_stock") {
-      return (product.stock_status || "in stock") === "in stock";
+      return getProductStockDisplay(product).tone === "in_stock";
     }
     if (productListFilter === "out_of_stock") {
-      return (product.stock_status || "in stock") === "out of stock";
+      return getProductStockDisplay(product).tone === "out_of_stock";
     }
     if (productListFilter === "on_sale") {
       return hasActiveSalePrice(product);
@@ -8346,6 +8500,68 @@ function AdminStorefrontDashboard({
   const productCreateStepErrors = productEditorMode === "create"
     ? (productCreateValidationStep === activeProductCreateStep.key ? getProductCreateStepErrors(activeProductCreateStep.key) : {})
     : {};
+  const orderCreateSubtotal = orderCreateItems.reduce((total, item) => {
+    const product = popupOrderProducts.find((entry) => String(entry.id) === String(item.productId))
+      || (data.products || []).find((entry) => String(entry.id) === String(item.productId));
+    const price = getProductPrice(product, "sale_price")
+      || getProductPrice(product, "regular_price")
+      || getProductPrice(product, "price")
+      || 0;
+    return total + (Number(price) * Number(item.quantity || 1));
+  }, 0);
+  const orderCreateHasCustomer = Boolean(
+    orderCreateForm.customerId
+    || (
+      orderCreateManualCustomer
+      && [orderCreateForm.firstName, orderCreateForm.lastName].some((value) => String(value || "").trim())
+      && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(orderCreateForm.email.trim())
+      && orderCreateForm.phone.trim()
+    )
+  );
+  const orderCreateNeedsAddress = ["local_delivery", "shipping"].includes(orderCreateForm.deliveryMethod);
+  const orderCreateCanSubmit = Boolean(
+    orderCreateHasCustomer
+    && orderCreateItems.length
+    && orderCreateForm.status
+    && orderCreateForm.deliveryMethod
+    && (!orderCreateNeedsAddress || orderCreateForm.address.trim())
+  );
+  const orderCreateDirty = Boolean(
+    orderCreateItems.length
+    || orderCreateCustomerSearch.trim()
+    || orderCreateSearch.trim()
+    || orderCreateManualCustomer
+    || Object.entries(orderCreateForm).some(([key, value]) => key !== "quantity" && String(value || "").trim())
+  );
+  const consultationCreateDirty = Boolean(
+    consultationPatientSearch.trim()
+    || consultationDoctorSearch.trim()
+    || consultationCreateForm.patientUserId
+    || consultationCreateForm.doctorUserId
+    || consultationCreateForm.startAt
+    || consultationCreateForm.reason.trim()
+  );
+  const userAccountCreateDirty = JSON.stringify(userAccountCreateForm) !== JSON.stringify(EMPTY_USER_ACCOUNT_FORM);
+  const productCreateDirty = productEditorMode === "create" && Boolean(
+    productEditMedia.length
+    || createMultiple
+    || JSON.stringify(productEditForm || {}) !== JSON.stringify(buildEmptyProductDraft())
+  );
+  const userAccountRequiresPhone = ["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role);
+  const userAccountPasswordValid = userAccountCreateForm.password.length >= 12
+    && /[A-Z]/.test(userAccountCreateForm.password)
+    && /[a-z]/.test(userAccountCreateForm.password)
+    && /\d/.test(userAccountCreateForm.password)
+    && /[^A-Za-z0-9]/.test(userAccountCreateForm.password);
+  const userAccountValidationErrors = {
+    role: USER_ACCOUNT_ROLES.some(([role]) => role === userAccountCreateForm.role) ? "" : "Select a role.",
+    firstName: userAccountCreateForm.firstName.trim() ? "" : "Enter a first name.",
+    lastName: userAccountCreateForm.lastName.trim() ? "" : "Enter a last name.",
+    email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userAccountCreateForm.email.trim()) ? "" : "Enter a valid email address.",
+    phone: !userAccountRequiresPhone || /^[+0-9][0-9 ()-]{7,24}$/.test(userAccountCreateForm.phone.trim()) ? "" : "Enter a valid phone number.",
+    password: userAccountPasswordValid ? "" : "Use 12+ characters with upper/lowercase, a number, and a symbol.",
+  };
+  const userAccountCanSubmit = !Object.values(userAccountValidationErrors).some(Boolean);
   const pendingProductTag = String(productEditSearch.tags || "");
 
   const activeProductMedia = productEditMedia.find((item) => item.id === activeProductMediaId) || productEditMedia[0] || null;
@@ -8360,6 +8576,8 @@ function AdminStorefrontDashboard({
         ? { thumbMin: "76px" }
         : { thumbMin: "88px" };
   const productEditorCurrency = getEditorCurrency(selectedProductEdit, storeCurrency);
+  const productEditorCurrencySymbol = currencySymbol(productEditorCurrency);
+  const productCreateCanAdvance = !Object.values(getProductCreateStepErrors(activeProductCreateStep.key)).some(Boolean);
 
   useEffect(() => {
     if (!productCategoryRows.length) {
@@ -8558,6 +8776,7 @@ function AdminStorefrontDashboard({
   const paginatedOrders = filteredOrders.slice((activeOrderPage - 1) * ordersPerPage, activeOrderPage * ordersPerPage);
   const customersPerPage = 10;
   const customerServerPagination = customersQuery.data?.data?.pagination || {};
+  const customerMetrics = customersQuery.data?.data?.metrics || {};
   const customerPageCount = Math.max(1, Number(customerServerPagination.pages || Math.ceil(customerRows.length / customersPerPage)));
   const activeCustomerPage = Math.min(customerPage, customerPageCount);
   const paginatedCustomerRows = customerRows;
@@ -8567,6 +8786,7 @@ function AdminStorefrontDashboard({
   const paginatedConsultationRows = consultationList.slice((activeConsultationPage - 1) * consultationsPerPage, activeConsultationPage * consultationsPerPage);
   const mtmPerPage = 10;
   const mtmServerPagination = mtmQuery.data?.data?.pagination || {};
+  const mtmMetrics = mtmQuery.data?.data?.metrics || {};
   const mtmPageCount = Math.max(1, Number(mtmServerPagination.pages || Math.ceil(filteredMtmRequests.length / mtmPerPage)));
   const activeMtmPage = Math.min(mtmPage, mtmPageCount);
   const paginatedMtmRequests = filteredMtmRequests;
@@ -9863,7 +10083,7 @@ function AdminStorefrontDashboard({
                   maxCards={4}
                   ariaLabel="Overview metrics"
                   cards={[
-                    { label: "Total revenue", value: formatMetricNaira(sales.month || 0), note: `${formatMetricNaira(sales.today || 0)} processed today`, icon: "moneyBag", tone: "blue" },
+                    { label: "Processed today", value: formatMetricNaira(sales.today || 0), note: `${formatMetricNaira(sales.week || 0)} processed this week`, icon: "moneyBag", tone: "blue" },
                     { label: "Consultations today", value: formatNumber(todayAppointments.length), note: `${formatNumber(consultations.confirmed || 0)} confirmed, ${formatNumber(consultations.requested || 0)} requested`, icon: "calendarCheck", tone: "blue" },
                     { label: "Active products", value: formatNumber((data.products || []).length), note: `${formatNumber(overviewInventoryAlertCount)} stock flags`, icon: "pill", tone: "mint" },
                     { label: "Orders in progress", value: formatNumber(overviewOrderRows.filter((order) => ["pending", "processing", "on-hold"].includes(String(order.status || "").toLowerCase())).length), note: `${formatNumber(overviewOrderRows.filter((order) => String(order.status || "").toLowerCase() === "completed").length)} completed recently`, icon: "cart", tone: "lavender" },
@@ -9879,6 +10099,7 @@ function AdminStorefrontDashboard({
                         </div>
                       </div>
                       <RevenueOverviewCard
+                        title="Processed revenue"
                         currency={storeCurrency}
                         value={overviewRevenueTotal}
                         changePct={overviewRevenueChangePct}
@@ -10225,10 +10446,10 @@ function AdminStorefrontDashboard({
                   ariaLabel="Patient metrics"
                   loading={customersQuery.isLoading}
                   cards={[
-                    { label: "Total patients", value: formatNumber(customerServerPagination.total || customerRows.length), note: "Patient accounts in the directory", icon: "users" },
-                    { label: "Total orders", value: formatNumber(customerRows.reduce((total, row) => total + Number(row.orders || 0), 0)), note: "Orders from patients on this page", icon: "cart" },
-                    { label: "Patient spend", value: formatMetricNaira(customerRows.reduce((total, row) => total + Number(row.spend || 0), 0)), note: "Combined spend on this page", icon: "money" },
-                    { label: "Appointments", value: formatNumber(customerRows.reduce((total, row) => total + Number(row.appointments || 0), 0)), note: "Appointments linked to these patients", icon: "calendar" },
+                    { label: "Total patients", value: formatNumber(customerMetrics.total ?? customerServerPagination.total ?? customerRows.length), note: "Patient accounts in the filtered directory", icon: "users" },
+                    { label: "Total orders", value: formatNumber(customerMetrics.orders ?? customerRows.reduce((total, row) => total + Number(row.orders || 0), 0)), note: "Orders across the filtered directory", icon: "cart" },
+                    { label: "Patient spend", value: formatMetricNaira(customerMetrics.spend ?? customerRows.reduce((total, row) => total + Number(row.spend || 0), 0)), note: "Combined spend across the filtered directory", icon: "money" },
+                    { label: "Appointments", value: formatNumber(customerMetrics.appointments ?? customerRows.reduce((total, row) => total + Number(row.appointments || 0), 0)), note: "Appointments across the filtered directory", icon: "calendar" },
                   ]}
                 />
                 <section className="panel table-panel patient-directory-panel admin-flat-table-section">
@@ -10382,10 +10603,10 @@ function AdminStorefrontDashboard({
                   ariaLabel="MTM metrics"
                   loading={mtmLoading}
                   cards={[
-                    { label: "Total requests", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).length), note: "Tracked MTM requests", icon: "clipboard" },
-                    { label: "Submitted", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "submitted").length), note: "Awaiting pharmacist review", icon: "fileClock" },
-                    { label: "Scheduled", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "scheduled").length), note: "MTM consultations booked", icon: "calendarCheck" },
-                    { label: "Completed", value: formatNumber((Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "completed").length), note: "MTM workflows closed out", icon: "check" },
+                    { label: "Total requests", value: formatNumber(mtmMetrics.total ?? (Array.isArray(data.mtmRequests) ? data.mtmRequests : []).length), note: "Tracked MTM requests", icon: "clipboard" },
+                    { label: "Submitted", value: formatNumber(mtmMetrics.submitted ?? (Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "submitted").length), note: "Awaiting pharmacist review", icon: "fileClock" },
+                    { label: "Scheduled", value: formatNumber(mtmMetrics.scheduled ?? (Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "scheduled").length), note: "MTM consultations booked", icon: "calendarCheck" },
+                    { label: "Completed", value: formatNumber(mtmMetrics.completed ?? (Array.isArray(data.mtmRequests) ? data.mtmRequests : []).filter((item) => String(item.status || "") === "completed").length), note: "MTM workflows closed out", icon: "check" },
                   ]}
                 />
                 <section className="operations-grid mtm-registry-row">
@@ -10599,7 +10820,7 @@ function AdminStorefrontDashboard({
                         {productsLoading ? renderTableRowSkeletons(8, 11) : paginatedProducts.length ? paginatedProducts.map((product) => {
                           const actionLinks = buildProductActionLinks(product, session);
                           const stockQuantity = getProductStockQuantity(product);
-                          const stockStatus = product.stock_status || "in stock";
+                          const stockDisplay = getProductStockDisplay(product);
                           const isDraftProduct = getProductStatus(product) === "draft";
                           const tags = getProductTags(product);
                           const brands = getProductBrands(product);
@@ -10621,7 +10842,7 @@ function AdminStorefrontDashboard({
                               <td className="sku-col">{product.sku || "n/a"}</td>
                               <td>
                                 <div className="table-title">
-                                  <strong className={`stock-label ${stockStatus}`}>{formatStatusLabel(stockStatus)}</strong>
+                                  <StatusPill value={stockDisplay.tone}>{stockDisplay.label}</StatusPill>
                                   <span className="muted">{stockQuantity === null ? "Qty unavailable" : `${formatNumber(stockQuantity)} in inventory`}</span>
                                 </div>
                               </td>
@@ -11361,18 +11582,19 @@ function AdminStorefrontDashboard({
       {orderCreateModalOpen ? (
         <CreationModalLayer
           dismissLabel="Close order creation"
+          hasUnsavedChanges={orderCreateDirty}
           onDismiss={closeOrderCreateModal}
           restoreFocusSelector='[aria-label="Create new record"]'
           submissionPending={orderCreateLoading}
         >
-          <section className="detail-section stacked-order-popup order-create-popup admin-surface-modal modal-frame creation-frame modal-design-system-parity" role="dialog" aria-modal="true" aria-labelledby="create-order-title" aria-describedby="create-order-subtitle">
+          <section className="nevari-create-order" role="dialog" aria-modal="true" aria-labelledby="create-order-title" aria-describedby="create-order-subtitle">
             <form className="order-create-form" onSubmit={createOrderFromForm}>
               <div className="panel-header stacked-order-popup-header modal-head">
                 <div>
                   <h3 id="create-order-title">Create order</h3>
                   <p id="create-order-subtitle" className="popup-support-copy modal-intro-copy">Create a manual storefront order, link products, define payment state and prepare fulfilment.</p>
                 </div>
-                <button className="icon-button" type="button" aria-label="Close order creation" onClick={closeOrderCreateModal}>
+                <button className="icon-button" type="button" aria-label="Close order creation" onClick={requestCloseOrderCreateModal}>
                   <InlineIcon id="i-x" />
                 </button>
               </div>
@@ -11382,12 +11604,27 @@ function AdminStorefrontDashboard({
                   <div className="order-create-left-column">
                   <div className="creation-section-title order-create-customer-heading">
                     <InlineIcon id="i-user" />
-                    <span>Customer details</span>
+                    <span>Customer</span>
                   </div>
                   <div className="creation-field-grid order-create-patient-name">
                     <div className="creation-field">
-                      <label>Patient name</label>
+                      <label>Customer</label>
+                      {orderCreateForm.customerId ? (
+                        <div className="creation-selected-entity">
+                          <span className="consultation-strip-avatar patient">{getNameInitials(getOrderCreateCustomerName(), "CU")}</span>
+                          <span className="consultation-strip-copy">
+                            <strong>{getOrderCreateCustomerName()}</strong>
+                            <span>{orderCreateForm.email} · {orderCreateForm.phone || "No phone on file"}</span>
+                          </span>
+                          <button type="button" onClick={() => {
+                            setOrderCreateForm((prev) => ({ ...prev, customerId: "", firstName: "", lastName: "", email: "", phone: "" }));
+                            setOrderCreateCustomerSearch("");
+                            setOrderCreateCustomerMenuOpen(true);
+                          }}>Change</button>
+                        </div>
+                      ) : (
                       <div className="consultation-search-combo order-create-combo">
+                        <HugeiconsIcon icon={Search01Icon} className="creation-search-icon" />
                         <input
                           className="form-control"
                           value={orderCreateCustomerSearch}
@@ -11407,7 +11644,8 @@ function AdminStorefrontDashboard({
                           onFocus={() => setOrderCreateCustomerMenuOpen(true)}
                           placeholder="Search customer by name, email, or phone"
                           autoComplete="off"
-                          required
+                          required={!orderCreateManualCustomer}
+                          data-modal-initial-focus
                         />
                         {orderCreateCustomerMenuOpen && orderCreateCustomerSearch.trim().length >= 2 ? (
                           <div className="consultation-search-results order-create-results">
@@ -11434,12 +11672,28 @@ function AdminStorefrontDashboard({
                                   </span>
                                 </button>
                               );
-                            }) : !orderCreateCustomersQuery.isLoading ? <div className="order-create-empty-results">No matching patients found.</div> : null}
+                            }) : !orderCreateCustomersQuery.isLoading ? <div className="order-create-empty-results">No matching customer found.</div> : null}
                           </div>
                         ) : null}
                       </div>
+                      )}
+                      {!orderCreateForm.customerId ? (
+                        <button className="order-create-quiet-action" type="button" onClick={() => {
+                          setOrderCreateManualCustomer((current) => !current);
+                          setOrderCreateCustomerMenuOpen(false);
+                          setOrderCreateCustomerSearch("");
+                          setOrderCreateForm((prev) => ({ ...prev, customerId: "", firstName: "", lastName: "", email: "", phone: "" }));
+                        }}>{orderCreateManualCustomer ? "Search existing customers" : "Enter customer details manually"}</button>
+                      ) : null}
+                      {orderCreateManualCustomer && !orderCreateForm.customerId ? (
+                        <div className="creation-field-grid creation-field-grid-two order-create-manual-name">
+                          <input className="form-control" value={orderCreateForm.firstName} onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, firstName: event.target.value }))} placeholder="First name" autoComplete="given-name" required />
+                          <input className="form-control" value={orderCreateForm.lastName} onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, lastName: event.target.value }))} placeholder="Last name" autoComplete="family-name" />
+                        </div>
+                      ) : null}
                     </div>
                   </div>
+                  {(orderCreateManualCustomer || orderCreateForm.customerId) ? (
                   <div className="creation-field-grid creation-field-grid-two order-create-contact-fields">
                     <div className="creation-field">
                       <label>Email address</label>
@@ -11449,6 +11703,7 @@ function AdminStorefrontDashboard({
                         placeholder="customer@email.com"
                         value={orderCreateForm.email}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, email: event.target.value }))}
+                        autoComplete="email"
                         required
                       />
                     </div>
@@ -11456,16 +11711,19 @@ function AdminStorefrontDashboard({
                       <label>Phone number</label>
                       <input
                         className="form-control"
+                        type="tel"
                         placeholder="Enter phone number"
                         value={orderCreateForm.phone}
                         onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, phone: event.target.value }))}
+                        autoComplete="tel"
                         required
                       />
                     </div>
                   </div>
+                  ) : null}
                   <div className="creation-section-title order-create-payment-heading">
                     <InlineIcon id="i-credit-card" />
-                    <span>Payment</span>
+                    <span>Payment and delivery</span>
                   </div>
                   <div className="creation-field-grid order-create-payment-field">
                     <div className="creation-field">
@@ -11483,6 +11741,32 @@ function AdminStorefrontDashboard({
                       </select>
                     </div>
                   </div>
+                  <div className="creation-field-grid order-create-delivery-field">
+                    <div className="creation-field">
+                      <label>Delivery method</label>
+                      <select
+                        className="form-control"
+                        value={orderCreateForm.deliveryMethod}
+                        onChange={(event) => setOrderCreateForm((prev) => ({
+                          ...prev,
+                          deliveryMethod: event.target.value,
+                          address: event.target.value === "pickup" ? "" : prev.address
+                        }))}
+                        required
+                      >
+                        <option value="" disabled>Select delivery method</option>
+                        {ORDER_CREATE_DELIVERY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {orderCreateNeedsAddress ? (
+                    <div className="creation-field-grid order-create-address-field">
+                      <div className="creation-field">
+                        <label>Delivery address</label>
+                        <textarea className="form-control" rows={3} placeholder="Enter the delivery address" value={orderCreateForm.address} onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, address: event.target.value }))} maxLength={300} required />
+                      </div>
+                    </div>
+                  ) : null}
                   </div>
                   <div className="order-create-right-column">
                   <section className="order-create-items-column" aria-labelledby="order-create-products-title">
@@ -11537,7 +11821,12 @@ function AdminStorefrontDashboard({
                           </tbody>
                         </table>
                       </div>
-                    ) : <p className="order-create-empty-products">No products added yet.</p>}
+                    ) : (
+                      <div className="order-create-empty-products">
+                        <span>No products added</span>
+                        <button type="button" onClick={() => document.getElementById("order-create-product-search")?.focus()}>Browse products</button>
+                      </div>
+                    )}
 
                     {orderCreateItems.length ? (
                       <div className="order-create-line-summary">
@@ -11568,14 +11857,16 @@ function AdminStorefrontDashboard({
                             const productId = String(product.id);
                             const productName = product.name || `Product #${productId}`;
                             const productImage = getProductImage(product);
-                            const productMeta = [product.sku, getProductCategories(product), getProductBrands(product), getProductPrice(product, "regular_price") ? formatMoney(getProductPrice(product, "regular_price"), storeCurrency) : ""]
+                            const stockDisplay = getProductStockDisplay(product);
+                            const productMeta = [product.sku, getProductCategories(product), getProductBrands(product), getProductPrice(product, "regular_price") ? formatMoney(getProductPrice(product, "regular_price"), storeCurrency) : "", stockDisplay.label]
                               .filter(Boolean)
                               .join(" • ");
                             return (
                               <button
                                 key={productId}
                                 type="button"
-                                className="consultation-search-result consultation-strip-result"
+                                className={`consultation-search-result consultation-strip-result ${stockDisplay.tone === "out_of_stock" ? "is-disabled" : ""}`}
+                                disabled={stockDisplay.tone === "out_of_stock"}
                                 onClick={() => {
                                   addOrderCreateItem(product);
                                 }}
@@ -11596,25 +11887,9 @@ function AdminStorefrontDashboard({
                     </div>
                   </section>
 
-                  <div className="creation-field-grid order-create-delivery-field" key={`order-delivery-${orderCreateItems.length}`}>
-                    <div className="creation-field">
-                      <label>Delivery method</label>
-                      <select
-                        className="form-control"
-                        value={orderCreateForm.deliveryMethod}
-                        onChange={(event) => setOrderCreateForm((prev) => ({ ...prev, deliveryMethod: event.target.value }))}
-                        required
-                      >
-                        <option value="" disabled>Select delivery method</option>
-                        <option>Pickup</option>
-                        <option>Home delivery</option>
-                        <option>Dispatch rider</option>
-                      </select>
-                    </div>
-                  </div>
                   <div className="creation-field-grid creation-field-grid-two order-create-note-field">
                     <div className="creation-field">
-                      <label>Prescription note</label>
+                      <label>Fulfilment note <span className="field-optional">(optional)</span></label>
                       <textarea
                         className="form-control"
                         rows={4}
@@ -11624,16 +11899,31 @@ function AdminStorefrontDashboard({
                       />
                     </div>
                   </div>
+                  <div className="order-create-total-summary" aria-live="polite">
+                    <div>
+                      <span>Items</span>
+                      <strong>{orderCreateItems.reduce((total, item) => total + Number(item.quantity || 0), 0)}</strong>
+                    </div>
+                    <div>
+                      <span>Subtotal</span>
+                      <strong>{formatMoney(orderCreateSubtotal, storeCurrency)}</strong>
+                    </div>
+                    <div className="is-total">
+                      <span>Total</span>
+                      <strong>{formatMoney(orderCreateSubtotal, storeCurrency)}</strong>
+                    </div>
+                  </div>
                   </div>
                 </section>
               </div>
 
               {orderCreateFeedback ? <p className="muted popup-support-copy">{orderCreateFeedback}</p> : null}
               <div className="stacked-order-popup-actions modal-actions">
-                <button className="pill-button" type="button" onClick={closeOrderCreateModal}>Cancel</button>
-                <span className="order-create-footer-note">You can review the order before fulfilment</span>
-                <button className="button-primary" type="submit" disabled={orderCreateLoading}>
-                  {orderCreateLoading ? "Creating..." : "Create order"}
+                <button className="pill-button" type="button" onClick={requestCloseOrderCreateModal}>Cancel</button>
+                <span className="order-create-footer-total">Total <strong>{formatMoney(orderCreateSubtotal, storeCurrency)}</strong></span>
+                <button className="button-primary" type="submit" disabled={orderCreateLoading || !orderCreateCanSubmit}>
+                  {orderCreateLoading ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
+                  <span>{orderCreateLoading ? "Creating..." : "Create order"}</span>
                 </button>
               </div>
             </form>
@@ -12214,12 +12504,17 @@ function AdminStorefrontDashboard({
       ) : null}
 
       {productEditForm && (selectedProductEdit || productEditorMode === "create") ? (
-        <div className="app-modal-stack">
-          <div className="app-modal-layer app-modal-layer-top is-open">
-            <ModalScrim className="app-modal-backdrop" label="Close product editor" onDismiss={closeProductEditModal} />
+        <CreationModalLayer
+          dismissLabel={productEditorMode === "create" ? "Close product creator" : "Close product editor"}
+          hasUnsavedChanges={productCreateDirty}
+          layerClassName="app-modal-layer-top"
+          onDismiss={closeProductEditModal}
+          restoreFocusSelector='[aria-label="Create new record"]'
+          submissionPending={productEditLoading || productMediaUploading}
+        >
               <section id={productEditorMode === "create" ? "popup-template-product" : undefined} data-popup={productEditorMode === "create" ? "product" : undefined} className={`detail-section product-editor-popup product-editor-modal admin-surface-modal modal-frame detail-frame modal-design-system-parity ${productEditorMode === "create" ? "product-editor-create-mode" : "product-editor-edit-mode"} ${productEditorMode === "create" && !isEmbeddedDashboard ? "product-editor-admin-parity" : ""} ${selectedProductEdit && deletingProductIds.includes(selectedProductEdit.id) ? "product-editor-modal-deleting" : ""}`.trim()} role="dialog" aria-modal="true" aria-labelledby="productEditorTitle" aria-describedby="productEditorDescription" ref={productEditorDialogRef} tabIndex={-1}>
               <form className="product-editor-form" onSubmit={saveProductEdits}>
-                <input ref={productMediaInputRef} type="file" accept="image/*" multiple hidden onChange={handleProductMediaUpload} />
+                <input ref={productMediaInputRef} type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" multiple hidden onChange={handleProductMediaUpload} />
                 <div className="panel-header stacked-order-popup-header product-editor-header modal-head">
                   <div>
                     {productEditorMode === "create" ? (
@@ -12252,7 +12547,7 @@ function AdminStorefrontDashboard({
                         <span className="product-status-toggle-label">{productEditForm.status === "publish" ? "Published" : "Draft"}</span>
                       </button>
                     )}
-                    <button ref={productEditorCloseButtonRef} className="icon-button product-editor-close-button" type="button" data-popup-close={productEditorMode === "create" ? "product" : undefined} aria-label={productEditorMode === "create" ? "Close product creator" : "Close product editor"} disabled={productEditLoading} onClick={closeProductEditModal}><InlineIcon id="i-x" /></button>
+                    <button ref={productEditorCloseButtonRef} className="icon-button product-editor-close-button" type="button" data-popup-close={productEditorMode === "create" ? "product" : undefined} aria-label={productEditorMode === "create" ? "Close product creator" : "Close product editor"} disabled={productEditLoading} onClick={requestCloseProductEditModal}><InlineIcon id="i-x" /></button>
                   </div>
                 </div>
 
@@ -12261,115 +12556,91 @@ function AdminStorefrontDashboard({
                       <>
                         <div className="product-editor-form-column">
                           <div className="product-editor-form-card creation-main product-create-form-layout">
-                            <div className="product-create-step-head">
-                              <div>
-                                <span className="customer-section-kicker">{activeProductCreateStep.eyebrow}</span>
-                                <h4 className="creation-section-title">
-                                  <InlineIcon id="i-products" />
-                                  {activeProductCreateStep.label}
-                                </h4>
+                            {productCreateStep > 0 ? (
+                              <div className="product-create-section-head">
+                                <h4>{activeProductCreateStep.label}</h4>
+                                <p className="popup-support-copy">{activeProductCreateStep.description}</p>
                               </div>
-                              <p className="popup-support-copy">{activeProductCreateStep.description}</p>
-                            </div>
+                            ) : null}
 
                             <div className="product-create-step-scroll">
                             {productCreateStep === 0 ? (
                               <div className="product-create-step-panel">
                                 <div className="creation-field-grid product-create-field-grid">
-                                    <div className="creation-field product-create-primary-image-field product-create-images-widget">
-                                      <div className="product-create-images-heading">
-                                        <span>Product images</span>
-                                        <small>Add up to 6 images. The first image will be used as the cover.</small>
-                                      </div>
-                                      <div className="product-create-images-list" aria-label="Product images">
-                                        {productEditMedia.map((item, index) => (
-                                          <div
-                                            className={`product-create-image-tile ${index === 0 ? "is-cover" : ""}`}
-                                            key={item.id}
-                                            draggable={!productMediaUploading}
-                                            onDragStart={() => {
-                                              productMediaDragIndexRef.current = index;
-                                            }}
-                                            onDragOver={(event) => event.preventDefault()}
-                                            onDrop={() => {
-                                              moveProductMediaItem(productMediaDragIndexRef.current, index);
-                                              productMediaDragIndexRef.current = null;
-                                            }}
-                                          >
-                                            <span className="product-create-image-drag" aria-hidden="true" />
-                                            <img src={item.src} alt={item.alt} />
-                                            <button
-                                              className="product-create-image-remove"
-                                              type="button"
-                                              disabled={productMediaUploading || productEditLoading}
-                                              onClick={() => removeProductMediaItem(index)}
-                                              aria-label={`Remove ${item.alt}`}
-                                            >
-                                              <InlineIcon id="i-x" />
-                                            </button>
-                                            <button
-                                              className="product-create-image-cover"
-                                              type="button"
-                                              disabled={productMediaUploading || productEditLoading || index === 0}
-                                              onClick={() => featureProductMediaItem(index)}
-                                              aria-label={index === 0 ? `${item.alt} is the cover image` : `Make ${item.alt} the cover image`}
-                                            >
-                                              Cover
-                                            </button>
-                                          </div>
-                                        ))}
-                                        {productEditMedia.length < 6 ? (
-                                          <button
-                                            className="product-create-images-add"
-                                            type="button"
-                                            disabled={productMediaUploading || productEditLoading}
-                                            onClick={() => triggerProductMediaUpload("append")}
-                                          >
-                                            <InlineIcon id="i-upload" />
-                                            <span>Add images</span>
-                                          </button>
-                                        ) : null}
-                                        {productMediaUploading ? (
-                                          <span className="product-create-images-loading" role="status" aria-label="Uploading product images">
-                                            <span className="nevari-branded-spinner" aria-hidden="true" />
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                      <small className={productCreateStepErrors.image ? "field-error" : "field-hint"}>{productCreateStepErrors.image || "PNG or JPG, up to 10MB each."}</small>
-                                    </div>
                                     <div className="product-create-details-columns full-width">
                                       <div className="product-create-details-primary">
                                         <label className="creation-field product-create-name-row">
                                           <span>Product name</span>
-                                          <input className="form-control" value={productEditForm.title} placeholder="e.g. Loratadine 10mg" onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} />
+                                          <input className="form-control" value={productEditForm.title} placeholder="e.g. Loratadine 10mg" onBlur={() => setProductCreateValidationStep("identity")} onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.title)} />
                                           {productCreateStepErrors.title ? <small className="field-error">{productCreateStepErrors.title}</small> : null}
                                         </label>
+                                        <div className="creation-field product-create-primary-image-field product-create-images-widget">
+                                          <div className="product-create-images-heading">
+                                            <span>Product images</span>
+                                            <small>Add up to 6 JPG or PNG images. The first image will be used as the cover.</small>
+                                          </div>
+                                          <div className="product-create-images-list" aria-label="Product images">
+                                            {productEditMedia.map((item, index) => (
+                                              <div
+                                                className={`product-create-image-tile ${index === 0 ? "is-cover" : ""}`}
+                                                key={item.id}
+                                                draggable={!productMediaUploading}
+                                                onDragStart={() => {
+                                                  productMediaDragIndexRef.current = index;
+                                                }}
+                                                onDragOver={(event) => event.preventDefault()}
+                                                onDrop={() => {
+                                                  moveProductMediaItem(productMediaDragIndexRef.current, index);
+                                                  productMediaDragIndexRef.current = null;
+                                                }}
+                                              >
+                                                <span className="product-create-image-drag" aria-hidden="true" />
+                                                <img src={item.src} alt={item.alt} />
+                                                <button className="product-create-image-remove" type="button" disabled={productMediaUploading || productEditLoading} onClick={() => removeProductMediaItem(index)} aria-label={`Remove ${item.alt}`}>
+                                                  <InlineIcon id="i-x" />
+                                                </button>
+                                                <button className="product-create-image-cover" type="button" disabled={productMediaUploading || productEditLoading || index === 0} onClick={() => featureProductMediaItem(index)} aria-label={index === 0 ? `${item.alt} is the cover image` : `Make ${item.alt} the cover image`}>
+                                                  Cover
+                                                </button>
+                                              </div>
+                                            ))}
+                                            {productEditMedia.length < 6 ? (
+                                              <button className="product-create-images-add" type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload("append")}>
+                                                <InlineIcon id="i-upload" />
+                                                <span>Add images</span>
+                                              </button>
+                                            ) : null}
+                                            {productMediaUploading ? <span className="product-create-images-loading" role="status" aria-label="Uploading product images"><span className="nevari-branded-spinner" aria-hidden="true" /></span> : null}
+                                          </div>
+                                          <small className={productCreateStepErrors.image ? "field-error" : "field-hint"}>{productCreateStepErrors.image || "PNG or JPG, up to 10MB each."}</small>
+                                        </div>
                                         <div className="product-create-price-row">
                                           <label className="creation-field">
                                             <span>Unit price</span>
-                                            <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.regularPrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} />
+                                            <div className="product-create-money-field">
+                                              <span aria-hidden="true">{productEditorCurrencySymbol}</span>
+                                              <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.regularPrice} onBlur={() => setProductCreateValidationStep("identity")} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.regularPrice)} />
+                                            </div>
                                             {productCreateStepErrors.regularPrice ? <small className="field-error">{productCreateStepErrors.regularPrice}</small> : null}
                                           </label>
                                           <label className="creation-field">
                                             <span>Sales price</span>
-                                            <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.salePrice} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} />
+                                            <div className="product-create-money-field">
+                                              <span aria-hidden="true">{productEditorCurrencySymbol}</span>
+                                              <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.salePrice} onBlur={() => setProductCreateValidationStep("identity")} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.salePrice)} />
+                                            </div>
                                             {productCreateStepErrors.salePrice ? <small className="field-error">{productCreateStepErrors.salePrice}</small> : null}
                                           </label>
                                         </div>
                                       </div>
                                       <label className="creation-field product-create-description-column">
                                         <span>Short description</span>
-                                        <textarea className="form-control" rows={4} maxLength={160} placeholder="Add a short customer friendly description" value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} />
+                                        <textarea className="form-control" rows={2} maxLength={160} placeholder="Add a short customer-friendly description" value={productEditForm.shortDescription} onBlur={() => setProductCreateValidationStep("identity")} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.shortDescription)} />
                                         <small className={productCreateStepErrors.shortDescription ? "field-error" : "field-hint"}>
                                           {productCreateStepErrors.shortDescription || `${productEditForm.shortDescription.length}/160`}
                                         </small>
                                       </label>
                                     </div>
-                                    <label className="creation-field full-width product-create-generated-sku">
-                                      <span>SKU</span>
-                                      <input className="form-control" value={productEditForm.sku || "Generated when saved"} readOnly aria-readonly="true" />
-                                      <small className="field-hint">SKU is generated automatically and cannot be edited.</small>
-                                    </label>
                                     <div className="creation-field-row creation-field-row-three full-width product-create-secondary-fields" hidden>
                                       <label className="creation-field"><span>Expiry date</span><input className="form-control" type="date" value={productEditForm.expiryDate || ""} onChange={(event) => setProductEditForm((prev) => ({ ...prev, expiryDate: event.target.value }))} /></label>
                                       <label className="creation-field"><span>Weight</span><input className="form-control" value={productEditForm.weight || ""} placeholder="e.g. 0.08 kg" onChange={(event) => setProductEditForm((prev) => ({ ...prev, weight: event.target.value }))} /></label>
@@ -12428,16 +12699,23 @@ function AdminStorefrontDashboard({
                                       <div className="product-rich-editor-card">
                                         <div className="product-rich-toolbar" role="toolbar" aria-label="Prescription formatting">
                                           <button type="button" onClick={() => formatProductDescription("bold")}><strong>B</strong></button>
+                                          <button type="button" onClick={() => formatProductDescription("italic")}><em>I</em></button>
                                           <button type="button" onClick={() => formatProductDescription("underline")}><span className="text-underline">U</span></button>
                                           <button type="button" onClick={() => formatProductDescription("insertUnorderedList")}>List</button>
+                                          <button type="button" onClick={() => formatProductDescription("insertOrderedList")}>1. List</button>
                                           <button type="button" onClick={() => formatProductDescription("fontSize", "2")}>Small</button>
                                           <button type="button" onClick={() => formatProductDescription("fontSize", "3")}>Normal</button>
                                           <button type="button" onClick={() => formatProductDescription("fontSize", "5")}>Large</button>
                                         </div>
-                                        <div ref={productDescriptionEditorRef} className="product-rich-surface product-prescription-editor" contentEditable suppressContentEditableWarning onInput={handleProductDescriptionInput} aria-label="Product prescription" />
+                                        <div ref={productDescriptionEditorRef} className="product-rich-surface product-prescription-editor" contentEditable suppressContentEditableWarning onInput={handleProductDescriptionInput} aria-label="Product prescription" data-placeholder="Add prescription guidance, dosage, precautions, and fulfilment notes" />
                                       </div>
                                       <small className="field-hint">A sanitized snapshot is stored with every purchased order item and included in customer emails.</small>
-                                      {productCreateStepErrors.longDescription ? <small className="field-error">{productCreateStepErrors.longDescription}</small> : null}
+                                      {productCreateStepErrors.prescriptionContent ? <small className="field-error">{productCreateStepErrors.prescriptionContent}</small> : null}
+                                      <label className="product-create-multiple">
+                                        <input type="checkbox" checked={createMultiple} onChange={(event) => setCreateMultiple(event.target.checked)} />
+                                        <span>Create multiple</span>
+                                        <small>Publish and start a new product</small>
+                                      </label>
                                     </div>
                                   </div>
                                 </div>
@@ -12563,7 +12841,7 @@ function AdminStorefrontDashboard({
                               </div>
                             <div className="creation-popup-note">
                                 <strong>Prescription note</strong>
-                                <p>{productEditForm.prescriptionNotes || "Add prescription notes to preview them here."}</p>
+                                <p>{htmlToTextMessage(productEditForm.prescriptionContent) || "Add a prescription to preview it here."}</p>
                               </div>
                             </div>
 
@@ -12768,7 +13046,7 @@ function AdminStorefrontDashboard({
                                 <textarea rows={4} maxLength={160} value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} placeholder="Add a short customer friendly description" />
                               </label>
                               <div className="detail-field detail-field-wide product-long-description-field product-editor-form-field">
-                                <span>Long Description</span>
+                                <span>Prescription</span>
                                 <div className="product-rich-editor product-rich-editor-card">
                                   <div className="product-rich-toolbar product-rich-toolbar-reference">
                                     <button type="button" onClick={() => formatProductBlock("p")}>Paragraph</button>
@@ -12786,6 +13064,7 @@ function AdminStorefrontDashboard({
                                     contentEditable
                                     suppressContentEditableWarning
                                     onInput={handleProductDescriptionInput}
+                                    aria-label="Product prescription"
                                   />
                                 </div>
                               </div>
@@ -12887,15 +13166,7 @@ function AdminStorefrontDashboard({
                 <div className="product-editor-footer modal-actions">
                   {productEditorMode === "create" ? <div /> : <button className="pill-button danger product-delete-button" type="button" onClick={deleteSelectedProduct} disabled={productEditLoading}>Delete Product</button>}
                   <div className="product-editor-footer-layout">
-                    {productEditorMode === "create" && productCreateStep === PRODUCT_CREATE_STEPS.length - 1 ? (
-                      <div className="product-editor-footer-multiple">
-                        <label className="product-create-multiple">
-                          <input type="checkbox" checked={createMultiple} onChange={(event) => setCreateMultiple(event.target.checked)} />
-                          <span>Create multiple</span>
-                          <small>Publish and start a new product</small>
-                        </label>
-                      </div>
-                    ) : <div className="product-editor-footer-multiple" aria-hidden="true" />}
+                    <div className="product-editor-footer-multiple" aria-hidden="true" />
                     <div className="product-editor-footer-end">
                       <div className="stacked-order-popup-actions product-editor-actions">
                         {productEditorMode === "create" ? (
@@ -12903,18 +13174,25 @@ function AdminStorefrontDashboard({
                             {productCreateStep > 0 ? (
                               <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={() => setProductCreateStep((prev) => Math.max(0, prev - 1))}>Go back</button>
                             ) : <div />}
-                            <button className="pill-button product-draft-button" type="submit" data-intent="draft" disabled={productEditLoading}>{productEditLoading ? "Saving..." : "Save draft"}</button>
+                            <button className="pill-button product-draft-button" type="submit" data-intent="draft" disabled={productEditLoading || productMediaUploading}>
+                              {productEditLoading ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
+                              <span>{productEditLoading ? "Saving..." : "Save draft"}</span>
+                            </button>
                             {productCreateStep < PRODUCT_CREATE_STEPS.length - 1 ? (
-                              <button className="button-primary product-save-button" type="button" disabled={productEditLoading} onClick={() => goToProductCreateStep(productCreateStep + 1, { validateCurrentStep: true })}>
-                                Next
+                              <button className="button-primary product-save-button" type="button" disabled={productEditLoading || productMediaUploading || !productCreateCanAdvance} onClick={() => goToProductCreateStep(productCreateStep + 1, { validateCurrentStep: true })}>
+                                {productEditLoading || productMediaUploading ? <span className="nevari-branded-spinner is-compact" aria-hidden="true" /> : null}
+                                <span>Next</span>
                               </button>
                             ) : (
-                              <button className="button-primary product-save-button" type="submit" data-intent="publish" data-popup-submit="Product created" disabled={productEditLoading}>{productEditLoading ? "Saving..." : "Publish"}</button>
+                              <button className="button-primary product-save-button" type="submit" data-intent="publish" data-popup-submit="Product created" disabled={productEditLoading || productMediaUploading}>
+                                {productEditLoading ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
+                                <span>{productEditLoading ? "Saving..." : "Publish"}</span>
+                              </button>
                             )}
                           </>
                         ) : (
                         <>
-                          <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={closeProductEditModal}>Cancel</button>
+                          <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={requestCloseProductEditModal}>Cancel</button>
                           <button className="button-primary product-save-button" type="submit" disabled={productEditLoading}>{productEditLoading ? "Saving..." : "Save Changes"}</button>
                         </>
                       )}
@@ -12924,31 +13202,31 @@ function AdminStorefrontDashboard({
                 </div>
               </form>
             </section>
-          </div>
-        </div>
+        </CreationModalLayer>
       ) : null}
 
       {createModalType ? (
         <CreationModalLayer
           dismissLabel="Close create form"
+          hasUnsavedChanges={createModalType === "consultation" ? consultationCreateDirty : userAccountCreateDirty}
           layerClassName="app-modal-layer-top"
           onDismiss={closeCreateModal}
           restoreFocusSelector='[aria-label="Create new record"]'
           submissionPending={createLoading}
         >
-            <section className={`detail-section stacked-order-popup create-record-popup admin-surface-modal modal-frame creation-frame modal-design-system-parity ${createModalType === "consultation" ? "consultation-create-popup consultation-design-popup" : "profile-create-popup"}`} role="dialog" aria-modal="true" aria-labelledby="create-record-title" aria-describedby="create-record-subtitle">
-              <form className="create-record-form" onSubmit={submitGenericCreate}>
-                <div className="panel-header stacked-order-popup-header modal-head">
+            <section className={createModalType === "consultation" ? "creation-modal nevari-create-appointment" : (createModalType === "user" ? "nevari-create-user" : "detail-section stacked-order-popup create-record-popup admin-surface-modal modal-frame creation-frame modal-design-system-parity profile-create-popup")} role="dialog" aria-modal="true" aria-labelledby="create-record-title" aria-describedby="create-record-subtitle">
+              <form className={createModalType === "consultation" ? "creation-modal__form" : "create-record-form"} onSubmit={submitGenericCreate}>
+                <div className={createModalType === "consultation" ? "creation-modal__header" : "panel-header stacked-order-popup-header modal-head"}>
                   <div>
-                    {createModalType === "consultation" ? null : <p className="section-kicker">Create record</p>}
+                    {createModalType === "consultation" || createModalType === "user" ? null : <p className="section-kicker">Create record</p>}
                     <h3 id="create-record-title">{createModalType === "consultation" ? "New appointment" : (createModalType === "user" ? "New user account" : `New ${formatStatusLabel(createModalType)}`)}</h3>
-                    {createModalType === "consultation" ? <p id="create-record-subtitle">Book a consultation using patient details, doctor availability, appointment type and time slot.</p> : createModalType === "user" ? <p id="create-record-subtitle">Create an account, assign a role and set secure login details.</p> : null}
+                    {createModalType === "consultation" ? <p id="create-record-subtitle">Choose a patient, doctor, date, duration and available time.</p> : createModalType === "user" ? <p id="create-record-subtitle">Add account details and assign a role.</p> : null}
                   </div>
-                  <button className="icon-button" type="button" aria-label="Close create form" onClick={closeCreateModal}><InlineIcon id="i-x" /></button>
+                  <button className="icon-button" type="button" aria-label="Close create form" onClick={requestCloseCreateModal}><InlineIcon id="i-x" /></button>
                 </div>
 
                 {createModalType === "consultation" ? (
-                  <div className="consultation-create-shell consultation-design-shell modal-body">
+                  <div className="creation-modal__body appointment-creation__body">
                     {(consultationCreateDoctorsQuery.isLoading || consultationCreatePatientsQuery.isLoading || consultationCreateAppointmentsQuery.isLoading) ? (
                       <p className="muted popup-support-copy detail-field-wide">Loading consultation dependencies...</p>
                     ) : null}
@@ -12957,24 +13235,38 @@ function AdminStorefrontDashboard({
                     ) : null}
 
                     <section className="consultation-design-card consultation-design-form-card">
-                      <div className="consultation-design-card-title">
-                        <InlineIcon id="i-calendar" />
-                        <span>Appointment details</span>
-                      </div>
-
                       <div className="consultation-design-grid">
-                        <label className="consultation-design-field">
-                          <span>Patient name</span>
-                          <div className="consultation-search-combo consultation-design-combo">
+                        <div className="consultation-design-card-title">
+                          <InlineIcon id="i-calendar" />
+                          <span>Appointment details</span>
+                        </div>
+                        <div className="consultation-design-field">
+                          <span>Patient</span>
+                          {consultationSelectedPatient ? (
+                            <div className="creation-selected-entity">
+                              <span className="consultation-strip-avatar patient">{getNameInitials(consultationSelectedPatient.name || consultationSelectedPatient.email || "PT", "PT")}</span>
+                              <span className="consultation-strip-copy">
+                                <strong>{consultationSelectedPatient.name || consultationSelectedPatient.label}</strong>
+                                <span>{consultationSelectedPatient.email}</span>
+                              </span>
+                              <button type="button" onClick={() => {
+                                setConsultationCreateForm((previous) => ({ ...previous, patientUserId: "" }));
+                                setConsultationPatientSearch("");
+                              }}>Change</button>
+                            </div>
+                          ) : (
+                          <div className="consultation-search-combo consultation-design-combo appointment-creation__search">
+                            <HugeiconsIcon icon={Search01Icon} className="appointment-creation__search-icon" />
                             <input
                               value={consultationPatientSearch}
                               onChange={(event) => {
                                 setConsultationPatientSearch(event.target.value);
                                 setConsultationCreateForm((prev) => ({ ...prev, patientUserId: "" }));
                               }}
-                              placeholder="Search by email, username, or name"
+                              placeholder="Search by name, email, or phone"
+                              autoComplete="off"
                             />
-                            <div className="consultation-search-results consultation-design-results">
+                            {consultationPatientSearch.trim().length >= 2 ? <div className="consultation-search-results consultation-design-results">
                               {consultationCreatePatientsQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading patients"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
                               {consultationVisiblePatientOptions.length ? consultationVisiblePatientOptions.map((option) => (
                                 <button
@@ -12993,41 +13285,16 @@ function AdminStorefrontDashboard({
                                   </span>
                                 </button>
                               )) : <div className="consultation-search-empty">No matching patients.</div>}
-                            </div>
+                            </div> : null}
                           </div>
-                        </label>
-
-                        <label className="consultation-design-field">
-                          <span>Consultation type</span>
-                          <div className="select-wrap consultation-design-select">
-                            <select value={consultationCreateForm.type} onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, type: event.target.value }))}>
-                              <option value="video">Video consultation</option>
-                              <option value="audio">Audio consultation</option>
-                            </select>
-                          </div>
-                        </label>
+                          )}
+                        </div>
 
                         <div className="consultation-design-field">
                           <span>Doctor</span>
-                          {consultationDoctorProfile ? (
-                            <div className="consultation-selected-doctor">
-                              <span className="consultation-strip-avatar">
-                                {firstNonEmpty(consultationDoctorProfile.avatar_url, consultationDoctorProfile.avatar, consultationDoctorProfile.image_url, consultationDoctorProfile.photo_url)
-                                  ? <img src={firstNonEmpty(consultationDoctorProfile.avatar_url, consultationDoctorProfile.avatar, consultationDoctorProfile.image_url, consultationDoctorProfile.photo_url)} alt="" />
-                                  : getNameInitials(consultationDoctorProfile.display_name || consultationDoctorProfile.email, "DR")}
-                              </span>
-                              <span className="consultation-strip-copy">
-                                <strong>{consultationDoctorProfile.display_name || "Selected doctor"}</strong>
-                                <span>{consultationDoctorProfile.specialty || consultationDoctorProfile.specialties?.[0] || "Doctor"}</span>
-                                <small><i />Available today</small>
-                              </span>
-                              <button type="button" onClick={() => {
-                                setConsultationCreateForm((prev) => ({ ...prev, doctorUserId: "", startAt: "", endAt: "" }));
-                                setConsultationDoctorSearch("");
-                                setConsultationBookingDate("");
-                              }}>Change</button>
-                            </div>
-                          ) : <div className="consultation-search-combo consultation-design-combo">
+                          {!consultationDoctorProfile ? (
+                          <div className="consultation-search-combo consultation-design-combo appointment-creation__search">
+                            <HugeiconsIcon icon={Search01Icon} className="appointment-creation__search-icon" />
                             <input
                               value={consultationDoctorSearch}
                               onChange={(event) => {
@@ -13035,10 +13302,10 @@ function AdminStorefrontDashboard({
                                 setConsultationCreateForm((prev) => ({ ...prev, doctorUserId: "", startAt: "", endAt: "" }));
                                 setConsultationBookingDate("");
                               }}
-                              placeholder="Search by doctor name, specialty, or email"
+                              placeholder="Search doctor by name or specialty"
                               aria-label="Search doctors for consultation"
                             />
-                            <div className="consultation-search-results consultation-design-results">
+                            {consultationDoctorSearch.trim().length >= 2 ? <div className="consultation-search-results consultation-design-results">
                               {consultationCreateDoctorsQuery.isLoading ? <div className="consultation-search-loading" role="status" aria-label="Loading doctors"><span className="consultation-form-spinner" aria-hidden="true" /></div> : null}
                               {consultationDoctorOptions.length ? consultationDoctorOptions.map((doctor) => {
                                 const doctorId = doctor.user_id || doctor.id;
@@ -13057,14 +13324,46 @@ function AdminStorefrontDashboard({
                                   </button>
                                 );
                               }) : <div className="consultation-search-empty">No matching doctors.</div>}
+                            </div> : null}
+                          </div>
+                          ) : null}
+                          {consultationDoctorProfile ? (
+                            <div className="consultation-selected-doctor">
+                              <span className="consultation-strip-avatar">
+                                {firstNonEmpty(consultationDoctorProfile.avatar_url, consultationDoctorProfile.avatar, consultationDoctorProfile.image_url, consultationDoctorProfile.photo_url)
+                                  ? <img src={firstNonEmpty(consultationDoctorProfile.avatar_url, consultationDoctorProfile.avatar, consultationDoctorProfile.image_url, consultationDoctorProfile.photo_url)} alt="" />
+                                  : getNameInitials(consultationDoctorProfile.display_name || consultationDoctorProfile.email, "DR")}
+                              </span>
+                              <span className="consultation-strip-copy">
+                                <strong>{consultationDoctorProfile.display_name || "Selected doctor"}</strong>
+                                <span>{consultationDoctorProfile.specialty || consultationDoctorProfile.specialties?.[0] || "Doctor"}</span>
+                                <small><i />Available today</small>
+                              </span>
+                              <button type="button" onClick={() => {
+                                setConsultationCreateForm((prev) => ({ ...prev, doctorUserId: "", startAt: "", endAt: "" }));
+                                setConsultationDoctorSearch("");
+                                setConsultationBookingDate("");
+                              }}>Change</button>
                             </div>
-                          </div>}
+                          ) : null}
                         </div>
+
+                        <label className="consultation-design-field consultation-design-reason">
+                          <span>Reason for visit</span>
+                          <textarea
+                            rows={5}
+                            maxLength={500}
+                            value={consultationCreateForm.reason}
+                            onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, reason: event.target.value }))}
+                            placeholder="Add a short note for the doctor"
+                          />
+                          {consultationCreateForm.reason.length >= 450 ? <small>{consultationCreateForm.reason.length}/500</small> : null}
+                        </label>
 
                         <div className="consultation-design-calendar">
                           <BookingCalendarWidget
                             title="Choose appointment time"
-                            subtitle="Select an available date and time slot."
+                            subtitle="Select an available date, duration and time slot."
                             datePanelSubtitle="Select any available day."
                             appointments={consultationDoctorAppointments}
                             selectedDate={consultationSelectedDateKey}
@@ -13084,22 +13383,10 @@ function AdminStorefrontDashboard({
                             }}
                             showStepsHeader={false}
                             compactAppointmentLayout
-                            consultationTypeLabel={consultationCreateForm.type === "audio" ? "Audio consultation" : "Video consultation"}
                           />
                         </div>
-
-                        <label className="consultation-design-field consultation-design-reason">
-                          <span>Reason for visit</span>
-                          <textarea
-                            rows={4}
-                            value={consultationCreateForm.reason}
-                            onChange={(event) => setConsultationCreateForm((prev) => ({ ...prev, reason: event.target.value }))}
-                            placeholder="Add the patient's reason for this consultation."
-                          />
-                          <small>This information will be shared with the doctor.</small>
-                        </label>
                       </div>
-                      {!consultationCanSubmit ? <p className="consultation-validation-message">Select a doctor, patient, booking day, booking time, and consultation type to continue.</p> : null}
+                      {!consultationCanSubmit ? <p className="consultation-validation-message">Select a patient, doctor, booking day, and booking time to continue.</p> : null}
                     </section>
 
                   </div>
@@ -13124,16 +13411,33 @@ function AdminStorefrontDashboard({
                             <input type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={selectUserAccountAvatar} />
                           </label>
                           {userAccountCreateForm.avatar ? (
-                            <button className="pill-button danger-subtle" type="button" onClick={() => setUserAccountCreateForm((previous) => ({ ...previous, avatar: null }))}>Remove</button>
+                            <button className="pill-button danger-subtle" type="button" onClick={() => {
+                              setUserAccountCreateForm((previous) => ({ ...previous, avatar: null }));
+                              setUserAccountAvatarError("");
+                            }}>Remove</button>
                           ) : null}
                         </div>
                         {userAccountCreateForm.avatar ? <span className="user-avatar-filename" title={userAccountCreateForm.avatar.name}>{userAccountCreateForm.avatar.name}</span> : null}
+                        {userAccountAvatarError ? <span className="field-error" role="alert">{userAccountAvatarError}</span> : null}
                       </div>
                     </section>
                     <label className="detail-field user-account-role">
                       <span>Role</span>
                       <div className="select-wrap">
-                        <select value={userAccountCreateForm.role} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...EMPTY_USER_ACCOUNT_FORM, firstName: previous.firstName, lastName: previous.lastName, email: previous.email, password: previous.password, avatar: previous.avatar, role: event.target.value }))}>
+                        <select
+                          value={userAccountCreateForm.role}
+                          onBlur={() => setUserAccountTouched((previous) => ({ ...previous, role: true }))}
+                          onChange={(event) => setUserAccountCreateForm((previous) => ({
+                            ...previous,
+                            role: event.target.value,
+                            permissions: [],
+                            licenseNumber: "",
+                            specialty: "",
+                            location: "",
+                            weeklyCapacity: 40,
+                            isAvailable: true
+                          }))}
+                        >
                           {USER_ACCOUNT_ROLES.filter(([role]) => role !== "administrator" || (session.user?.roles || []).includes("administrator")).map(([role, label]) => <option key={role} value={role}>{label}</option>)}
                         </select>
                       </div>
@@ -13143,35 +13447,42 @@ function AdminStorefrontDashboard({
                     <div className="detail-form-grid user-account-grid">
                       <label className="detail-field">
                         <span>First name</span>
-                        <input value={userAccountCreateForm.firstName} placeholder="Enter first name" maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, firstName: event.target.value }))} required />
+                        <input value={userAccountCreateForm.firstName} placeholder="Enter first name" maxLength={80} onBlur={() => setUserAccountTouched((previous) => ({ ...previous, firstName: true }))} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, firstName: event.target.value }))} aria-invalid={Boolean(userAccountTouched.firstName && userAccountValidationErrors.firstName)} required />
+                        {userAccountTouched.firstName && userAccountValidationErrors.firstName ? <span className="field-error">{userAccountValidationErrors.firstName}</span> : null}
                       </label>
                       <label className="detail-field">
                         <span>Last name</span>
-                        <input value={userAccountCreateForm.lastName} placeholder="Enter last name" maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, lastName: event.target.value }))} required />
+                        <input value={userAccountCreateForm.lastName} placeholder="Enter last name" maxLength={80} onBlur={() => setUserAccountTouched((previous) => ({ ...previous, lastName: true }))} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, lastName: event.target.value }))} aria-invalid={Boolean(userAccountTouched.lastName && userAccountValidationErrors.lastName)} required />
+                        {userAccountTouched.lastName && userAccountValidationErrors.lastName ? <span className="field-error">{userAccountValidationErrors.lastName}</span> : null}
                       </label>
                       <label className="detail-field">
                         <span>Email address</span>
-                        <div className="modal-icon-field"><InlineIcon id="i-mail" /><input type="email" placeholder="name@example.com" value={userAccountCreateForm.email} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, email: event.target.value }))} required /></div>
+                        <div className="modal-icon-field"><InlineIcon id="i-mail" /><input type="email" placeholder="name@example.com" value={userAccountCreateForm.email} onBlur={() => setUserAccountTouched((previous) => ({ ...previous, email: true }))} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, email: event.target.value }))} aria-invalid={Boolean(userAccountTouched.email && userAccountValidationErrors.email)} autoComplete="email" required /></div>
+                        {userAccountTouched.email && userAccountValidationErrors.email ? <span className="field-error">{userAccountValidationErrors.email}</span> : null}
                       </label>
                       <label className="detail-field">
                         <span>Phone number{["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role) ? "" : " (optional)"}</span>
-                        <div className="modal-icon-field"><InlineIcon id="i-phone" /><input type="tel" placeholder="Enter phone number" value={userAccountCreateForm.phone} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, phone: event.target.value }))} required={["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role)} /></div>
+                        <div className="modal-icon-field"><InlineIcon id="i-phone" /><input type="tel" placeholder="Enter phone number" value={userAccountCreateForm.phone} onBlur={() => setUserAccountTouched((previous) => ({ ...previous, phone: true }))} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, phone: event.target.value }))} aria-invalid={Boolean(userAccountTouched.phone && userAccountValidationErrors.phone)} autoComplete="tel" required={userAccountRequiresPhone} /></div>
+                        {userAccountTouched.phone && userAccountValidationErrors.phone ? <span className="field-error">{userAccountValidationErrors.phone}</span> : null}
                       </label>
                       <label className="detail-field detail-field-wide">
                         <span>Password</span>
                         <div className="user-password-control">
                           <div className="modal-icon-field user-password-input">
                             <InlineIcon id="i-lock" />
-                            <input type={userAccountPasswordVisible ? "text" : "password"} value={userAccountCreateForm.password} minLength={12} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, password: event.target.value }))} required />
+                            <input type={userAccountPasswordVisible ? "text" : "password"} value={userAccountCreateForm.password} minLength={12} onFocus={() => setUserAccountPasswordFocused(true)} onBlur={() => {
+                              setUserAccountPasswordFocused(false);
+                              setUserAccountTouched((previous) => ({ ...previous, password: true }));
+                            }} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, password: event.target.value }))} aria-invalid={Boolean(userAccountTouched.password && userAccountValidationErrors.password)} autoComplete="new-password" required />
                             <button type="button" aria-label={userAccountPasswordVisible ? "Hide password" : "Show password"} onClick={() => setUserAccountPasswordVisible((visible) => !visible)}><InlineIcon id="i-eye" /></button>
                           </div>
                           <button className="pill-button" type="button" onClick={generateUserAccountPassword}>Generate password</button>
                         </div>
-                        <small>At least 12 characters with upper/lowercase, a number, and a symbol.</small>
-                        <div className="user-password-strength" aria-label="Password strength">
+                        {userAccountPasswordFocused || (userAccountTouched.password && userAccountValidationErrors.password) ? <small className={userAccountTouched.password && userAccountValidationErrors.password ? "field-error" : ""}>At least 12 characters with upper/lowercase, a number, and a symbol.</small> : null}
+                        {userAccountPasswordFocused ? <div className="user-password-strength" aria-label="Password strength">
                           {[1, 2, 3, 4].map((level) => <i className={userAccountCreateForm.password.length >= level * 3 ? "active" : ""} key={level} />)}
                           <span>{userAccountCreateForm.password.length >= 12 ? "Strong" : userAccountCreateForm.password.length >= 8 ? "Good" : "Weak"}</span>
-                        </div>
+                        </div> : null}
                       </label>
 
                       {["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role) ? (
@@ -13368,10 +13679,12 @@ function AdminStorefrontDashboard({
                     </div>
                   </div>
                 )}
-                <div className="stacked-order-popup-actions modal-actions">
-                  {createModalType === "user" ? <span className="user-account-footer-note">Required fields must be completed before creating the account.</span> : null}
-                  <button className="pill-button" type="button" onClick={closeCreateModal}>Cancel</button>
-                  <button className="button-primary" type="submit" disabled={createLoading || (createModalType === "consultation" && !consultationCanSubmit)}>{createLoading ? (createModalType === "consultation" ? "Booking..." : "Creating...") : (createModalType === "consultation" ? "Book appointment" : (createModalType === "user" ? "Create user" : "Create"))}</button>
+                <div className={createModalType === "consultation" ? "creation-modal__footer" : "stacked-order-popup-actions modal-actions"}>
+                  <button className={createModalType === "consultation" ? "creation-modal__secondary-action" : "pill-button"} type="button" onClick={requestCloseCreateModal}>Cancel</button>
+                  <button className={createModalType === "consultation" ? "creation-modal__primary-action" : "button-primary"} type="submit" disabled={createLoading || (createModalType === "consultation" && !consultationCanSubmit) || (createModalType === "user" && !userAccountCanSubmit)}>
+                    {createLoading ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
+                    <span>{createLoading ? (createModalType === "consultation" ? "Booking..." : "Creating...") : (createModalType === "consultation" ? "Book appointment" : (createModalType === "user" ? "Create user" : "Create"))}</span>
+                  </button>
                 </div>
               </form>
             </section>
@@ -14141,10 +14454,15 @@ export default function Page() {
   return <AdminStorefrontDashboard />;
 }
 
-const ORDER_CREATE_PAYMENT_STATUS_OPTIONS = ["Awaiting payment", "Paid", "Payment slip uploaded", "Refunded"];
+const ORDER_CREATE_PAYMENT_STATUS_OPTIONS = ["Unpaid", "Paid", "Payment slip uploaded", "Refunded"];
 const ORDER_CREATE_PAYMENT_STATUS_MAP = {
-  "Awaiting payment": "pending",
+  Unpaid: "pending",
   Paid: "completed",
   "Payment slip uploaded": "on-hold",
   Refunded: "refunded"
 };
+const ORDER_CREATE_DELIVERY_OPTIONS = [
+  { value: "pickup", label: "Pickup" },
+  { value: "local_delivery", label: "Local delivery" },
+  { value: "shipping", label: "Shipping" }
+];

@@ -1561,6 +1561,17 @@ final class Nevari_Mtm {
         $table = self::table();
         $count_sql = "SELECT COUNT(*) FROM {$table} WHERE {$where}";
         $total = (int) ($params ? $wpdb->get_var($wpdb->prepare($count_sql, $params)) : $wpdb->get_var($count_sql));
+        $metrics_sql = "SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = %s THEN 1 ELSE 0 END) AS submitted,
+                SUM(CASE WHEN status = %s THEN 1 ELSE 0 END) AS scheduled,
+                SUM(CASE WHEN status = %s THEN 1 ELSE 0 END) AS completed
+            FROM {$table} WHERE {$where}";
+        $metric_params = array_merge(
+            [self::STATUS_SUBMITTED, self::STATUS_SCHEDULED, self::STATUS_COMPLETED],
+            $params
+        );
+        $metric_row = $wpdb->get_row($wpdb->prepare($metrics_sql, $metric_params), ARRAY_A) ?: [];
         $offset = ($page - 1) * $per_page;
         $list_sql = "SELECT * FROM {$table} WHERE {$where} ORDER BY id DESC LIMIT %d OFFSET %d";
         $rows = $wpdb->get_results($wpdb->prepare($list_sql, array_merge($params, [$per_page, $offset])));
@@ -1571,6 +1582,12 @@ final class Nevari_Mtm {
                 'per_page' => $per_page,
                 'total' => $total,
                 'pages' => max(1, (int) ceil($total / $per_page)),
+            ],
+            'metrics' => [
+                'total' => (int) ($metric_row['total'] ?? $total),
+                'submitted' => (int) ($metric_row['submitted'] ?? 0),
+                'scheduled' => (int) ($metric_row['scheduled'] ?? 0),
+                'completed' => (int) ($metric_row['completed'] ?? 0),
             ],
         ]);
     }

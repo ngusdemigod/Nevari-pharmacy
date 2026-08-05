@@ -579,6 +579,7 @@ final class Nevari_SSO {
             }
 
             $tokens = Nevari_Auth::issue_token_pair((int) $user->ID, $frontend, is_array($issue_context) ? $issue_context : []);
+            Nevari_Auth::send_dashboard_login_notification($user, $frontend);
             return Nevari_Helpers::success([
                 'access_token' => $tokens['access_token'],
                 'refresh_token' => $tokens['refresh_token'],
