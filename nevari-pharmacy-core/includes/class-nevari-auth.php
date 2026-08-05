@@ -5,12 +5,37 @@ if (!defined('ABSPATH')) {
 
 final class Nevari_Auth {
     private const RESEND_CODE_COOLDOWN_SECONDS = 60;
+    private const CUSTOMER_SETTINGS_META_KEY = '_nevari_customer_dashboard_settings';
 
     private static int $api_session_resolution_depth = 0;
 
     public static function init(): void {
         add_filter('determine_current_user', [__CLASS__, 'determine_current_user'], 20, 1);
+        add_filter('retrieve_password_notification_email', [__CLASS__, 'use_dashboard_native_reset_email'], 20, 4);
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
+    }
+
+    public static function use_dashboard_native_reset_email(array $email, string $reset_key, string $user_login, WP_User $user): array {
+        $frontend_type = self::frontend_type_for_user($user);
+        $frontend = $frontend_type ? Nevari_Connections::trusted_frontend_for_type($frontend_type) : null;
+        if (!$frontend || !self::user_role_can_access_frontend($user, $frontend_type)) {
+            return $email;
+        }
+
+        $reset_url = self::dashboard_password_reset_url($frontend, $user, $reset_key);
+        if ($reset_url === '') {
+            $email['message'] = "A password reset was requested for your Nevari account, but the dashboard reset page is currently unavailable. Please contact support.\r\n";
+            return $email;
+        }
+
+        $display_name = $user->display_name ?: $user_login;
+        $email['subject'] = 'Reset your Nevari dashboard password';
+        $email['message'] = sprintf(
+            "Hello %1\$s,\r\n\r\nUse this dashboard link to reset your password:\r\n%2\$s\r\n\r\nIf you did not request this, you can ignore this email.\r\n",
+            $display_name,
+            $reset_url
+        );
+        return $email;
     }
 
     public static function register_routes(): void {
@@ -388,10 +413,42 @@ final class Nevari_Auth {
         }
 
         $reset_user = self::find_user_by_login_or_email($username);
-        if ($reset_user instanceof WP_User && self::user_can_access_frontend($reset_user, (string) $frontend['frontend_type'])) {
-            $reset_key = get_password_reset_key($reset_user);
-            if (!is_wp_error($reset_key)) {
-                self::send_dashboard_password_reset_email($reset_user, self::dashboard_password_reset_url($frontend, $reset_user, (string) $reset_key));
+        if ($reset_user instanceof WP_User) {
+            $reset_frontend_type = self::frontend_type_for_user($reset_user);
+            $reset_frontend = $reset_frontend_type !== ''
+                ? Nevari_Connections::trusted_frontend_for_type($reset_frontend_type)
+                : null;
+
+            if (!$reset_frontend || !self::user_role_can_access_frontend($reset_user, $reset_frontend_type)) {
+                Nevari_Audit::log('security', 'nevari', 'auth.password_reset_skipped', 'error', [
+                    'related_user_id' => (int) $reset_user->ID,
+                    'message' => 'Password reset email was skipped because no dashboard destination was available for the account role.',
+                    'error_code' => 'reset_frontend_unavailable',
+                    'metadata' => [
+                        'requested_frontend_type' => sanitize_key((string) $frontend['frontend_type']),
+                        'account_frontend_type' => sanitize_key($reset_frontend_type),
+                    ],
+                ]);
+            } else {
+                $reset_key = get_password_reset_key($reset_user);
+                if (!is_wp_error($reset_key)) {
+                    $email_result = self::send_dashboard_password_reset_email($reset_user, self::dashboard_password_reset_url($reset_frontend, $reset_user, (string) $reset_key));
+                    if (is_wp_error($email_result)) {
+                        Nevari_Audit::log('emails', 'nevari', 'auth.password_reset_notification_failed', 'error', [
+                            'related_user_id' => (int) $reset_user->ID,
+                            'message' => 'Password reset email could not be queued.',
+                            'error_code' => sanitize_key($email_result->get_error_code()),
+                            'metadata' => ['frontend_type' => sanitize_key($reset_frontend_type)],
+                        ]);
+                    }
+                } else {
+                    Nevari_Audit::log('security', 'nevari', 'auth.password_reset_key_failed', 'error', [
+                        'related_user_id' => (int) $reset_user->ID,
+                        'message' => 'Password reset key could not be created.',
+                        'error_code' => sanitize_key($reset_key->get_error_code()),
+                        'metadata' => ['frontend_type' => sanitize_key($reset_frontend_type)],
+                    ]);
+                }
             }
         }
 
@@ -462,6 +519,8 @@ final class Nevari_Auth {
                 'frontend_origin' => $frontend['frontend_origin'],
             ],
         ]);
+
+        self::send_password_changed_notification($user, $frontend);
 
         return Nevari_Helpers::success([
             'message' => 'Password reset successful.',
@@ -806,7 +865,7 @@ final class Nevari_Auth {
     }
 
     private static function complete_authenticated_session(WP_User $user, array $frontend, array $params, array $options = []): WP_REST_Response {
-        if (self::login_requires_email_verification($frontend)) {
+        if (self::login_requires_email_verification($user, $frontend)) {
             $challenge = self::create_login_challenge($user, $frontend);
             if (is_wp_error($challenge)) {
                 return Nevari_Helpers::error($challenge->get_error_code(), $challenge->get_error_message(), 500);
@@ -876,15 +935,68 @@ final class Nevari_Auth {
             ],
         ]);
 
+        self::send_dashboard_login_notification($user, $frontend);
+
         return Nevari_Helpers::success($payload, [], (int) ($options['status'] ?? 200));
+    }
+
+    public static function send_dashboard_login_notification(WP_User $user, array $frontend): void {
+        $frontend_type = sanitize_key((string) ($frontend['frontend_type'] ?? 'dashboard'));
+        $dashboard_labels = [
+            'patient_dashboard' => 'Patient dashboard',
+            'doctors_dashboard' => 'Doctor dashboard',
+            'pharmacist_dashboard' => 'Pharmacist dashboard',
+            'storefront' => 'Storefront dashboard',
+        ];
+        $dashboard_label = $dashboard_labels[$frontend_type] ?? 'Nevari dashboard';
+        $login_time = wp_date('F j, Y \a\t g:i a T');
+        $ip_address = sanitize_text_field(Nevari_Helpers::client_ip());
+        $user_agent = isset($_SERVER['HTTP_USER_AGENT'])
+            ? substr(sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_USER_AGENT'])), 0, 255)
+            : 'Unavailable';
+        $display_name = $user->display_name ?: $user->user_login;
+        $support_email = sanitize_email((string) get_option('admin_email'));
+
+        $result = Nevari_Emails::queue_or_send([
+            'template_key' => 'dashboard_login_notification',
+            'recipient_user_id' => (int) $user->ID,
+            'recipient_email' => $user->user_email,
+            'variables' => [
+                'display_name' => $display_name,
+                'dashboard_name' => $dashboard_label,
+                'login_time' => $login_time,
+                'ip_address' => $ip_address ?: 'Unavailable',
+                'device' => $user_agent,
+                'support_email' => $support_email,
+            ],
+            'related_object_type' => 'dashboard_login',
+            'related_object_id' => (int) $user->ID,
+        ], true);
+
+        if (is_wp_error($result)) {
+            Nevari_Audit::log('emails', 'nevari', 'auth.login_notification_failed', 'error', [
+                'related_user_id' => (int) $user->ID,
+                'message' => 'Dashboard login succeeded, but its security notification could not be queued.',
+                'error_code' => sanitize_key($result->get_error_code()),
+                'metadata' => ['frontend_type' => $frontend_type],
+            ]);
+        }
     }
 
     public static function frontend_requires_email_verification(string $frontend_type): bool {
         return $frontend_type === 'storefront';
     }
 
-    private static function login_requires_email_verification(array $frontend): bool {
+    public static function user_requires_email_verification(WP_User $user, array $frontend): bool {
+        return self::login_requires_email_verification($user, $frontend);
+    }
+
+    private static function login_requires_email_verification(WP_User $user, array $frontend): bool {
         $frontend_type = (string) ($frontend['frontend_type'] ?? '');
+        if ($frontend_type === 'patient_dashboard' && self::customer_two_factor_enabled((int) $user->ID)) {
+            return true;
+        }
+
         if (!self::frontend_requires_email_verification($frontend_type)) {
             return false;
         }
@@ -903,6 +1015,19 @@ final class Nevari_Auth {
         }
 
         return true;
+    }
+
+    private static function customer_two_factor_enabled(int $user_id): bool {
+        if ($user_id <= 0 || !Nevari_Helpers::is_patient($user_id)) {
+            return false;
+        }
+
+        $settings = get_user_meta($user_id, self::CUSTOMER_SETTINGS_META_KEY, true);
+        if (!is_array($settings) || !array_key_exists('twoFactorEnabled', $settings)) {
+            return false;
+        }
+
+        return (bool) Nevari_Helpers::bool_param($settings['twoFactorEnabled']);
     }
 
     public static function create_login_challenge(WP_User $user, array $frontend) {
@@ -1096,15 +1221,23 @@ final class Nevari_Auth {
     }
 
     private static function dashboard_password_reset_url(array $frontend, WP_User $user, string $reset_key): string {
-        $origin = untrailingslashit((string) ($frontend['frontend_origin'] ?? ''));
+        $frontend_type = sanitize_key((string) ($frontend['frontend_type'] ?? ''));
+        $trusted_frontend = $frontend_type ? Nevari_Connections::trusted_frontend_for_type($frontend_type) : null;
+        $origin = $trusted_frontend ? untrailingslashit((string) ($trusted_frontend['frontend_origin'] ?? '')) : '';
+        if ($origin === '' || !wp_http_validate_url($origin) || in_array($origin, [untrailingslashit(home_url()), untrailingslashit(site_url())], true)) {
+            return '';
+        }
         return $origin . '/reset-password?' . http_build_query([
             'login' => $user->user_login,
             'key' => $reset_key,
-            'frontend_type' => sanitize_key((string) ($frontend['frontend_type'] ?? 'patient_dashboard')),
+            'frontend_type' => $frontend_type,
         ]);
     }
 
     private static function send_dashboard_password_reset_email(WP_User $user, string $reset_url) {
+        if ($reset_url === '' || !wp_http_validate_url($reset_url) || strpos($reset_url, '/reset-password?') === false) {
+            return new WP_Error('reset_frontend_unavailable', 'The dashboard password reset destination is unavailable.');
+        }
         $display_name = self::preferred_customer_display_name(
             (string) get_user_meta((int) $user->ID, 'first_name', true),
             (string) get_user_meta((int) $user->ID, 'last_name', true),
@@ -1120,10 +1253,43 @@ final class Nevari_Auth {
                 esc_html($display_name),
                 esc_url($reset_url)
             ),
-            'body_text' => sprintf("Hello %1$s,\n\nUse this link to reset your password:\n%2$s\n\nIf you did not request this, you can ignore this email.", $display_name, $reset_url),
+            'body_text' => sprintf("Hello %1\$s,\n\nUse this link to reset your password:\n%2\$s\n\nIf you did not request this, you can ignore this email.", $display_name, $reset_url),
             'related_object_type' => 'password_reset',
             'related_object_id' => (int) $user->ID,
         ], true);
+    }
+
+    private static function send_password_changed_notification(WP_User $user, array $frontend): void {
+        $display_name = $user->display_name ?: $user->user_login;
+        $changed_at = wp_date('F j, Y \a\t g:i a T');
+        $support_email = sanitize_email((string) get_option('admin_email'));
+        $result = Nevari_Emails::queue_or_send([
+            'recipient_user_id' => (int) $user->ID,
+            'recipient_email' => $user->user_email,
+            'subject' => 'Your Nevari password was changed',
+            'body_html' => sprintf(
+                '<p>Hello %1$s,</p><p>Your Nevari dashboard password was changed on %2$s.</p><p>If you did not make this change, contact us immediately%3$s.</p>',
+                esc_html($display_name),
+                esc_html($changed_at),
+                $support_email ? ' at ' . esc_html($support_email) : ''
+            ),
+            'body_text' => sprintf(
+                "Hello %1\$s,\n\nYour Nevari dashboard password was changed on %2\$s.\n\nIf you did not make this change, contact us immediately%3\$s.",
+                $display_name,
+                $changed_at,
+                $support_email ? ' at ' . $support_email : ''
+            ),
+            'related_object_type' => 'password_change',
+            'related_object_id' => (int) $user->ID,
+        ], true);
+        if (is_wp_error($result)) {
+            Nevari_Audit::log('emails', 'nevari', 'auth.password_change_notification_failed', 'error', [
+                'related_user_id' => (int) $user->ID,
+                'message' => 'Password changed, but its security notification could not be queued.',
+                'error_code' => sanitize_key($result->get_error_code()),
+                'metadata' => ['frontend_type' => sanitize_key((string) ($frontend['frontend_type'] ?? ''))],
+            ]);
+        }
     }
 
     private static function find_user_by_login_or_email(string $username): ?WP_User {

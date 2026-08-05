@@ -63,6 +63,7 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
   const [stage, setStage] = useState("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [challenge, setChallenge] = useState({ id: "", code: "", maskedEmail: "" });
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
@@ -73,9 +74,19 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
     if (!open) return;
     setStage("login");
     setPassword("");
+    setPasswordVisible(false);
     setChallenge({ id: "", code: "", maskedEmail: "" });
     setError("");
     window.setTimeout(() => identifierRef.current?.focus(), 0);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [open]);
 
   useEffect(() => {
@@ -125,7 +136,7 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
           size: "large",
           shape: "rectangular",
           text: "signin_with",
-          width: Math.min(360, googleButtonRef.current.clientWidth || 320),
+          width: Math.min(400, googleButtonRef.current.clientWidth || 320),
         });
       } catch (caught) {
         if (!cancelled) setError(String(caught?.message || "Google sign-in could not be loaded."));
@@ -277,28 +288,23 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
   return (
     <div className="session-reauth-layer" role="presentation">
       <section ref={dialogRef} className="session-reauth-dialog" role="dialog" aria-modal="true" aria-labelledby="session-reauth-title">
-        <img className="session-reauth-logo" src="/ne.webp" alt="" aria-hidden="true" />
-        <p className="section-kicker">Session paused</p>
-        <h1 id="session-reauth-title">{stage === "verify" ? "Enter verification code" : "Sign in to continue"}</h1>
-        <p className="session-reauth-copy">
-          {stage === "verify"
-            ? `Enter the code sent to ${challenge.maskedEmail || "your email"}.`
-            : "Your work is still here. Sign in again to continue without leaving this page."}
-        </p>
+        <h1 id="session-reauth-title">{stage === "verify" ? "Verify code" : "Log in"}</h1>
+        {stage === "verify" ? <p className="session-reauth-copy">Enter the code sent to {challenge.maskedEmail || "your email"}.</p> : null}
         {stage === "login" ? (
           <form className="session-reauth-form" onSubmit={submitLogin}>
-            <label><span>Username or email</span><input ref={identifierRef} type="text" inputMode="email" autoCapitalize="none" spellCheck="false" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label>
-            <label><span>Password</span><input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
+            <label><span>Email</span><input ref={identifierRef} type="text" inputMode="email" autoCapitalize="none" spellCheck="false" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label>
+            <label><span>Password</span><span className="session-reauth-password-field"><input type={passwordVisible ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="button" onClick={() => setPasswordVisible((visible) => !visible)}>{passwordVisible ? "Hide" : "Show"}</button></span></label>
+            <button className="auth-primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign In"}</button>
+            <div className="session-reauth-links">
+              <a href={config.loginPath}>Reset password</a>
+              {config.allowRegistration ? <a href={config.loginPath}>Create account</a> : null}
+            </div>
             {googleAuth.enabled ? (
-              <>
-                <div className="session-reauth-divider"><span>or</span></div>
-                <div className="auth-google-panel" aria-busy={googleBusy ? "true" : "false"}>
-                  <div className="auth-google-button-slot" ref={googleButtonRef} />
-                  {googleBusy ? <span className="auth-google-loading"><span className="auth-button-spinner" aria-hidden="true" /> Signing in with Google...</span> : null}
-                </div>
-              </>
+              <div className="auth-google-panel" aria-busy={googleBusy ? "true" : "false"}>
+                <div className="auth-google-button-slot" ref={googleButtonRef} />
+                {googleBusy ? <span className="auth-google-loading"><span className="auth-button-spinner" aria-hidden="true" /> Signing in with Google...</span> : null}
+              </div>
             ) : null}
-            <button className="auth-primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in and continue"}</button>
           </form>
         ) : (
           <form className="session-reauth-form" onSubmit={submitCode}>

@@ -108,8 +108,13 @@ export default function AppProviders({ children }) {
       }
 
       const response = await originalFetch(input, { ...init, headers });
+      const proxyPath = requestUrl.pathname === "/api/nevari-proxy"
+        ? String(requestUrl.searchParams.get("path") || "")
+        : "";
       const isAuthRoute = requestUrl.pathname.startsWith("/api/auth/")
-        || requestUrl.pathname === "/api/nevari-proxy" && /\/auth\//.test(requestUrl.search);
+        || requestUrl.pathname.startsWith("/api/sso/")
+        || proxyPath.startsWith("/auth/")
+        || proxyPath.startsWith("/sso/");
       const isLoginPage = /\/login\/?$/.test(window.location.pathname);
       if (isSameOriginApi && response.status === 401 && !isAuthRoute && !isLoginPage) {
         const reauthenticated = requestReauthentication();

@@ -447,6 +447,14 @@ final class Nevari_Plugin {
         $created_by = get_current_user_id() ?: 0;
         $templates = [
             [
+                'template_key' => 'dashboard_login_notification',
+                'name' => 'Dashboard Login Notification',
+                'subject' => 'New sign-in to your Nevari dashboard',
+                'body_html' => '<p>Hello {{display_name}},</p><p>A successful sign-in to your {{dashboard_name}} was recorded.</p><p><strong>Time:</strong> {{login_time}}<br><strong>IP address:</strong> {{ip_address}}<br><strong>Device:</strong> {{device}}</p><p>If this was not you, reset your password immediately and contact us at {{support_email}}.</p>',
+                'body_text' => 'Hello {{display_name}}, a successful sign-in to your {{dashboard_name}} was recorded. Time: {{login_time}}. IP address: {{ip_address}}. Device: {{device}}. If this was not you, reset your password immediately and contact us at {{support_email}}.',
+                'variables' => ['display_name', 'dashboard_name', 'login_time', 'ip_address', 'device', 'support_email'],
+            ],
+            [
                 'template_key' => 'doctor_order_assigned',
                 'name' => 'Doctor Order Assigned',
                 'subject' => 'A pharmacy order needs your review',
