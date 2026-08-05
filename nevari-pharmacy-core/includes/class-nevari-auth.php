@@ -413,25 +413,42 @@ final class Nevari_Auth {
         }
 
         $reset_user = self::find_user_by_login_or_email($username);
-        if ($reset_user instanceof WP_User && self::user_can_access_frontend($reset_user, (string) $frontend['frontend_type'])) {
-            $reset_key = get_password_reset_key($reset_user);
-            if (!is_wp_error($reset_key)) {
-                $email_result = self::send_dashboard_password_reset_email($reset_user, self::dashboard_password_reset_url($frontend, $reset_user, (string) $reset_key));
-                if (is_wp_error($email_result)) {
-                    Nevari_Audit::log('emails', 'nevari', 'auth.password_reset_notification_failed', 'error', [
+        if ($reset_user instanceof WP_User) {
+            $reset_frontend_type = self::frontend_type_for_user($reset_user);
+            $reset_frontend = $reset_frontend_type !== ''
+                ? Nevari_Connections::trusted_frontend_for_type($reset_frontend_type)
+                : null;
+
+            if (!$reset_frontend || !self::user_role_can_access_frontend($reset_user, $reset_frontend_type)) {
+                Nevari_Audit::log('security', 'nevari', 'auth.password_reset_skipped', 'error', [
+                    'related_user_id' => (int) $reset_user->ID,
+                    'message' => 'Password reset email was skipped because no dashboard destination was available for the account role.',
+                    'error_code' => 'reset_frontend_unavailable',
+                    'metadata' => [
+                        'requested_frontend_type' => sanitize_key((string) $frontend['frontend_type']),
+                        'account_frontend_type' => sanitize_key($reset_frontend_type),
+                    ],
+                ]);
+            } else {
+                $reset_key = get_password_reset_key($reset_user);
+                if (!is_wp_error($reset_key)) {
+                    $email_result = self::send_dashboard_password_reset_email($reset_user, self::dashboard_password_reset_url($reset_frontend, $reset_user, (string) $reset_key));
+                    if (is_wp_error($email_result)) {
+                        Nevari_Audit::log('emails', 'nevari', 'auth.password_reset_notification_failed', 'error', [
+                            'related_user_id' => (int) $reset_user->ID,
+                            'message' => 'Password reset email could not be queued.',
+                            'error_code' => sanitize_key($email_result->get_error_code()),
+                            'metadata' => ['frontend_type' => sanitize_key($reset_frontend_type)],
+                        ]);
+                    }
+                } else {
+                    Nevari_Audit::log('security', 'nevari', 'auth.password_reset_key_failed', 'error', [
                         'related_user_id' => (int) $reset_user->ID,
-                        'message' => 'Password reset email could not be queued.',
-                        'error_code' => sanitize_key($email_result->get_error_code()),
-                        'metadata' => ['frontend_type' => sanitize_key((string) $frontend['frontend_type'])],
+                        'message' => 'Password reset key could not be created.',
+                        'error_code' => sanitize_key($reset_key->get_error_code()),
+                        'metadata' => ['frontend_type' => sanitize_key($reset_frontend_type)],
                     ]);
                 }
-            } else {
-                Nevari_Audit::log('security', 'nevari', 'auth.password_reset_key_failed', 'error', [
-                    'related_user_id' => (int) $reset_user->ID,
-                    'message' => 'Password reset key could not be created.',
-                    'error_code' => sanitize_key($reset_key->get_error_code()),
-                    'metadata' => ['frontend_type' => sanitize_key((string) $frontend['frontend_type'])],
-                ]);
             }
         }
 

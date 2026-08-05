@@ -6,6 +6,7 @@
 - Enabling or disabling customer email two-factor authentication is recorded in the security audit log without storing OTPs or authentication secrets.
 - Successful dashboard authentication now queues a login notification to the authenticated user's WordPress email for patient, doctor, pharmacist, nurse, store-admin, shop-manager, and administrator access paths, including direct, Google, verification-code, and dashboard SSO completion.
 - Password-reset requests retain their generic anti-enumeration response. Delivery failures are recorded server-side without revealing whether an account exists.
+- Password-reset requests authenticate the signed calling frontend but derive the reset destination from the matched account's WordPress role. A valid account is therefore not silently skipped when the request originated from a different dashboard login page, and unavailable role destinations are recorded only in the private audit log.
 - Successful password changes queue a separate confirmation email. Login and password-change notifications never contain credentials, reset keys, session tokens, or raw authentication payloads.
 - Login notifications use the managed `dashboard_login_notification` template and the default branded Nevari email wrapper; only the display name, dashboard label, login time, IP address, device description, and support email are supplied as escaped template variables.
 - Email queue persistence failures now fail explicitly instead of returning a false-success log identifier.

@@ -33,6 +33,8 @@ export default function ResetPasswordPageClient() {
   const config = FRONTEND_BY_TYPE[requestedFrontendType] || null;
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
   const [fieldError, setFieldError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [completed, setCompleted] = useState(false);
@@ -49,6 +51,7 @@ export default function ResetPasswordPageClient() {
       paired: true,
     };
   }, [config]);
+  const dashboardName = String(config?.label || "Nevari Dashboard").replace(/^Nevari\s+/i, "").trim();
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -108,53 +111,60 @@ export default function ResetPasswordPageClient() {
 
   return (
     <div className="auth-gate">
-      <div className="auth-card">
-        <div className="auth-brand">
-          <div className="auth-badge">Nevari Health</div>
-          <h1>Reset password</h1>
-          <p>Finish resetting your dashboard password here.</p>
+      <div className="auth-gate-shell">
+        <div className="auth-intro">
+          <img className="auth-logo" src="/ne.webp" alt="Nevari logo" />
+          <p className="auth-dashboard-name">{dashboardName}</p>
         </div>
-
-        <div className={`auth-notice ${notice.tone}`}>{notice.message}</div>
-
-        {!login || !key || !config ? (
-          <div className="auth-form">
-            <div className="auth-helper-copy">This password reset link is invalid or incomplete.</div>
-            <button className="auth-primary-button" type="button" onClick={() => router.push(config?.loginPath || FRONTENDS.patient.loginPath)}>
-              Back to login
-            </button>
-          </div>
-        ) : completed ? (
-          <div className="auth-form">
-            <div className="auth-helper-copy">Your password has been updated successfully.</div>
-            <button className="auth-primary-button" type="button" onClick={() => router.push(config.loginPath)}>
-              Go to login
-            </button>
-          </div>
-        ) : (
-          <form className="auth-form" onSubmit={handleSubmit}>
-            <label className="form-group">
-              <span>New password</span>
-              <div className="input-wrap">
-                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" required />
+        <section className="auth-card auth-screen-card">
+          <div className="auth-card-body">
+            <h1 className="auth-title">Reset password</h1>
+            {!login || !key || !config ? (
+              <div className="auth-form auth-reference-form">
+                <p className="auth-subtitle">This password reset link is invalid or incomplete.</p>
+                <div className="auth-actions"><button className="auth-primary-button" type="button" onClick={() => router.push(config?.loginPath || FRONTENDS.patient.loginPath)}>Back to login</button></div>
               </div>
-            </label>
-            <label className="form-group">
-              <span>Confirm password</span>
-              <div className="input-wrap">
-                <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" required />
+            ) : completed ? (
+              <div className="auth-form auth-reference-form">
+                <p className="auth-subtitle">Your password has been updated successfully.</p>
+                <div className="auth-actions"><button className="auth-primary-button" type="button" onClick={() => router.push(config.loginPath)}>Go to login</button></div>
               </div>
-            </label>
-            {fieldError ? <small className="customer-mobile-field-error">{fieldError}</small> : null}
-            <button className="auth-primary-button" type="submit" disabled={submitting}>
-              {submitting ? <BrandedSpinner label="Resetting password" /> : "Reset password"}
-            </button>
-            <div className="auth-footer-links">
-              <Link href={config.loginPath} className="auth-text-link">Back to login</Link>
-            </div>
+            ) : (
+              <form className="auth-form auth-reference-form" onSubmit={handleSubmit}>
+                <p className="auth-subtitle">Set a new password to continue to your dashboard.</p>
+                <label className="form-group">
+                  <span>New password</span>
+                  <div className="input-wrap">
+                    <input type={passwordVisible ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" required />
+                    <button className="input-suffix auth-toggle-button" type="button" onClick={() => setPasswordVisible((visible) => !visible)}>{passwordVisible ? "Hide" : "Show"}</button>
+                  </div>
+                </label>
+                <label className="form-group">
+                  <span>Confirm password</span>
+                  <div className="input-wrap">
+                    <input type={confirmPasswordVisible ? "text" : "password"} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" required />
+                    <button className="input-suffix auth-toggle-button" type="button" onClick={() => setConfirmPasswordVisible((visible) => !visible)}>{confirmPasswordVisible ? "Hide" : "Show"}</button>
+                  </div>
+                </label>
+                {fieldError ? <small className="customer-mobile-field-error">{fieldError}</small> : null}
+                <div className="auth-actions"><button className="auth-primary-button" type="submit" disabled={submitting}>
+                  {submitting ? <BrandedSpinner label="Resetting password" /> : "Reset password"}
+                </button></div>
+                <div className="auth-inline-links">
+                  <Link href={config.loginPath} className="auth-text-link">Back to login</Link>
+                </div>
+              </form>
+            )}
             <RecaptchaDisclosure />
-          </form>
-        )}
+            {notice?.message ? (
+              <div className={`snackbar auth-snackbar ${notice.tone}`} role="status">
+                <span className="snackbar-title">{notice.tone === "error" ? "Error" : notice.tone === "success" ? "Success" : "Notice"}</span>
+                <span className="snackbar-message">{notice.message}</span>
+                <button className="auth-snackbar-close" type="button" onClick={() => setNotice(null)} aria-label="Dismiss notice">×</button>
+              </div>
+            ) : null}
+          </div>
+        </section>
       </div>
     </div>
   );
