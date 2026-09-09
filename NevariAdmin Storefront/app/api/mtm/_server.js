@@ -77,7 +77,7 @@ export async function proxyRawRequest(origin, session, path, { method = "GET", b
   });
 }
 
-export async function proxyRequest(origin, session, path, { method = "GET", body } = {}) {
+export async function proxyRequest(origin, session, path, { method = "GET", body, headers = {} } = {}) {
   const response = await fetch(proxyUrl(origin, session.baseUrl, path), {
     method,
     headers: {
@@ -86,6 +86,7 @@ export async function proxyRequest(origin, session, path, { method = "GET", body
       Authorization: session.accessToken ? `Bearer ${session.accessToken}` : "",
       "X-Nevari-Frontend-Type": session.frontendType || "patient",
       "X-Nevari-Frontend-Origin": session.frontendOrigin || origin,
+      ...headers,
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });

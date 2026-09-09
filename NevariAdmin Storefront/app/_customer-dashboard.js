@@ -54,7 +54,7 @@ const CUSTOMER_DASHBOARD_REFRESH_MS = 60_000;
 const CUSTOMER_MOBILE_BREAKPOINT = 960;
 
 function customerDashboardPagePath(page) {
-  return page === "overview" ? "/dashboard" : `/dashboard/${encodeURIComponent(page)}`;
+  return page === "overview" ? "/dashboard" : `/dashboard?page=${encodeURIComponent(page)}`;
 }
 
 function isCustomerMobileViewport() {
@@ -187,15 +187,18 @@ function fullNameFromParts(source = {}) {
 }
 
 function resolveCustomerPreferredName({ settingsDisplayName = '', profile = {}, sessionUser = {} } = {}) {
-  return normalizeCustomerName(settingsDisplayName)
-    || normalizeCustomerName(profile?.last_name || profile?.lastName)
-    || normalizeCustomerName(sessionUser?.last_name || sessionUser?.lastName)
-    || normalizeCustomerName(profile?.first_name || profile?.firstName)
-    || normalizeCustomerName(sessionUser?.first_name || sessionUser?.firstName)
+  const structuredName = [fullNameFromParts(profile), fullNameFromParts(sessionUser)]
+    .map(normalizeCustomerName)
+    .filter(Boolean)
+    .sort((left, right) => right.split(/\s+/).length - left.split(/\s+/).length || right.length - left.length)[0];
+  return structuredName
+    || normalizeCustomerName(settingsDisplayName)
     || normalizeCustomerName(profile?.display_name)
     || normalizeCustomerName(sessionUser?.display_name)
-    || normalizeCustomerName(fullNameFromParts(profile))
-    || normalizeCustomerName(fullNameFromParts(sessionUser))
+    || normalizeCustomerName(profile?.first_name || profile?.firstName)
+    || normalizeCustomerName(sessionUser?.first_name || sessionUser?.firstName)
+    || normalizeCustomerName(profile?.last_name || profile?.lastName)
+    || normalizeCustomerName(sessionUser?.last_name || sessionUser?.lastName)
     || normalizeCustomerName(sessionUser?.name)
     || normalizeCustomerName(emailLocalName(profile?.email || sessionUser?.email))
     || 'Patient';
@@ -346,7 +349,7 @@ function buildIvTherapyStepErrors(step, form) {
     if (!String(goals.expectedResults || "").trim()) errors.expectedResults = "Expected results are required.";
   }
 
-  if (step === 5 && consent !== "Yes") {
+  if (step === 6 && consent !== "Yes") {
     errors.consent = "Consent is required before submission.";
   }
 
@@ -370,20 +373,41 @@ function formatSubscriptionPriceLabel(subscription) {
   }
 }
 
-function ModalScrim({ className, label, onDismiss }) {
+function ModalScrim({ className, onDismiss }) {
   return <div
     className={className}
-    role="button"
-    tabIndex={0}
-    aria-label={label}
+    role="presentation"
+    aria-hidden="true"
     onClick={onDismiss}
-    onKeyDown={(event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        onDismiss?.();
-      }
-    }}
   />;
+}
+
+function useFocusTrap(open, containerRef, initialFocusRef, onDismiss) {
+  const restoreFocusRef = useRef(null);
+  useEffect(() => {
+    if (!open || typeof document === "undefined") return undefined;
+    restoreFocusRef.current = document.activeElement;
+    const container = containerRef.current;
+    const focusableSelector = "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+    const focusInitial = () => (initialFocusRef?.current || container?.querySelector(focusableSelector) || container)?.focus?.();
+    const frame = window.requestAnimationFrame(focusInitial);
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") { event.preventDefault(); onDismiss?.(); return; }
+      if (event.key !== "Tab" || !container) return;
+      const focusable = Array.from(container.querySelectorAll(focusableSelector)).filter((node) => node.offsetParent !== null);
+      if (!focusable.length) { event.preventDefault(); container.focus(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", handleKeyDown);
+      restoreFocusRef.current?.focus?.();
+    };
+  }, [open]);
 }
 const APPOINTMENT_TIMEFRAME_OPTIONS = [
   "09:00",
@@ -1177,7 +1201,8 @@ const IV_THERAPY_STEP_TITLES = {
   2: "IV Therapy Medical & Clinical History",
   3: "IV Therapy Selection",
   4: "IV Therapy Goals & Expectations",
-  5: "IV Therapy Consent",
+  5: "Review Details",
+  6: "IV Therapy Consent",
 };
 
 const MTM_ADHERENCE_OPTIONS = [
@@ -1290,6 +1315,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const profileReminderShownRef = useRef(false);
   const profileReminderSessionRef = useRef("");
   const profileReminderCloseRef = useRef(null);
+  const profileReminderDialogRef = useRef(null);
   const [storeUrl, setStoreUrl] = useState("#");
   const [appointmentsData, setAppointmentsData] = useState(null);
   const [appointmentsLoadingState, setAppointmentsLoadingState] = useState(false);
@@ -1481,8 +1507,21 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     if (currentLocation === nextUrl && currentPageParam === nextPageParam) {
       return;
     }
-    router.replace(nextUrl);
+    window.history.replaceState(window.history.state, "", nextUrl);
   }, [authResolved, page, pathname, router]);
+
+  useEffect(() => {
+    if (!authResolved || typeof window === "undefined") return undefined;
+    const syncPageFromLocation = () => {
+      const url = new URL(window.location.href);
+      const pathPage = url.pathname.match(/^\/dashboard\/([^/]+)\/?$/)?.[1] || "";
+      const requestedPage = decodeURIComponent(url.searchParams.get("page") || pathPage || "overview");
+      setPage((pages.includes(requestedPage) || requestedPage === "search") ? requestedPage : "overview");
+    };
+    syncPageFromLocation();
+    window.addEventListener("popstate", syncPageFromLocation);
+    return () => window.removeEventListener("popstate", syncPageFromLocation);
+  }, [authResolved]);
 
   useEffect(() => {
     const nextSessionKey = resolveCustomerSessionStorageIdentity(session?.user);
@@ -1808,19 +1847,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     return () => window.clearTimeout(timeoutId);
   }, [authResolved, customerProfileCompletion.isComplete, customerProfileReminderItems.length, customerSettingsHydrated, page, session?.user?.email, session?.user?.id]);
 
-  useEffect(() => {
-    if (!overviewProfilePromptVisible || typeof document === "undefined") {
-      return undefined;
-    }
-    const handleEscape = (event) => {
-      if (event.key === "Escape") {
-        dismissOverviewProfilePrompt();
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-    window.setTimeout(() => profileReminderCloseRef.current?.focus?.(), 0);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [overviewProfilePromptVisible]);
+  useFocusTrap(overviewProfilePromptVisible, profileReminderDialogRef, profileReminderCloseRef, dismissOverviewProfilePrompt);
 
   function dismissOverviewProfilePrompt() {
     setOverviewProfilePromptVisible(false);
@@ -1996,8 +2023,8 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
           return;
         }
       }
-      if (pages.includes(destination) || destination === "search") setPage(destination);
-      else setPage("overview");
+      if (pages.includes(destination) || destination === "search") navigateToPage(destination);
+      else navigateToPage("overview");
     }
   })), [openDoctorAvailability, patientSearchQuery.data, state.appointments, state.orders, visibleDoctors]);  const now = Date.now();
   const sortedAppointments = useMemo(() => sortByDateDesc(state.appointments, ["start_at", "created_at", "updated_at"]), [state.appointments]);
@@ -2039,18 +2066,22 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       setDesktopSearchPreviousPage(page);
     }
     setDesktopSearchQuery(sanitizeClientText(nextValue, { max: 120 }));
-    setPage("search");
+    navigateToPage("search");
   }
 
   function navigateToPage(nextPage) {
-    const safePage = pages.includes(nextPage) ? nextPage : "overview";
+    const safePage = (pages.includes(nextPage) || nextPage === "search") ? nextPage : "overview";
     setPage(safePage);
-    router.push(customerDashboardPagePath(safePage));
+    if (typeof window !== "undefined") {
+      const nextUrl = customerDashboardPagePath(safePage);
+      const currentUrl = `${window.location.pathname}${window.location.search}`;
+      if (currentUrl !== nextUrl) window.history.pushState({ ...(window.history.state || {}), nevariPage: safePage }, "", nextUrl);
+    }
   }
 
   function closeDesktopSearch() {
     setDesktopSearchQuery("");
-    setPage(desktopSearchPreviousPage || "overview");
+    navigateToPage(desktopSearchPreviousPage || "overview");
   }
 
   function openOrderDocuments(order) {
@@ -2090,7 +2121,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     }
     if (!canCreateRefill) {
       setSelectedOrder(null);
-      setPage("therapy");
+      navigateToPage("therapy");
       return;
     }
 
@@ -2101,12 +2132,12 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       await ordersQuery.mutate((current) => Array.isArray(current) ? upsertById(current, next) : current, { revalidate: false });
       patchCustomerOrderCache(next);
       setSelectedOrder(next);
-      setPage("orders");
+      navigateToPage("orders");
       revalidateCustomerGroups(isProxyOrdersKey);
     } catch (error) {
       if (error?.code === "upgrade_required" || Number(error?.status || 0) === 403) {
         setSelectedOrder(null);
-        setPage("therapy");
+        navigateToPage("therapy");
         return;
       }
       setOrderActionError(String(error?.message || "The refill order could not be created."));
@@ -2447,6 +2478,9 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     if (!appointmentId || appointmentActionBusy) {
       return;
     }
+    if (typeof window !== "undefined" && !window.confirm("Cancel this appointment? This action may release the reserved time.")) {
+      return;
+    }
     setAppointmentActionBusy(true);
     try {
       const currentAppointment = state.appointments.find((item) => String(item?.id) === String(appointmentId))
@@ -2513,7 +2547,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     setSelectedAppointment(null);
     setJourney(createJourneyState());
     setAppointmentRescheduleTarget(appointment);
-    setPage("appointment");
+    navigateToPage("appointment");
   }
 
   async function cancelCheckoutAppointment() {
@@ -2573,13 +2607,18 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         </div>
       </div>}
       topContent={<div className="customer-desktop-topbar">
-        <label ref={desktopSearchRef} className={"customer-desktop-search-shell customer-desktop-search-shell-interactive" + (desktopSearchOpen ? " is-open" : "")} aria-label="Search dashboard">
+        <div ref={desktopSearchRef} className={"customer-desktop-search-shell customer-desktop-search-shell-interactive" + (desktopSearchOpen ? " is-open" : "")}>
           <HugeiconsIcon icon={Search01Icon} size={18} strokeWidth={1.8} />
           <input
             type="search"
             value={desktopSearchQuery}
             placeholder="Search here for orders, appointments etc"
             aria-label="Search here for orders, appointments etc"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={desktopSearchOpen}
+            aria-controls="customer-desktop-search-listbox"
+            aria-activedescendant={desktopSearchActiveIndex >= 0 ? `customer-desktop-search-option-${desktopSearchActiveIndex}` : undefined}
             onFocus={() => {
               setDesktopSearchOpen(true);
               if (page !== "search") {
@@ -2596,25 +2635,25 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
           {desktopSearchQuery ? <button type="button" className="customer-desktop-search-clear" aria-label="Clear search" onClick={() => {
             setDesktopSearchQuery("");
             setDesktopSearchOpen(true);
-          }}>?</button> : null}
-          {desktopSearchOpen ? <div className="customer-desktop-search-dropdown">
+          }}><span aria-hidden="true">×</span></button> : null}
+          {desktopSearchOpen ? <div id="customer-desktop-search-listbox" className="customer-desktop-search-dropdown" role="listbox" aria-label="Dashboard search results">
             {desktopSearchQuery.trim().length < 3
-              ? CUSTOMER_SEARCH_QUICK_OPTIONS.map(([nextPage, label]) => <button key={nextPage} type="button" onClick={() => {
+              ? CUSTOMER_SEARCH_QUICK_OPTIONS.map(([nextPage, label], index) => <button id={`customer-desktop-search-option-${index}`} role="option" aria-selected={desktopSearchActiveIndex === index} key={nextPage} type="button" onClick={() => {
                 setDesktopSearchOpen(false);
                 setDesktopSearchQuery("");
-                setPage(nextPage);
+                navigateToPage(nextPage);
               }}>{label}</button>)
               : patientSearchQuery.isLoading
                 ? <div className="customer-desktop-search-empty" aria-live="polite">Searching...</div>
                 : patientSearchQuery.error
                   ? <div className="customer-desktop-search-empty" role="alert">Search is unavailable. Try again.</div>
                   : desktopSearchResults.length
-                    ? desktopSearchResults.slice(0, 4).map((result, index) => <button key={result.key} type="button" className={desktopSearchActiveIndex === index ? "is-active" : ""} onMouseEnter={() => setDesktopSearchActiveIndex(index)} onClick={() => {
+                    ? desktopSearchResults.slice(0, 4).map((result, index) => <button id={`customer-desktop-search-option-${index}`} role="option" aria-selected={desktopSearchActiveIndex === index} key={result.key} type="button" className={desktopSearchActiveIndex === index ? "is-active" : ""} onMouseEnter={() => setDesktopSearchActiveIndex(index)} onClick={() => {
                       setDesktopSearchOpen(false);
                       result.onSelect();
                     }}><span>{result.label}</span><small>{result.area}</small></button>)
                     : <div className="customer-desktop-search-empty">No results found</div>}          </div> : null}
-        </label>
+        </div>
       </div>}
     >
       {showSkeleton ? <CustomerDesktopSkeleton page={page} /> : null}
@@ -2809,33 +2848,24 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         onPrefillConsumed={() => setGuestConsultationDraft(null)}
         embeddedDesktop
       /> : null}
-      {!showSkeleton && page === "search" ? <section className="customer-desktop-panel customer-desktop-search-results-panel">
+      {!showSkeleton && page === "search" ? <section className="customer-desktop-panel customer-desktop-search-results-panel" aria-live="polite">
         <div className="customer-panel-head">
           <div>
             <span className="customer-section-kicker">Search</span>
-            <h2>Results</h2>
+            <h2>Search patient dashboard</h2>
           </div>
           <button className="customer-mobile-back-link" type="button" onClick={closeDesktopSearch}>
             <MobileIcon name="arrow-left" />
             <span>Back</span>
           </button>
         </div>
-        <div className="customer-mobile-search-results customer-desktop-search-results">
-          {desktopSearchQuery.trim().length < 3 ? <div className="customer-mobile-search-empty">
-            <strong className="customer-mobile-search-empty-hint">start typing to see results</strong>
-          </div> : patientSearchQuery.isLoading ? <div className="customer-mobile-search-empty" aria-live="polite"><BrandedSpinner label="Searching patient records" /></div> : patientSearchQuery.error ? <div className="customer-mobile-search-empty" role="alert"><strong>Search is unavailable</strong><small>Try again in a moment.</small></div> : desktopSearchResults.length ? desktopSearchResults.map((result) => <button className="customer-mobile-search-result" key={result.key} type="button" onClick={result.onSelect}>
-            <div>
-              <span className="customer-mobile-search-result-area">{result.area}</span>
-              <strong>{result.label}</strong>
-              <small>{result.meta}</small>
-            </div>
-            <MobileIcon name="arrow-right" />
-          </button>) : <div className="customer-mobile-search-empty">
-            <strong>no results found</strong>
-          </div>}
+        <div className="customer-mobile-search-empty customer-desktop-search-guidance">
+          <strong>{patientSearchQuery.isLoading ? "Searching patient records…" : "Search results appear below the search field."}</strong>
+          <small>Use the arrow keys to move through results and Enter to open one.</small>
         </div>
       </section> : null}
       {!showSkeleton && page === "settings" ? <SettingsPage
+        session={session}
         profile={profile}
         doctors={visibleDoctors}
         orders={state.orders}
@@ -2855,6 +2885,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         logoutBusy={logoutBusy}
       /> : null}
       {!showSkeleton && page === "profile" ? <ProfilePage
+        session={session}
         profile={profile}
         orders={state.orders}
         appointments={state.appointments}
@@ -2871,11 +2902,11 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         onProfileImageOpen={() => profileImageInputRef.current?.click()}
         subscriptionState={subscriptionState}
         onSettingsChange={setSettings}
-        onViewSubscription={() => setPage("subscription-management")}
+        onViewSubscription={() => navigateToPage("subscription-management")}
         onLogout={handleLogout}
         logoutBusy={logoutBusy}
       /> : null}
-      {!showSkeleton && page === "subscription-management" ? <CustomerSubscriptionManagementScreen embeddedDesktop onBack={() => setPage("profile")} subscriptionState={subscriptionState} /> : null}
+      {!showSkeleton && page === "subscription-management" ? <CustomerSubscriptionManagementScreen embeddedDesktop onBack={() => navigateToPage("profile")} subscriptionState={subscriptionState} /> : null}
       {!showSkeleton && page === "request" ? <CustomerMobileDashboard
         session={session}
         setSession={setSession}
@@ -3198,7 +3229,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       onClose={() => setSelectedOrder(null)}
     /> : null}
     {overviewProfilePromptVisible ? <div className="customer-profile-reminder-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissOverviewProfilePrompt(); }}>
-      <div className="customer-profile-reminder-modal" role="dialog" aria-modal="true" aria-labelledby="customer-profile-reminder-title" aria-describedby="customer-profile-reminder-description" onMouseDown={(event) => event.stopPropagation()}>
+      <div ref={profileReminderDialogRef} tabIndex={-1} className="customer-profile-reminder-modal" role="dialog" aria-modal="true" aria-labelledby="customer-profile-reminder-title" aria-describedby="customer-profile-reminder-description" onMouseDown={(event) => event.stopPropagation()}>
         <button ref={profileReminderCloseRef} className="customer-profile-reminder-close" type="button" onClick={dismissOverviewProfilePrompt} aria-label="Dismiss profile reminder">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" focusable="false"><path d="M6 6 18 18M18 6 6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
         </button>
@@ -3216,7 +3247,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         </div>
         <div className="customer-profile-reminder-actions">
           <button type="button" className="customer-profile-reminder-secondary" onClick={dismissOverviewProfilePrompt}>Remind me later</button>
-          <button type="button" className="customer-profile-reminder-primary" onClick={() => { setOverviewProfilePromptVisible(false); setPage("profile"); }}>Update profile <span aria-hidden="true">-&gt;</span></button>
+          <button type="button" className="customer-profile-reminder-primary" onClick={() => { setOverviewProfilePromptVisible(false); navigateToPage("profile"); }}>Update profile <span aria-hidden="true">-&gt;</span></button>
         </div>
       </div>
     </div> : null}
@@ -3263,16 +3294,17 @@ function buildCustomerBootstrapState(session, settings, fallbackState = emptyCus
 }
 
 function CustomerDashboardSkeleton({ page }) {
+  const loadingAnnouncement = <span className="customer-sr-only" role="status" aria-live="polite">Loading {pageLabels[page] || "patient dashboard"}.</span>;
   if (page === "orders") {
-    return <CustomerOrdersSkeleton />;
+    return <>{loadingAnnouncement}<CustomerOrdersSkeleton /></>;
   }
   if (page === "settings") {
-    return <CustomerSettingsSkeleton />;
+    return <>{loadingAnnouncement}<CustomerSettingsSkeleton /></>;
   }
   if (page === "profile") {
-    return <CustomerProfileSkeleton />;
+    return <>{loadingAnnouncement}<CustomerProfileSkeleton /></>;
   }
-  return <CustomerOverviewSkeleton />;
+  return <>{loadingAnnouncement}<CustomerOverviewSkeleton /></>;
 }
 
 function CustomerOverviewSkeleton() {
@@ -4313,6 +4345,8 @@ function AppointmentPage({
                 type="button"
                 className={`customer-mobile-calendar-day ${isSelected ? "active" : ""} ${isPast ? "is-past" : ""}`}
                 disabled={isPast}
+                aria-label={`${isSelected ? "Selected: " : "Select "}${new Date(`${dateValue}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}`}
+                aria-pressed={isSelected}
                 onClick={() => {
                   setBookingDate(dateValue);
                   setBookingTime("");
@@ -4360,6 +4394,9 @@ function AppointmentPage({
         <button className="appointment-primary-cta customer-mobile-appointment-cta" type="button" onClick={handleAutoAssignBooking} disabled={journey.loading || bookingSlotsLoading || !bookingDate || !bookingTime || !bookingReason.trim() || !hasAvailableBookingTimes}>
           {(journey.loading || bookingSlotsLoading) ? <AppointmentCtaLoadingState active stage={bookingSlotsLoading ? "finding_doctors" : (journey.progressStage || bookingSubmitStage || "securing_slot")} /> : (rescheduleTarget?.id ? "Reschedule Appointment" : "Book Appointment")}
         </button>
+        <p className="customer-appointment-booking-guidance" aria-live="polite">
+          {!bookingDate ? "Select an appointment date." : !bookingTime ? "Select an available time." : !bookingReason.trim() ? "Add a brief reason for your appointment." : "A suitable available doctor will be assigned automatically after you continue."}
+        </p>
       </section> : null}
     </div>
 
@@ -4892,7 +4929,7 @@ function CustomerStatusActions({ children }) {
   return <div className="customer-flow-status-actions">{children}</div>;
 }
 
-function SettingsPage({ profile, doctors, orders, appointments, settings, displayName = "Patient", uploading = false, imageRefreshing = false, imageError = "", imageSuccess = "", imageInputRef = null, onProfileImageSelect, onProfileImageOpen, validationErrors = {}, onSettingsChange, onLogout, logoutBusy = false }) {
+function SettingsPage({ session, profile, doctors, orders, appointments, settings, displayName = "Patient", uploading = false, imageRefreshing = false, imageError = "", imageSuccess = "", imageInputRef = null, onProfileImageSelect, onProfileImageOpen, validationErrors = {}, onSettingsChange, onLogout, logoutBusy = false }) {
   const invoiceCount = orders.filter((order) => ["processing", "completed"].includes(String(order.status || "").toLowerCase())).length;
   return <div className="customer-dashboard-stack customer-desktop-boxed-page">
     <section className="customer-list-shell customer-settings-shell">
@@ -4999,7 +5036,7 @@ function SettingsPage({ profile, doctors, orders, appointments, settings, displa
           <div className="customer-settings-summary"><span>Saved methods</span><strong>{settings.savedMethods.length || 0}</strong></div>
           <div className="customer-settings-summary"><span>Two-factor authentication</span><strong>{settings.twoFactorEnabled ? "Enabled" : "Disabled"}</strong></div>
           <SettingsToggle label="Refund tracking" checked={settings.refundTracking} onChange={(checked) => onSettingsChange((current) => ({ ...current, refundTracking: checked }))} />
-          <SettingsToggle label="Two-factor authentication" checked={settings.twoFactorEnabled} onChange={(checked) => onSettingsChange((current) => ({ ...current, twoFactorEnabled: checked }))} />
+          <TwoFactorVerificationControl session={session} settings={settings} onSettingsChange={onSettingsChange} />
           <button className="pill-button danger customer-settings-logout" type="button" onClick={onLogout} disabled={logoutBusy}>
             {logoutBusy ? <span className="appointment-cta-spinner" aria-label="Logging out" /> : "Logout all devices"}
           </button>
@@ -5014,6 +5051,130 @@ function SettingsToggle({ label, checked, onChange }) {
     <span>{label}</span>
     <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
   </label>;
+}
+
+function TwoFactorVerificationControl({ session, settings, onSettingsChange }) {
+  const enabled = Boolean(settings?.twoFactorEnabled);
+  const [dialog, setDialog] = useState(null);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [cooldown, setCooldown] = useState(0);
+  const codeInputRef = useRef(null);
+  const triggerRef = useRef(null);
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    if (cooldown <= 0) return undefined;
+    const timer = window.setInterval(() => setCooldown((current) => Math.max(0, current - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [cooldown]);
+
+  useEffect(() => {
+    if (!dialog) return undefined;
+    codeInputRef.current?.focus();
+    const handleEscape = (event) => {
+      if (event.key === "Escape" && !busy) closeDialog();
+      if (event.key === "Tab") {
+        const controls = Array.from(dialogRef.current?.querySelectorAll('button:not([disabled]), input:not([disabled])') || []);
+        if (!controls.length) return;
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [busy, dialog]);
+
+  async function begin(action, resend = false) {
+    setBusy(true);
+    setError("");
+    if (!resend) {
+      setDialog({ action, challengeId: "", maskedEmail: "" });
+      setCode("");
+    }
+    try {
+      const result = await apiRequest(session, "/customers/me/settings/two-factor/begin", {
+        method: "POST",
+        body: { action }
+      });
+      setDialog({ action, challengeId: String(result?.challenge_id || ""), maskedEmail: String(result?.masked_email || "") });
+      setCode("");
+      setCooldown(Number(result?.resend_cooldown || 60));
+      window.setTimeout(() => codeInputRef.current?.focus(), 0);
+    } catch (requestError) {
+      const retryAfter = Number(requestError?.details?.retry_after || 0);
+      if (retryAfter > 0) setCooldown(retryAfter);
+      setError(requestError?.message || "A verification code could not be sent. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function closeDialog(force = false) {
+    if (busy && !force) return;
+    setDialog(null);
+    setCode("");
+    setError("");
+    setCooldown(0);
+    window.setTimeout(() => triggerRef.current?.focus(), 0);
+  }
+
+  async function confirm(event) {
+    event.preventDefault();
+    if (!dialog?.challengeId || code.length !== 6) return;
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await apiRequest(session, "/customers/me/settings/two-factor/confirm", {
+        method: "POST",
+        body: { action: dialog.action, challenge_id: dialog.challengeId, code }
+      });
+      onSettingsChange?.(() => normalizeCustomerSettingsPayload(saved || {}));
+      setBusy(false);
+      closeDialog(true);
+    } catch (requestError) {
+      setCode("");
+      setError(requestError?.message || "The code is invalid or expired. Request a new code and try again.");
+      setBusy(false);
+      window.setTimeout(() => codeInputRef.current?.focus(), 0);
+    }
+  }
+
+  return <>
+    <div className="customer-toggle-row customer-two-factor-row">
+      <span><strong>Two-factor authentication</strong><small>Changes require a code sent to your account email.</small></span>
+      <button ref={triggerRef} type="button" className={`customer-two-factor-trigger ${enabled ? "is-enabled" : ""}`} aria-pressed={enabled} onClick={() => begin(enabled ? "disable" : "enable")}>
+        {enabled ? "Disable" : "Enable"}
+      </button>
+    </div>
+    {dialog && typeof document !== "undefined" ? createPortal(
+      <div className="customer-two-factor-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog(); }}>
+        <section ref={dialogRef} className="customer-two-factor-dialog" role="dialog" aria-modal="true" aria-labelledby="customer-two-factor-title" aria-describedby="customer-two-factor-guidance">
+          <h3 id="customer-two-factor-title">{dialog.action === "enable" ? "Enable" : "Disable"} two-factor authentication</h3>
+          <p id="customer-two-factor-guidance">Enter the six-digit code sent to {dialog.maskedEmail || "your account email"}. The code expires after 10 minutes.</p>
+          <form onSubmit={confirm}>
+            <label><span>Verification code</span><input ref={codeInputRef} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} disabled={busy || !dialog.challengeId} /></label>
+            {error ? <p className="customer-two-factor-error" role="alert">{error}</p> : null}
+            <p className="customer-two-factor-recovery">No access to this email? Cancel and contact Nevari support. Your current security setting will remain unchanged.</p>
+            <div className="customer-two-factor-actions">
+              <button type="button" className="pill-button tertiary" onClick={closeDialog} disabled={busy}>Cancel</button>
+              <button type="button" className="pill-button tertiary" onClick={() => begin(dialog.action, true)} disabled={busy || cooldown > 0}>{cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}</button>
+              <button type="submit" className="pill-button" disabled={busy || code.length !== 6 || !dialog.challengeId}>{busy ? "Verifying…" : "Verify change"}</button>
+            </div>
+          </form>
+        </section>
+      </div>,
+      document.body
+    ) : null}
+  </>;
 }
 
 function CustomerProfilePhotoWidget({ profile, displayName, uploading, refreshing = false, error, success, cooldownUntil = 0, inputRef, onSelect, onOpen, className = "" }) {
@@ -5847,7 +6008,7 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
   </section>;
 }
 
-function ProfilePage({ profile, orders, appointments, doctors, settings, displayName = "Patient", uploading = false, imageRefreshing = false, imageError = "", imageSuccess = "", imageCooldownUntil = 0, imageInputRef = null, onProfileImageSelect, onProfileImageOpen, subscriptionState = null, validationErrors = {}, onSettingsChange, onLogout, logoutBusy = false, onSaveSettings, profileSaveBusy = false, profileSaveError = "", onViewSubscription = null }) {
+function ProfilePage({ session, profile, orders, appointments, doctors, settings, displayName = "Patient", uploading = false, imageRefreshing = false, imageError = "", imageSuccess = "", imageCooldownUntil = 0, imageInputRef = null, onProfileImageSelect, onProfileImageOpen, subscriptionState = null, validationErrors = {}, onSettingsChange, onLogout, logoutBusy = false, onSaveSettings, profileSaveBusy = false, profileSaveError = "", onViewSubscription = null }) {
   const interactedDoctorCount = new Set([
     ...appointments.map((appointment) => String(
       appointment?.doctor_user_id
@@ -5991,7 +6152,9 @@ function ProfilePage({ profile, orders, appointments, doctors, settings, display
       <button type="button" role="tab" aria-selected={profileTab === "notifications"} className={profileTab === "notifications" ? "active" : ""} onClick={() => setProfileTab("notifications")}>Notification Settings</button>
     </div>
     <section className="customer-profile-desktop-notifications" aria-label="Notification settings">
-      {CUSTOMER_NOTIFICATION_OPTIONS.map(([key, label]) => <label key={key}><span>{label}</span><input type="checkbox" checked={Boolean(settings[key])} onChange={(event) => onSettingsChange?.((current) => ({ ...current, [key]: event.target.checked }))} /></label>)}
+      {CUSTOMER_NOTIFICATION_OPTIONS.map(([key, label]) => key === "twoFactorEnabled"
+        ? <TwoFactorVerificationControl key={key} session={session} settings={settings} onSettingsChange={onSettingsChange} />
+        : <label key={key}><span>{label}</span><input type="checkbox" checked={Boolean(settings[key])} onChange={(event) => onSettingsChange?.((current) => ({ ...current, [key]: event.target.checked }))} /></label>)}
     </section>
     <section className="customer-profile-hero">
       <CustomerProfilePhotoWidget
@@ -6416,7 +6579,7 @@ function isAllowedMedicalFile(file) {
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   ]);
-  return file.size > 0 && file.size <= 5 * 1024 * 1024 && allowedExtensions.test(file.name || "") && (!file.type || allowedTypes.has(file.type));
+  return file.size > 0 && file.size <= 5 * 1024 * 1024 && allowedExtensions.test(file.name || "") && allowedTypes.has(String(file.type || "").toLowerCase());
 }
 
 function normalizeBookingMinutes(value) {
@@ -7171,8 +7334,12 @@ function CustomerMobileDashboard({
   const router = useRouter();
   const { mutate: mobileGlobalMutate } = useSWRConfig();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerRef = useRef(null);
+  const drawerCloseRef = useRef(null);
+  useFocusTrap(drawerOpen, drawerRef, drawerCloseRef, () => setDrawerOpen(false));
   const [previousPage, setPreviousPage] = useState("overview");
   const [searchQuery, setSearchQuery] = useState("");
+  const [mobileSearchActiveIndex, setMobileSearchActiveIndex] = useState(-1);
   const [debouncedMobileSearchQuery, setDebouncedMobileSearchQuery] = useState("");
   const [appointmentTab, setAppointmentTab] = useState(initialPage === "request" ? "request" : "upcoming");
   const [appointmentComposerOpen, setAppointmentComposerOpen] = useState(false);
@@ -7250,6 +7417,7 @@ function CustomerMobileDashboard({
   const [requestStep3Errors, setRequestStep3Errors] = useState({});
   const [requestStep3Touched, setRequestStep3Touched] = useState({});
   const [requestStep3ShowErrors, setRequestStep3ShowErrors] = useState(false);
+  const nurseRequestSubmitLockRef = useRef(false);
   const [clinicalRequirements, setClinicalRequirements] = useState([]);
   const [uploadedMedicalFiles, setUploadedMedicalFiles] = useState({});
   const uploadInputRefs = useRef({});
@@ -7749,6 +7917,7 @@ function CustomerMobileDashboard({
   const showAppointmentPagePlus = appointmentTab !== "request" && visibleAppointments.length > 0;
   useEffect(() => {
     const normalizedQuery = searchQuery.trim();
+    setMobileSearchActiveIndex(-1);
     if (normalizedQuery.length < 3) {
       setDebouncedMobileSearchQuery("");
       return undefined;
@@ -8083,7 +8252,10 @@ function CustomerMobileDashboard({
       window.requestAnimationFrame(() => {
         const firstInvalid = document.querySelector(".customer-mobile-step-panel .has-error, .customer-mobile-step-panel [aria-invalid='true']");
         firstInvalid?.scrollIntoView?.({ behavior: "smooth", block: "center" });
-        firstInvalid?.focus?.({ preventScroll: true });
+        const focusTarget = firstInvalid?.matches?.("fieldset")
+          ? firstInvalid.querySelector("input, select, textarea, button")
+          : firstInvalid;
+        focusTarget?.focus?.({ preventScroll: true });
       });
     }
     return Object.keys(errors).length === 0;
@@ -8150,7 +8322,8 @@ function CustomerMobileDashboard({
 
   async function handleRequestContinue() {
     if (requestStep === 1) {
-      if (!selectedCareType) return;
+      if (!selectedCareType) { setRequestSubmitError("Select a care type to continue."); return; }
+      setRequestSubmitError("");
       transitionToRequestStep(2);
       return;
     }
@@ -8165,10 +8338,13 @@ function CustomerMobileDashboard({
       return;
     }
     if (requestStep === 4) {
+      if (!clinicalRequirements.length) { setRequestSubmitError("Select at least one clinical service to continue."); return; }
+      setRequestSubmitError("");
       transitionToRequestStep(5);
       return;
     }
-    if (requestSubmitting) return;
+    if (requestStep === 5) { transitionToRequestStep(6); return; }
+    if (requestSubmitting || nurseRequestSubmitLockRef.current) return;
     const normalizedCareDetails = { ...careDetails };
     const finalCareErrors = getRequestStep3Errors({ source: normalizedCareDetails });
     if (Object.keys(finalCareErrors).length) {
@@ -8178,6 +8354,7 @@ function CustomerMobileDashboard({
       return;
     }
     setRequestSubmitError("");
+    nurseRequestSubmitLockRef.current = true;
     setRequestSubmitting(true);
     setRequestSubmitLoadingState(true);
     try {
@@ -8234,6 +8411,7 @@ function CustomerMobileDashboard({
       setRequestSubmitError("Unable to submit nurse request.");
     } finally {
       window.setTimeout(() => setRequestSubmitLoadingState(false), 320);
+      nurseRequestSubmitLockRef.current = false;
       setRequestSubmitting(false);
     }
   }
@@ -8292,7 +8470,7 @@ function CustomerMobileDashboard({
       return;
     }
 
-    if (ivTherapyStep < 5) {
+    if (ivTherapyStep < 6) {
       transitionToIvTherapyStep(ivTherapyStep + 1);
       return;
     }
@@ -9029,9 +9207,10 @@ function CustomerMobileDashboard({
   function renderDrawer() {
     return <div className={`customer-mobile-drawer-layer ${drawerOpen ? "open" : ""}`}>
       <ModalScrim className="customer-mobile-drawer-backdrop" label="Close drawer" onDismiss={() => setDrawerOpen(false)} />
-      <aside className="customer-mobile-drawer">
+      <aside ref={drawerRef} tabIndex={-1} className="customer-mobile-drawer" role="dialog" aria-modal="true" aria-label="Patient menu">
         <div className="customer-mobile-drawer-brand" aria-label="Nevari logo">
           <img src="/ne.webp" alt="Nevari" width="32" height="32" />
+          <button ref={drawerCloseRef} className="customer-mobile-drawer-close" type="button" aria-label="Close patient menu" onClick={() => setDrawerOpen(false)}>×</button>
         </div>
         <nav className="customer-mobile-drawer-nav" aria-label="Patient menu">
           {[
@@ -9075,21 +9254,13 @@ function CustomerMobileDashboard({
           </button>
         </nav>
         <div className="customer-mobile-drawer-footer">
-          <div
+          <button
             className="customer-mobile-drawer-profile"
-            role="button"
-            tabIndex={0}
+            type="button"
             aria-label="Open profile settings"
             onClick={() => {
               goToPage("profile");
               setDrawerOpen(false);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                goToPage("profile");
-                setDrawerOpen(false);
-              }
             }}
           >
             <div className="customer-mobile-avatar">
@@ -9100,10 +9271,10 @@ function CustomerMobileDashboard({
               <strong>{customerDisplayName}</strong>
               <span>{resolvedProfile.email || settings.email || "tee@example.com"}</span>
             </div>
-            <button className="customer-mobile-more" type="button" aria-label="More options" onClick={(event) => event.stopPropagation()}>
+            <span className="customer-mobile-more" aria-hidden="true">
               <MobileIcon name="more" />
-            </button>
-          </div>
+            </span>
+          </button>
         </div>
       </aside>
     </div>;
@@ -9243,13 +9414,24 @@ function CustomerMobileDashboard({
               onChange={(event) => setSearchQuery(sanitizeClientText(event.target.value, { max: 120 }))}
               placeholder="Search here for orders, appointments etc"
               aria-label="Search here for orders, appointments etc"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={searchQuery.trim().length >= 3}
+              aria-controls="customer-mobile-search-listbox"
+              aria-activedescendant={mobileSearchActiveIndex >= 0 ? `customer-mobile-search-option-${mobileSearchActiveIndex}` : undefined}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown" && searchResults.length) { event.preventDefault(); setMobileSearchActiveIndex((current) => Math.min(searchResults.length - 1, current + 1)); }
+                else if (event.key === "ArrowUp" && searchResults.length) { event.preventDefault(); setMobileSearchActiveIndex((current) => Math.max(0, current - 1)); }
+                else if (event.key === "Enter" && mobileSearchActiveIndex >= 0) { event.preventDefault(); searchResults[mobileSearchActiveIndex]?.onSelect(); }
+                else if (event.key === "Escape") { event.preventDefault(); exitSearchPage(); }
+              }}
             />
           </div>
         </header>
-        <section className="customer-mobile-search-results">
+        <section id="customer-mobile-search-listbox" className="customer-mobile-search-results" role="listbox" aria-label="Patient dashboard search results" aria-busy={mobilePatientSearchQuery.isLoading}>
           {searchQuery.trim().length < 3 ? <div className="customer-mobile-search-empty">
             <strong className="customer-mobile-search-empty-hint">start typing to see results</strong>
-          </div> : mobilePatientSearchQuery.isLoading ? <div className="customer-mobile-search-empty" aria-live="polite"><BrandedSpinner label="Searching patient records" /></div> : mobilePatientSearchQuery.error ? <div className="customer-mobile-search-empty" role="alert"><strong>Search is unavailable</strong><small>Try again in a moment.</small></div> : searchResults.length ? searchResults.map((result) => <button className="customer-mobile-search-result" key={result.key} type="button" onClick={result.onSelect}>
+          </div> : mobilePatientSearchQuery.isLoading ? <div className="customer-mobile-search-empty" aria-live="polite"><BrandedSpinner label="Searching patient records" /></div> : mobilePatientSearchQuery.error ? <div className="customer-mobile-search-empty" role="alert"><strong>Search is unavailable</strong><small>Try again in a moment.</small></div> : searchResults.length ? searchResults.map((result, index) => <button id={`customer-mobile-search-option-${index}`} role="option" aria-selected={mobileSearchActiveIndex === index} className={`customer-mobile-search-result ${mobileSearchActiveIndex === index ? "is-active" : ""}`} key={result.key} type="button" onMouseEnter={() => setMobileSearchActiveIndex(index)} onClick={result.onSelect}>
             <div>
               <span className="customer-mobile-search-result-area">{result.area}</span>
               <strong>{result.label}</strong>
@@ -10036,7 +10218,7 @@ function CustomerMobileDashboard({
         </header> : renderHeader("IV Therapy (Wellness infusions)")}
         <section className="customer-mobile-flow customer-iv-therapy-shell">
           {!ivTherapySubmitted ? <>
-            <div className="customer-mobile-step-title">Step {ivTherapyStep} of 5 - {IV_THERAPY_STEP_TITLES[ivTherapyStep] || "IV Therapy"}</div>
+            <div className="customer-mobile-step-title">Step {ivTherapyStep} of 6 - {IV_THERAPY_STEP_TITLES[ivTherapyStep] || "IV Therapy"}</div>
             <p className="customer-mobile-step-copy">{ivTherapyStep === 3 ? "Please select the type(s) of IV therapy you are interested in." : "Please fill out the IV therapy form."}</p>
             <div className={`customer-mobile-step-panel customer-iv-therapy-panel ${ivTherapyAnimatingOut ? "is-out" : "is-in"}`}>
               {ivTherapyStep === 1 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
@@ -10169,7 +10351,16 @@ function CustomerMobileDashboard({
                 </label>
               </div> : null}
 
-              {ivTherapyStep === 5 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
+              {ivTherapyStep === 5 ? <div className="customer-clinical-review" aria-label="Review IV therapy request">
+                <h3>Review your request</h3>
+                <p>Check the information below before providing consent.</p>
+                <section><div className="customer-clinical-review-head"><h4>Patient details</h4><button type="button" onClick={() => transitionToIvTherapyStep(1)}>Edit</button></div><dl><div><dt>Name</dt><dd>{ivTherapyForm.patient.name}</dd></div><div><dt>Location</dt><dd>{composeCityStateValue(ivTherapyForm.patient.city, ivTherapyForm.patient.state)}</dd></div><div><dt>Phone</dt><dd>{ivTherapyForm.patient.phoneNumber}</dd></div></dl></section>
+                <section><div className="customer-clinical-review-head"><h4>Clinical history</h4><button type="button" onClick={() => transitionToIvTherapyStep(2)}>Edit</button></div><p>{Object.entries(ivTherapyForm.clinicalHistory).filter(([key]) => !key.endsWith("Details")).map(([key, value]) => `${titleCase(key.replace(/([A-Z])/g, " $1"))}: ${value || "Not answered"}`).join("; ")}</p></section>
+                <section><div className="customer-clinical-review-head"><h4>Therapies</h4><button type="button" onClick={() => transitionToIvTherapyStep(3)}>Edit</button></div><p>{ivTherapyForm.therapyTypes.join(", ")}</p></section>
+                <section><div className="customer-clinical-review-head"><h4>Goals</h4><button type="button" onClick={() => transitionToIvTherapyStep(4)}>Edit</button></div><p>{ivTherapyForm.goals.primaryReason}</p><p>{ivTherapyForm.goals.expectedResults}</p></section>
+              </div> : null}
+
+              {ivTherapyStep === 6 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
                 <div className="customer-mobile-radio-group customer-iv-therapy-question">
                   <span>I confirm that the information provided is accurate and I consent to receiving I.V. therapy as selected.</span>
                   <div className="customer-mobile-inline-radios customer-iv-therapy-inline-radios">
@@ -10258,12 +10449,12 @@ function CustomerMobileDashboard({
         {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
         {showNurseRequestFlow && appointmentTab === "request" ? <section className="customer-mobile-flow">
           {!requestSubmitted ? <>
-            <div className="customer-mobile-step-title">Step {requestStep} of 5 - {requestStep === 1 ? "Care Type" : requestStep === 2 ? "Patient Details" : requestStep === 3 ? "Care Details" : requestStep === 4 ? "Clinical Requirements" : "Upload Medical Information"}</div>
-            <p className="customer-mobile-step-copy">{requestStep === 1 ? "Please select as appropriate:" : requestStep === 2 ? "Please fill out the form" : requestStep === 3 ? "Set the care schedule details." : requestStep === 4 ? "Select required clinical services." : "You can upload any of these, if available:"}</p>
+            <div className="customer-mobile-step-title">Step {requestStep} of 6 - {requestStep === 1 ? "Care Type" : requestStep === 2 ? "Patient Details" : requestStep === 3 ? "Care Details" : requestStep === 4 ? "Clinical Requirements" : requestStep === 5 ? "Upload Medical Information" : "Review Details"}</div>
+            <p className="customer-mobile-step-copy">{requestStep === 1 ? "Please select as appropriate:" : requestStep === 2 ? "Please fill out the form" : requestStep === 3 ? "Set the care schedule details." : requestStep === 4 ? "Select required clinical services." : requestStep === 5 ? "You can upload any of these, if available:" : "Check your request before submitting it."}</p>
             <div className={`customer-mobile-step-panel ${requestStepAnimatingOut ? "is-out" : "is-in"}`}>
               {requestStep === 1 ? <div className="customer-mobile-flow-stack">
                 {NURSE_REQUEST_CARE_TYPES.map((label) => (
-                  <button key={label} type="button" className={`customer-mobile-option-row ${selectedCareType === label ? "active" : ""}`} onClick={() => setSelectedCareType(label)}>
+                  <button key={label} type="button" className={`customer-mobile-option-row ${selectedCareType === label ? "active" : ""}`} onClick={() => { setSelectedCareType(label); setRequestSubmitError(""); }}>
                     <span>{label}</span>
                     <span className={`customer-mobile-radio ${selectedCareType === label ? "selected" : ""}`} aria-hidden="true" />
                   </button>
@@ -10311,8 +10502,8 @@ function CustomerMobileDashboard({
                 </label>)}
               </div> : null}
               {requestStep === 3 ? <div className="customer-mobile-form-stack">
-                <div className="customer-mobile-radio-group">
-                  <span>Is this a recurring visit or one time care?</span>
+                <fieldset className={`customer-mobile-radio-group ${showRequestStep3FieldError("visitType") ? "has-error" : ""}`} aria-invalid={showRequestStep3FieldError("visitType") || undefined} aria-describedby={showRequestStep3FieldError("visitType") ? "nurse-visit-type-error" : undefined}>
+                  <legend>Is this a recurring visit or one time care?</legend>
                   <div className="customer-mobile-inline-radios">
                     {NURSE_REQUEST_VISIT_TYPES.map((label) => <label key={label}>
                       <input
@@ -10327,8 +10518,8 @@ function CustomerMobileDashboard({
                       {label}
                     </label>)}
                   </div>
-                  {showRequestStep3FieldError("visitType") ? <small className="customer-mobile-field-error">{requestStep3Errors.visitType}</small> : null}
-                </div>
+                  {showRequestStep3FieldError("visitType") ? <small id="nurse-visit-type-error" className="customer-mobile-field-error">{requestStep3Errors.visitType}</small> : null}
+                </fieldset>
 
                 <label className="customer-mobile-field">
                   <span>Preferred Visit Date:</span>
@@ -10355,8 +10546,8 @@ function CustomerMobileDashboard({
                   {showRequestStep3FieldError("duration") ? <small className="customer-mobile-field-error">{requestStep3Errors.duration}</small> : null}
                 </label>
 
-                <div className="customer-mobile-radio-group">
-                  <span>Day/Night Care?</span>
+                <fieldset className={`customer-mobile-radio-group ${showRequestStep3FieldError("careShift") ? "has-error" : ""}`} aria-invalid={showRequestStep3FieldError("careShift") || undefined} aria-describedby={showRequestStep3FieldError("careShift") ? "nurse-care-shift-error" : undefined}>
+                  <legend>Day/Night Care?</legend>
                   <div className="customer-mobile-inline-radios">
                     {NURSE_REQUEST_CARE_SHIFTS.map((choice) => <label key={choice}>
                       <input type="radio" name="careShift" checked={careDetails.careShift === choice} onChange={() => {
@@ -10366,8 +10557,8 @@ function CustomerMobileDashboard({
                       {choice}
                     </label>)}
                   </div>
-                  {showRequestStep3FieldError("careShift") ? <small className="customer-mobile-field-error">{requestStep3Errors.careShift}</small> : null}
-                </div>
+                  {showRequestStep3FieldError("careShift") ? <small id="nurse-care-shift-error" className="customer-mobile-field-error">{requestStep3Errors.careShift}</small> : null}
+                </fieldset>
 
                 {[
                   ["Live-In Care Required?", "liveInCareRequired"],
@@ -10376,8 +10567,8 @@ function CustomerMobileDashboard({
                   ["Requires Lifting Assistance?", "requiresLiftingAssistance"],
                   ["Any Infectious Disease?", "infectiousDisease"]
                 ].map(([label, key]) => (
-                  <div className="customer-mobile-radio-group" key={label}>
-                    <span>{label}</span>
+                  <fieldset className={`customer-mobile-radio-group ${showRequestStep3FieldError(key) ? "has-error" : ""}`} key={label} aria-invalid={showRequestStep3FieldError(key) || undefined} aria-describedby={showRequestStep3FieldError(key) ? `nurse-${key}-error` : undefined}>
+                    <legend>{label}</legend>
                     <div className="customer-mobile-inline-radios">
                       {NURSE_REQUEST_YES_NO_OPTIONS.map((choice) => <label key={choice}>
                         <input type="radio" name={key} checked={careDetails[key] === choice} onChange={() => {
@@ -10387,14 +10578,14 @@ function CustomerMobileDashboard({
                         {choice}
                       </label>)}
                     </div>
-                    {showRequestStep3FieldError(key) ? <small className="customer-mobile-field-error">{requestStep3Errors[key]}</small> : null}
-                  </div>
+                    {showRequestStep3FieldError(key) ? <small id={`nurse-${key}-error`} className="customer-mobile-field-error">{requestStep3Errors[key]}</small> : null}
+                  </fieldset>
                 ))}
               </div> : null}
               {requestStep === 4 ? <div className="customer-mobile-flow-stack">
                 {NURSE_REQUEST_CLINICAL_REQUIREMENTS.map((label) => {
                   const selected = clinicalRequirements.includes(label);
-                  return <button key={label} type="button" className={`customer-mobile-option-row ${selected ? "active" : ""}`} onClick={() => setClinicalRequirements((current) => selected ? current.filter((item) => item !== label) : [...current, label])}><span>{label}</span><span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "✓" : ""}</span></button>;
+                  return <button key={label} type="button" className={`customer-mobile-option-row ${selected ? "active" : ""}`} onClick={() => { setRequestSubmitError(""); setClinicalRequirements((current) => selected ? current.filter((item) => item !== label) : [...current, label]); }}><span>{label}</span><span className={`customer-mobile-select-indicator ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? "✓" : ""}</span></button>;
                 })}
               </div> : null}
               {requestStep === 5 ? <div className="customer-mobile-flow-stack">
@@ -10405,7 +10596,7 @@ function CustomerMobileDashboard({
                       <span>{label}</span>
                       {uploaded ? <span className="customer-mobile-upload-success">✓</span> : <MobileIcon name="upload-file" />}
                     </button>
-                    <input ref={(node) => { uploadInputRefs.current[label] = node; }} type="file" className="customer-mobile-hidden-file" onChange={(event) => {
+                    <input ref={(node) => { uploadInputRefs.current[label] = node; }} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp" className="customer-mobile-hidden-file" onChange={(event) => {
                       const file = event.target.files?.[0];
                       if (!file) return;
                       if (!isAllowedMedicalFile(file)) {
@@ -10433,8 +10624,16 @@ function CustomerMobileDashboard({
                   </div>;
                 })}
               </div> : null}
+              {requestStep === 6 ? <div className="customer-clinical-review" aria-label="Review nurse request">
+                <h3>Review your nurse request</h3>
+                <section><div className="customer-clinical-review-head"><h4>Care type</h4><button type="button" onClick={() => transitionToRequestStep(1)}>Edit</button></div><p>{selectedCareType}</p></section>
+                <section><div className="customer-clinical-review-head"><h4>Patient details</h4><button type="button" onClick={() => transitionToRequestStep(2)}>Edit</button></div><dl><div><dt>Name</dt><dd>{requestForm.name}</dd></div><div><dt>Emergency contact</dt><dd>{requestForm.emergencyContact}</dd></div><div><dt>Address</dt><dd>{requestForm.address}</dd></div></dl></section>
+                <section><div className="customer-clinical-review-head"><h4>Care schedule</h4><button type="button" onClick={() => transitionToRequestStep(3)}>Edit</button></div><dl><div><dt>Visit</dt><dd>{careDetails.visitType}</dd></div><div><dt>Preferred date and time</dt><dd>{careDetails.preferredDate} at {careDetails.preferredTime}</dd></div><div><dt>Duration</dt><dd>{careDetails.duration}</dd></div><div><dt>Shift</dt><dd>{careDetails.careShift}</dd></div><div><dt>Live-in care</dt><dd>{careDetails.liveInCareRequired}</dd></div><div><dt>Wheelchair assistance</dt><dd>{careDetails.wheelchairAssistanceNeeded}</dd></div><div><dt>Medical equipment present</dt><dd>{careDetails.medicalEquipmentPresent}</dd></div><div><dt>Lifting assistance</dt><dd>{careDetails.requiresLiftingAssistance}</dd></div><div><dt>Infectious disease</dt><dd>{careDetails.infectiousDisease}</dd></div></dl></section>
+                <section><div className="customer-clinical-review-head"><h4>Clinical services</h4><button type="button" onClick={() => transitionToRequestStep(4)}>Edit</button></div><p>{clinicalRequirements.join(", ")}</p></section>
+                <section><div className="customer-clinical-review-head"><h4>Medical files</h4><button type="button" onClick={() => transitionToRequestStep(5)}>Edit</button></div><p>{Object.values(uploadedMedicalFiles).map((file) => file.name).join(", ") || "No files added"}</p></section>
+              </div> : null}
             </div>
-            <button className="customer-mobile-primary-button" type="button" disabled={requestContinueDisabled} onClick={handleRequestContinue}>{requestSubmitting ? <BrandedSpinner label="Submitting nurse request" /> : "Continue"}</button>
+            <button className="customer-mobile-primary-button" type="button" disabled={requestContinueDisabled} onClick={handleRequestContinue}>{requestSubmitting ? <BrandedSpinner label="Submitting nurse request" /> : requestStep === 6 ? "Submit request" : "Continue"}</button>
             {requestSubmitError ? <small className="customer-mobile-field-error">{requestSubmitError}</small> : null}
             {requestStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToRequestStep(Math.max(1, requestStep - 1))}>Go Back</button> : null}
           </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="nurse-request-confirmation-title">
@@ -10730,6 +10929,7 @@ function CustomerMobileEmptyState({ message, ctaLabel, onCta, icon = "appointmen
 function CustomerMobileSkeleton({ page }) {
   return <div className="customer-mobile-app">
     <main className="customer-mobile-frame">
+      <span className="customer-sr-only" role="status" aria-live="polite">Loading {pageLabels[page] || "patient dashboard"}.</span>
       <div className="customer-mobile-skeleton-block customer-mobile-skeleton-search" />
       <div className="customer-mobile-skeleton-line" />
       <div className="customer-mobile-skeleton-grid">

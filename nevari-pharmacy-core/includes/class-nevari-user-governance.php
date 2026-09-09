@@ -144,8 +144,8 @@ final class Nevari_User_Governance {
         $actor_id = Nevari_Auth::api_session_user_id();
         $actor_is_administrator = in_array('administrator', Nevari_Helpers::current_user_roles($actor_id), true);
         $role = sanitize_key((string) ($body['role'] ?? ''));
-        $role_map = ['administrator', 'store_admin', 'doctor', 'patient', 'nurse', 'pharmacist'];
-        if (!in_array($role, $role_map, true) || ($role === 'administrator' && !$actor_is_administrator)) {
+        $role_map = ['store_admin', 'doctor', 'patient', 'nurse', 'pharmacist'];
+        if (!in_array($role, $role_map, true)) {
             self::audit_event('admin.user_created', 0, $actor_id, 'error', '', $role, 'authorization_failed');
             return Nevari_Helpers::error('forbidden_role', 'You cannot create the selected account role.', 403);
         }
@@ -154,15 +154,18 @@ final class Nevari_User_Governance {
         $last_name = substr(sanitize_text_field((string) ($body['last_name'] ?? '')), 0, 80);
         $email = sanitize_email((string) ($body['email'] ?? ''));
         $phone = substr(sanitize_text_field((string) ($body['phone'] ?? '')), 0, 40);
+        $license = strtoupper(substr(sanitize_text_field((string) ($body['license_number'] ?? '')), 0, 80));
         $password = (string) ($body['password'] ?? '');
         $requires_phone = in_array($role, ['doctor', 'nurse', 'pharmacist'], true);
-        $phone_valid = !$requires_phone || (bool) preg_match('/^[+0-9][0-9 ()-]{7,24}$/', $phone);
+        $requires_license = in_array($role, ['doctor', 'nurse', 'pharmacist'], true);
+        $phone_valid = (!$requires_phone && $phone === '') || (bool) preg_match('/^[+0-9][0-9 ()-]{7,24}$/', $phone);
+        $license_valid = !$requires_license || (bool) preg_match('/^[A-Z0-9][A-Z0-9\/-]{4,39}$/', $license);
         $password_valid = strlen($password) >= 12
             && preg_match('/[A-Z]/', $password)
             && preg_match('/[a-z]/', $password)
             && preg_match('/\d/', $password)
             && preg_match('/[^A-Za-z0-9]/', $password);
-        if ($first_name === '' || $last_name === '' || !is_email($email) || !$phone_valid || !$password_valid) {
+        if ($first_name === '' || $last_name === '' || !is_email($email) || !$phone_valid || !$license_valid || !$password_valid) {
             return Nevari_Helpers::error('invalid_request', 'Check the required fields and password requirements.', 422);
         }
         if (email_exists($email) || username_exists($email)) {
@@ -175,9 +178,7 @@ final class Nevari_User_Governance {
         if (array_diff($permissions, array_keys(self::PERMISSIONS))) {
             return Nevari_Helpers::error('invalid_permissions', 'One or more permissions are invalid.', 422);
         }
-        if ($role === 'administrator') {
-            $permissions = array_keys(self::PERMISSIONS);
-        } elseif ($role !== 'store_admin' || !$actor_is_administrator) {
+        if ($role !== 'store_admin' || !$actor_is_administrator) {
             $permissions = self::default_permissions_for_role($role);
         }
 
@@ -195,7 +196,6 @@ final class Nevari_User_Governance {
             return Nevari_Helpers::error('creation_failed', 'The user account could not be created.', 422);
         }
 
-        $license = strtoupper(substr(sanitize_text_field((string) ($body['license_number'] ?? '')), 0, 80));
         $now = Nevari_Helpers::now();
         global $wpdb;
         $saved = $wpdb->replace(self::table(), [
@@ -570,6 +570,49 @@ final class Nevari_User_Governance {
         ], [], 201);
     }
 
+    private static function legacy_customer_commerce_totals(int $user_id, string $email): array {
+        if (!function_exists('wc_get_orders')) {
+            return [
+                'orders' => function_exists('wc_get_customer_order_count') ? (int) wc_get_customer_order_count($user_id) : 0,
+                'spend' => function_exists('wc_get_customer_total_spent') ? (float) wc_get_customer_total_spent($user_id) : 0.0,
+            ];
+        }
+
+        $statuses = function_exists('wc_get_order_statuses') ? array_keys(wc_get_order_statuses()) : [];
+        $base_query = [
+            'limit' => -1,
+            'return' => 'objects',
+        ];
+        if ($statuses) {
+            $base_query['status'] = $statuses;
+        }
+
+        $orders_by_id = [];
+        foreach ((array) wc_get_orders(array_merge($base_query, ['customer_id' => $user_id])) as $order) {
+            if ($order instanceof WC_Order) {
+                $orders_by_id[$order->get_id()] = $order;
+            }
+        }
+
+        $normalized_email = sanitize_email($email);
+        if (is_email($normalized_email)) {
+            foreach ((array) wc_get_orders(array_merge($base_query, ['billing_email' => $normalized_email])) as $order) {
+                if ($order instanceof WC_Order) {
+                    $orders_by_id[$order->get_id()] = $order;
+                }
+            }
+        }
+
+        $paid_spend = 0.0;
+        foreach ($orders_by_id as $order) {
+            if ($order->is_paid()) {
+                $paid_spend += (float) $order->get_total();
+            }
+        }
+
+        return ['orders' => count($orders_by_id), 'spend' => $paid_spend];
+    }
+
     public static function users_index(WP_REST_Request $request): WP_REST_Response {
         global $wpdb;
         self::ensure_directory_rows();
@@ -635,8 +678,9 @@ final class Nevari_User_Governance {
                 $user_id
             )) ?: $row['date_joined'];
             if ($scope === 'patients') {
-                $row['orders'] = function_exists('wc_get_customer_order_count') ? (int) wc_get_customer_order_count($user_id) : 0;
-                $row['spend'] = function_exists('wc_get_customer_total_spent') ? (float) wc_get_customer_total_spent($user_id) : 0.0;
+                $commerce_totals = self::legacy_customer_commerce_totals($user_id, (string) ($row['user_email'] ?? ''));
+                $row['orders'] = $commerce_totals['orders'];
+                $row['spend'] = $commerce_totals['spend'];
                 $row['appointments'] = (int) $wpdb->get_var($wpdb->prepare(
                     'SELECT COUNT(*) FROM ' . Nevari_Helpers::table('appointments') . ' WHERE patient_user_id = %d',
                     $user_id
@@ -653,21 +697,23 @@ final class Nevari_User_Governance {
         $total = (int) ($args ? $wpdb->get_var($wpdb->prepare($count, $args)) : $wpdb->get_var($count));
         $metrics = ['total' => $total];
         if ($scope === 'patients') {
-            $commerce_sql = "SELECT
-                    COALESCE(SUM(CAST(order_count.meta_value AS UNSIGNED)), 0) AS orders,
-                    COALESCE(SUM(CAST(total_spent.meta_value AS DECIMAL(18,2))), 0) AS spend
-                FROM " . self::table() . " g
-                INNER JOIN {$wpdb->users} u ON u.ID = g.user_id
-                LEFT JOIN {$wpdb->usermeta} order_count ON order_count.user_id = g.user_id AND order_count.meta_key = '_order_count'
-                LEFT JOIN {$wpdb->usermeta} total_spent ON total_spent.user_id = g.user_id AND total_spent.meta_key = '_money_spent'
-                WHERE {$clause}";
-            $commerce = $args
-                ? $wpdb->get_row($wpdb->prepare($commerce_sql, $args), ARRAY_A)
-                : $wpdb->get_row($commerce_sql, ARRAY_A);
+            $commerce_users_sql = "SELECT g.user_id,u.user_email FROM " . self::table() . " g INNER JOIN {$wpdb->users} u ON u.ID = g.user_id WHERE {$clause}";
+            $commerce_users = $args
+                ? $wpdb->get_results($wpdb->prepare($commerce_users_sql, $args), ARRAY_A)
+                : $wpdb->get_results($commerce_users_sql, ARRAY_A);
+            $commerce = ['orders' => 0, 'spend' => 0.0];
+            foreach ($commerce_users ?: [] as $commerce_user) {
+                $totals = self::legacy_customer_commerce_totals(
+                    (int) ($commerce_user['user_id'] ?? 0),
+                    (string) ($commerce_user['user_email'] ?? '')
+                );
+                $commerce['orders'] += (int) $totals['orders'];
+                $commerce['spend'] += (float) $totals['spend'];
+            }
             $patient_ids_sql = "SELECT g.user_id FROM " . self::table() . " g INNER JOIN {$wpdb->users} u ON u.ID = g.user_id WHERE {$clause}";
             $appointments_sql = 'SELECT COUNT(*) FROM ' . Nevari_Helpers::table('appointments') . " WHERE patient_user_id IN ({$patient_ids_sql})";
-            $metrics['orders'] = (int) ($commerce['orders'] ?? 0);
-            $metrics['spend'] = (float) ($commerce['spend'] ?? 0);
+            $metrics['orders'] = (int) $commerce['orders'];
+            $metrics['spend'] = (float) $commerce['spend'];
             $metrics['appointments'] = (int) ($args
                 ? $wpdb->get_var($wpdb->prepare($appointments_sql, $args))
                 : $wpdb->get_var($appointments_sql));
@@ -734,6 +780,15 @@ final class Nevari_User_Governance {
         if (!in_array($role, self::STAFF_ROLES, true)) {
             return Nevari_Helpers::error('invalid_role', 'The selected staff role is not allowed.', 422);
         }
+        $before_role = self::primary_role($target);
+        if ($role === 'administrator' && $before_role !== 'administrator') {
+            self::audit_event('admin.staff_access_updated', $target_id, Nevari_Auth::api_session_user_id(), 'error', $before_role, $role, 'step_up_required');
+            return Nevari_Helpers::error(
+                'step_up_required',
+                'Administrator access cannot be granted from the staff editor. Use the verified role-upgrade flow.',
+                403
+            );
+        }
         $permissions = isset($body['permissions']) && is_array($body['permissions'])
             ? array_values(array_unique(array_map('sanitize_key', $body['permissions'])))
             : self::permission_keys_for_user($target_id);
@@ -745,8 +800,11 @@ final class Nevari_User_Governance {
         } elseif (!in_array($role, self::CUSTOM_PERMISSION_ROLES, true)) {
             $permissions = self::default_permissions_for_role($role);
         }
-        $before_role = self::primary_role($target);
         $before_permissions = self::permission_keys_for_user($target_id);
+        $reason = substr(sanitize_text_field((string) ($body['reason'] ?? '')), 0, 500);
+        if (($role !== $before_role || $permissions !== $before_permissions) && $reason === '') {
+            return Nevari_Helpers::error('reason_required', 'Enter a reason for this access change.', 422);
+        }
         if ($role !== $before_role) {
             $role_update = wp_update_user([
                 'ID' => $target_id,
@@ -782,7 +840,7 @@ final class Nevari_User_Governance {
                 'to_role' => $role,
                 'permissions_before' => $before_permissions,
                 'permissions_after' => $permissions,
-                'reason' => substr(sanitize_text_field((string) ($body['reason'] ?? '')), 0, 500),
+                'reason' => $reason,
             ],
         ]);
         $notification = $role !== $before_role

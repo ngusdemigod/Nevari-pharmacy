@@ -51,6 +51,14 @@ function proxySigningSecret() {
   return String(process.env.NEVARI_PROXY_SIGNING_SECRET || "").trim();
 }
 
+function localRecaptchaBypassEnabled(request) {
+  if (process.env.NODE_ENV === "production"
+      || process.env.RECAPTCHA_LOCAL_BYPASS_ENABLED !== "true") {
+    return false;
+  }
+  return ["localhost", "127.0.0.1", "::1"].includes(new URL(request.url).hostname.toLowerCase());
+}
+
 function cookieName(kind, frontendType) {
   return `nevari_${kind}_${String(frontendType || "unknown").replace(/[^a-z0-9_-]/gi, "_")}`;
 }
@@ -241,13 +249,28 @@ async function proxyRequest(request, { params } = {}) {
   assertCsrf(request, frontendType);
   const accessToken = requestCookie(request, cookieName("access", frontendType));
   const isMutating = !["GET", "HEAD", "OPTIONS"].includes(String(request.method || "GET").toUpperCase());
-  if (isMutating && !accessToken) {
+  const apiPath = targetUrl.pathname.split(`/${API_NAMESPACE}`)[1] || "";
+  const publicMutation = apiPath.startsWith("/auth/") || apiPath.startsWith("/sso/");
+  if (isMutating && !accessToken && !publicMutation) {
+    return Response.json(
+      { success: false, error: { code: "session_expired", message: "Your session expired. Sign in again to continue." } },
+      { status: 401, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  if (isMutating && !accessToken && publicMutation) {
     const remoteIp = String(request.headers.get("x-forwarded-for") || "").split(",")[0].trim();
+    const allowLocalDevelopment = localRecaptchaBypassEnabled(request);
+    if (!String(process.env.RECAPTCHA_SECRET_KEY || "").trim() && !allowLocalDevelopment) {
+      return Response.json(
+        { success: false, error: { code: "captcha_required", message: "Spam protection verification failed. Please try again." } },
+        { status: 403, headers: { "Cache-Control": "no-store" } }
+      );
+    }
     const verification = await verifyRecaptchaToken(
       request.headers.get("x-nevari-recaptcha-token") || "",
       "public_submit",
       remoteIp,
-      ["localhost", "127.0.0.1", "::1"].includes(new URL(request.url).hostname)
+      allowLocalDevelopment
     );
     if (!verification.ok) {
       return Response.json(

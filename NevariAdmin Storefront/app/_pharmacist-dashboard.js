@@ -117,6 +117,11 @@ export default function PharmacistDashboard() {
   }, []);
 
   useEffect(() => {
+    document.querySelector(".doctor-flow-shell:has(.pharmacist-clinical-dashboard) .main")?.scrollTo({ top: 0 });
+    window.scrollTo({ top: 0 });
+  }, [page]);
+
+  useEffect(() => {
     const hydrated = hydrateStoredSession("pharmacist");
     if (!isSessionUsable(hydrated) || !hasPharmacistRole(hydrated.user)) {
       setAuthResolved(true);
@@ -222,7 +227,7 @@ function PharmacistPageHeader({ title, description, onOpenNav, search = null, on
     {onSearch ? <label className="doctor-mobile-search pharmacist-workspace-search">
       <span className="sr-only">{searchPlaceholder}</span>
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></svg>
-      <input value={search} onChange={(event) => onSearch(event.target.value)} placeholder={searchPlaceholder} />
+      <input type="search" autoComplete="off" value={search} onChange={(event) => onSearch(event.target.value)} placeholder={searchPlaceholder} />
     </label> : null}
     <div className="pharmacist-page-title-row">
       <button className="pharmacist-nav-toggle" type="button" aria-label="Open navigation" onClick={onOpenNav}>
@@ -257,7 +262,7 @@ function Overview({ name, mtmItems, ivItems, availability, loading, onNavigate, 
   return <section className="pharmacist-clinical-page pharmacist-overview-page">
     <PharmacistPageHeader
       title="Overview"
-      description={`Welcome back, ${String(name || "Pharmacist").split(" ")[0].toLowerCase()}`}
+      description={`Welcome back, ${String(name || "Pharmacist").split(" ")[0]}`}
       onOpenNav={onOpenNav}
       search={search}
       onSearch={setSearch}
@@ -329,7 +334,7 @@ function WorkspaceShell({ title, description, kind, items, loading, selectedId, 
     />
     <PharmacistCaseTable
       title={`${title} cases`}
-      description={`${filtered.length} ${filtered.length === 1 ? "case" : "cases"} match the current view.`}
+      description={`${filtered.length} ${filtered.length === 1 ? "case matches" : "cases match"} the current view.`}
       kind={kind}
       items={paginatedItems}
       loading={loading}
@@ -391,17 +396,7 @@ function PharmacistCaseTable({ title, description, kind, items, loading = false,
           {!loading && items.length ? items.map((item) => <tr
             className={onOpen ? "doctor-appointment-row" : ""}
             key={item.id}
-            role={onOpen ? "button" : undefined}
-            tabIndex={onOpen ? 0 : undefined}
-            aria-label={onOpen ? `Open ${kind === "mtm" ? "MTM" : "IV Therapy"} details for ${patientName(item)}` : undefined}
-            onClick={onOpen ? () => openItem(item) : undefined}
-            onKeyDown={onOpen ? (event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                openItem(item);
-              }
-            } : undefined}
-          >{renderCells(item).map((cell, index) => <td key={columns[index]}>{cell}</td>)}</tr>) : null}
+          >{renderCells(item).map((cell, index) => <td key={columns[index]}>{index === 0 && onOpen ? <button className="pharmacist-case-row-button" type="button" aria-label={`Open ${kind === "mtm" ? "MTM" : "IV Therapy"} details for ${patientName(item)}`} onClick={() => openItem(item)}>{cell}</button> : cell}</td>)}</tr>) : null}
           {!loading && !items.length ? <tr><td className="doctor-table-empty" colSpan={columns.length}>No assigned cases match this view.</td></tr> : null}
         </tbody>
       </table>
@@ -479,7 +474,7 @@ function PharmacistCaseModal({ title, onClose, children }) {
   if (typeof document === "undefined") return null;
 
   return createPortal(<div className="app-modal-layer app-modal-layer-top is-open pharmacist-case-modal-layer">
-    <button className="app-modal-backdrop" type="button" aria-label={`Close ${title}`} onClick={onClose} />
+    <div className="app-modal-backdrop" aria-hidden="true" onClick={onClose} />
     <section className="modal-frame detail-flat-modal pharmacist-case-modal" role="dialog" aria-modal="true" aria-label={title} ref={modalRef} tabIndex="-1">
       <div className="modal-head"><div><p className="section-kicker">Assigned care</p><h2>{title}</h2></div><button className="icon-button" type="button" aria-label={`Close ${title}`} onClick={onClose}>×</button></div>
       <div className="modal-body" tabIndex="-1">{children}</div>
@@ -757,8 +752,6 @@ function AvailabilityWorkspace({ session, availability, loading, mutate, onNotic
   }, [savedSignature, frames]);
   const changedDays = WEEKDAYS.filter((day) => selectedFramesByDay[day].join("|") !== savedFramesByDay[day].join("|"));
   const hasChanges = changedDays.length > 0;
-  const activeDays = WEEKDAYS.filter((day) => selectedFramesByDay[day].length).length;
-  const totalSlots = WEEKDAYS.reduce((sum, day) => sum + selectedFramesByDay[day].length, 0);
   const morningFrames = frames.filter((time) => Number(time.slice(0, 2)) < 12);
   const afternoonFrames = frames.filter((time) => Number(time.slice(0, 2)) >= 12 && Number(time.slice(0, 2)) < 17);
   const eveningFrames = frames.filter((time) => Number(time.slice(0, 2)) >= 17);
@@ -796,22 +789,7 @@ function AvailabilityWorkspace({ session, availability, loading, mutate, onNotic
       onOpenNav={onOpenNav}
     />
     <div className="availability-layout">
-      <aside className="summary-column">
-        <section className="section-card pad">
-          <div className="card-title-row">
-            <div><h2 className="card-title">Weekly summary</h2><p className="card-copy">A quick view of what patients can book this week.</p></div>
-            <span className={`status-pill ${activeDays ? "success" : "warning"}`}>{activeDays ? "Live schedule" : "Needs setup"}</span>
-          </div>
-          <div className="stat-grid" aria-label="Weekly availability statistics">
-            <div className="stat"><span className="stat-label">Active days</span><strong className="stat-value">{activeDays}</strong></div>
-            <div className="stat"><span className="stat-label">Bookable slots</span><strong className="stat-value">{totalSlots}</strong></div>
-            <div className="stat"><span className="stat-label">First slot</span><strong className="stat-value">{totalSlots ? formatAvailabilityLabel(frames[0]) : "None"}</strong></div>
-            <div className="stat"><span className="stat-label">Last slot</span><strong className="stat-value">{totalSlots ? formatAvailabilityLabel(frames[frames.length - 1]) : "None"}</strong></div>
-          </div>
-        </section>
-      </aside>
       <section className="schedule-column">
-        <div className="schedule-intro"><div><h2>Daily slot editor</h2><p>Open a day, turn it on or off, then choose the time slots patients can book.</p></div></div>
       {WEEKDAYS.map((day) => {
         const selected = selectedFramesByDay[day];
         const enabled = Boolean(selected.length);
@@ -819,27 +797,23 @@ function AvailabilityWorkspace({ session, availability, loading, mutate, onNotic
         return <details className={`day-card ${enabled ? "" : "closed"} ${changed ? "has-unsaved-changes" : ""}`.trim()} key={day} open>
           <summary className="day-summary">
             <div className="day-heading"><div><h3 className="day-name">{titleCase(day)}</h3><p className="day-note"><span>{selected.length}</span> selected slots - {enabled ? `starts ${formatAvailabilityLabel(selected[0])}` : "patients cannot book this day"}</p></div></div>
-            <div className="summary-right">
+            <span className="chevron"><svg className="icon" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
+          </summary>
+          <div className="summary-right">
               {changed ? <button
                 className="btn primary pharmacist-day-save"
                 type="button"
                 disabled={loading || saving}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  save();
-                }}
+                onClick={save}
               >{saving ? "Saving..." : "Save changes"}</button> : null}
-              <label className="switch day-summary-switch" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-                <input type="checkbox" checked={enabled} disabled={loading || saving} aria-label={`Allow bookings on ${titleCase(day)}`} onClick={(event) => event.stopPropagation()} onChange={(event) => setDraft((current) => toggleAvailabilityDay(current, day, event.target.checked, DEFAULT_SLOT_INTERVAL_MINUTES))} />
+              <label className="switch day-summary-switch">
+                <input type="checkbox" checked={enabled} disabled={loading || saving} aria-label={`Allow bookings on ${titleCase(day)}`} onChange={(event) => setDraft((current) => toggleAvailabilityDay(current, day, event.target.checked, DEFAULT_SLOT_INTERVAL_MINUTES))} />
                 <span className="switch-ui" aria-hidden="true" />
               </label>
               <span className={`status-pill ${enabled ? "success" : "warning"}`}>{enabled ? "Bookable" : "Unavailable"}</span>
-              <span className="chevron"><svg className="icon" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
-            </div>
-          </summary>
+          </div>
           <div className="day-body">
-            <div className="day-controls"><div className="quick-card"><span className="toggle-title">Quick select</span><span className="toggle-copy">Use presets, then adjust individual slots below.</span><div className="quick-actions">
+            <div className="day-controls"><div className="quick-card"><span className="toggle-title">Quick select</span><div className="quick-actions">
               <button className="btn soft" type="button" onClick={() => applyPreset(day, "morning")}>Morning</button>
               <button className="btn soft" type="button" onClick={() => applyPreset(day, "afternoon")}>Afternoon</button>
               <button className="btn soft" type="button" onClick={() => applyPreset(day, "full")}>Full day</button>

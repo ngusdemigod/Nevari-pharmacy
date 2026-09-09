@@ -1,5 +1,10 @@
 # Nevari Pharmacy Core - Security Vulnerability Audit Report
 
+## 2026-09-08 localhost CAPTCHA with an expired session
+
+- Local development API writes attach the existing localhost CAPTCHA marker even when a CSRF cookie remains after the access cookie expires. A remaining CSRF cookie no longer suppresses local verification.
+- Server-side localhost/non-production restrictions, production CAPTCHA verification, CSRF validation, and upstream authorization remain unchanged.
+
 ## 2026-07-29 order creation and product-media hardening
 
 - `POST /orders` now rejects unexpected fields, allowlists `pickup`, `local_delivery`, and `shipping`, and requires a delivery address for delivery and shipping orders.

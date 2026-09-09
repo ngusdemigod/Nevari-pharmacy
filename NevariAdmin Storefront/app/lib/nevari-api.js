@@ -1,6 +1,11 @@
 "use client";
 
 import { apiRequest } from "../components/role-dashboard-utils";
+import {
+  resolveSubscriptionBaseAmount,
+  resolveSubscriptionMonthlyAmount,
+} from "./subscriptionPricing.mjs";
+export { resolveSubscriptionMonthlyAmount } from "./subscriptionPricing.mjs";
 // mtmPdfBrowser statically pulls in pdf-lib (~130 KB gzip). It is only needed
 // when submitting an MTM assessment, so load it lazily instead of shipping it
 // in every dashboard bundle.
@@ -32,89 +37,6 @@ const CUSTOMER_SETTINGS_DEFAULTS = {
   emergencyContactName: "",
   emergencyContactPhoneNumber: "",
 };
-
-function readFiniteAmount(value, { divideBy = 1 } = {}) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount < 0) {
-    return null;
-  }
-  return amount / divideBy;
-}
-
-function readFirstFiniteAmount(candidates = []) {
-  for (const candidate of candidates) {
-    const amount = readFiniteAmount(candidate.value, { divideBy: candidate.divideBy || 1 });
-    if (amount != null) {
-      return amount;
-    }
-  }
-  return null;
-}
-
-function resolveAvailablePaidPlan(subscription = {}) {
-  const plans = Array.isArray(subscription?.available_plans) ? subscription.available_plans : [];
-  const requestedKey = String(subscription?.requested_plan_key || "nevari_access_pro").trim().toLowerCase();
-  return plans.find((plan) => String(plan?.plan_key || "").trim().toLowerCase() === requestedKey && Number(plan?.price || 0) > 0)
-    || plans.find((plan) => String(plan?.tier || "").trim().toLowerCase() === "pro" && Number(plan?.price || 0) > 0)
-    || null;
-}
-
-function resolveSubscriptionBaseAmount(subscription = {}, { status = "" } = {}) {
-  const availablePaidPlan = resolveAvailablePaidPlan(subscription);
-  const latestSubscription = subscription?.latest_subscription && typeof subscription.latest_subscription === "object"
-    ? subscription.latest_subscription
-    : null;
-  const resolved = readFirstFiniteAmount([
-    { value: subscription?.amount },
-    { value: subscription?.amount_ngn },
-    { value: subscription?.plan_amount },
-    { value: subscription?.planAmount },
-    { value: latestSubscription?.amount },
-    { value: latestSubscription?.amount_ngn },
-    { value: latestSubscription?.plan_amount },
-    { value: latestSubscription?.planAmount },
-    { value: subscription?.amount_kobo },
-    { value: subscription?.amountKobo },
-    { value: latestSubscription?.amount_kobo },
-    { value: latestSubscription?.amountKobo },
-  ]);
-  if (resolved != null) {
-    if (resolved > 0) return resolved;
-    if (availablePaidPlan) return Number(availablePaidPlan.price);
-  }
-  return availablePaidPlan ? Number(availablePaidPlan.price) : 0;
-}
-
-export function resolveSubscriptionMonthlyAmount(subscription = {}) {
-  const status = String(subscription?.status || "free").trim().toLowerCase();
-
-  const latestSubscription = subscription?.latest_subscription && typeof subscription.latest_subscription === "object"
-    ? subscription.latest_subscription
-    : null;
-  const directMonthlyAmount = readFirstFiniteAmount([
-    { value: subscription?.monthlyEquivalent },
-    { value: subscription?.monthly_equivalent },
-    { value: subscription?.monthly_equivalent_amount },
-    { value: subscription?.monthlyEquivalentAmount },
-    { value: subscription?.monthly_equivalent_kobo },
-    { value: subscription?.monthlyEquivalentKobo },
-    { value: latestSubscription?.monthlyEquivalent },
-    { value: latestSubscription?.monthly_equivalent },
-    { value: latestSubscription?.monthly_equivalent_amount },
-    { value: latestSubscription?.monthlyEquivalentAmount },
-    { value: latestSubscription?.monthly_equivalent_kobo },
-    { value: latestSubscription?.monthlyEquivalentKobo },
-  ]);
-  if (directMonthlyAmount != null && directMonthlyAmount > 0) {
-    return directMonthlyAmount;
-  }
-  const frequency = String(subscription?.frequency || subscription?.interval || "monthly").trim().toLowerCase();
-  const baseAmount = resolveSubscriptionBaseAmount(subscription, { status });
-  if ((frequency === "yearly" || frequency === "year") && baseAmount > 0) {
-    return baseAmount / 12;
-  }
-  return baseAmount;
-}
 
 function storageKey(userId) {
   return `${STORAGE_PREFIX}:${String(userId || "guest")}`;
@@ -232,7 +154,7 @@ export function normalizeSubscriptionPayload(payload = {}) {
   const code = String(payload.paystack_subscription_code || payload.subscription_code || latestSubscription?.paystack_subscription_code || "").trim();
   const status = String(payload.status || base.status || "free").trim().toLowerCase();
   const frequency = String(payload.frequency || payload.interval || (status === "free" ? "free" : "monthly")).trim().toLowerCase();
-  const amount = resolveSubscriptionBaseAmount(payload, { status });
+  const amount = resolveSubscriptionBaseAmount(payload);
   const monthlyEquivalent = resolveSubscriptionMonthlyAmount({
     ...payload,
     status,

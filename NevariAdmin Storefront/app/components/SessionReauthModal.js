@@ -186,8 +186,11 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
       expiresAt: Date.now() + (Number(data.expires_in || 900) * 1000),
       user: data.user || null,
     };
+    const result = await onAuthenticated(session);
+    if (result?.accepted === false) {
+      throw new Error(result.message || "Sign in with the same account to continue.");
+    }
     saveSession(config, session);
-    onAuthenticated(session);
   }
 
   async function submitLogin(event) {

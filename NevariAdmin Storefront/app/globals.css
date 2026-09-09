@@ -8817,12 +8817,41 @@ body.auth-locked .page-shell {
 }
 
 .products-table .sku-col {
-  width: 156px;
-  min-width: 156px;
-  max-width: 180px;
+  width: 128px;
+  min-width: 128px;
+  max-width: 128px;
+  font-size: 10px;
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.products-table .stock-col {
+  width: 104px;
+  min-width: 104px;
+  text-align: left;
+}
+
+.products-table .product-stock-summary {
+  align-items: flex-start;
+  text-align: left;
+}
+
+.products-table .categories-col {
+  width: 180px;
+  min-width: 180px;
+  max-width: 180px;
+  white-space: normal;
+}
+
+.products-table .product-category-summary {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .products-table .price-col {
@@ -11550,6 +11579,116 @@ body.auth-locked .page-shell {
   border-color: transparent;
 
   transform: translateY(-2px);
+}
+
+/* Patient dashboard audit fixes: accessibility, clinical review, and responsive controls. */
+.customer-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.customer-mobile-app :is(button, [role="button"], a.btn),
+.customer-profile-reminder-modal button,
+.customer-appointment-modal button {
+  min-height: 44px;
+}
+
+.customer-mobile-app :is(.customer-mobile-icon-button, .customer-mobile-more, .customer-mobile-back-link),
+.customer-profile-reminder-close,
+.customer-desktop-search-clear {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.customer-mobile-search-empty,
+.customer-overview-reference-empty,
+.customer-mobile-empty-state :is(p, small),
+.compact-empty {
+  color: #475569 !important;
+}
+
+.customer-mobile-search-result.is-active,
+.customer-desktop-search-dropdown [role="option"].is-active {
+  outline: 3px solid rgba(26, 91, 173, .28);
+  outline-offset: -3px;
+  background: #edf5ff;
+}
+
+.customer-mobile-drawer-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.customer-mobile-drawer-close {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #102f5f;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.customer-mobile-drawer-profile {
+  width: 100%;
+  border: 0;
+  text-align: left;
+}
+
+.customer-clinical-review {
+  display: grid;
+  gap: 14px;
+}
+
+.customer-clinical-review > section {
+  padding: 16px;
+  border: 1px solid #d6e0eb;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.customer-clinical-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.customer-clinical-review :is(h3, h4, p, dl) { margin: 0; }
+.customer-clinical-review dl { display: grid; gap: 8px; }
+.customer-clinical-review dl > div { display: grid; grid-template-columns: minmax(110px, .4fr) 1fr; gap: 12px; }
+.customer-clinical-review dt { color: #475569; }
+.customer-clinical-review dd { margin: 0; color: #102f5f; font-weight: 600; overflow-wrap: anywhere; }
+.customer-clinical-review-head button { padding: 0 14px; border: 1px solid #1a5bad; border-radius: 10px; background: #fff; color: #174f96; }
+
+.customer-appointment-booking-guidance {
+  margin: 10px 0 0;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.customer-mobile-upload-row-button { border-radius: 12px !important; }
+.customer-mobile-upload-filename { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.customer-mobile-upload-meta { min-width: 0; }
+
+@media (min-width: 961px) {
+  .customer-desktop-embedded-page .customer-mobile-icon-button[aria-label="Open menu"],
+  .customer-desktop-embedded-page .customer-mobile-searchbar-button + .customer-mobile-greeting-row > .customer-mobile-icon-button {
+    display: none !important;
+  }
 }
 
 .booking-t-slot.chosen .booking-t-time {
@@ -14975,6 +15114,7 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 
 .customer-mobile-field span,
 .customer-mobile-radio-group>span,
+.customer-mobile-radio-group>legend,
 .customer-mobile-upload-group p,
 .customer-mobile-book-header p,
 .customer-mobile-step-copy,
@@ -15461,6 +15601,21 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 .customer-mobile-radio-group {
   display: grid;
   gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.customer-mobile-radio-group legend {
+  padding: 0;
+  color: var(--color-text-main);
+}
+
+.customer-mobile-radio-group.has-error {
+  padding: 10px 12px;
+  border: 1px solid #b42318;
+  border-radius: 10px;
 }
 
 .customer-mobile-inline-radios {
@@ -15473,15 +15628,29 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 }
 
 .customer-mobile-inline-radios label {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
 }
 
 .customer-mobile-inline-radios input[type="radio"] {
   position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   opacity: 0;
-  pointer-events: none;
+  cursor: pointer;
+}
+
+.customer-mobile-inline-radios label:focus-within {
+  border-radius: 8px;
+  outline: 3px solid rgba(26, 91, 173, .32);
+  outline-offset: 3px;
 }
 
 .customer-mobile-inline-radios label input[type="radio"]:checked+.customer-mobile-radio {
@@ -24082,6 +24251,10 @@ button:focus-visible,
   align-items: flex-start;
 }
 
+.doctor-flow-shell .pharmacist-availability-editor .availability-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .doctor-flow-shell .summary-column {
   position: sticky;
   top: 104px;
@@ -24203,6 +24376,7 @@ button:focus-visible,
 }
 
 .doctor-flow-shell .day-card {
+  position: relative;
   background: #fff;
   border: 1px solid var(--flow-line);
   border-radius: 24px;
@@ -24239,6 +24413,9 @@ button:focus-visible,
 }
 
 .doctor-flow-shell .summary-right {
+  position: absolute;
+  top: 22px;
+  right: 66px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -24279,6 +24456,58 @@ button:focus-visible,
   grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr);
   gap: 14px;
   align-items: flex-start;
+}
+
+.doctor-flow-shell .pharmacist-availability-editor .day-controls {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.doctor-flow-shell .pharmacist-availability-editor .quick-card {
+  width: 100%;
+}
+
+.doctor-flow-shell .pharmacist-availability-editor .quick-actions .btn,
+.doctor-flow-shell .pharmacist-availability-editor .day-summary-switch,
+.pharmacist-case-modal .icon-button {
+  min-height: 44px;
+}
+
+.pharmacist-case-modal .icon-button {
+  min-width: 44px;
+}
+
+.doctor-flow-shell .pharmacist-availability-editor .day-summary-switch {
+  height: 44px;
+}
+
+.doctor-flow-shell .pharmacist-availability-editor .day-summary-switch .switch-ui {
+  width: 52px;
+  height: 30px;
+}
+
+.doctor-flow-shell:has(.pharmacist-clinical-dashboard) .customer-desktop-sidebar-profile,
+.doctor-flow-shell:has(.pharmacist-clinical-dashboard) .customer-desktop-sidebar-profile-copy {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.doctor-flow-shell:has(.pharmacist-clinical-dashboard) .customer-desktop-sidebar-profile-copy :is(strong, span) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doctor-flow-shell .pharmacist-case-row-button {
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .doctor-flow-shell .day-toggle-card,
@@ -44668,11 +44897,21 @@ html body .app-modal-layer .product-editor-modal.product-editor-create-mode
 
   .pharmacist-case-modal .modal-head h2 {
     max-width: calc(100vw - 92px);
-    overflow: hidden;
     font-size: 20px;
     line-height: 1.2;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .doctor-flow-shell .pharmacist-availability-editor .day-summary {
+    min-height: 0;
+    padding-bottom: 12px;
+  }
+
+  .doctor-flow-shell .pharmacist-availability-editor .summary-right {
+    position: static;
+    padding: 0 18px 16px;
+    justify-content: flex-start;
   }
 
   .pharmacist-case-modal .modal-body {
@@ -47148,6 +47387,605 @@ html body div.creation-modal-layer section.profile-create-popup .user-account-ro
   }
 }
 
+/* Storefront information architecture and table controls. */
+.nevari-admin-storefront .topbar {
+  min-height: 72px;
+}
+
+.nevari-admin-storefront .topbar-left {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 20px;
+}
+
+.nevari-admin-storefront .topbar-page-title {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--color-primary);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.nevari-admin-storefront .topbar-left .search-field {
+  flex: 1 1 420px;
+  max-width: 620px;
+}
+
+.nevari-admin-storefront .page-view > .admin-page-heading {
+  display: none;
+}
+
+.nevari-admin-storefront :is(.table-panel, .admin-flat-table-section, .subscription-plans-panel, .users-panel) {
+  min-height: 0;
+}
+
+.nevari-admin-storefront :is(.pagination-row, .users-pagination, .doctor-pagination) {
+  position: sticky;
+  z-index: 5;
+  bottom: 0;
+  margin-top: auto;
+  border-top: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, .98);
+  backdrop-filter: blur(10px);
+}
+
+.sortable-table-header {
+  width: 100%;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sortable-table-header:focus-visible {
+  outline: 3px solid rgba(26, 91, 173, .24);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.sort-direction {
+  position: relative;
+  width: 10px;
+  height: 14px;
+  flex: 0 0 10px;
+  opacity: .48;
+}
+
+.sort-direction::before,
+.sort-direction::after {
+  position: absolute;
+  left: 1px;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  content: "";
+}
+
+.sort-direction::before { top: 1px; border-bottom: 5px solid currentColor; }
+.sort-direction::after { bottom: 1px; border-top: 5px solid currentColor; }
+.sort-direction.asc::before,
+.sort-direction.desc::after { opacity: 1; }
+.sort-direction.asc::after,
+.sort-direction.desc::before { opacity: .2; }
+
+.nevari-admin-storefront :is(.segmented-mini, .nevari-storefront-tabs) {
+  min-height: 52px;
+  padding: 5px;
+  border: 1px solid #d6e0eb;
+  border-radius: 15px;
+  background: #eef3f8;
+  overflow-x: auto;
+}
+
+.nevari-admin-storefront :is(.segmented-mini, .nevari-storefront-tabs) > button {
+  min-height: 42px;
+  border-radius: 12px;
+}
+
+.nevari-admin-storefront :is(.toolbar, .filter-row, .users-toolbar) select {
+  min-height: 44px;
+  padding: 0 38px 0 14px;
+  border: 1px solid #d6e0eb;
+  border-radius: 12px;
+  background-color: #fff;
+  color: var(--color-text-main);
+}
+
+/* Product categories: bounded independent columns and row-level actions. */
+.nevari-admin-storefront .product-categories-pane {
+  height: min(760px, calc(100dvh - 190px));
+  min-height: 560px;
+  overflow: hidden;
+}
+
+.nevari-admin-storefront .product-categories-sidebar {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.nevari-admin-storefront .product-category-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 10px 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.nevari-admin-storefront .product-category-directory-pagination {
+  position: sticky;
+  bottom: 0;
+  flex: 0 0 auto;
+  background: #f7f9fc;
+}
+
+.nevari-admin-storefront .product-category-row {
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  display: block;
+  overflow: hidden;
+}
+
+.product-category-row-main {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: grid;
+  gap: 5px;
+  color: inherit;
+  text-align: left;
+}
+
+.product-category-row-main strong,
+.product-category-row-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-category-row-actions {
+  height: 0;
+  margin-top: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+  opacity: 0;
+  transition: height 160ms ease, margin-top 160ms ease, opacity 160ms ease;
+}
+
+.product-category-row:hover .product-category-row-actions,
+.product-category-row:focus-within .product-category-row-actions {
+  height: 24px;
+  margin-top: 7px;
+  opacity: 1;
+}
+
+.product-category-row-actions button {
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #315f94;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.product-category-row-actions button.danger { color: #b42318; }
+.product-category-row-actions button:disabled { color: #95a2b2; cursor: not-allowed; }
+
+.product-category-directory-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.product-category-directory-editor input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #7aa7dc;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--color-text-main);
+}
+
+.nevari-admin-storefront .product-categories-content {
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+.nevari-admin-storefront .product-category-searchfield-inline {
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid #d6e0eb;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.nevari-admin-storefront .product-category-searchfield-inline input {
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.category-delete-popup {
+  width: min(460px, calc(100vw - 32px));
+  padding: 28px;
+  border: 1px solid #d9e1eb;
+  border-radius: 20px;
+  background: #fff;
+}
+
+.category-delete-confirm {
+  border-color: #b42318 !important;
+  background: #b42318 !important;
+}
+
+/* Consultation details action groups. */
+.consultation-details-actions > :first-child { order: 3; margin-left: auto; }
+.consultation-details-actions > :nth-child(2) { order: 2; }
+.consultation-details-actions > .consultation-action-primary { order: 4; }
+.consultation-details-actions > .consultation-action-danger { order: 1; }
+
+/* Product creator layout from the approved audit. */
+.creation-modal--product .product-create-details-columns {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.creation-modal--product .product-create-description-column {
+  width: 100%;
+  min-width: 0;
+}
+
+.creation-modal--product .product-create-description-column textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+}
+
+.creation-modal--product .product-create-tag-picker {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.product-create-multiple-footer {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #d6e0eb;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+@media (min-width: 981px) and (min-height: 760px) {
+  .creation-modal--product,
+  .creation-modal--product .creation-modal__form {
+    max-height: none !important;
+  }
+
+  .creation-modal--product :is(.creation-modal__body, .product-create-step-scroll) {
+    overflow: visible !important;
+  }
+}
+
+@media (max-width: 980px) {
+  .nevari-admin-storefront .product-categories-pane {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) !important;
+    overflow: visible;
+  }
+
+  .nevari-admin-storefront .product-categories-sidebar {
+    height: min(440px, 48dvh);
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .nevari-admin-storefront .product-categories-content {
+    height: auto;
+    overflow: visible;
+  }
+}
+
+/* Product category column polish requested during the desktop review. */
+html body .nevari-admin-storefront .product-categories-sidebar > .product-categories-pane-head,
+html body .nevari-admin-storefront .product-categories-sidebar > .product-category-directory-search {
+  width: auto;
+  margin-inline: 16px;
+}
+
+html body .nevari-admin-storefront .product-category-list {
+  gap: 8px;
+  padding-inline: 16px;
+}
+
+html body .nevari-admin-storefront .product-category-row {
+  min-height: 60px;
+  padding: 17px 14px;
+  overflow: clip;
+  transition: min-height 180ms ease, padding 180ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+html body .nevari-admin-storefront .product-category-row-main {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+}
+
+html body .nevari-admin-storefront .product-category-row-actions {
+  height: auto;
+  max-height: 0;
+  margin-top: 0;
+  flex-wrap: nowrap;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: max-height 180ms ease, margin-top 180ms ease, opacity 140ms ease, transform 180ms ease;
+}
+
+html body .nevari-admin-storefront .product-category-row:hover,
+html body .nevari-admin-storefront .product-category-row:focus-within {
+  min-height: 88px;
+}
+
+html body .nevari-admin-storefront .product-category-row:hover .product-category-row-actions,
+html body .nevari-admin-storefront .product-category-row:focus-within .product-category-row-actions {
+  height: auto;
+  max-height: 28px;
+  margin-top: 10px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+html body .nevari-admin-storefront .product-categories-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+html body .nevari-admin-storefront .product-category-products {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+html body .nevari-admin-storefront .product-category-linked-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+html body .nevari-admin-storefront .product-category-searchbar,
+html body .nevari-admin-storefront .product-category-searchbar .product-category-searchfield,
+html body .nevari-admin-storefront .product-category-searchfield-inline,
+html body .nevari-admin-storefront .product-category-searchfield-inline input {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+html body .nevari-admin-storefront .product-category-searchfield-inline {
+  margin-left: 0;
+}
+
+html body .nevari-admin-storefront .product-category-searchfield-inline input {
+  flex: 1 1 auto;
+}
+
+html body .nevari-admin-storefront .product-category-directory-pagination,
+html body .nevari-admin-storefront .product-category-pagination-row,
+html body .nevari-admin-storefront :is(.pagination-row, .users-pagination, .doctor-pagination) {
+  position: sticky;
+  z-index: 12;
+  bottom: 0;
+  flex: 0 0 auto;
+  margin-top: auto;
+  background: rgba(255, 255, 255, .98);
+  backdrop-filter: blur(10px);
+}
+
+html body .nevari-admin-storefront :is(
+  .main-shell,
+  .pages-stack,
+  .dashboard-swr-reveal,
+  .page-view,
+  .product-categories-pane,
+  .product-category-list,
+  .product-categories-content,
+  .product-category-linked-list,
+  .table-scroll
+) {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html body .nevari-admin-storefront :is(
+  .main-shell,
+  .pages-stack,
+  .dashboard-swr-reveal,
+  .page-view,
+  .product-categories-pane,
+  .product-category-list,
+  .product-categories-content,
+  .product-category-linked-list,
+  .table-scroll
+)::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html body .nevari-admin-storefront .product-category-row,
+  html body .nevari-admin-storefront .product-category-row-actions {
+    transition: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .nevari-admin-storefront .topbar {
+    align-items: flex-start !important;
+    flex-wrap: wrap !important;
+  }
+
+  .nevari-admin-storefront .topbar-left {
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .nevari-admin-storefront .topbar-left .search-field {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+}
+
+/* V2 audit repairs: bounded mobile shell, category directory controls, and touch targets. */
+.storefront-sidebar-scrim {
+  display: none;
+}
+
+.product-category-directory-search {
+  display: block;
+  padding: 0 12px 10px;
+}
+
+.product-category-directory-search input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #d5dfeb;
+  border-radius: 12px;
+  background: #fff;
+  color: #102f5f;
+}
+
+.product-category-directory-pagination {
+  padding: 10px 12px;
+}
+
+@media (max-width: 980px) {
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) .sidebar {
+    top: 16px !important;
+    bottom: 16px !important;
+    left: 16px !important;
+    width: min(320px, calc(100vw - 32px)) !important;
+    max-width: calc(100vw - 32px) !important;
+    height: calc(100dvh - 32px) !important;
+    max-height: calc(100dvh - 32px) !important;
+  }
+
+  .storefront-sidebar-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: rgba(10, 42, 94, .42);
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) :is(.main-shell, .pages-stack, .page-view, .panel, .table-panel) {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) :is(.table-scroll, .table-wrap, .users-table-wrap, .order-create-table-scroll) {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto !important;
+    overscroll-behavior-inline: contain;
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) :is(.icon-button, .staff-action-icon, .featured-toggle, .btn-add-icon) {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+
+  .app-modal-layer :is(.detail-flat-modal, .modal-frame, .staff-fullscreen-modal) {
+    width: min(calc(100% - 16px), 960px) !important;
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+  }
+}
+
+@media (max-width: 620px) {
+  body:has(.nevari-admin-storefront) {
+    padding: 8px;
+    overflow-x: hidden;
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) .sidebar {
+    top: 8px !important;
+    bottom: 8px !important;
+    left: 8px !important;
+    width: min(320px, calc(100vw - 16px)) !important;
+    max-width: calc(100vw - 16px) !important;
+    height: calc(100dvh - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) .main-shell {
+    height: calc(100dvh - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+    padding: 10px !important;
+  }
+
+  .nevari-admin-storefront .topbar {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+  }
+
+  .nevari-admin-storefront .topbar-left {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .nevari-admin-storefront .search-field {
+    min-width: 0;
+  }
+
+  .nevari-admin-storefront .product-categories-pane {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
 /* Screenshot-reference redesign, scoped exclusively to Create Appointment. */
 .creation-modal--appointment {
   width: min(1390px, calc(100vw - 48px));
@@ -48955,6 +49793,26 @@ html body .app-modal-layer .product-editor-modal.product-editor-create-mode .pro
   font-weight: 500 !important;
 }
 
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode .product-create-empty-placeholder {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 8px !important;
+  object-fit: cover !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode .product-create-gallery-empty {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode .product-create-gallery-empty img {
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
 html body .app-modal-layer .product-editor-modal.product-editor-create-mode
   :is(.field-hint, .field-error) {
   display: block !important;
@@ -49137,5 +49995,644 @@ html body .app-modal-layer .product-editor-modal.product-editor-create-mode .nev
   html body .app-modal-layer .product-editor-modal.product-editor-create-mode .product-create-image-tile {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+/* Approved storefront audit overrides; keep after legacy compatibility rules. */
+html body .nevari-admin-storefront .topbar-left {
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 20px;
+}
+
+html body .nevari-admin-storefront .topbar-page-title {
+  margin: 0;
+  flex: 0 0 auto;
+  color: #102f5f;
+  font-size: 22px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+html body .nevari-admin-storefront .topbar-left .search-field {
+  width: min(100%, 620px);
+  min-width: 220px;
+  flex: 1 1 420px;
+}
+
+html body .nevari-admin-storefront .page-view > .admin-page-heading {
+  display: none !important;
+}
+
+html body .nevari-admin-storefront .nevari-storefront-tabs label {
+  display: block;
+  min-width: 150px;
+}
+
+html body .nevari-admin-storefront .nevari-storefront-tabs select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 38px 0 14px;
+  border: 1px solid #d6e0eb;
+  border-radius: 12px;
+  background-color: #fff;
+  color: #102f5f;
+  font: inherit;
+}
+
+html body .nevari-admin-storefront .product-categories-pane {
+  height: min(760px, calc(100dvh - 190px));
+  min-height: 560px;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-categories-sidebar {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-searchfield-inline input {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode
+  .product-create-price-row {
+  grid-column: 1 / -1 !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode
+  .product-create-description-column {
+  grid-column: 1 / -1 !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode
+  .product-create-description-column textarea.form-control {
+  height: 74px !important;
+  min-height: 74px !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode
+  .product-create-tag-picker {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode
+  .product-create-multiple-footer {
+  min-height: 46px !important;
+  padding: 0 14px !important;
+  border: 1px solid #c8d4e2 !important;
+  border-radius: 12px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+@media (min-width: 981px) and (min-height: 760px) {
+  html body .app-modal-layer .product-editor-modal.product-editor-create-mode .product-editor-shell {
+    overflow: visible !important;
+  }
+}
+
+@media (max-width: 980px) {
+  html body .nevari-admin-storefront .product-categories-pane {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) !important;
+    overflow: visible;
+  }
+
+  html body .nevari-admin-storefront .product-categories-sidebar {
+    height: min(440px, 48dvh);
+    border-right: 0;
+    border-bottom: 1px solid #d6e0eb;
+  }
+
+  html body .nevari-admin-storefront .product-categories-content {
+    height: auto;
+    overflow: visible;
+  }
+}
+.customer-two-factor-row > span {
+  display: grid;
+  gap: 3px;
+}
+
+.customer-two-factor-row small,
+.customer-two-factor-recovery {
+  color: #596579;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.customer-two-factor-trigger {
+  min-width: 88px;
+  min-height: 44px;
+  border: 1px solid #c9d3e2;
+  border-radius: 12px;
+  background: #fff;
+  color: #10233f;
+  cursor: pointer;
+  font: inherit;
+}
+
+.customer-two-factor-trigger.is-enabled {
+  border-color: #b42318;
+  color: #b42318;
+}
+
+.customer-two-factor-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(9, 24, 46, 0.58);
+}
+
+.customer-two-factor-dialog {
+  width: min(100%, 480px);
+  border-radius: 18px;
+  background: #fff;
+  padding: 24px;
+  color: #10233f;
+}
+
+.customer-two-factor-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+}
+
+.customer-two-factor-dialog > p {
+  margin: 0 0 20px;
+  color: #596579;
+  line-height: 1.5;
+}
+
+.customer-two-factor-dialog label {
+  display: grid;
+  gap: 8px;
+}
+
+.customer-two-factor-dialog input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid #b8c5d6;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  letter-spacing: 0.22em;
+}
+
+.customer-two-factor-error {
+  margin: 12px 0 0;
+  color: #b42318;
+  font-size: 0.88rem;
+}
+
+.customer-two-factor-recovery {
+  margin: 14px 0 0;
+}
+
+.customer-two-factor-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+@media (max-width: 560px) {
+  .customer-two-factor-dialog {
+    padding: 20px;
+  }
+
+  .customer-two-factor-actions > button {
+    width: 100%;
+  }
+}
+
+/* Shared admin tabs, table actions, and pagination footers. */
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 5px;
+  overflow-x: auto;
+  border: 0 !important;
+  border-radius: 15px;
+  background: #eef4fb;
+  box-shadow: none;
+  scrollbar-width: none;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+)::-webkit-scrollbar {
+  display: none;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) > button {
+  min-height: 42px;
+  padding: 0 16px;
+  border: 0 !important;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  color: #53647c;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) > button:is(.active, [aria-selected="true"], [aria-current="page"]) {
+  background: #0b326c;
+  box-shadow: none;
+  color: #fff;
+}
+
+html body .nevari-admin-storefront .table-action-strip .table-action-button {
+  width: 36px !important;
+  min-width: 36px !important;
+  max-width: 36px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  max-height: 36px !important;
+  flex: 0 0 36px;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  aspect-ratio: 1 / 1;
+}
+
+html body :is(.pagination-row, .users-pagination, .doctor-pagination) {
+  border-top: 0 !important;
+}
+
+html body .nevari-admin-storefront .table-scroll table {
+  width: max(100%, max-content);
+}
+
+html body .nevari-admin-storefront table th,
+html body .nevari-admin-storefront .sortable-table-header,
+html body .nevari-admin-storefront .sortable-table-header > span:first-child {
+  white-space: nowrap;
+}
+
+html body .nevari-admin-storefront .patient-directory-panel .narrow-col {
+  width: 132px;
+  min-width: 132px;
+}
+
+html body .nevari-admin-storefront .topbar-page-title {
+  font-weight: 300;
+}
+
+html body .nevari-admin-storefront .topbar-search-field {
+  animation: topbar-search-reposition 220ms cubic-bezier(.2, .8, .2, 1) both;
+  will-change: transform, opacity;
+}
+
+@keyframes topbar-search-reposition {
+  from {
+    opacity: .72;
+    transform: translateX(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html body .nevari-admin-storefront .topbar-search-field {
+    animation: none;
+  }
+}
+
+html body .nevari-admin-storefront {
+  --admin-select-width: 120px;
+  --admin-select-height: 18px;
+  --admin-select-font-size: 12px;
+  --admin-select-radius: 12px;
+  --admin-select-padding-inline: 10px;
+}
+
+html body .nevari-admin-storefront select {
+  width: var(--admin-select-width) !important;
+  min-width: var(--admin-select-width) !important;
+  max-width: 100% !important;
+  height: var(--admin-select-height) !important;
+  min-height: var(--admin-select-height) !important;
+  padding-right: var(--admin-select-padding-inline) !important;
+  padding-left: var(--admin-select-padding-inline) !important;
+  border-radius: var(--admin-select-radius) !important;
+  font-size: var(--admin-select-font-size) !important;
+  line-height: 1 !important;
+}
+
+/* Consolidated storefront tabs, pagination, and product-category layout. */
+html body .nevari-admin-storefront {
+  --admin-tab-background: #eef4fb;
+  --admin-tab-font-size: 10px;
+  --admin-tab-height: 40px;
+  --admin-tab-min-width: 90px;
+  --admin-pagination-width: 42px;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) {
+  width: max-content;
+  max-width: 100%;
+  min-height: calc(var(--admin-tab-height) + 10px);
+  height: auto;
+  padding: 5px 10px;
+  gap: 5px;
+  border: 0 !important;
+  border-radius: 15px;
+  background: var(--admin-tab-background) !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) > button {
+  width: auto;
+  min-width: var(--admin-tab-min-width);
+  height: var(--admin-tab-height);
+  min-height: var(--admin-tab-height);
+  padding: 0 12px;
+  border: 0 !important;
+  border-radius: 12px;
+  font-size: var(--admin-tab-font-size);
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) .filter-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 9px;
+  line-height: 16px;
+}
+
+html body .nevari-admin-storefront .products-table-shell {
+  min-width: 0;
+  padding: 16px !important;
+  display: grid;
+  gap: 12px;
+  border-radius: 19px;
+  background: var(--admin-tab-background);
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .products-table-shell > .products-panel-header {
+  min-width: 0;
+  padding: 0 !important;
+  margin: 0;
+  border: 0;
+}
+
+html body .nevari-admin-storefront .products-table-shell .products-segmented-bar {
+  margin: 0;
+}
+
+html body .nevari-admin-storefront .product-categories-pane {
+  width: 100%;
+  min-width: 0;
+  height: min(680px, calc(100dvh - 220px));
+  min-height: 520px;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 0;
+  align-items: stretch;
+  border-radius: 19px;
+  background: var(--admin-tab-background);
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-categories-sidebar,
+html body .nevari-admin-storefront .product-categories-content {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  background: var(--admin-tab-background);
+}
+
+html body .nevari-admin-storefront .product-categories-sidebar {
+  padding: 16px 0 0;
+  border-right: 1px solid #d6e0eb;
+}
+
+html body .nevari-admin-storefront .product-categories-content {
+  padding: 16px;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-products {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  margin: 0;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-linked-list {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  grid-auto-rows: minmax(104px, auto);
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-product-card {
+  width: 100%;
+  min-width: 0;
+  min-height: 104px;
+  height: auto;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #d6e0eb;
+  border-radius: 16px;
+  background: #fff;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-product-card .product-thumb {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-product-card .product-thumb img {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+html body .nevari-admin-storefront .product-category-product-details {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+html body .nevari-admin-storefront .product-category-product-details strong {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+html body .nevari-admin-storefront .product-category-product-price {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+html body .nevari-admin-storefront .product-category-product-price {
+  margin: 0 !important;
+  color: #53647c;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+html body .nevari-admin-storefront .product-category-inline-head,
+html body .nevari-admin-storefront .product-category-inline-group,
+html body .nevari-admin-storefront .product-category-inline-trigger {
+  min-height: 34px;
+  overflow: visible;
+}
+
+html body .nevari-admin-storefront :is(.pagination-row, .users-pagination, .doctor-pagination) {
+  min-height: 44px;
+  padding-top: 5px !important;
+  padding-bottom: 5px !important;
+  border: 0 !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+html body .nevari-admin-storefront .page-item {
+  width: var(--admin-pagination-width);
+  min-width: var(--admin-pagination-width);
+  height: 34px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
+@media (max-width: 980px) {
+  html body .nevari-admin-storefront .products-table-shell {
+    padding: 12px !important;
+  }
+
+  html body .nevari-admin-storefront .product-categories-pane {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  html body .nevari-admin-storefront .product-categories-sidebar {
+    height: min(440px, 48dvh);
+    border-right: 0;
+    border-bottom: 1px solid #d6e0eb;
+  }
+
+  html body .nevari-admin-storefront .product-categories-content {
+    height: min(620px, 64dvh);
   }
 }

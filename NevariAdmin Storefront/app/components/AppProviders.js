@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
 import { SWRConfig } from "swr";
-import { requireRecaptchaToken } from "../lib/recaptcha-client";
+import { isLocalDevelopment, requireRecaptchaToken } from "../lib/recaptcha-client";
+import { ensureIdempotencyKey, isRecoverableClinicalMutation, shouldRecoverMutation } from "../lib/session-recovery.mjs";
 import { FRONTENDS } from "./frontend-config";
 import SessionReauthModal from "./SessionReauthModal";
 
@@ -54,9 +55,18 @@ export default function AppProviders({ children }) {
     return FRONTENDS.patient;
   }
 
-  function requestReauthentication() {
+  function storedUserId(config) {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(config.storageKey) || "{}");
+      return String(stored?.user?.id || "");
+    } catch {
+      return "";
+    }
+  }
+
+  function requestReauthentication(config) {
     if (reauthPromiseRef.current) return reauthPromiseRef.current;
-    setReauthConfig(frontendForPath(window.location.pathname));
+    setReauthConfig({ config, expectedUserId: storedUserId(config) });
     reauthPromiseRef.current = new Promise((resolve) => {
       reauthResolveRef.current = resolve;
     });
@@ -64,11 +74,16 @@ export default function AppProviders({ children }) {
   }
 
   function completeReauthentication(session) {
-    window.dispatchEvent(new CustomEvent("nevari:session-restored", { detail: { session, frontendType: reauthConfig?.type || "" } }));
+    const authenticatedUserId = String(session?.user?.id || "");
+    if (reauthConfig?.expectedUserId && authenticatedUserId !== reauthConfig.expectedUserId) {
+      return { accepted: false, message: "Sign in with the same patient account to continue this submission." };
+    }
+    window.dispatchEvent(new CustomEvent("nevari:session-restored", { detail: { session, frontendType: reauthConfig?.config?.type || "" } }));
     reauthResolveRef.current?.(session);
     reauthResolveRef.current = null;
     reauthPromiseRef.current = null;
     setReauthConfig(null);
+    return { accepted: true };
   }
 
   useEffect(() => {
@@ -95,14 +110,19 @@ export default function AppProviders({ children }) {
       const method = String(init.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
       const isMutating = !["GET", "HEAD", "OPTIONS"].includes(method);
       const isSameOriginApi = requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith("/api/");
+      const recoverableMutation = isSameOriginApi && isRecoverableClinicalMutation(requestUrl.toString(), method);
 
-      const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined) || {});
+      let headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined) || {});
+      if (recoverableMutation) {
+        headers = ensureIdempotencyKey(headers);
+      }
       if (isMutating && isSameOriginApi) {
         const csrf = readCookie("nevari_csrf");
         if (csrf && !headers.has("x-nevari-csrf")) {
           headers.set("x-nevari-csrf", csrf);
         }
-        if (!csrf && !headers.has("x-nevari-recaptcha-token")) {
+        // A CSRF cookie can outlive the session; local requests still need their marker.
+        if ((!csrf || isLocalDevelopment()) && !headers.has("x-nevari-recaptcha-token")) {
           headers.set("x-nevari-recaptcha-token", await requireRecaptchaToken("public_submit"));
         }
       }
@@ -117,8 +137,16 @@ export default function AppProviders({ children }) {
         || proxyPath.startsWith("/sso/");
       const isLoginPage = /\/login\/?$/.test(window.location.pathname);
       if (isSameOriginApi && response.status === 401 && !isAuthRoute && !isLoginPage) {
-        const reauthenticated = requestReauthentication();
+        const config = frontendForPath(window.location.pathname);
+        const reauthenticated = requestReauthentication(config);
         if (!isMutating) {
+          await reauthenticated;
+          const retryHeaders = new Headers(headers);
+          const refreshedCsrf = readCookie("nevari_csrf");
+          if (refreshedCsrf) retryHeaders.set("x-nevari-csrf", refreshedCsrf);
+          return originalFetch(input, { ...init, headers: retryHeaders });
+        }
+        if (shouldRecoverMutation({ responseStatus: response.status, requestUrl: requestUrl.toString(), method, retryCount: 0 })) {
           await reauthenticated;
           const retryHeaders = new Headers(headers);
           const refreshedCsrf = readCookie("nevari_csrf");
@@ -332,7 +360,7 @@ export default function AppProviders({ children }) {
     focusThrottleInterval: 60_000
     }}>
       {children}
-      <SessionReauthModal open={Boolean(reauthConfig)} config={reauthConfig} onAuthenticated={completeReauthentication} />
+      <SessionReauthModal open={Boolean(reauthConfig)} config={reauthConfig?.config || null} onAuthenticated={completeReauthentication} />
     </SWRConfig>
   </PostHogProvider>;
 }

@@ -112,15 +112,23 @@ final class Nevari_Paystack {
             return new WP_Error('gateway_response_invalid', 'Gateway returned an invalid response.');
         }
 
+        $response_code = (int) wp_remote_retrieve_response_code($response);
+        $gateway_status = !empty($body['status']);
+        if ($response_code < 200 || $response_code >= 300 || !$gateway_status) {
+            $gateway_message = sanitize_text_field((string) ($body['message'] ?? 'Paystack could not initialize this payment.'));
+            return new WP_Error('gateway_initialize_failed', $gateway_message ?: 'Paystack could not initialize this payment.');
+        }
+
         $payment_url = is_array($body['data'] ?? null) ? (string) ($body['data']['authorization_url'] ?? '') : '';
         $resolved_reference = is_array($body['data'] ?? null) ? (string) ($body['data']['reference'] ?? $reference) : $reference;
+        $payment_url = esc_url_raw($payment_url, ['https']);
         if ($payment_url === '' || $resolved_reference === '') {
             return new WP_Error('gateway_initialize_failed', 'Gateway did not return a payment URL.');
         }
 
         return [
             'gateway' => 'paystack',
-            'payment_url' => esc_url_raw($payment_url),
+            'payment_url' => $payment_url,
             'reference' => sanitize_text_field($resolved_reference),
         ];
     }
@@ -424,21 +432,27 @@ final class Nevari_Paystack {
             return;
         }
 
-        $order->update_meta_data(self::META_STATUS, 'verification_failed');
+        $is_initialize = $channel === 'initialize';
+        $order->update_meta_data(self::META_STATUS, $is_initialize ? 'initialization_failed' : 'verification_failed');
         $order->update_meta_data(self::META_VERIFICATION_CHANNEL, sanitize_key($channel));
         $order->update_meta_data(self::META_LAST_ERROR, sanitize_text_field($message));
         $order->save();
 
-        $order->add_order_note(sprintf(
-            'Nevari Paystack verification did not complete via %s. Reason: %s',
-            sanitize_text_field($channel),
-            sanitize_text_field($message)
-        ));
-        Nevari_Audit::log('payments', 'nevari', 'woocommerce.paystack.verification_failed', 'error', [
+        $order->add_order_note($is_initialize
+            ? sprintf('Nevari Paystack payment initialization failed. Reason: %s', sanitize_text_field($message))
+            : sprintf(
+                'Nevari Paystack verification did not complete via %s. Reason: %s',
+                sanitize_text_field($channel),
+                sanitize_text_field($message)
+            )
+        );
+        Nevari_Audit::log('payments', 'nevari', $is_initialize ? 'woocommerce.paystack.initialization_failed' : 'woocommerce.paystack.verification_failed', 'error', [
             'object_type' => 'shop_order',
             'object_id' => (int) $order->get_id(),
             'order_id' => (int) $order->get_id(),
-            'message' => 'WooCommerce order payment could not be verified through Nevari Paystack.',
+            'message' => $is_initialize
+                ? 'WooCommerce order payment could not be initialized through Nevari Paystack.'
+                : 'WooCommerce order payment could not be verified through Nevari Paystack.',
             'metadata' => [
                 'channel' => $channel,
             ],

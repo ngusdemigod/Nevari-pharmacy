@@ -28,6 +28,7 @@ import {
   sendUpstreamEmail,
   upstreamErrorMessage
 } from "../_shared";
+import { zonedAppointmentRange } from "../../../../lib/appointmentDateTime.mjs";
 
 const DEFAULT_ADMIN_EMAIL = "careteam@nevarihealth.com";
 
@@ -69,10 +70,6 @@ async function sendConfirmationEmails({
 
 function asText(value) {
   return String(value || "").trim();
-}
-
-function buildIso(date, time) {
-  return `${date}T${time}:00`;
 }
 
 function fallbackAppointment({ startAt, endAt, reason }) {
@@ -333,7 +330,14 @@ export async function POST(request) {
   if (!isAllowedUrl(resolvedBaseUrl)) return invalid("Backend URL is invalid.", "baseUrl");
   if (adminEmail && !isValidEmail(adminEmail)) return invalid("Admin email is invalid.", "adminEmail");
 
-  const startAt = buildIso(date, time);
+  let appointmentRange;
+  try {
+    appointmentRange = zonedAppointmentRange(date, time, durationMinutes, "Africa/Lagos");
+  } catch {
+    Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "invalid_datetime" } });
+    return invalid("Date/time is invalid.", "time");
+  }
+  const { startAt, endAt } = appointmentRange;
   const startDate = new Date(startAt);
   if (Number.isNaN(startDate.getTime())) {
     Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "invalid_datetime" } });
@@ -351,16 +355,13 @@ export async function POST(request) {
     return invalid("Past date/time is not allowed.", "time");
   }
 
-  const endDate = new Date(startDate.getTime() + (durationMinutes * 60 * 1000));
-  const endAt = `${date}T${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}:00`;
-
   const bookingBody = {
     start_at: startAt,
     end_at: endAt,
     duration_minutes: durationMinutes,
     reason,
     type: "video",
-    timezone: "Africa/Lagos"
+    timezone: appointmentRange.timezone
   };
   if (doctorId) {
     bookingBody.doctor_user_id = Number(doctorId) || doctorId;

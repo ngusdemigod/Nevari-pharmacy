@@ -7,6 +7,7 @@ const hasSentryUploadCredentials = Boolean(
 );
 
 const nextConfig = {
+  distDir: process.env.NEVARI_NEXT_DIST_DIR || ".next",
   productionBrowserSourceMaps: true,
   // The MTM intake PDF is read from disk at runtime; Vercel's file tracing
   // cannot detect the dynamic fs path, so include it in each MTM function.

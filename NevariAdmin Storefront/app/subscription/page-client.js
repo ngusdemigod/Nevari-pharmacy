@@ -7,6 +7,7 @@ import Paywall from "../components/subscription/Paywall";
 import SubscriptionSuccess from "../components/subscription/SubscriptionSuccess";
 import { hydrateStoredSession } from "../components/role-dashboard-utils";
 import { useSubscription } from "../hooks/use-subscription";
+import { resolveSubscriptionMonthlyAmount } from "../lib/subscriptionPricing.mjs";
 
 function sanitizeReturnPath(value) {
   const path = String(value || "").trim();
@@ -37,7 +38,7 @@ function sanitizeFrequency(value) {
 }
 
 function formatSubscriptionPrice(subscription) {
-  const amount = Number(subscription?.monthlyEquivalent ?? subscription?.amount ?? 0);
+  const amount = Number(resolveSubscriptionMonthlyAmount(subscription));
   const currency = String(subscription?.currency || "NGN").trim().toUpperCase();
   const frequency = String(subscription?.frequency || subscription?.interval || "monthly").trim().toLowerCase();
   const recurringLabel = frequency === "yearly" ? "/year" : frequency === "weekly" ? "/week" : "/month";

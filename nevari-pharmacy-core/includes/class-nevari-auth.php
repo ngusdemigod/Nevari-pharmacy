@@ -984,7 +984,7 @@ final class Nevari_Auth {
     }
 
     public static function frontend_requires_email_verification(string $frontend_type): bool {
-        return $frontend_type === 'storefront';
+        return self::global_two_step_verification_enabled() || $frontend_type === 'storefront';
     }
 
     public static function user_requires_email_verification(WP_User $user, array $frontend): bool {
@@ -1001,20 +1001,23 @@ final class Nevari_Auth {
             return false;
         }
 
-        if ($frontend_type !== 'storefront') {
-            return true;
-        }
-
-        $frontend_url = strtolower((string) ($frontend['frontend_url'] ?? ''));
-        $frontend_origin = strtolower((string) ($frontend['frontend_origin'] ?? ''));
-        if (
-            strpos($frontend_url, '/admin/storefront') !== false
-            || strpos($frontend_origin, 'dash.nevarihealth.com') !== false
-        ) {
-            return false;
-        }
-
         return true;
+    }
+
+    /**
+     * Global step-up policy is server-owned. Client request flags are deliberately
+     * ignored so a caller cannot disable OTP by changing a request body.
+     */
+    public static function global_two_step_verification_enabled(): bool {
+        if (defined('NEVARI_GLOBAL_TWO_STEP_VERIFICATION')) {
+            $enabled = (bool) NEVARI_GLOBAL_TWO_STEP_VERIFICATION;
+        } else {
+            $enabled = (bool) Nevari_Helpers::bool_param(
+                get_option('nevari_global_two_step_verification', true)
+            );
+        }
+
+        return (bool) apply_filters('nevari_global_two_step_verification_enabled', $enabled);
     }
 
     private static function customer_two_factor_enabled(int $user_id): bool {
@@ -1067,6 +1070,107 @@ final class Nevari_Auth {
             'challenge_id' => $challenge_id,
             'expires_in' => $expires_in,
         ];
+    }
+
+    public static function create_purpose_challenge(WP_User $user, array $frontend, string $purpose) {
+        $purpose = sanitize_key($purpose);
+        if (!in_array($purpose, ['enable_2fa', 'disable_2fa'], true)) {
+            return new WP_Error('invalid_challenge_purpose', 'Verification purpose is invalid.');
+        }
+
+        $challenge = self::create_login_challenge($user, $frontend);
+        if (is_wp_error($challenge)) {
+            return $challenge;
+        }
+
+        $challenge_id = (string) $challenge['challenge_id'];
+        $active_key = self::purpose_challenge_active_key((int) $user->ID, $purpose);
+        $previous_id = sanitize_text_field((string) get_transient($active_key));
+        if ($previous_id !== '') {
+            delete_transient(self::purpose_challenge_binding_key($previous_id));
+        }
+
+        $binding = [
+            'user_id' => (int) $user->ID,
+            'purpose' => $purpose,
+            'frontend_type' => sanitize_key((string) ($frontend['frontend_type'] ?? '')),
+            'frontend_origin' => esc_url_raw((string) ($frontend['frontend_origin'] ?? '')),
+        ];
+        $binding_saved = set_transient(
+            self::purpose_challenge_binding_key($challenge_id),
+            $binding,
+            (int) $challenge['expires_in']
+        );
+        $active_saved = set_transient($active_key, $challenge_id, (int) $challenge['expires_in']);
+        if (!$binding_saved || !$active_saved) {
+            delete_transient(self::purpose_challenge_binding_key($challenge_id));
+            delete_transient($active_key);
+            return new WP_Error('verification_challenge_failed', 'Verification code could not be created.');
+        }
+
+        return $challenge;
+    }
+
+    public static function verify_purpose_challenge(string $challenge_id, string $code, WP_User $user, array $frontend, string $purpose) {
+        global $wpdb;
+
+        $challenge_id = sanitize_text_field($challenge_id);
+        $code = preg_replace('/\D+/', '', $code);
+        $purpose = sanitize_key($purpose);
+        if ($challenge_id === '' || strlen($code) !== 6 || !in_array($purpose, ['enable_2fa', 'disable_2fa'], true)) {
+            return new WP_Error('invalid_verification_code', 'Verification code is invalid or expired.', ['status' => 401]);
+        }
+
+        $binding_key = self::purpose_challenge_binding_key($challenge_id);
+        $binding = get_transient($binding_key);
+        $active_id = get_transient(self::purpose_challenge_active_key((int) $user->ID, $purpose));
+        if (!is_array($binding)
+            || !hash_equals($challenge_id, (string) $active_id)
+            || (int) ($binding['user_id'] ?? 0) !== (int) $user->ID
+            || !hash_equals($purpose, (string) ($binding['purpose'] ?? ''))
+            || !hash_equals((string) ($frontend['frontend_type'] ?? ''), (string) ($binding['frontend_type'] ?? ''))
+            || !hash_equals((string) ($frontend['frontend_origin'] ?? ''), (string) ($binding['frontend_origin'] ?? ''))) {
+            return new WP_Error('invalid_verification_code', 'Verification code is invalid or expired.', ['status' => 401]);
+        }
+
+        $table = Nevari_Helpers::table('login_challenges');
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, user_id, code_hash, attempts FROM {$table} WHERE challenge_uuid = %s AND consumed_at IS NULL AND expires_at > %s LIMIT 1",
+            $challenge_id,
+            Nevari_Helpers::now()
+        ));
+        if (!$row || (int) $row->user_id !== (int) $user->ID) {
+            return new WP_Error('invalid_verification_code', 'Verification code is invalid or expired.', ['status' => 401]);
+        }
+        if ((int) $row->attempts >= 5) {
+            return new WP_Error('verification_locked', 'Too many verification attempts. Request a new code.', ['status' => 429]);
+        }
+
+        $wpdb->update($table, ['attempts' => (int) $row->attempts + 1], ['id' => (int) $row->id], ['%d'], ['%d']);
+        if (!hash_equals((string) $row->code_hash, hash('sha256', $code))) {
+            return new WP_Error('invalid_verification_code', 'Verification code is invalid or expired.', ['status' => 401]);
+        }
+
+        $consumed = $wpdb->query($wpdb->prepare(
+            "UPDATE {$table} SET consumed_at = %s WHERE id = %d AND consumed_at IS NULL",
+            Nevari_Helpers::now(),
+            (int) $row->id
+        ));
+        if ($consumed !== 1) {
+            return new WP_Error('invalid_verification_code', 'Verification code is invalid or expired.', ['status' => 401]);
+        }
+
+        delete_transient($binding_key);
+        delete_transient(self::purpose_challenge_active_key((int) $user->ID, $purpose));
+        return true;
+    }
+
+    private static function purpose_challenge_binding_key(string $challenge_id): string {
+        return 'nevari_auth_purpose_' . substr(hash('sha256', $challenge_id), 0, 40);
+    }
+
+    private static function purpose_challenge_active_key(int $user_id, string $purpose): string {
+        return 'nevari_auth_active_' . $user_id . '_' . sanitize_key($purpose);
     }
 
     private static function mask_email(string $email): string {

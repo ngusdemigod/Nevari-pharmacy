@@ -4,14 +4,14 @@ export const AUTH_SECURITY_SETTINGS_KEY = "nevari_global_auth_security_settings"
 
 export function defaultAuthSecuritySettings() {
   return {
-    globalTwoStepVerification: false
+    globalTwoStepVerification: true
   };
 }
 
 export function normalizeAuthSecuritySettings(settings = {}) {
   return {
     ...defaultAuthSecuritySettings(),
-    globalTwoStepVerification: Boolean(settings?.globalTwoStepVerification)
+    globalTwoStepVerification: true
   };
 }
 

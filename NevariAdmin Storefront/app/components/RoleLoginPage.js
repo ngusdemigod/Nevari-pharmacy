@@ -97,6 +97,13 @@ function resolveGoogleAuthConfig(payload, responseOk = false) {
   };
 }
 
+function googleAuthAllowedOnCurrentOrigin() {
+  if (typeof window === "undefined") return false;
+  const hostname = window.location.hostname.toLowerCase();
+  const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  return !isLocal || process.env.NEXT_PUBLIC_GOOGLE_AUTH_LOCAL_ENABLED === "true";
+}
+
 function authScreenTitle(view) {
   if (view === "register") {
     return "Sign up";
@@ -123,6 +130,23 @@ function noticeTone(message) {
     return "success";
   }
   return "warning";
+}
+
+function loginFailureMessage(response, payload) {
+  const errorCode = String(payload?.error?.code || "").trim().toLowerCase();
+  if (errorCode === "captcha_required" || errorCode === "captcha_failed") {
+    return "Spam protection could not be verified. Check your connection, reload the page, and try again.";
+  }
+  if (response?.status === 429 || errorCode === "too_many_requests") {
+    return "Too many sign-in attempts. Please wait a few minutes and try again.";
+  }
+  if (response?.status === 401 || response?.status === 403) {
+    return "Sign in could not be completed. Check your details and try again.";
+  }
+  if (response?.status === 503) {
+    return "The pharmacy sign-in service is temporarily unavailable. Please try again shortly.";
+  }
+  return payload?.error?.message || "Sign in failed. Please try again.";
 }
 
 export default function RoleLoginPage({ config }) {
@@ -353,7 +377,7 @@ export default function RoleLoginPage({ config }) {
           return;
         }
         const googleConfig = resolveGoogleAuthConfig(payload, response.ok);
-        setGoogleAuth({ checked: true, enabled: googleConfig.enabled, clientId: googleConfig.clientId });
+        setGoogleAuth({ checked: true, enabled: googleConfig.enabled && googleAuthAllowedOnCurrentOrigin(), clientId: googleConfig.clientId });
       } catch {
         if (active) {
           setGoogleAuth({ checked: true, enabled: false, clientId: "" });
@@ -438,13 +462,7 @@ export default function RoleLoginPage({ config }) {
           resetToPairingState();
           return;
         }
-        showNotice(
-          payload?.error?.message
-          || (response.status === 503
-            ? "The pharmacy sign-in service is temporarily unavailable. Please try again shortly."
-            : "Sign in failed."),
-          "error"
-        );
+        showNotice(loginFailureMessage(response, payload), "error");
         return;
       }
       if (payload.data.verification_required) {

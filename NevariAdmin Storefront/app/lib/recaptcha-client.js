@@ -4,6 +4,7 @@ let scriptPromise = null;
 const SCRIPT_SELECTOR = 'script[data-nevari-recaptcha="true"]';
 const SCRIPT_HOSTS = ["https://www.google.com", "https://www.recaptcha.net"];
 const LOCAL_DEVELOPMENT_TOKEN = "nevari-local-development";
+const SCRIPT_LOAD_TIMEOUT_MS = 8000;
 
 function captchaError(code, message) {
   const error = new Error(message);
@@ -15,9 +16,14 @@ function siteKey() {
   return String(process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || "").trim();
 }
 
-function isLocalDevelopment() {
+export function isLocalDevelopment() {
   if (process.env.NODE_ENV === "production" || typeof window === "undefined") return false;
   return ["localhost", "127.0.0.1", "::1"].includes(String(window.location.hostname || "").toLowerCase());
+}
+
+export function localRecaptchaBypassEnabled() {
+  return isLocalDevelopment()
+    && process.env.NEXT_PUBLIC_RECAPTCHA_LOCAL_BYPASS_ENABLED === "true";
 }
 
 function loadRecaptcha() {
@@ -40,7 +46,12 @@ function loadRecaptcha() {
         script.async = true;
         script.defer = true;
         script.dataset.nevariRecaptcha = "true";
+        const timeout = window.setTimeout(() => {
+          script.remove();
+          tryHost(index + 1);
+        }, SCRIPT_LOAD_TIMEOUT_MS);
         script.onload = () => {
+          window.clearTimeout(timeout);
           if (window.grecaptcha) {
             resolve(window.grecaptcha);
             return;
@@ -49,6 +60,7 @@ function loadRecaptcha() {
           tryHost(index + 1);
         };
         script.onerror = () => {
+          window.clearTimeout(timeout);
           script.remove();
           tryHost(index + 1);
         };
@@ -65,7 +77,7 @@ function loadRecaptcha() {
 }
 
 export async function executeRecaptcha(action) {
-  if (isLocalDevelopment()) return LOCAL_DEVELOPMENT_TOKEN;
+  if (localRecaptchaBypassEnabled()) return LOCAL_DEVELOPMENT_TOKEN;
   const key = siteKey();
   if (!key) return "";
   const grecaptcha = await loadRecaptcha();

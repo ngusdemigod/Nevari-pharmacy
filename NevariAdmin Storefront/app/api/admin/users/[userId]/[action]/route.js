@@ -4,7 +4,7 @@ import { isAllowedUrl, rejectUnknownFields, sanitizeText } from "../../../../../
 const API_NAMESPACE = "nevari/v1";
 const ACTIONS = new Set(["approve", "decline", "ban", "unban", "suspend", "reset-password", "access"]);
 const STAFF_ROLES = new Set(["administrator", "store_admin", "shop_manager", "doctor", "pharmacist", "nurse"]);
-const PERMISSIONS = new Set(["products", "orders", "payments", "patients", "consultations", "mtm", "iv-therapy", "nurse-requests", "logs", "staff", "subscriptions"]);
+const PERMISSIONS = new Set(["products", "orders", "payments", "patients", "consultations", "mtm", "iv-therapy", "nurse-requests", "logs", "staff", "subscriptions", "analytics"]);
 
 function normalize(value) { return String(value || "").trim().replace(/\/+$/, ""); }
 function allowedOrigins() { return String(process.env.NEVARI_PROXY_ALLOWED_ORIGINS || "").split(",").map(normalize).filter(Boolean); }

@@ -460,6 +460,12 @@ Stale display data can appear after account switching if cache keys or cleanup a
 - Decision: the MTM server response exposes only Nevari's signed, expiring invoice capability URL. The existing invoice endpoint initializes Paystack from the server-owned order and verifies the provider reference before changing payment state.
 - Decision: payment callback return paths are restricted to local `/dashboard/` routes; client-supplied amounts, currencies, order IDs, and payment states remain non-authoritative.
 - Decision: MTM confirmation success is rendered only from the server-owned MTM payment state. The callback result query may select a failed presentation but cannot mark a payment successful or mutate the request.
+
+# 2026-08-09 — Product-category assignment disabled and Paystack initialization diagnostics
+
+- Decision: product-category doctor assignment no longer runs during WooCommerce order creation, and its dashboard controls are disabled. Dedicated consultation and prescription workflows remain authoritative for doctor involvement.
+- Decision: Paystack initialization continues to derive the amount, currency, customer, reference, callback, and metadata on the server. The gateway response must be a successful 2xx response with a positive status and an HTTPS authorization URL before checkout can redirect.
+- Decision: initialization failures are recorded separately from verification failures. Sanitized provider messages may be stored in private order notes for diagnosis; secrets and raw provider payloads are not stored there.
 ## Auth continuation after an expired dashboard session
 
 - **Decision:** An API `401` blocks the active screen with the correct role login and stores only a validated, same-origin relative continuation path in a short-lived `HttpOnly`, `SameSite=Strict` cookie. Successful authentication consumes the cookie and resumes that path. Tokens and page data are never placed in the continuation.
@@ -489,3 +495,7 @@ Stale display data can appear after account switching if cache keys or cleanup a
 - Administrator permissions are fixed to the full allowlist. Only an Administrator may customize a new Store Manager's dashboard permissions. Doctor, Patient, Nurse, and Pharmacist accounts receive server-defined role defaults.
 - Requests reject unexpected fields, duplicate emails, invalid roles, weak passwords, invalid phone data where required, and avatars outside the JPG/PNG/WebP, one-file, 2 MB policy.
 - User creation is audited. A failed avatar validation removes the newly-created account so a partially configured account is not retained.
+
+## 2026-09-08 localhost CAPTCHA cookie handling
+
+- Local development API writes send the existing development marker regardless of CSRF-cookie presence, because that cookie does not prove an active session. Production CAPTCHA behavior and server-side session/CSRF/authorization checks are unchanged.

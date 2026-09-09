@@ -49,7 +49,7 @@ const ADMIN_SETTINGS_TABS = [
   { key: "security", label: "Security", count: 4 }
 ];
 const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
-const ADMIN_OTP_TEMPORARILY_DISABLED = true;
+const ADMIN_OTP_TEMPORARILY_DISABLED = false;
 let adminStorefrontClientHydrated = false;
 
 const EMAIL_HOOKS = [
@@ -115,6 +115,10 @@ const DEFAULT_EMAIL_TEMPLATES = [
   { id: "admin-notification", name: "Admin Notification", category: "System", status: "active", subject: "{site_name} admin notification", html: "<h1>Admin notification</h1><p>{content}</p>" },
   { id: "vendor-notification", name: "Vendor Notification", category: "System", status: "draft", subject: "{site_name} vendor notification", html: "<h1>Vendor notification</h1><p>{content}</p>" }
 ];
+
+// Category-based doctor assignment is intentionally disabled. Doctor consultations
+// are managed through the dedicated consultation workflow, not product categories.
+const CATEGORY_DOCTOR_ASSIGNMENT_ENABLED = false;
 
 const LEGACY_PAGE_ALIASES = {
   queue: "orders",
@@ -313,7 +317,6 @@ const EMPTY_USER_ACCOUNT_FORM = {
 };
 
 const USER_ACCOUNT_ROLES = [
-  ["administrator", "Administrator"],
   ["store_admin", "Store Manager"],
   ["doctor", "Doctor"],
   ["patient", "Patient"],
@@ -387,6 +390,14 @@ function getBookingSlotOptions(appointments = [], selectedDateKey = "", selected
 
 function shouldNotifyCustomerForOrderStatus(status) {
   return CUSTOMER_STATUS_EMAILS.has(String(status || "").toLowerCase().replace(/\s+/g, "-"));
+}
+
+function orderStatusOptions(order) {
+  const current = normalizeOrderQueueValue(order?.status);
+  if (["cancelled", "failed", "refunded"].includes(current)) return [current];
+  const statuses = ["pending", "awaiting-doctor", "awaiting-prescription", "processing", "in-delivery", "on-hold", "completed", "cancelled", "failed"];
+  if (normalizedPaymentStatus(order) === "completed") statuses.push("refunded");
+  return Array.from(new Set([current, ...statuses].filter(Boolean)));
 }
 
 function buildDefaultConsultationWindow() {
@@ -1059,7 +1070,7 @@ function formatDate(value, withTime = false, timeZone = storedStoreTimeZone()) {
     timeZone: normalizeTimeZone(timeZone) || storedStoreTimeZone(),
     month: "short",
     day: "numeric",
-    year: withTime ? undefined : "numeric",
+    year: "numeric",
     hour: withTime ? "numeric" : undefined,
     minute: withTime ? "2-digit" : undefined
   }).format(date);
@@ -1444,7 +1455,7 @@ function escapeHtml(value) {
 }
 
 function getOrderDocumentType(order) {
-  return normalizeOrderQueueValue(order?.status) === "completed" ? "receipt" : "invoice";
+  return normalizedPaymentStatus(order) === "completed" ? "receipt" : "invoice";
 }
 
 function mergeRequiredEmailTemplates(templates) {
@@ -1633,52 +1644,6 @@ function getProductCategories(product) {
   return categories || "Uncategorized";
 }
 
-function getDoctorCategoryEntries(doctor) {
-  const categories = doctor?.product_categories || doctor?.categories || [];
-  if (Array.isArray(categories)) {
-    return categories
-      .map((item) => ({
-        id: item?.id ?? item?.term_id ?? item?.category_id ?? item?.value ?? null,
-        name: item?.name || item?.label || item?.slug || item?.title || "",
-        slug: item?.slug || normalizeCategoryKey(item?.name || item?.label || item?.title || ""),
-        raw: item
-      }))
-      .filter((item) => item.name);
-  }
-  if (typeof categories === "string" && categories.trim()) {
-    return categories.split(",").map((item) => item.trim()).filter(Boolean).map((name) => ({
-      id: null,
-      name,
-      slug: normalizeCategoryKey(name),
-      raw: name
-    }));
-  }
-  return [];
-}
-
-function getDoctorCategoryIds(doctor) {
-  const ids = new Set();
-  if (Array.isArray(doctor?.product_category_ids)) {
-    doctor.product_category_ids.forEach((id) => {
-      const value = Number(id);
-      if (Number.isFinite(value) && value > 0) {
-        ids.add(value);
-      }
-    });
-  }
-  getDoctorCategoryEntries(doctor).forEach((item) => {
-    const value = Number(item.id);
-    if (Number.isFinite(value) && value > 0) {
-      ids.add(value);
-    }
-  });
-  return [...ids];
-}
-
-function getDoctorCategoryNames(doctor) {
-  return getDoctorCategoryEntries(doctor).map((item) => item.name);
-}
-
 function replaceCategoryNameInProduct(product, oldName, nextName) {
   const nextCategories = getProductCategories(product)
     .split(",")
@@ -1705,56 +1670,6 @@ function removeCategoryNameFromProduct(product, categoryName) {
   };
 }
 
-function replaceCategoryNameInDoctor(doctor, oldCategoryId, oldName, nextName, nextCategoryId) {
-  const nextIds = new Set(getDoctorCategoryIds(doctor));
-  const currentEntries = getDoctorCategoryEntries(doctor);
-  const matched = currentEntries.some((item) => (
-    (oldCategoryId && Number(item.id) === Number(oldCategoryId)) ||
-    item.name === oldName ||
-    item.slug === normalizeCategoryKey(oldName)
-  ));
-
-  if (!matched) {
-    return doctor;
-  }
-
-  const nextCategories = currentEntries.map((item) => {
-    const baseCategory = typeof item.raw === "object" && item.raw !== null ? item.raw : {};
-    if (
-      (oldCategoryId && Number(item.id) === Number(oldCategoryId)) ||
-      item.name === oldName ||
-      item.slug === normalizeCategoryKey(oldName)
-    ) {
-      return {
-        ...baseCategory,
-        id: nextCategoryId ?? item.id,
-        name: nextName,
-        label: nextName,
-        slug: normalizeCategoryKey(nextName)
-      };
-    }
-    return baseCategory.id ? baseCategory : {
-      id: item.id,
-      name: item.name,
-      label: item.name,
-      slug: item.slug
-    };
-  });
-
-  if (oldCategoryId) {
-    nextIds.delete(Number(oldCategoryId));
-  }
-  if (nextCategoryId) {
-    nextIds.add(Number(nextCategoryId));
-  }
-
-  return {
-    ...doctor,
-    product_categories: nextCategories,
-    product_category_ids: [...nextIds]
-  };
-}
-
 function normalizeCategoryKey(value) {
   return String(value || "")
     .trim()
@@ -1762,20 +1677,6 @@ function normalizeCategoryKey(value) {
     .replace(/&/g, "and")
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
-}
-
-function resolveCategoryConsultationPrice(category, categoryPricing = {}) {
-  const candidates = [category?.slug, category?.name, category?.label]
-    .map((value) => normalizeCategoryKey(value))
-    .filter(Boolean);
-
-  for (const candidate of candidates) {
-    if (categoryPricing?.[candidate] !== undefined && categoryPricing?.[candidate] !== "") {
-      return categoryPricing[candidate];
-    }
-  }
-
-  return categoryPricing?.general || "";
 }
 
 function getProductTerms(product, keys = []) {
@@ -1893,13 +1794,27 @@ function base64PdfToBlob(base64) {
 }
 
 function getProductPrice(product, key) {
-  return product?.[key] || product?.prices?.[key] || product?.price || 0;
+  const value = product?.[key] ?? product?.prices?.[key];
+  if (value !== undefined && value !== null && value !== "") {
+    return value;
+  }
+  return key === "price" ? (product?.price ?? product?.prices?.price ?? 0) : 0;
 }
 
 function hasActiveSalePrice(product) {
   const regularPrice = Number(getProductPrice(product, "regular_price") || 0);
   const salePrice = Number(getProductPrice(product, "sale_price") || 0);
   return salePrice > 0 && (regularPrice === 0 || salePrice < regularPrice);
+}
+
+function getEffectiveProductPrice(product) {
+  const canonicalPrice = getProductPrice(product, "price");
+  if (canonicalPrice !== "" && Number.isFinite(Number(canonicalPrice))) {
+    return Number(canonicalPrice);
+  }
+  return Number(hasActiveSalePrice(product)
+    ? getProductPrice(product, "sale_price")
+    : getProductPrice(product, "regular_price")) || 0;
 }
 
 function getProductStockQuantity(product) {
@@ -2602,6 +2517,7 @@ function AdminStorefrontDashboard({
   const [data, setData] = useState(() => embeddedInitialData || emptyData());
   const [audit, setAudit] = useState({ category: "orders", status: "all", source: "all" });
   const [search, setSearch] = useState("");
+  const [tableSorts, setTableSorts] = useState({});
   const [liveSnapshots, setLiveSnapshots] = useState([]);
   const deferredSearchValue = useDeferredValue(search);
   const deferredSearch = search === deferredSearchValue ? deferredSearchValue : "";
@@ -2702,6 +2618,7 @@ function AdminStorefrontDashboard({
   const [productCreateStep, setProductCreateStep] = useState(0);
   const [createMultiple, setCreateMultiple] = useState(false);
   const [productCreateValidationStep, setProductCreateValidationStep] = useState("");
+  const [productCreateTouched, setProductCreateTouched] = useState({});
   const [productEditTab, setProductEditTab] = useState("details");
   const [productEditSearch, setProductEditSearch] = useState({ categories: "", tags: "", brands: "" });
   const [productEditFeedback, setProductEditFeedback] = useState("");
@@ -2719,14 +2636,18 @@ function AdminStorefrontDashboard({
   const [categoryMutationLoading, setCategoryMutationLoading] = useState("");
   const [categoryMutationFeedback, setCategoryMutationFeedback] = useState("");
   const [categoryCreateOpen, setCategoryCreateOpen] = useState(false);
+  const [categoryDeleteTarget, setCategoryDeleteTarget] = useState(null);
   const [categoryCreateForm, setCategoryCreateForm] = useState({ name: "", pricePerMinute: "" });
   const [categoryEditDraft, setCategoryEditDraft] = useState({ name: "", pricePerMinute: "" });
   const [categoryInlineField, setCategoryInlineField] = useState("");
   const [categorySaveNotice, setCategorySaveNotice] = useState("");
   const [categoryProductPage, setCategoryProductPage] = useState(1);
+  const [categoryDirectorySearch, setCategoryDirectorySearch] = useState("");
+  const [categoryDirectoryPage, setCategoryDirectoryPage] = useState(1);
   const [productPage, setProductPage] = useState(1);
   const [selectedProductIds, setSelectedProductIds] = useState([]);
   const [deletingProductIds, setDeletingProductIds] = useState([]);
+  const [restoringProductId, setRestoringProductId] = useState(null);
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [paymentPage, setPaymentPage] = useState(1);
   const [orderPage, setOrderPage] = useState(1);
@@ -2780,6 +2701,36 @@ function AdminStorefrontDashboard({
   const [globalConsultationFee, setGlobalConsultationFee] = useState("5000");
   const [globalConsultationFeeLoading, setGlobalConsultationFeeLoading] = useState(false);
   const [globalConsultationFeeFeedback, setGlobalConsultationFeeFeedback] = useState("");
+  function sortTableRows(rows, tableKey, columns) {
+    const sort = tableSorts[tableKey];
+    const getter = sort?.key ? columns[sort.key] : null;
+    if (!getter) return rows;
+    const direction = sort.direction === "desc" ? -1 : 1;
+    return [...rows].sort((left, right) => {
+      const leftValue = getter(left);
+      const rightValue = getter(right);
+      const leftNumber = typeof leftValue === "number" ? leftValue : Number.NaN;
+      const rightNumber = typeof rightValue === "number" ? rightValue : Number.NaN;
+      if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return (leftNumber - rightNumber) * direction;
+      const leftDate = /date|created|start|end|joined/i.test(sort.key) ? Date.parse(leftValue || "") : Number.NaN;
+      const rightDate = /date|created|start|end|joined/i.test(sort.key) ? Date.parse(rightValue || "") : Number.NaN;
+      if (Number.isFinite(leftDate) && Number.isFinite(rightDate)) return (leftDate - rightDate) * direction;
+      return String(leftValue ?? "").localeCompare(String(rightValue ?? ""), undefined, { numeric: true, sensitivity: "base" }) * direction;
+    });
+  }
+  function sortableHeader(tableKey, key, label, className = "") {
+    const current = tableSorts[tableKey];
+    const active = current?.key === key;
+    const direction = active ? current.direction : "none";
+    return <th className={className} aria-sort={direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none"}>
+      <button className="sortable-table-header" type="button" onClick={() => setTableSorts((sorts) => ({
+        ...sorts,
+        [tableKey]: { key, direction: active && current.direction === "asc" ? "desc" : "asc" }
+      }))}>
+        <span>{label}</span><span className={`sort-direction ${direction}`} aria-hidden="true" />
+      </button>
+    </th>;
+  }
   adminStorefrontClientHydrated = hydrated;
   const latestSessionRef = useRef(session);
   const refreshPromiseRef = useRef(null);
@@ -2897,6 +2848,26 @@ function AdminStorefrontDashboard({
     setSyncStatus({ text: "Disconnected", mode: "" });
     persistSessionSnapshot(nextSession, "overview");
     router.replace("/admin/storefront/login");
+  }
+
+  function invalidateExpiredSession(message = "Stored session expired. Sign in again.") {
+    const workingSession = latestSessionRef.current || session;
+    const nextSession = { ...workingSession, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
+    latestSessionRef.current = nextSession;
+    clearDashboardCacheStorage();
+    setSession(nextSession);
+    setData(emptyData());
+    setAppDataLoaded(false);
+    setSelectedCustomerId(null);
+    setCustomerHistoryOrders([]);
+    setSelectedPaymentReceipt(null);
+    setPaymentReceiptModalOpen(false);
+    setSelectedOrderDetail(null);
+    setOrderModalOpen(false);
+    setAuthFeedback(message);
+    setSyncStatus({ text: "Disconnected", mode: "" });
+    persistSessionSnapshot(nextSession, "overview");
+    showAuthGate("auth");
   }
 
   useEffect(() => {
@@ -3242,6 +3213,10 @@ function AdminStorefrontDashboard({
 
   async function deleteSubscriptionPlan(planOverride = null) {
     const activePlan = planOverride || subscriptionModalPlan || selectedSubscriptionPlan;
+    if (isSystemSubscriptionPlan(activePlan)) {
+      showSnackbar("System subscription plans cannot be deleted.", "warning");
+      return;
+    }
     const planId = String(activePlan?.id ?? activePlan?.plan_id ?? selectedSubscriptionPlanId ?? selectedSubscriptionPlanKey ?? "").trim();
     if (!planId) {
       showSnackbar("Select a subscription plan first.", "warning");
@@ -3299,7 +3274,7 @@ function AdminStorefrontDashboard({
 
     setSubscriptionState((current) => ({ ...current, loading: true, error: "" }));
     try {
-      const payload = await apiRequest("/subscriptions/admin", { params: { page: subscriptionUserPage, per_page: 20 } });
+      const payload = await apiRequest("/subscriptions/admin", { params: { page: subscriptionUserPage, per_page: 100 } });
       setSubscriptionState({ loading: false, error: "", data: payload?.data || payload || null });
       return true;
     } catch (error) {
@@ -3629,6 +3604,16 @@ function AdminStorefrontDashboard({
   }, [productListFilter, deferredSearch, data.products]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const savedView = window.localStorage.getItem("nevari_admin_product_catalog_view");
+    if (["products", "categories"].includes(savedView)) setProductCatalogView(savedView);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem("nevari_admin_product_catalog_view", productCatalogView);
+  }, [productCatalogView]);
+
+  useEffect(() => {
     setCustomerPage(1);
   }, [customerFilter, deferredSearch, data.customers, data.orderDetails, data.appointments, data.prescriptionDetails]);
 
@@ -3638,6 +3623,7 @@ function AdminStorefrontDashboard({
   // Calculate allCustomerRows before it's used in dependent values
   const allCustomerRows = (() => {
     const customerMap = new Map();
+    const customerIdsByEmail = new Map();
 
     (data.customers || []).forEach((customer) => {
       const id = customer.id || customer.user_id || customer.customer_id;
@@ -3662,11 +3648,16 @@ function AdminStorefrontDashboard({
         primaryRole: primaryRoleValue(roles),
         hasAccountRecord: true
       });
+      const normalizedEmail = normalizeText(customerEmail(customer));
+      if (normalizedEmail) {
+        customerIdsByEmail.set(normalizedEmail, id);
+      }
     });
 
     (data.orderDetails || []).forEach((order) => {
       const summary = customerSummary(order);
-      const key = order.customer_id || `guest-${customerEmail(order) || order.number || order.id}`;
+      const orderEmail = normalizeText(customerEmail(order));
+      const key = order.customer_id || customerIdsByEmail.get(orderEmail) || `guest-${orderEmail || order.number || order.id}`;
       const current = customerMap.get(key) || {
         id: key,
         label: summary.name,
@@ -3994,25 +3985,6 @@ function AdminStorefrontDashboard({
     return extractApiErrorMessage(error);
   }
 
-  function addDoctorCreateCategory(categoryId) {
-    const nextId = String(categoryId || "");
-    if (!nextId) {
-      return;
-    }
-    setDoctorCreateForm((prev) => ({
-      ...prev,
-      productCategoryIds: Array.from(new Set([...(prev.productCategoryIds || []), nextId]))
-    }));
-    setDoctorCreateCategorySearch("");
-  }
-
-  function removeDoctorCreateCategory(categoryId) {
-    setDoctorCreateForm((prev) => ({
-      ...prev,
-      productCategoryIds: (prev.productCategoryIds || []).filter((id) => String(id) !== String(categoryId))
-    }));
-  }
-
   async function fetchOrderDocument(order, documentType = getOrderDocumentType(order)) {
     const attachment = await fetchOrderDocumentAttachment(order, documentType);
     return {
@@ -4116,8 +4088,6 @@ function AdminStorefrontDashboard({
         frontendType: session.frontendType || FRONTEND_TYPE,
         frontendOrigin: window.location.origin,
         appOrigin: window.location.origin,
-        fallback_body_html: buildOrderEmailFallbackHtml(order, documentType, paymentLink),
-        fallback_body_text: buildOrderEmailFallbackText(order, documentType, paymentLink),
         fallback_variables: buildOrderEmailVariables(order, documentType, paymentLink)
       })
     });
@@ -4739,6 +4709,13 @@ function AdminStorefrontDashboard({
     if (!selectedOrderDetail) {
       return;
     }
+    const statusChanged = selectedOrderStatus !== selectedOrderDetail.status;
+    let reason = "";
+    if (statusChanged && ["completed", "cancelled", "failed", "refunded"].includes(selectedOrderStatus)) {
+      reason = window.prompt(`Reason for changing order #${selectedOrderDetail.number} to ${formatStatusLabel(selectedOrderStatus)}:`) || "";
+      if (!reason) return;
+      if (!window.confirm(`Change order #${selectedOrderDetail.number} to ${formatStatusLabel(selectedOrderStatus)}?`)) return;
+    }
     setOrderMutationLoading(true);
     setOrderMutationAction("update");
     setOrderActionFeedback("");
@@ -4748,10 +4725,7 @@ function AdminStorefrontDashboard({
         {
           status: selectedOrderStatus,
           customer_note: selectedOrderNote,
-          notify_status_change: selectedOrderStatus !== selectedOrderDetail.status,
-          notify_doctor: selectedOrderStatus !== selectedOrderDetail.status,
-          notify_admin: selectedOrderStatus !== selectedOrderDetail.status,
-          notify_customer: selectedOrderStatus !== selectedOrderDetail.status && shouldNotifyCustomerForOrderStatus(selectedOrderStatus)
+          reason
         },
         {
           ...selectedOrderDetail,
@@ -4862,6 +4836,9 @@ function AdminStorefrontDashboard({
           }
         }
       });
+      if (!payload?.data?.id) {
+        throw new Error("The server did not confirm the new order. No local changes were saved.");
+      }
       syncOrderState(payload.data);
       setOrderCreateForm(EMPTY_ORDER_FORM);
       setOrderCreateItems([]);
@@ -4901,7 +4878,6 @@ function AdminStorefrontDashboard({
           method: "POST",
           body: {
             name: productCreateForm.name,
-            sku: productCreateForm.sku,
             regular_price: productCreateForm.regularPrice,
             sale_price: productCreateForm.salePrice,
             status: productCreateForm.status,
@@ -5023,7 +4999,6 @@ function AdminStorefrontDashboard({
             position: doctorCreateForm.position,
             is_available: doctorCreateForm.isAvailable,
             max_workload_per_week: Number(doctorCreateForm.maxWorkloadPerWeek || 40),
-            product_category_ids: doctorCreateForm.productCategoryIds.map(Number)
           }
         });
         if (payload?.data) {
@@ -5269,19 +5244,18 @@ function AdminStorefrontDashboard({
     if (!selectedOrderDetail || typeof window === "undefined") {
       return;
     }
-    if (!window.confirm(`Delete order #${selectedOrderDetail.number}?`)) {
-      return;
-    }
+    const reason = window.prompt(`Reason for moving order #${selectedOrderDetail.number} to trash:`) || "";
+    if (!reason || !window.confirm(`Move order #${selectedOrderDetail.number} to trash?`)) return;
     setOrderMutationLoading(true);
     setOrderMutationAction("delete");
     setOrderActionFeedback("");
     try {
-      await apiRequest(`/orders/${selectedOrderDetail.id}`, { method: "DELETE" });
+      await apiRequest(`/orders/${selectedOrderDetail.id}`, { method: "DELETE", body: { reason } });
       markOrderDeleting(selectedOrderDetail.id);
       await waitForDeleteExit();
       removeOrderState(selectedOrderDetail.id);
       clearOrderDeleting(selectedOrderDetail.id);
-      setOrderActionFeedback("Order deleted.");
+      setOrderActionFeedback("Order moved to trash.");
     } catch (error) {
       setOrderActionFeedback(describeRequestError(error));
     } finally {
@@ -5301,6 +5275,23 @@ function AdminStorefrontDashboard({
       const documentType = getOrderDocumentType(selectedOrderDetail);
       await printReceiptForOrder(selectedOrderDetail, { documentType });
       setOrderActionFeedback(`${documentType === "receipt" ? "Receipt" : "Invoice"} PDF generated.`);
+    } catch (error) {
+      setOrderActionFeedback(describeRequestError(error));
+    } finally {
+      setOrderMutationLoading(false);
+      setOrderMutationAction("");
+    }
+  }
+
+  async function downloadSelectedOrderDocument() {
+    if (!selectedOrderDetail) return;
+    setOrderMutationLoading(true);
+    setOrderMutationAction("download");
+    setOrderActionFeedback("");
+    try {
+      const documentType = getOrderDocumentType(selectedOrderDetail);
+      await downloadReceiptForOrder(selectedOrderDetail, { documentType });
+      setOrderActionFeedback(`${documentType === "receipt" ? "Receipt" : "Invoice"} downloaded.`);
     } catch (error) {
       setOrderActionFeedback(describeRequestError(error));
     } finally {
@@ -5392,24 +5383,28 @@ function AdminStorefrontDashboard({
     setCustomerProductPage(1);
     setCustomerHistoryFeedback("");
 
+    const normalizedCustomerEmail = normalizeText(customer.email);
     const cachedOrders = (data.orderDetails || []).filter((order) => (
-      customer.id === (order.customer_id || `guest-${customerEmail(order) || order.number || order.id}`)
+      String(customer.id) === String(order.customer_id || "")
+      || (normalizedCustomerEmail && normalizeText(customerEmail(order)) === normalizedCustomerEmail)
     ));
     setCustomerHistoryOrders(cachedOrders);
 
-    const params = { per_page: 100 };
+    const queries = [];
     if (/^\d+$/.test(String(customer.id))) {
-      params.patient_id = customer.id;
-    } else if (customer.email && customer.email !== "No email on file") {
-      params.customer_email = customer.email;
-    } else {
+      queries.push({ per_page: 100, patient_id: customer.id });
+    }
+    if (customer.email && customer.email !== "No email on file") {
+      queries.push({ per_page: 100, customer_email: customer.email });
+    }
+    if (!queries.length) {
       return;
     }
 
     setCustomerHistoryLoading(true);
     try {
-      const payload = await apiRequest("/orders", { params });
-      const orders = payload.data || [];
+      const payloads = await Promise.all(queries.map((params) => apiRequest("/orders", { params })));
+      const orders = [...new Map(payloads.flatMap((payload) => payload.data || []).map((order) => [String(order.id), order])).values()];
       const orderDetailsResults = await Promise.allSettled(
         orders.map((order) => apiRequest(`/orders/${order.id}`).then((response) => response.data).catch(() => order))
       );
@@ -5426,8 +5421,9 @@ function AdminStorefrontDashboard({
       return;
     }
     await performTableOrderAction("print", order, async () => {
-      await printReceiptForOrder(order, { documentType: "receipt", statusMode: "payment" });
-      return `Receipt for order #${order.number || order.id} is ready.`;
+      const documentType = getOrderDocumentType(order);
+      await printReceiptForOrder(order, { documentType, statusMode: "payment" });
+      return `${documentType === "receipt" ? "Receipt" : "Invoice"} for order #${order.number || order.id} is ready.`;
     });
   }
 
@@ -5447,8 +5443,9 @@ function AdminStorefrontDashboard({
       return;
     }
     await performTableOrderAction("download", order, async () => {
-      await downloadReceiptForOrder(order, { documentType: "receipt" });
-      return `Receipt PDF viewer opened for order #${order.number || order.id}.`;
+      const documentType = getOrderDocumentType(order);
+      await downloadReceiptForOrder(order, { documentType });
+      return `${documentType === "receipt" ? "Receipt" : "Invoice"} PDF viewer opened for order #${order.number || order.id}.`;
     });
   }
 
@@ -5480,16 +5477,15 @@ function AdminStorefrontDashboard({
     if (!order || typeof window === "undefined") {
       return;
     }
-    if (!window.confirm(`Delete order #${order.number}?`)) {
-      return;
-    }
+    const reason = window.prompt(`Reason for moving order #${order.number} to trash:`) || "";
+    if (!reason || !window.confirm(`Move order #${order.number} to trash?`)) return;
     await performTableOrderAction("delete", order, async () => {
-      await apiRequest(`/orders/${order.id}`, { method: "DELETE" });
+      await apiRequest(`/orders/${order.id}`, { method: "DELETE", body: { reason } });
       markOrderDeleting(order.id);
       await waitForDeleteExit();
       removeOrderState(order.id);
       clearOrderDeleting(order.id);
-      return `Order #${order.number || order.id} deleted.`;
+      return `Order #${order.number || order.id} moved to trash.`;
     });
   }
 
@@ -5668,9 +5664,11 @@ function AdminStorefrontDashboard({
     setReceiptActionLoading("print");
     setPaymentReceiptFeedback("");
     try {
-      await printReceiptForOrder(selectedPaymentReceipt, { documentType: "receipt" });
-      setPaymentReceiptFeedback("Printable PDF receipt generated.");
-      showSnackbar(`Receipt for order #${selectedPaymentReceipt.number || selectedPaymentReceipt.id} is ready.`, "success");
+      const documentType = getOrderDocumentType(selectedPaymentReceipt);
+      await printReceiptForOrder(selectedPaymentReceipt, { documentType });
+      const label = documentType === "receipt" ? "Receipt" : "Invoice";
+      setPaymentReceiptFeedback(`Printable PDF ${label.toLowerCase()} generated.`);
+      showSnackbar(`${label} for order #${selectedPaymentReceipt.number || selectedPaymentReceipt.id} is ready.`, "success");
     } catch (error) {
       const message = describeRequestError(error);
       setPaymentReceiptFeedback(message);
@@ -5689,10 +5687,30 @@ function AdminStorefrontDashboard({
     setPaymentReceiptFeedback("");
     try {
       let message = "";
-      await sendReceiptForOrder(selectedPaymentReceipt, { documentType: "receipt", feedback: (nextMessage) => { message = nextMessage; } });
-      const finalMessage = message || `Receipt sent to ${customerEmail(selectedPaymentReceipt) || "the patient"}.`;
+      const documentType = getOrderDocumentType(selectedPaymentReceipt);
+      await sendReceiptForOrder(selectedPaymentReceipt, { documentType, feedback: (nextMessage) => { message = nextMessage; } });
+      const finalMessage = message || `${documentType === "receipt" ? "Receipt" : "Invoice"} sent to ${customerEmail(selectedPaymentReceipt) || "the patient"}.`;
       setPaymentReceiptFeedback(finalMessage);
       showSnackbar(finalMessage, "success");
+    } catch (error) {
+      const message = describeRequestError(error);
+      setPaymentReceiptFeedback(message);
+      showSnackbar(message, "error");
+    } finally {
+      setReceiptActionLoading("");
+    }
+  }
+
+  async function downloadPaymentDocument() {
+    if (!selectedPaymentReceipt) return;
+    setReceiptActionLoading("download");
+    setPaymentReceiptFeedback("");
+    try {
+      const documentType = getOrderDocumentType(selectedPaymentReceipt);
+      await downloadReceiptForOrder(selectedPaymentReceipt, { documentType });
+      const message = `${documentType === "receipt" ? "Receipt" : "Invoice"} for order #${selectedPaymentReceipt.number || selectedPaymentReceipt.id} opened.`;
+      setPaymentReceiptFeedback(message);
+      showSnackbar(message, "success");
     } catch (error) {
       const message = describeRequestError(error);
       setPaymentReceiptFeedback(message);
@@ -5709,6 +5727,7 @@ function AdminStorefrontDashboard({
     setActiveProductMediaId("");
     setProductCreateStep(0);
     setProductCreateValidationStep("");
+    setProductCreateTouched({});
     setProductEditTab("details");
     setProductEditSearch({ categories: "", tags: "", brands: "" });
     setProductEditFeedback("");
@@ -5717,7 +5736,7 @@ function AdminStorefrontDashboard({
     setProductEditorMode("edit");
   }
 
-  function openProductEditModal(product) {
+  async function openProductEditModal(product) {
     if (!product) {
       return;
     }
@@ -5733,6 +5752,41 @@ function AdminStorefrontDashboard({
     setProductEditTab("details");
     setProductEditSearch({ categories: "", tags: "", brands: "" });
     setProductEditFeedback("");
+    setProductEditLoading(true);
+    try {
+      const payload = await apiRequest(`/products/${product.id}`);
+      const detailedProduct = payload?.data || product;
+      const detailedMedia = extractProductMediaItems(detailedProduct);
+      setSelectedProductEdit(detailedProduct);
+      setProductEditForm(buildProductEditDraft(detailedProduct));
+      setProductEditMedia(detailedMedia);
+      setActiveProductMediaId(detailedMedia[0]?.id || "");
+    } catch (error) {
+      const message = describeRequestError(error);
+      setProductEditFeedback(message);
+      showSnackbar(message, "error");
+    } finally {
+      setProductEditLoading(false);
+    }
+  }
+
+  async function toggleFeaturedProduct(product) {
+    const nextFeatured = !isFeaturedProduct(product);
+    const optimisticProduct = { ...product, featured: nextFeatured };
+    setData((prev) => ({
+      ...prev,
+      products: (prev.products || []).map((item) => item.id === product.id ? optimisticProduct : item)
+    }));
+    try {
+      const payload = await apiRequest(`/products/${product.id}`, { method: "POST", body: { featured: nextFeatured } });
+      const nextProduct = payload?.data || optimisticProduct;
+      patchCacheList(isProductListKey, (list) => replaceById(list, nextProduct));
+      revalidateCacheGroups(isProductListKey, isAdminSummaryKey);
+      showSnackbar(`${product.name || "Product"} ${nextFeatured ? "featured" : "unfeatured"}.`, "success");
+    } catch (error) {
+      setData((prev) => ({ ...prev, products: (prev.products || []).map((item) => item.id === product.id ? product : item) }));
+      showSnackbar(describeRequestError(error), "error");
+    }
   }
 
   function openProductCreateModal() {
@@ -5759,33 +5813,29 @@ function AdminStorefrontDashboard({
     const nextForm = form || {};
     if (stepKey === "identity") {
       return {
-        image: productEditMedia.length ? "" : "Add a product image.",
+        image: "",
         title: nextForm.title?.trim() ? "" : "Product name is required.",
-        shortDescription: nextForm.shortDescription?.trim() ? "" : "Add a short description.",
+        shortDescription: "",
         regularPrice: String(nextForm.regularPrice || "").trim() === "" || Number(nextForm.regularPrice) < 0
           ? "Enter a valid unit price."
           : "",
-        salePrice: String(nextForm.salePrice || "").trim() === ""
-          ? "Enter a sales price."
-          : (Number(nextForm.salePrice) < 0 || Number(nextForm.salePrice) > Number(nextForm.regularPrice)
+        salePrice: String(nextForm.salePrice || "").trim() !== "" && (Number(nextForm.salePrice) < 0 || Number(nextForm.salePrice) > Number(nextForm.regularPrice))
             ? "Enter a valid sales price no greater than the unit price."
-            : "")
+            : ""
       };
     }
     if (stepKey === "commerce") {
       return {
         category: nextForm.categories?.[0] ? "" : "Select a category.",
-        tags: nextForm.tags?.length ? "" : "Select at least one tag.",
+        tags: "",
         stockQuantity: String(nextForm.stockQuantity ?? "").trim() === "" || Number(nextForm.stockQuantity) < 0
           ? "Enter a valid stock quantity."
           : "",
-        shippingClass: nextForm.shippingClass?.trim() ? "" : "Select a shipping class."
+        shippingClass: ""
       };
     }
     if (stepKey === "prescription") {
-      return {
-        prescriptionContent: htmlToTextMessage(nextForm.prescriptionContent) ? "" : "Add a prescription."
-      };
+      return { prescriptionContent: "" };
     }
     return {};
   }
@@ -5797,6 +5847,10 @@ function AdminStorefrontDashboard({
       const errors = getProductCreateStepErrors(validationStepKey);
       const firstError = Object.values(errors).find(Boolean);
       setProductCreateValidationStep(validationStepKey);
+      setProductCreateTouched((current) => ({
+        ...current,
+        ...Object.fromEntries(Object.keys(errors).map((key) => [key, true]))
+      }));
       if (firstError) {
         showSnackbar(firstError, "warning");
         return false;
@@ -5998,13 +6052,35 @@ function AdminStorefrontDashboard({
     });
   }
 
-  function addProductTerm(field) {
-    const query = String(productEditSearch[field] || "").trim();
-    if (!query) {
+  function addProductTerm(field, rawValue = productEditSearch[field]) {
+    const values = String(rawValue || "").split(",").map((value) => value.trim()).filter(Boolean);
+    if (!values.length) return;
+    const allowedValues = field === "categories" ? productCategoryOptions : null;
+    const acceptedValues = values.filter((value) => !allowedValues || allowedValues.includes(value));
+    if (!acceptedValues.length) {
+      if (field === "categories") showSnackbar("Choose an existing category.", "warning");
       return;
     }
-    toggleProductTerm(field, query);
-    setProductEditSearch((prev) => ({ ...prev, [field]: "" }));
+    setProductEditForm((current) => ({
+      ...current,
+      [field]: Array.from(new Set([...(current?.[field] || []), ...acceptedValues]))
+    }));
+    setProductEditSearch((current) => ({ ...current, [field]: "" }));
+    setProductCreateTouched((current) => ({ ...current, [field === "categories" ? "category" : field]: true }));
+  }
+
+  function handleProductTermKeyDown(field, event) {
+    if (event.key !== "Enter" && event.key !== ",") return;
+    event.preventDefault();
+    addProductTerm(field);
+  }
+
+  function handleProductTermChange(field, value) {
+    if (String(value).includes(",")) {
+      addProductTerm(field, value);
+      return;
+    }
+    setProductEditSearch((current) => ({ ...current, [field]: value }));
   }
 
   async function saveProductEdits(event) {
@@ -6025,6 +6101,10 @@ function AdminStorefrontDashboard({
         if (firstError) {
           setProductCreateStep(index);
           setProductCreateValidationStep(step.key);
+          setProductCreateTouched((current) => ({
+            ...current,
+            ...Object.fromEntries(Object.keys(errors).map((key) => [key, true]))
+          }));
           showSnackbar(firstError, "warning");
           return;
         }
@@ -6045,7 +6125,6 @@ function AdminStorefrontDashboard({
             stock_status: productEditForm.stockStatus || "instock",
             categories: productEditForm.categories,
             tags: productEditForm.tags,
-            brands: productEditForm.brands,
             pharmacy_rules: {
             rx_required: productEditForm.prescriptionRule === "prescription_required",
             consultation_required: productEditForm.prescriptionRule === "pharmacist_review_required",
@@ -6141,12 +6220,27 @@ function AdminStorefrontDashboard({
       if (wasSelected || closeEditor) {
         closeProductEditModal();
       }
+      showSnackbar(`${product.name || "Product"} moved to trash.`, "success");
     } catch (error) {
-      if (wasSelected) {
-        showSnackbar(describeRequestError(error), "error");
-        setProductEditLoading(false);
-      }
+      showSnackbar(describeRequestError(error), "error");
+      setDeletingProductIds((prev) => prev.filter((id) => id !== product.id));
+      if (wasSelected) setProductEditLoading(false);
       return;
+    }
+  }
+
+  async function restoreProduct(product) {
+    if (!product?.id || restoringProductId) return;
+    setRestoringProductId(product.id);
+    try {
+      await apiRequest(`/products/${product.id}/restore`, { method: "POST", body: {} }, session);
+      setData((prev) => ({ ...prev, products: (prev.products || []).filter((item) => item.id !== product.id) }));
+      await productsQuery.mutate();
+      showSnackbar(`${product.name || "Product"} restored as a draft.`, "success");
+    } catch (error) {
+      showSnackbar(describeRequestError(error), "error");
+    } finally {
+      setRestoringProductId(null);
     }
   }
 
@@ -6199,6 +6293,9 @@ function AdminStorefrontDashboard({
         }
       });
       const nextProduct = payload?.data || optimisticProduct;
+      if (!getProductCategories(nextProduct).split(",").map((item) => item.trim()).includes(category.name)) {
+        throw new Error(`The server did not save ${category.name} on this product.`);
+      }
       setData((prev) => ({
         ...prev,
         products: (prev.products || []).map((item) => (item.id === product.id ? { ...item, ...nextProduct } : item))
@@ -6247,6 +6344,9 @@ function AdminStorefrontDashboard({
         }
       });
       const nextProduct = payload?.data || optimisticProduct;
+      if (getProductCategories(nextProduct).split(",").map((item) => item.trim()).includes(category.name)) {
+        throw new Error(`The server did not remove ${category.name} from this product.`);
+      }
       setData((prev) => ({
         ...prev,
         products: (prev.products || []).map((item) => (item.id === product.id ? { ...item, ...nextProduct } : item))
@@ -6267,9 +6367,8 @@ function AdminStorefrontDashboard({
   }
 
   function openCategoryCreateForm() {
-    const defaultPrice = String(appointmentSettings.categoryPricing?.general || selectedCategory?.price || "6000");
     setCategoryCreateOpen(true);
-    setCategoryCreateForm({ name: "", pricePerMinute: defaultPrice });
+    setCategoryCreateForm({ name: "", pricePerMinute: "" });
     setCategoryMutationFeedback("");
   }
 
@@ -6281,11 +6380,10 @@ function AdminStorefrontDashboard({
   async function saveNewCategory(event) {
     event.preventDefault();
     const nextName = String(categoryCreateForm.name || "").trim();
-    if (!nextName) {
-      setCategoryMutationFeedback("Enter a category name.");
+    if (!nextName || nextName.length > 80 || /[\\\u0000-\u001f]/.test(nextName)) {
+      setCategoryMutationFeedback("Enter a category name up to 80 characters without backslashes.");
       return;
     }
-    const nextPrice = String(categoryCreateForm.pricePerMinute || appointmentSettings.categoryPricing?.general || "6000").trim();
     setCategoryMutationLoading("create-category");
     setCategoryMutationFeedback("");
     try {
@@ -6309,13 +6407,6 @@ function AdminStorefrontDashboard({
       }));
       patchCacheList(isProductCategoryListKey, (list) => upsertById(list, createdCategory));
       revalidateCacheGroups(isProductListKey, isProductCategoryListKey, isProductTagListKey);
-      setAppointmentSettings((prev) => ({
-        ...prev,
-        categoryPricing: {
-          ...prev.categoryPricing,
-          [normalizeCategoryKey(createdCategory.slug || createdCategory.name || nextName)]: nextPrice
-        }
-      }));
       setSelectedProductCategoryName(createdCategory.name || nextName);
       closeCategoryCreateForm();
       setCategoryMutationFeedback(`Created ${createdCategory.name || nextName}.`);
@@ -6332,24 +6423,20 @@ function AdminStorefrontDashboard({
     }
     const existingCategory = selectedCategoryRecord || selectedCategory;
     const nextName = String(categoryEditDraft?.name || "").trim();
-    if ((field === "all" || field === "name") && !nextName) {
-      setCategoryMutationFeedback("Enter a category name.");
+    if ((field === "all" || field === "name") && (!nextName || nextName.length > 80 || /[\\\u0000-\u001f]/.test(nextName))) {
+      setCategoryMutationFeedback("Enter a category name up to 80 characters without backslashes.");
       return;
     }
     const resolvedName = nextName || String(existingCategory.name || "").trim();
     const oldKey = normalizeCategoryKey(existingCategory.slug || existingCategory.name || "");
     const nextKey = normalizeCategoryKey(resolvedName);
-    const previousPrice = String(existingCategory.price || appointmentSettings.categoryPricing?.[oldKey] || "");
-    const nextPrice = String(categoryEditDraft?.pricePerMinute ?? previousPrice).trim();
     const nameChanged = resolvedName !== String(existingCategory.name || "");
-    const priceChanged = nextPrice !== previousPrice;
-    if ((field === "name" && !nameChanged) || (field === "price" && !priceChanged) || (field === "all" && !nameChanged && !priceChanged)) {
+    if (!nameChanged) {
       setCategoryInlineField("");
       return;
     }
     const previousCategoryName = existingCategory.name || "";
     const snapshotData = data;
-    const snapshotSettings = appointmentSettings;
     setCategoryMutationLoading("edit-category");
     setCategoryMutationFeedback("");
     try {
@@ -6366,8 +6453,7 @@ function AdminStorefrontDashboard({
               ? { ...category, name: resolvedName, slug: nextKey }
               : category
           )),
-          products: (prev.products || []).map((product) => replaceCategoryNameInProduct(product, previousCategoryName, resolvedName)),
-          doctors: (prev.doctors || []).map((doctor) => replaceCategoryNameInDoctor(doctor, existingCategory.id, previousCategoryName, resolvedName, nextCategory.id))
+          products: (prev.products || []).map((product) => replaceCategoryNameInProduct(product, previousCategoryName, resolvedName))
         }));
         setSelectedProductCategoryName(resolvedName);
         const payload = await apiRequest(`/products/categories/${existingCategory.id}`, {
@@ -6387,28 +6473,16 @@ function AdminStorefrontDashboard({
             ? { ...category, ...nextCategory, name: resolvedName, slug: nextKey }
             : category
         )),
-        products: nameChanged ? (prev.products || []).map((product) => replaceCategoryNameInProduct(product, existingCategory.name || "", resolvedName)) : (prev.products || []),
-        doctors: nameChanged ? (prev.doctors || []).map((doctor) => replaceCategoryNameInDoctor(doctor, existingCategory.id, existingCategory.name || "", resolvedName, nextCategory.id)) : (prev.doctors || [])
+        products: nameChanged ? (prev.products || []).map((product) => replaceCategoryNameInProduct(product, existingCategory.name || "", resolvedName)) : (prev.products || [])
       }));
       patchCacheList(isProductCategoryListKey, (list) => replaceById(list, { ...nextCategory, name: resolvedName, slug: nextKey }));
       revalidateCacheGroups(isProductListKey, isProductCategoryListKey, isProductTagListKey, isDoctorListKey);
 
-      setAppointmentSettings((prev) => {
-        const nextPricing = { ...(prev.categoryPricing || {}) };
-        if (oldKey && oldKey !== nextKey) {
-          delete nextPricing[oldKey];
-        }
-        nextPricing[nextKey] = nextPrice;
-        return {
-          ...prev,
-          categoryPricing: nextPricing
-        };
-      });
       setSelectedProductCategoryName(resolvedName);
       setCategoryEditDraft({
         name: resolvedName,
-          pricePerMinute: nextPrice
-        });
+        pricePerMinute: ""
+      });
       setCategoryInlineField("");
       setCategorySaveNotice("Saved");
     } catch (error) {
@@ -6416,8 +6490,30 @@ function AdminStorefrontDashboard({
         setData(snapshotData);
         setSelectedProductCategoryName(previousCategoryName);
       }
-      setAppointmentSettings(snapshotSettings);
       setCategoryMutationFeedback(describeRequestError(error));
+    } finally {
+      setCategoryMutationLoading("");
+    }
+  }
+
+  async function deleteProductCategory() {
+    const category = categoryDeleteTarget;
+    if (!category?.id) return;
+    setCategoryMutationLoading("delete-category");
+    setCategoryMutationFeedback("");
+    try {
+      await apiRequest(`/products/categories/${category.id}`, { method: "DELETE" });
+      setData((current) => ({
+        ...current,
+        productCategories: (current.productCategories || []).filter((item) => String(item.id) !== String(category.id))
+      }));
+      patchCacheList(isProductCategoryListKey, (list) => removeById(list, category.id));
+      setCategoryDeleteTarget(null);
+      setSelectedProductCategoryName("");
+      revalidateCacheGroups(isProductListKey, isProductCategoryListKey);
+      showSnackbar(`${category.name} deleted. Its products were reassigned to Uncategorized.`, "success");
+    } catch (error) {
+      showSnackbar(describeRequestError(error), "error");
     } finally {
       setCategoryMutationLoading("");
     }
@@ -6676,6 +6772,10 @@ function AdminStorefrontDashboard({
       return apiRequest(path, { method, body, params, auth, retry: false }, refreshed);
     }
 
+    if (response.status === 401 && auth) {
+      invalidateExpiredSession("Your session expired. Sign in again to continue.");
+    }
+
     if (!response.ok || (payload && !payload?.success)) {
       const message = extractApiErrorMessage(payload);
       if (response.status === 404 && isRouteMissingPayload(payload)) {
@@ -6721,6 +6821,9 @@ function AdminStorefrontDashboard({
     if ((response.status === 401 || response.status === 403) && retry && activeSession.refreshToken) {
       const refreshed = await refreshSession(activeSession);
       return adminApiRequest(route, { params, retry: false }, refreshed);
+    }
+    if (response.status === 401) {
+      invalidateExpiredSession("Your session expired. Sign in again to continue.");
     }
     if (!response.ok || (payload && !payload?.success)) {
       throw new Error(extractApiErrorMessage(payload));
@@ -6810,13 +6913,7 @@ function AdminStorefrontDashboard({
         return nextSession;
       } catch (error) {
         if (isExpiredRefreshSessionError(error)) {
-          const nextSession = { ...workingSession, accessToken: "", refreshToken: "", expiresAt: 0, user: null };
-          latestSessionRef.current = nextSession;
-          setSession(nextSession);
-          persistSessionSnapshot(nextSession, currentPage);
-          setSyncStatus({ text: "Disconnected", mode: "" });
-          setAuthFeedback("Stored session expired. Sign in again.");
-          showAuthGate("auth");
+          invalidateExpiredSession("Stored session expired. Sign in again.");
           throw new Error("Stored session expired. Sign in again.");
         }
         throw error;
@@ -7415,8 +7512,9 @@ function AdminStorefrontDashboard({
   const ordersListKey = canLoadSections && ["overview", "orders", "payments"].includes(currentPage)
     ? swrKeys.admin.orders(withBaseUrl(session, { per_page: 24, page: 1, status: ordersApiStatusFilter, search: deferredSearch }))
     : null;
+  const productsApiStatusFilter = currentPage === "products" && productListFilter === "trash" ? "trash" : "";
   const productsListKey = canLoadSections && ["overview", "products"].includes(currentPage)
-    ? swrKeys.admin.products(withBaseUrl(session, { per_page: 24, page: 1, search: deferredSearch }))
+    ? swrKeys.admin.products(withBaseUrl(session, { per_page: 24, page: 1, search: deferredSearch, status: productsApiStatusFilter }))
     : null;
   const productCategoriesListKey = canLoadSections && ["overview", "products"].includes(currentPage)
     ? swrKeys.admin.categories(withBaseUrl(session, { per_page: 100, page: 1 }))
@@ -7460,7 +7558,7 @@ function AdminStorefrontDashboard({
   );
   const productsQuery = useSWR(
     productsListKey,
-    () => adminApiRequest("products", { params: { per_page: 24, page: 1, search: deferredSearch } }, session),
+    () => adminApiRequest("products", { params: { per_page: 24, page: 1, search: deferredSearch, status: productsApiStatusFilter } }, session),
     { ...lazyQueryOptions, keepPreviousData: true, dedupingInterval: 120_000 }
   );
   const productCategoriesQuery = useSWR(
@@ -7571,7 +7669,7 @@ function AdminStorefrontDashboard({
     canLoadSections && createModalType === "consultation"
       ? swrKeys.admin.customers(withBaseUrl(session, { per_page: 20, page: 1, search: consultationPatientSearch }))
       : null,
-    () => adminApiRequest("customers", { params: { per_page: 20, page: 1, search: consultationPatientSearch } }, session),
+    () => adminApiRequest("patients", { params: { scope: "patients", per_page: 20, page: 1, search: consultationPatientSearch } }, session),
     { ...popupQueryOptions, fallbackData: data.customers?.length ? { data: data.customers.slice(0, 20) } : undefined }
   );
   const consultationCreateDoctorsQuery = useSWR(
@@ -7816,6 +7914,8 @@ function AdminStorefrontDashboard({
   const showPageSearch = Object.hasOwn(SEARCH_PLACEHOLDERS, currentPage)
     && !["analytics", "settings", "profile"].includes(currentPage);
   const searchPlaceholder = SEARCH_PLACEHOLDERS[currentPage] || "Search this page";
+  const currentPageTitle = FRONTEND_PAGES.flatMap((group) => group.items).find(([page]) => page === currentPage)?.[1]
+    || (currentPage === "profile" ? "Profile" : "Nevari Admin");
   const siteName = session.siteName || DEFAULT_SITE_NAME;
   const siteLogo = session.siteLogo || "/ne.webp";
 
@@ -8126,7 +8226,8 @@ function AdminStorefrontDashboard({
     draft: (data.products || []).filter((product) => getProductStatus(product) === "draft").length,
     in_stock: (data.products || []).filter((product) => getProductStockDisplay(product).tone === "in_stock").length,
     out_of_stock: (data.products || []).filter((product) => getProductStockDisplay(product).tone === "out_of_stock").length,
-    on_sale: (data.products || []).filter((product) => hasActiveSalePrice(product)).length
+    on_sale: (data.products || []).filter((product) => hasActiveSalePrice(product)).length,
+    trash: productsApiStatusFilter === "trash" ? (data.products || []).length : 0
   };
   const getLowStockThreshold = (product) => {
     const threshold = Number(
@@ -8171,7 +8272,7 @@ function AdminStorefrontDashboard({
 
   const filteredProducts = (data.products || []).filter((product) => {
     const rules = product.pharmacy_rules || {};
-    const matchesProductSearch = matchesSearch(`${product.name} ${product.sku} ${product.badge?.label} ${product.badge?.key} ${product.stock_status} ${rules.rx_required} ${rules.otc} ${rules.consultation_required}`, ["overview", "products"].includes(currentPage));
+    const matchesProductSearch = matchesSearch(`${product.name} ${product.sku} ${getProductCategories(product)} ${getProductTags(product)} ${getProductBrands(product)} ${product.badge?.label} ${product.badge?.key} ${product.stock_status} ${rules.rx_required} ${rules.otc} ${rules.consultation_required}`, ["overview", "products"].includes(currentPage));
     if (!matchesProductSearch) {
       return false;
     }
@@ -8196,7 +8297,17 @@ function AdminStorefrontDashboard({
   const productsPerPage = 10;
   const productPageCount = Math.max(1, Math.ceil(filteredProducts.length / productsPerPage));
   const activeProductPage = Math.min(productPage, productPageCount);
-  const paginatedProducts = filteredProducts.slice((activeProductPage - 1) * productsPerPage, activeProductPage * productsPerPage);
+  const sortedProducts = sortTableRows(filteredProducts, "products", {
+    name: (product) => product.name,
+    sku: (product) => product.sku,
+    stock: (product) => Number(getProductStockQuantity(product) ?? -1),
+    price: (product) => Number(getEffectiveProductPrice(product) || 0),
+    categories: (product) => getProductCategories(product),
+    tags: (product) => getProductTags(product),
+    brands: (product) => getProductBrands(product),
+    date: (product) => product.date_created || product.created_at
+  });
+  const paginatedProducts = sortedProducts.slice((activeProductPage - 1) * productsPerPage, activeProductPage * productsPerPage);
   const visibleProductIds = paginatedProducts.map((product) => product.id);
   const allVisibleProductsSelected = visibleProductIds.length > 0 && visibleProductIds.every((id) => selectedProductIds.includes(id));
   const deferredCategoryProductSearch = useDeferredValue(categoryProductSearch);
@@ -8204,7 +8315,7 @@ function AdminStorefrontDashboard({
     const categoryMap = new Map();
 
     (data.productCategories || []).forEach((category) => {
-      const name = category?.name || category?.label;
+      const name = htmlToTextMessage(category?.name || category?.label);
       if (!name) {
         return;
       }
@@ -8214,13 +8325,15 @@ function AdminStorefrontDashboard({
         key,
         name,
         slug: category.slug || normalizeCategoryKey(name),
-        price: resolveCategoryConsultationPrice(category, appointmentSettings.categoryPricing),
+        permalink: category.permalink || (session.baseUrl && category.slug
+          ? `${normalizeBaseUrl(session.baseUrl)}/product-category/${category.slug}/`
+          : ""),
         productCount: 0
       });
     });
 
     (data.products || []).forEach((product) => {
-      getProductCategories(product).split(",").map((item) => item.trim()).filter(Boolean).forEach((categoryName) => {
+      getProductCategories(product).split(",").map((item) => htmlToTextMessage(item)).filter(Boolean).forEach((categoryName) => {
         const existing = [...categoryMap.values()].find((item) => item.name === categoryName);
         const nextKey = existing?.key || categoryName;
         const nextRow = existing || {
@@ -8228,7 +8341,9 @@ function AdminStorefrontDashboard({
           key: nextKey,
           name: categoryName,
           slug: normalizeCategoryKey(categoryName),
-          price: resolveCategoryConsultationPrice({ name: categoryName }, appointmentSettings.categoryPricing),
+          permalink: session.baseUrl
+            ? `${normalizeBaseUrl(session.baseUrl)}/product-category/${normalizeCategoryKey(categoryName)}/`
+            : "",
           productCount: 0
         };
         nextRow.productCount += 1;
@@ -8237,9 +8352,20 @@ function AdminStorefrontDashboard({
     });
 
     return [...categoryMap.values()]
-      .filter((category) => matchesSearch(`${category.name} ${category.slug} ${category.productCount} ${category.price}`, currentPage === "products"))
+      .filter((category) => matchesSearch(`${category.name} ${category.slug} ${category.productCount}`, currentPage === "products"))
       .sort((left, right) => left.name.localeCompare(right.name));
   })();
+  const categoryDirectoryQuery = categoryDirectorySearch.trim().toLowerCase();
+  const filteredCategoryDirectoryRows = productCategoryRows.filter((category) =>
+    !categoryDirectoryQuery || `${category.name} ${category.slug || ""}`.toLowerCase().includes(categoryDirectoryQuery)
+  );
+  const categoriesPerPage = 20;
+  const categoryDirectoryPageCount = Math.max(1, Math.ceil(filteredCategoryDirectoryRows.length / categoriesPerPage));
+  const activeCategoryDirectoryPage = Math.min(categoryDirectoryPage, categoryDirectoryPageCount);
+  const paginatedCategoryDirectoryRows = filteredCategoryDirectoryRows.slice(
+    (activeCategoryDirectoryPage - 1) * categoriesPerPage,
+    activeCategoryDirectoryPage * categoriesPerPage
+  );
   const selectedCategory = productCategoryRows.find((category) => category.name === selectedProductCategoryName) || productCategoryRows[0] || null;
   const selectedCategoryRecord = selectedCategory
     ? (data.productCategories || []).find((category) => (
@@ -8248,27 +8374,15 @@ function AdminStorefrontDashboard({
     ))
     : null;
   const selectedCategoryProducts = selectedCategory
-    ? (data.products || []).filter((product) => getProductCategories(product).split(",").map((item) => item.trim()).includes(selectedCategory.name))
+    ? (data.products || []).filter((product) => getProductCategories(product).split(",").map((item) => htmlToTextMessage(item)).filter(Boolean).includes(selectedCategory.name))
     : [];
   const categorySearchQuery = deferredCategoryProductSearch.trim().toLowerCase();
   const selectedCategoryId = selectedCategoryRecord?.id || selectedCategory?.id || null;
   const selectedCategoryName = selectedCategory?.name || "";
-  const minimumConsultationMinutes = Number(appointmentSettings.minimumConsultationMinutes || 0) || 0;
-  const minimumConsultationLabel = minimumConsultationMinutes > 0
-    ? `${formatNumber(minimumConsultationMinutes)}min`
-    : "minimum consultation time";
-  const formatCategoryPricing = (value) => (
-    value ? (
-      <>
-        <strong>{formatMoney(value, storeCurrency)}</strong>
-        <span className="product-category-price-suffix"> per {minimumConsultationLabel}</span>
-      </>
-    ) : "Not set"
-  );
-  const categoryDoctorsKey = canLoadSections && currentPage === "products" && productCatalogView === "categories" && selectedCategoryId
+  const categoryDoctorsKey = CATEGORY_DOCTOR_ASSIGNMENT_ENABLED && canLoadSections && currentPage === "products" && productCatalogView === "categories" && selectedCategoryId
     ? ["category-doctors-local", String(selectedCategoryId), selectedCategoryName, (data.doctors || []).length]
     : null;
-  const categoryDoctorSearchKey = canLoadSections && currentPage === "products" && productCatalogView === "categories" && debouncedCategoryDoctorSearch.trim()
+  const categoryDoctorSearchKey = CATEGORY_DOCTOR_ASSIGNMENT_ENABLED && canLoadSections && currentPage === "products" && productCatalogView === "categories" && debouncedCategoryDoctorSearch.trim()
     ? ["doctor-search-local", debouncedCategoryDoctorSearch.trim(), (data.doctors || []).length]
     : null;
   const categoryAssignedDoctorsQuery = useSWR(
@@ -8310,7 +8424,7 @@ function AdminStorefrontDashboard({
     : [];
   const categoryProductCandidates = selectedCategory
     ? (data.products || []).filter((product) => {
-      const categoryNames = getProductCategories(product).split(",").map((item) => item.trim()).filter(Boolean);
+      const categoryNames = getProductCategories(product).split(",").map((item) => htmlToTextMessage(item)).filter(Boolean);
       if (categoryNames.includes(selectedCategory.name)) {
         return false;
       }
@@ -8338,7 +8452,7 @@ function AdminStorefrontDashboard({
     setCategoryProductPage(1);
     setCategoryEditDraft({
       name: selectedCategory?.name || "",
-      pricePerMinute: String(selectedCategory?.price || "")
+      pricePerMinute: ""
     });
   }, [selectedCategory?.id, selectedCategory?.name]);
 
@@ -8354,13 +8468,17 @@ function AdminStorefrontDashboard({
   }, [categoryProductPageCount]);
 
   useEffect(() => {
-    if (categoryInlineField === "name") {
+    setCategoryDirectoryPage(1);
+  }, [categoryDirectorySearch]);
+
+  useEffect(() => {
+    setCategoryDirectoryPage((prev) => Math.min(prev, categoryDirectoryPageCount));
+  }, [categoryDirectoryPageCount]);
+
+  useEffect(() => {
+    if (categoryInlineField === "name" || categoryInlineField === "directory-name") {
       categoryNameInputRef.current?.focus();
       categoryNameInputRef.current?.select();
-    }
-    if (categoryInlineField === "price") {
-      categoryPriceInputRef.current?.focus();
-      categoryPriceInputRef.current?.select();
     }
   }, [categoryInlineField]);
 
@@ -8463,9 +8581,17 @@ function AdminStorefrontDashboard({
       return !searchTerm || normalizeText(`${category.name || ""} ${category.slug || ""}`).includes(searchTerm);
     })
     .slice(0, 8);
-  const popupConsultationDoctors = consultationCreateDoctorsQuery.data?.data || data.doctors || [];
+  const popupConsultationDoctors = (consultationCreateDoctorsQuery.data?.data || data.doctors || []).filter((doctor) =>
+    (doctor.roles || []).includes("doctor") || doctor.managed_role === "doctor" || doctor.role === "doctor"
+  );
   const popupConsultationAppointments = consultationCreateAppointmentsQuery.data?.data || data.appointments || [];
-  const popupConsultationPatients = (consultationCreatePatientsQuery.data?.data || []).map((customer) => ({
+  const consultationPatientPayload = consultationCreatePatientsQuery.data?.data;
+  const consultationPatientPayloadRows = Array.isArray(consultationPatientPayload)
+    ? consultationPatientPayload
+    : Array.isArray(consultationPatientPayload?.items)
+      ? consultationPatientPayload.items
+      : [];
+  const popupConsultationPatients = consultationPatientPayloadRows.map((customer) => ({
     id: customer.id || customer.user_id || customer.customer_id,
     label: customer.label || customerNameFromRecord(customer) || customerEmail(customer) || `Patient #${customer.id || customer.user_id}`,
     name: customerNameFromRecord(customer) || customerEmail(customer) || `Patient #${customer.id || customer.user_id}`,
@@ -8498,15 +8624,14 @@ function AdminStorefrontDashboard({
   ));
   const activeProductCreateStep = PRODUCT_CREATE_STEPS[productCreateStep] || PRODUCT_CREATE_STEPS[0];
   const productCreateStepErrors = productEditorMode === "create"
-    ? (productCreateValidationStep === activeProductCreateStep.key ? getProductCreateStepErrors(activeProductCreateStep.key) : {})
+    ? (productCreateValidationStep === activeProductCreateStep.key
+      ? Object.fromEntries(Object.entries(getProductCreateStepErrors(activeProductCreateStep.key)).filter(([key]) => productCreateTouched[key]))
+      : {})
     : {};
   const orderCreateSubtotal = orderCreateItems.reduce((total, item) => {
     const product = popupOrderProducts.find((entry) => String(entry.id) === String(item.productId))
       || (data.products || []).find((entry) => String(entry.id) === String(item.productId));
-    const price = getProductPrice(product, "sale_price")
-      || getProductPrice(product, "regular_price")
-      || getProductPrice(product, "price")
-      || 0;
+    const price = getEffectiveProductPrice(product);
     return total + (Number(price) * Number(item.quantity || 1));
   }, 0);
   const orderCreateHasCustomer = Boolean(
@@ -8558,7 +8683,8 @@ function AdminStorefrontDashboard({
     firstName: userAccountCreateForm.firstName.trim() ? "" : "Enter a first name.",
     lastName: userAccountCreateForm.lastName.trim() ? "" : "Enter a last name.",
     email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userAccountCreateForm.email.trim()) ? "" : "Enter a valid email address.",
-    phone: !userAccountRequiresPhone || /^[+0-9][0-9 ()-]{7,24}$/.test(userAccountCreateForm.phone.trim()) ? "" : "Enter a valid phone number.",
+    phone: ((!userAccountRequiresPhone && !userAccountCreateForm.phone.trim()) || /^[+0-9][0-9 ()-]{7,24}$/.test(userAccountCreateForm.phone.trim())) ? "" : "Enter a valid phone number.",
+    licenseNumber: !userAccountRequiresPhone || /^[A-Z0-9][A-Z0-9\/-]{4,39}$/i.test(userAccountCreateForm.licenseNumber.trim()) ? "" : "Enter a valid professional license number.",
     password: userAccountPasswordValid ? "" : "Use 12+ characters with upper/lowercase, a number, and a symbol.",
   };
   const userAccountCanSubmit = !Object.values(userAccountValidationErrors).some(Boolean);
@@ -8646,7 +8772,15 @@ function AdminStorefrontDashboard({
   const paymentsPerPage = 10;
   const paymentPageCount = Math.max(1, Math.ceil(paymentRows.length / paymentsPerPage));
   const activePaymentPage = Math.min(paymentPage, paymentPageCount);
-  const paginatedPaymentRows = paymentRows.slice((activePaymentPage - 1) * paymentsPerPage, activePaymentPage * paymentsPerPage);
+  const sortedPaymentRows = sortTableRows(paymentRows, "payments", {
+    order: (row) => row.number,
+    patient: (row) => row.customerLabel,
+    created: (row) => row.createdAt,
+    amount: (row) => Number(row.amount || 0),
+    payment: (row) => row.paymentStatus,
+    rx: (row) => row.rxStatus
+  });
+  const paginatedPaymentRows = sortedPaymentRows.slice((activePaymentPage - 1) * paymentsPerPage, activePaymentPage * paymentsPerPage);
 
   const consultationDoctorProfile = popupConsultationDoctors.find((doctor) => String(doctor.user_id || doctor.id) === String(consultationCreateForm.doctorUserId)) || null;
   const consultationDoctorAppointments = popupConsultationAppointments
@@ -8773,27 +8907,68 @@ function AdminStorefrontDashboard({
   const ordersPerPage = 10;
   const orderPageCount = Math.max(1, Math.ceil(filteredOrders.length / ordersPerPage));
   const activeOrderPage = Math.min(orderPage, orderPageCount);
-  const paginatedOrders = filteredOrders.slice((activeOrderPage - 1) * ordersPerPage, activeOrderPage * ordersPerPage);
+  const sortedOrderRows = sortTableRows(filteredOrders, "orders", {
+    order: (row) => row.number,
+    type: (row) => getOrderTypeMeta(row).label,
+    patient: (row) => resolveOrderCustomerSummary(row).name,
+    products: (row) => (row.items_summary || row.items || []).map?.((item) => item.name || item).join(" ") || "",
+    prescription: (row) => row.rx_status || "",
+    price: (row) => Number(row.total || 0),
+    status: (row) => row.status
+  });
+  const paginatedOrders = sortedOrderRows.slice((activeOrderPage - 1) * ordersPerPage, activeOrderPage * ordersPerPage);
   const customersPerPage = 10;
   const customerServerPagination = customersQuery.data?.data?.pagination || {};
   const customerMetrics = customersQuery.data?.data?.metrics || {};
   const customerPageCount = Math.max(1, Number(customerServerPagination.pages || Math.ceil(customerRows.length / customersPerPage)));
   const activeCustomerPage = Math.min(customerPage, customerPageCount);
-  const paginatedCustomerRows = customerRows;
+  const paginatedCustomerRows = sortTableRows(customerRows, "customers", {
+    patient: (row) => row.name,
+    orders: (row) => Number(row.orders || 0),
+    spend: (row) => Number(row.spend || 0),
+    appointments: (row) => Number(row.appointments || 0),
+    activity: (row) => row.lastActivity,
+    status: (row) => row.status || "active"
+  });
   const consultationsPerPage = 10;
   const consultationPageCount = Math.max(1, Math.ceil(consultationList.length / consultationsPerPage));
   const activeConsultationPage = Math.min(consultationPage, consultationPageCount);
-  const paginatedConsultationRows = consultationList.slice((activeConsultationPage - 1) * consultationsPerPage, activeConsultationPage * consultationsPerPage);
+  const sortedConsultationRows = sortTableRows(consultationList, "consultations", {
+    patient: (row) => patientLabel(row.patient_user_id),
+    doctor: (row) => doctorMap.get(row.doctor_user_id) || "",
+    type: (row) => row.type,
+    status: (row) => row.status,
+    starts: (row) => row.start_at,
+    ends: (row) => row.end_at
+  });
+  const paginatedConsultationRows = sortedConsultationRows.slice((activeConsultationPage - 1) * consultationsPerPage, activeConsultationPage * consultationsPerPage);
   const mtmPerPage = 10;
   const mtmServerPagination = mtmQuery.data?.data?.pagination || {};
   const mtmMetrics = mtmQuery.data?.data?.metrics || {};
   const mtmPageCount = Math.max(1, Number(mtmServerPagination.pages || Math.ceil(filteredMtmRequests.length / mtmPerPage)));
   const activeMtmPage = Math.min(mtmPage, mtmPageCount);
-  const paginatedMtmRequests = filteredMtmRequests;
+  const paginatedMtmRequests = sortTableRows(filteredMtmRequests, "mtm", {
+    request: (row) => row.request_reference,
+    patient: (row) => row.patient?.name,
+    pharmacist: (row) => row.assigned_pharmacist_name,
+    status: (row) => row.status,
+    submitted: (row) => row.created_at,
+    scheduled: (row) => row.scheduled_at,
+    attendance: (row) => row.attendance_status
+  });
   const ivTherapyPerPage = 10;
   const ivTherapyPageCount = Math.max(1, Math.ceil(filteredIvTherapyRequests.length / ivTherapyPerPage));
   const activeIvTherapyPage = Math.min(ivTherapyPage, ivTherapyPageCount);
-  const paginatedIvTherapyRequests = filteredIvTherapyRequests.slice((activeIvTherapyPage - 1) * ivTherapyPerPage, activeIvTherapyPage * ivTherapyPerPage);
+  const sortedIvTherapyRequests = sortTableRows(filteredIvTherapyRequests, "iv-therapy", {
+    request: (row) => row.request_reference,
+    patient: (row) => row.customer_name,
+    phone: (row) => row.customer_phone,
+    therapies: (row) => (row.therapy_types || []).join(" "),
+    consent: (row) => row.consent,
+    submitted: (row) => row.created_at,
+    status: (row) => row.status
+  });
+  const paginatedIvTherapyRequests = sortedIvTherapyRequests.slice((activeIvTherapyPage - 1) * ivTherapyPerPage, activeIvTherapyPage * ivTherapyPerPage);
   const staffPerPage = 10;
   const staffPageCount = Math.max(1, Math.ceil(filteredDoctors.length / staffPerPage));
   const activeStaffPage = Math.min(staffPage, staffPageCount);
@@ -8912,7 +9087,7 @@ function AdminStorefrontDashboard({
   const getOverviewStockFlag = (product) => {
     const stockQuantity = getProductStockQuantity(product);
     const stockStatus = String(product.stock_status || "").toLowerCase().replace(/[_\s]+/g, "-");
-    if (["out of stock", "out-of-stock"].includes(stockStatus) || (!stockStatus && stockQuantity !== null && stockQuantity <= 0)) {
+    if (["outofstock", "out-of-stock", "out of stock"].includes(stockStatus) || (stockQuantity !== null && stockQuantity <= 0)) {
       return { value: "failed", label: "Out" };
     }
     if (["lowstock", "low-stock", "onbackorder", "on-backorder"].includes(stockStatus)) {
@@ -9298,55 +9473,38 @@ function AdminStorefrontDashboard({
             
 
             <div className="surface-content">
-              <section className="section-hero-card">
-                <div>
-                  
-                  <h1>Nevari Access Subscriptions</h1>
-                  <p>Manage plans, review subscriber status.</p>
-                </div>
-                <div className="hero-actions-inline">
-                  <button className="btn btn-primary" type="button" onClick={() => openSubscriptionModal("create")}>Create</button>
-                  
-                </div>
-              </section>
-
-              
-
               {subscriptionState.error ? <section className="panel subscription-alert"><p className="muted">{subscriptionState.error}</p></section> : null}
 
               <section className="subscription-layout">
                 <article className="subscription-plans-panel admin-flat-table-section" aria-label="Subscription plans">
-                  <div className="panel-header">
-                    <div>
-                      <h2>Subscription plans</h2>
-                      <p>Create, modify, activate or retire plan configurations.</p>
-                    </div>
-                    
-                  </div>
                   <div className="table-wrap users-table-wrap">
                     <table>
                       <thead>
                         <tr>
-                          <th>Plan name</th>
-                          <th>Price</th>
-                          <th>Billing cycle</th>
-                          <th>Users</th>
-                          <th>Status</th>
-                          <th>Gateway/source</th>
-                          <th>Actions</th>
+                          {sortableHeader("subscriptions", "name", "Plan name")}
+                          {sortableHeader("subscriptions", "price", "Price")}
+                          {sortableHeader("subscriptions", "billing", "Billing cycle")}
+                          {sortableHeader("subscriptions", "users", "Users")}
+                          {sortableHeader("subscriptions", "status", "Status")}
+                          {sortableHeader("subscriptions", "source", "Gateway/source")}
                         </tr>
                       </thead>
                       <tbody>
-                        {subscriptionState.loading ? renderTableRowSkeletons(6, 7) : subscriptionTablePlans.length ? subscriptionTablePlans.map((plan) => {
+                        {subscriptionState.loading ? renderTableRowSkeletons(6, 6) : subscriptionTablePlans.length ? sortTableRows(subscriptionTablePlans, "subscriptions", {
+                          name: (plan) => plan.name,
+                          price: (plan) => Number(plan.amount_kobo || String(plan.price || "").replace(/[^\d.]/g, "") || 0),
+                          billing: (plan) => plan.billing || plan.interval,
+                          users: (plan) => Number(plan.users || 0),
+                          status: (plan) => plan.status,
+                          source: (plan) => isSystemSubscriptionPlan(plan) ? "System" : plan.checkout_type
+                        }).map((plan) => {
                           const planId = String(plan?.id ?? plan?.plan_key ?? plan?.slug ?? "").trim();
                           const planKey = String(plan?.plan_key || plan?.slug || plan?.planKey || generateSlug(plan?.name || "") || "free").trim();
-                          const isSelected = Boolean(String(selectedSubscriptionPlanId || selectedSubscriptionPlan?.id || selectedSubscriptionPlan?.plan_key || "") === planId);
                           const planIsSystem = isSystemSubscriptionPlan(plan);
                           const planSource = planIsSystem ? "System" : (plan.plan_key === "free" ? "Manual" : (plan.checkout_type === "manual" ? "Manual" : "Paystack"));
                           return (
                             <tr
                               key={planId || planKey}
-                              className={isSelected ? "active-row" : ""}
                               role="button"
                               tabIndex={0}
                               onClick={() => {
@@ -9363,7 +9521,7 @@ function AdminStorefrontDashboard({
                                 <div className="user-cell">
                                   <div className="avatar-initial" data-tone={plan.featured ? "primary" : (plan.plan_key === "free" ? "soft" : "accent")}>{generateInitials(plan.name)}</div>
                                   <div>
-                                    <strong>{plan.name} {planIsSystem ? <span className="chip draft">System</span> : null}</strong>
+                                    <strong>{plan.name}</strong>
                                     <span>{splitFeatureList(plan.features || "").slice(0, 2).join(" • ") || plan.note || "Managed subscription plan"}</span>
                                   </div>
                                 </div>
@@ -9373,15 +9531,9 @@ function AdminStorefrontDashboard({
                               <td>{formatNumber(plan.users)}</td>
                               <td><span className={`chip ${formatPlanStatusTone(plan.status)}`}>{formatStatusLabel(plan.status || "active")}</span></td>
                               <td><span className={`chip ${planSource === "Paystack" ? "processing" : "draft"}`}>{planSource}</span></td>
-                              <td>
-                                <div className="user-actions">
-                                  <button className="btn btn-soft" type="button" onClick={(event) => { event.stopPropagation(); openSubscriptionDetails(plan); }}>View details</button>
-                                  <button className="btn btn-outline" type="button" onClick={(event) => { event.stopPropagation(); setSelectedSubscriptionPlanKey(planKey); setSelectedSubscriptionPlanId(planId); openSubscriptionModal("edit", plan); }}>Edit</button>
-                                </div>
-                              </td>
                             </tr>
                           );
-                        }) : <tr><td colSpan="7" className="muted">No subscription plans match the current search.</td></tr>}
+                        }) : <tr><td colSpan="6" className="muted">No subscription plans match the current search.</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -9557,9 +9709,9 @@ function AdminStorefrontDashboard({
                                 <button type="button" onClick={() => setSubscriptionPriceEditing(false)}>Cancel</button>
                               </> : <>
                                 <span>{selectedSubscriptionPlan.price || (selectedSubscriptionPlan.amount != null ? formatMoney(selectedSubscriptionPlan.amount, selectedSubscriptionPlan.currency || "NGN") : "NGN 0")}</span>
-                                <button className="subscription-inline-edit-button" type="button" aria-label="Edit subscription price" onClick={() => setSubscriptionPriceEditing(true)}>
+                                {!isFreeSubscriptionPlan(selectedSubscriptionPlan) ? <button className="subscription-inline-edit-button" type="button" aria-label="Edit subscription price" onClick={() => setSubscriptionPriceEditing(true)}>
                                   <HugeiconsIcon icon={PencilEdit02Icon} size={17} strokeWidth={1.8} />
-                                </button>
+                                </button> : null}
                               </>}
                             </dd>
                           </div>
@@ -9599,32 +9751,23 @@ function AdminStorefrontDashboard({
                       </div>
                       <div className="table-scroll subscription-plan-users-table">
                         <table>
-                          <thead><tr><th>User</th><th>Status</th><th>Date joined</th></tr></thead>
+                          <thead><tr><th>Full name</th><th>Email address</th><th>Status</th><th>Date joined</th></tr></thead>
                           <tbody>
                             {visibleSubscriptionUsers.length ? visibleSubscriptionUsers.map((row, index) => {
                               const userName = row.name || row.full_name || row.display_name || row.email || "Subscriber";
-                              const avatarUrl = row.avatar_url || row.avatarUrl || row.profile_image || "";
                               return <tr key={row.id || row.ref || `${userName}-${index}`}>
-                                <td><div className="customer-list-profile">
-                                  <span className="customer-list-avatar">{avatarUrl ? <img src={avatarUrl} alt="" /> : getNameInitials(userName, "SU")}</span>
-                                  <span><strong>{userName}</strong><small>{row.email || row.user_email || "—"}</small></span>
-                                </div></td>
+                                <td><strong>{userName}</strong></td>
+                                <td>{row.email || row.user_email || "—"}</td>
                                 <td><span className={`chip ${adminStatusTone(row.status || row.subscription_status || row.statusTone || "active")}`}>{row.status || row.subscription_status || "Active"}</span></td>
                                 <td>{formatDate(row.joined_at || row.date_joined || row.created_at || row.subscription_started_at, true)}</td>
                               </tr>;
-                            }) : <tr><td colSpan="3" className="muted">No users are currently assigned to this plan.</td></tr>}
+                            }) : <tr><td colSpan="4" className="muted">No users are currently assigned to this plan.</td></tr>}
                           </tbody>
                         </table>
                       </div>
                     </section>}
                   </div>
 
-                  <footer className="modal-actions subscription-plan-details-actions" aria-label="Subscription plan actions">
-                    <button className="subscription-details-pill subscription-details-pill-danger" type="button" disabled={Boolean(subscriptionDetailsActionLoading) || isSystemSubscriptionPlan(selectedSubscriptionPlan)} onClick={() => deleteSubscriptionPlan(selectedSubscriptionPlan)}>
-                      {subscriptionDetailsActionLoading === "delete" || subscriptionDeleteLoading ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
-                      <span>{subscriptionDetailsActionLoading === "delete" || subscriptionDeleteLoading ? "Deleting..." : "Delete subscription plan"}</span>
-                    </button>
-                  </footer>
                 </article>
             </div>,
             document.body
@@ -10012,6 +10155,7 @@ function AdminStorefrontDashboard({
 
           
         </aside> : null}
+        {!isEmbeddedDashboard && sidebarOpen ? <button className="storefront-sidebar-scrim" type="button" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} /> : null}
 
         <main className="main-shell">
           <header className="topbar">
@@ -10019,8 +10163,9 @@ function AdminStorefrontDashboard({
               <button className="icon-button mobile-only" type="button" aria-label="Toggle navigation" onClick={() => setSidebarOpen((prev) => !prev)}>
                 <InlineIcon id="i-menu" />
               </button>
+              <h1 className="topbar-page-title" key={`page-title-${currentPage}`}>{currentPageTitle}</h1>
               {showPageSearch && (
-                <label className="search-field" htmlFor="globalSearch">
+                <label className="search-field topbar-search-field" htmlFor="globalSearch" key={`page-search-${currentPage}`}>
                   <InlineIcon id="i-search" />
                   <input
                     id="globalSearch"
@@ -10129,7 +10274,10 @@ function AdminStorefrontDashboard({
                               const itemCount = Array.isArray(order.items_summary || order.items) ? (order.items_summary || order.items).length : 0;
                               const paymentStatus = normalizedPaymentStatus(order);
                               const rxStatus = order.rx_status || (order.prescription_id ? "pending" : "not needed");
-                              const nextAction = paymentStatus === "pending"
+                              const orderStatus = normalizeOrderQueueValue(order.status);
+                              const nextAction = ["cancelled", "failed", "refunded"].includes(orderStatus)
+                                ? "No further action"
+                                : paymentStatus === "pending"
                                 ? "Verify payment"
                                 : ["on_hold", "on-hold", "awaiting-prescription"].includes(String(rxStatus).toLowerCase())
                                   ? "Review prescription"
@@ -10271,17 +10419,17 @@ function AdminStorefrontDashboard({
                       </div>
                     </div>
                   </div>
-                  <div className="table-scroll">
+                  <div className="table-scroll" role="tabpanel" aria-label="Orders">
                     <table>
                       <thead>
                         <tr>
-                          <th>Order</th>
-                          <th>Type</th>
-                          <th>Patient</th>
-                          <th>Product mix</th>
-                          <th>Prescription</th>
-                          <th>Price</th>
-                          <th>Status</th>
+                          {sortableHeader("orders", "order", "Order")}
+                          {sortableHeader("orders", "type", "Type")}
+                          {sortableHeader("orders", "patient", "Patient")}
+                          {sortableHeader("orders", "products", "Product mix")}
+                          {sortableHeader("orders", "prescription", "Prescription")}
+                          {sortableHeader("orders", "price", "Price")}
+                          {sortableHeader("orders", "status", "Status")}
                           <th>Actions</th>
                         </tr>
                       </thead>
@@ -10317,7 +10465,7 @@ function AdminStorefrontDashboard({
                               <td>
                                 <div className="table-action-strip">
                                   <button className="icon-button table-action-button" type="button" title={getOrderDocumentType(order) === "receipt" ? "Print receipt" : "Print invoice"} aria-label={`${getOrderDocumentType(order) === "receipt" ? "Print receipt" : "Print invoice"} for order #${order.number}`} disabled={tableActionLoading === `print-${order.id}`} onClick={(event) => { event.stopPropagation(); printOrderDocumentFromRow(order); }}>{tableActionLoading === `print-${order.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-printer" />}</button>
-                                  <button className="icon-button table-action-button" type="button" title="Send receipt" aria-label={`Send receipt for order #${order.number}`} disabled={tableActionLoading === `send-${order.id}`} onClick={(event) => { event.stopPropagation(); sendOrderReceiptFromRow(order); }}>{tableActionLoading === `send-${order.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-mail" />}</button>
+                                  <button className="icon-button table-action-button" type="button" title={`Send ${getOrderDocumentType(order)}`} aria-label={`Send ${getOrderDocumentType(order)} for order #${order.number}`} disabled={tableActionLoading === `send-${order.id}`} onClick={(event) => { event.stopPropagation(); sendOrderReceiptFromRow(order); }}>{tableActionLoading === `send-${order.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-mail" />}</button>
                                   <button className="icon-button table-action-button danger" type="button" title="Delete order" aria-label={`Delete order #${order.number}`} disabled={tableActionLoading === `delete-${order.id}`} onClick={(event) => { event.stopPropagation(); deleteOrderFromRow(order); }}>{tableActionLoading === `delete-${order.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-trash" />}</button>
                                 </div>
                               </td>
@@ -10352,8 +10500,8 @@ function AdminStorefrontDashboard({
                   cards={[
                     { label: "Month revenue", value: formatMetricNaira(sales.month || 0), note: "WooCommerce revenue this month", icon: "moneyBag" },
                     { label: "Today revenue", value: formatMetricNaira(sales.today || 0), note: "Verified payments processed today", icon: "moneyReceive" },
-                    { label: "Completed payments", value: formatNumber(paymentRows.filter((row) => row.paymentStatus === "completed").length), note: "Successfully processed payments", icon: "check" },
-                    { label: "Payment exceptions", value: formatNumber(paymentRows.filter((row) => ["failed", "refunded"].includes(row.paymentStatus)).length), note: "Failed or refunded payments", icon: "alert" },
+                    { label: "Completed payments", value: formatNumber(allPaymentRows.filter((row) => row.paymentStatus === "completed").length), note: "Successfully processed payments", icon: "check" },
+                    { label: "Payment exceptions", value: formatNumber(allPaymentRows.filter((row) => ["failed", "refunded"].includes(row.paymentStatus)).length), note: "Failed or refunded payments", icon: "alert" },
                   ]}
                 />
                 <section className="table-panel dashboard-table-shell payments-table-shell">
@@ -10378,12 +10526,12 @@ function AdminStorefrontDashboard({
                     <table className="payments-table">
                       <thead>
                         <tr>
-                          <th className="order-col">Order</th>
-                          <th className="customer-col">Patient</th>
-                          <th className="created-col">Created</th>
-                          <th className="amount-col">Amount</th>
-                          <th className="payment-col">Payment</th>
-                          <th className="rx-col">RX state</th>
+                          {sortableHeader("payments", "order", "Order", "order-col")}
+                          {sortableHeader("payments", "patient", "Patient", "customer-col")}
+                          {sortableHeader("payments", "created", "Created", "created-col")}
+                          {sortableHeader("payments", "amount", "Amount", "amount-col")}
+                          {sortableHeader("payments", "payment", "Payment", "payment-col")}
+                          {sortableHeader("payments", "rx", "RX state", "rx-col")}
                           <th className="action-col">Action</th>
                         </tr>
                       </thead>
@@ -10415,9 +10563,9 @@ function AdminStorefrontDashboard({
                             <td className="rx-col"><StatusPill value={row.rxStatus}>{row.rxStatus}</StatusPill></td>
                             <td className="action-col">
                               <div className="table-action-strip">
-                                <button className="icon-button table-action-button" type="button" title="Print receipt" aria-label={`Print receipt for order #${row.number}`} disabled={tableActionLoading === `print-${row.id}`} onClick={(event) => { event.stopPropagation(); printOrderReceiptFromRow(row.sourceOrder); }}>{tableActionLoading === `print-${row.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-printer" />}</button>
-                                <button className="icon-button table-action-button" type="button" title="Download receipt" aria-label={`Download receipt for order #${row.number}`} disabled={tableActionLoading === `download-${row.id}`} onClick={(event) => { event.stopPropagation(); downloadOrderReceiptFromRow(row.sourceOrder); }}>{tableActionLoading === `download-${row.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-download" />}</button>
-                                <button className="icon-button table-action-button" type="button" title="Send receipt" aria-label={`Send receipt for order #${row.number}`} disabled={tableActionLoading === `send-${row.id}`} onClick={(event) => { event.stopPropagation(); sendOrderReceiptFromRow(row.sourceOrder); }}>{tableActionLoading === `send-${row.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-mail" />}</button>
+                                <button className="icon-button table-action-button" type="button" title={`Print ${getOrderDocumentType(row.sourceOrder)}`} aria-label={`Print ${getOrderDocumentType(row.sourceOrder)} for order #${row.number}`} disabled={tableActionLoading === `print-${row.id}`} onClick={(event) => { event.stopPropagation(); printOrderReceiptFromRow(row.sourceOrder); }}>{tableActionLoading === `print-${row.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-printer" />}</button>
+                                <button className="icon-button table-action-button" type="button" title={`Download ${getOrderDocumentType(row.sourceOrder)}`} aria-label={`Download ${getOrderDocumentType(row.sourceOrder)} for order #${row.number}`} disabled={tableActionLoading === `download-${row.id}`} onClick={(event) => { event.stopPropagation(); downloadOrderReceiptFromRow(row.sourceOrder); }}>{tableActionLoading === `download-${row.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-download" />}</button>
+                                <button className="icon-button table-action-button" type="button" title={`Send ${getOrderDocumentType(row.sourceOrder)}`} aria-label={`Send ${getOrderDocumentType(row.sourceOrder)} for order #${row.number}`} disabled={tableActionLoading === `send-${row.id}`} onClick={(event) => { event.stopPropagation(); sendOrderReceiptFromRow(row.sourceOrder); }}>{tableActionLoading === `send-${row.id}` ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-mail" />}</button>
                               </div>
                             </td>
                           </tr>
@@ -10457,12 +10605,12 @@ function AdminStorefrontDashboard({
                     <table>
                       <thead>
                         <tr>
-                          <th>Patient</th>
-                          <th className="narrow-col">Orders</th>
-                          <th>Spend</th>
-                          <th className="narrow-col">Appointments</th>
-                          <th>Last activity</th>
-                          <th>Status</th>
+                          {sortableHeader("customers", "patient", "Patient")}
+                          {sortableHeader("customers", "orders", "Orders", "narrow-col")}
+                          {sortableHeader("customers", "spend", "Spend")}
+                          {sortableHeader("customers", "appointments", "Appointments", "narrow-col")}
+                          {sortableHeader("customers", "activity", "Last activity")}
+                          {sortableHeader("customers", "status", "Status")}
                           <th>Actions</th>
                         </tr>
                       </thead>
@@ -10525,15 +10673,15 @@ function AdminStorefrontDashboard({
 
             {currentPage === "consultations" && (
               <section className="page-view active">
-                <AdminPageHeading title={`${formatStatusLabel(consultationFilter)} consultations`} />
+                <AdminPageHeading title="Consultations" />
                 <AdminMetricCards
                   ariaLabel="Consultation metrics and filters"
                   loading={consultationsLoading}
                   cards={[
-                    { key: "all", label: "All consultations", value: formatNumber(consultationCounts.all || 0), note: "All visible consultations", icon: "clipboard", active: consultationFilter === "all", onClick: () => setConsultationFilter("all") },
-                    { key: "upcoming", label: "Upcoming", value: formatNumber(consultationCounts.upcoming || 0), note: "Consultations scheduled ahead", icon: "calendar", active: consultationFilter === "upcoming", onClick: () => setConsultationFilter("upcoming") },
-                    { key: "past", label: "Past", value: formatNumber(consultationCounts.past || 0), note: "Consultations that have ended", icon: "check", active: consultationFilter === "past", onClick: () => setConsultationFilter("past") },
-                    { key: "ongoing", label: "Ongoing", value: formatNumber(consultationCounts.ongoing || 0), note: "Consultations currently in progress", icon: "activity", active: consultationFilter === "ongoing", onClick: () => setConsultationFilter("ongoing") },
+                    { key: "all", label: "All consultations", value: formatNumber(consultationCounts.all || 0), note: "All visible consultations", icon: "clipboard" },
+                    { key: "upcoming", label: "Upcoming", value: formatNumber(consultationCounts.upcoming || 0), note: "Consultations scheduled ahead", icon: "calendar" },
+                    { key: "past", label: "Past", value: formatNumber(consultationCounts.past || 0), note: "Consultations that have ended", icon: "check" },
+                    { key: "ongoing", label: "Ongoing", value: formatNumber(consultationCounts.ongoing || 0), note: "Consultations currently in progress", icon: "activity" },
                   ]}
                 />
                 <section className="consultation-table">
@@ -10542,12 +10690,12 @@ function AdminStorefrontDashboard({
                       <table className="consultations-table">
                         <thead>
                           <tr>
-                            <th>Patient</th>
-                            <th>Doctor</th>
-                            <th>Type</th>
-                            <th>Status</th>
-                            <th>Starts</th>
-                            <th>Ends</th>
+                            {sortableHeader("consultations", "patient", "Patient")}
+                            {sortableHeader("consultations", "doctor", "Doctor")}
+                            {sortableHeader("consultations", "type", "Type")}
+                            {sortableHeader("consultations", "status", "Status")}
+                            {sortableHeader("consultations", "starts", "Starts")}
+                            {sortableHeader("consultations", "ends", "Ends")}
                           </tr>
                         </thead>
                         <tbody>
@@ -10615,13 +10763,13 @@ function AdminStorefrontDashboard({
                       <table>
                         <thead>
                           <tr>
-                            <th>Request</th>
-                            <th>Patient</th>
-                            <th>Pharmacist</th>
-                            <th>Status</th>
-                            <th>Submitted</th>
-                            <th>Scheduled</th>
-                            <th>Attendance</th>
+                            {sortableHeader("mtm", "request", "Request")}
+                            {sortableHeader("mtm", "patient", "Patient")}
+                            {sortableHeader("mtm", "pharmacist", "Pharmacist")}
+                            {sortableHeader("mtm", "status", "Status")}
+                            {sortableHeader("mtm", "submitted", "Submitted")}
+                            {sortableHeader("mtm", "scheduled", "Scheduled")}
+                            {sortableHeader("mtm", "attendance", "Attendance")}
                           </tr>
                         </thead>
                         <tbody>
@@ -10683,13 +10831,13 @@ function AdminStorefrontDashboard({
                       <table>
                         <thead>
                           <tr>
-                            <th>Request</th>
-                            <th>Patient</th>
-                            <th>Phone</th>
-                            <th>Therapy types</th>
-                            <th>Consent</th>
-                            <th>Submitted</th>
-                            <th>Status</th>
+                            {sortableHeader("iv-therapy", "request", "Request")}
+                            {sortableHeader("iv-therapy", "patient", "Patient")}
+                            {sortableHeader("iv-therapy", "phone", "Phone")}
+                            {sortableHeader("iv-therapy", "therapies", "Therapy types")}
+                            {sortableHeader("iv-therapy", "consent", "Consent")}
+                            {sortableHeader("iv-therapy", "submitted", "Submitted")}
+                            {sortableHeader("iv-therapy", "status", "Status")}
                           </tr>
                         </thead>
                         <tbody>
@@ -10745,28 +10893,29 @@ function AdminStorefrontDashboard({
                 />
                 <section className="table-panel dashboard-table-shell products-table-shell">
                   <div className="panel-header products-panel-header">
-                    <div className="filter-bar products-segmented-bar" aria-label="Products and categories view">
+                    <div className="filter-bar products-segmented-bar nevari-storefront-tabs" role="tablist" aria-label="Products and categories view">
                       {[
                         ["products", "All products", formatNumber((data.products || []).length)],
                         ["categories", "Categories", formatNumber(productCategoryRows.length)]
                       ].map(([key, label, count]) => (
-                        <button className={`filter-btn ${productCatalogView === key ? "active" : ""}`} type="button" key={key} onClick={() => startTransition(() => setProductCatalogView(key))}>
+                        <button className={`filter-btn ${productCatalogView === key ? "active" : ""}`} type="button" role="tab" aria-selected={productCatalogView === key} key={key} onClick={() => startTransition(() => setProductCatalogView(key))}>
                           {label} <span className="filter-count">{count}</span>
                         </button>
                       ))}
                     </div>
                   </div>
                   {productCatalogView === "products" ? <>
-                  <div className="filter-bar products-filter-bar" aria-label="Product list filters">
+                  <div className="filter-bar products-filter-bar nevari-storefront-tabs" role="tablist" aria-label="Product list filters">
                     {[
                       ["all", "All"],
                       ["published", "Published"],
                       ["draft", "Draft"],
                       ["in_stock", "In stock"],
                       ["out_of_stock", "Out of stock"],
-                      ["on_sale", "On sale"]
+                      ["on_sale", "On sale"],
+                      ["trash", "Trash"]
                     ].map(([key, label]) => (
-                      <button className={`filter-btn ${productListFilter === key ? "active" : ""}`} type="button" key={key} onClick={() => setProductListFilter(key)}>
+                      <button className={`filter-btn ${productListFilter === key ? "active" : ""}`} type="button" role="tab" aria-selected={productListFilter === key} key={key} onClick={() => setProductListFilter(key)}>
                         {label} <span className="filter-count">{formatNumber(productFilterCounts[key] || 0)}</span>
                       </button>
                     ))}
@@ -10779,21 +10928,21 @@ function AdminStorefrontDashboard({
                       <button className="products-bulk-delete" type="button" onClick={deleteSelectedProductsBulk}>Delete selected</button>
                     </div>
                   ) : null}
-                  <div className="table-scroll">
+                  <div className="table-scroll" role="tabpanel" aria-label="Products">
                     <table className="products-table">
                       <thead>
                         <tr>
                           <th className="bulk-check-col"><input className="bulk-check" type="checkbox" checked={allVisibleProductsSelected} aria-label="Select all products" onChange={toggleVisibleProductSelection} /></th>
                           <th className="image-col">Image</th>
-                          <th> Name</th>
-                          <th className="sku-col">SKU</th>
-                          <th>Stock</th>
-                          <th className="price-col">Price</th>
-                          <th>Categories</th>
-                          <th>Tags</th>
-                          <th>Brands</th>
+                          {sortableHeader("products", "name", "Name")}
+                          {sortableHeader("products", "sku", "SKU", "sku-col")}
+                          {sortableHeader("products", "stock", "Stock", "stock-col")}
+                          {sortableHeader("products", "price", "Price", "price-col")}
+                          {sortableHeader("products", "categories", "Categories", "categories-col")}
+                          {sortableHeader("products", "tags", "Tags")}
+                          {sortableHeader("products", "brands", "Brands")}
                           <th className="featured-col">★</th>
-                          <th>Date</th>
+                          {sortableHeader("products", "date", "Date")}
                         </tr>
                       </thead>
                       <tbody>
@@ -10822,6 +10971,7 @@ function AdminStorefrontDashboard({
                           const stockQuantity = getProductStockQuantity(product);
                           const stockDisplay = getProductStockDisplay(product);
                           const isDraftProduct = getProductStatus(product) === "draft";
+                          const isTrashedProduct = getProductStatus(product) === "trash" || productListFilter === "trash";
                           const tags = getProductTags(product);
                           const brands = getProductBrands(product);
                           return (
@@ -10832,26 +10982,28 @@ function AdminStorefrontDashboard({
                                 <div className="product-name-wrap">
                                   <button className="table-link" type="button" onClick={() => openProductEditModal(product)}>{product.name || `Product #${product.id}`}</button>
                                   <div className="row-actions" aria-label={`Actions for ${product.name || `Product ${product.id}`}`}>
-                                    <button type="button" onClick={() => openProductEditModal(product)}>Edit</button>
-                                    <a href={actionLinks.viewHref} target="_blank" rel="noreferrer">View</a>
-                                    <button type="button" disabled={duplicatingProductId === product.id} onClick={() => duplicateProduct(product)}>{duplicatingProductId === product.id ? "Duplicating..." : "Duplicate"}</button>
-                                    <button className="row-action-trash" type="button" disabled={duplicatingProductId === product.id} onClick={() => trashProduct(product)}>Trash</button>
+                                    {isTrashedProduct ? <button type="button" disabled={restoringProductId === product.id} onClick={() => restoreProduct(product)}>{restoringProductId === product.id ? "Restoring..." : "Restore"}</button> : <>
+                                      <button type="button" onClick={() => openProductEditModal(product)}>Edit</button>
+                                      <a href={actionLinks.viewHref} target="_blank" rel="noreferrer">View</a>
+                                      <button type="button" disabled={duplicatingProductId === product.id} onClick={() => duplicateProduct(product)}>{duplicatingProductId === product.id ? "Duplicating..." : "Duplicate"}</button>
+                                      <button className="row-action-trash" type="button" disabled={duplicatingProductId === product.id} onClick={() => trashProduct(product)}>Trash</button>
+                                    </>}
                                   </div>
                                 </div>
                               </td>
                               <td className="sku-col">{product.sku || "n/a"}</td>
-                              <td>
-                                <div className="table-title">
+                              <td className="stock-col">
+                                <div className="table-title product-stock-summary">
                                   <StatusPill value={stockDisplay.tone}>{stockDisplay.label}</StatusPill>
-                                  <span className="muted">{stockQuantity === null ? "Qty unavailable" : `${formatNumber(stockQuantity)} in inventory`}</span>
+                                  <span className="muted">{stockQuantity === null ? "Qty unavailable" : `${formatNumber(stockQuantity)} left`}</span>
                                 </div>
                               </td>
                               <td className="price-col">{getProductPriceLabel(product, storeCurrency)}</td>
-                              <td>{getProductCategories(product)}</td>
+                              <td className="categories-col"><span className="product-category-summary" title={getProductCategories(product)}>{getProductCategories(product)}</span></td>
                               <td>{tags || "—"}</td>
                               <td>{brands || "—"}</td>
                               <td className="featured-col">
-                                <button type="button" className={`featured-toggle ${isFeaturedProduct(product) ? "active" : ""}`} aria-label={`Featured status for ${product.name || `Product ${product.id}`}`}>
+                                <button type="button" className={`featured-toggle ${isFeaturedProduct(product) ? "active" : ""}`} aria-label={`${isFeaturedProduct(product) ? "Remove" : "Mark"} ${product.name || `Product ${product.id}`} ${isFeaturedProduct(product) ? "from" : "as"} featured`} aria-pressed={isFeaturedProduct(product)} onClick={() => toggleFeaturedProduct(product)}>
                                   ★
                                 </button>
                               </td>
@@ -10877,7 +11029,7 @@ function AdminStorefrontDashboard({
                     </div>
                     <div className="pagination-summary">Showing {filteredProducts.length ? `${formatNumber(((activeProductPage - 1) * productsPerPage) + 1)}-${formatNumber(Math.min(activeProductPage * productsPerPage, filteredProducts.length))}` : "0"} of {formatNumber(filteredProducts.length)} products</div>
                   </div>
-                  </> : <div className="product-categories-pane">
+                  </> : <div className="product-categories-pane" role="tabpanel" aria-label="Categories">
                     <aside className="product-categories-sidebar">
                       <div className="product-categories-pane-head">
                         <div>
@@ -10895,26 +11047,51 @@ function AdminStorefrontDashboard({
                           </button>
                         </div>
                       </div>
+                      <label className="product-category-directory-search">
+                        <span className="sr-only">Search product categories</span>
+                        <input value={categoryDirectorySearch} onChange={(event) => setCategoryDirectorySearch(event.target.value)} placeholder="Search categories" />
+                      </label>
                       <div className="product-category-list" role="tablist" aria-label="Product categories">
-                        {productCategoryRows.length ? productCategoryRows.map((category) => (
-                          <button
-                            className={`product-category-row ${selectedCategory?.name === category.name ? "active" : ""}`}
-                            type="button"
-                            role="tab"
-                            aria-selected={selectedCategory?.name === category.name}
-                            key={category.key}
-                            onClick={() => startTransition(() => setSelectedProductCategoryName(category.name))}
-                          >
-                            <div>
-                              <strong>{category.name}</strong>
-                              <span>{formatNumber(category.productCount)} products linked</span>
+                        {paginatedCategoryDirectoryRows.length ? paginatedCategoryDirectoryRows.map((category) => {
+                          const isSelected = selectedCategory?.name === category.name;
+                          const isEditing = isSelected && categoryInlineField === "directory-name";
+                          const isDefaultCategory = normalizeCategoryKey(category.name) === "uncategorized";
+                          return <article className={`product-category-row ${isSelected ? "active" : ""}`} key={category.key}>
+                            {isEditing ? (
+                              <div className="product-category-directory-editor">
+                                <input
+                                  ref={categoryNameInputRef}
+                                  value={categoryEditDraft.name}
+                                  maxLength={80}
+                                  aria-label={`Edit ${category.name}`}
+                                  onChange={(event) => setCategoryEditDraft((current) => ({ ...current, name: event.target.value }))}
+                                  onBlur={() => saveCategoryEdit("name")}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
+                                    if (event.key === "Escape") { setCategoryEditDraft({ name: category.name, pricePerMinute: "" }); setCategoryInlineField(""); }
+                                  }}
+                                />
+                                {categoryMutationLoading === "edit-category" ? <span className="category-saving-spinner" role="status" aria-label="Saving category" /> : null}
+                              </div>
+                            ) : (
+                              <button className="product-category-row-main" type="button" role="tab" aria-selected={isSelected} onClick={() => startTransition(() => setSelectedProductCategoryName(category.name))}>
+                                <strong>{category.name}</strong>
+                              </button>
+                            )}
+                            <div className="product-category-row-actions" aria-label={`Actions for ${category.name}`}>
+                              <button type="button" disabled={!category.permalink} onClick={() => category.permalink && window.open(category.permalink, "_blank", "noopener,noreferrer")}>View</button>
+                              <button type="button" onClick={() => { setSelectedProductCategoryName(category.name); setCategoryEditDraft({ name: category.name, pricePerMinute: "" }); setCategoryInlineField("directory-name"); }}>Quick edit</button>
+                              {!isDefaultCategory ? <button className="danger" type="button" onClick={() => setCategoryDeleteTarget(category)}>Delete</button> : null}
                             </div>
-                            <div className="product-category-row-price">
-                              {formatCategoryPricing(category.price)}
-                          
-                            </div>
-                          </button>
-                        )) : <div className="empty-card compact-empty"><div className="card-title">No product categories available.</div></div>}
+                          </article>;
+                        }) : <div className="empty-card compact-empty"><div className="card-title">No product categories match this search.</div></div>}
+                      </div>
+                      <div className="pagination-row product-category-directory-pagination">
+                        <div className="pagination">
+                          <button className="page-item" type="button" disabled={activeCategoryDirectoryPage === 1} onClick={() => setCategoryDirectoryPage((prev) => Math.max(1, prev - 1))}>Prev</button>
+                          <span className="pagination-summary">Page {activeCategoryDirectoryPage} of {categoryDirectoryPageCount}</span>
+                          <button className="page-item" type="button" disabled={activeCategoryDirectoryPage === categoryDirectoryPageCount} onClick={() => setCategoryDirectoryPage((prev) => Math.min(categoryDirectoryPageCount, prev + 1))}>Next</button>
+                        </div>
                       </div>
                     </aside>
                     <section className="product-categories-content">
@@ -10927,6 +11104,8 @@ function AdminStorefrontDashboard({
                                 <input
                                   ref={categoryNameInputRef}
                                   className="product-category-inline-input product-category-name-input"
+                                  aria-label="Category name"
+                                  maxLength={80}
                                   value={categoryEditDraft.name}
                                   onChange={(event) => setCategoryEditDraft((prev) => ({ ...prev, name: event.target.value }))}
                                   onBlur={() => saveCategoryEdit("name")}
@@ -10944,51 +11123,17 @@ function AdminStorefrontDashboard({
                                 {categoryMutationLoading === "edit-category" ? <span className="category-saving-spinner" aria-label="Saving category name" role="status" /> : null}
                               </div>
                             ) : (
-                              <button className="product-category-inline-trigger product-category-name-trigger" type="button" onClick={() => setCategoryInlineField("name")}>
+                              <button className="product-category-inline-trigger product-category-name-trigger" type="button" aria-label={`Edit category name ${selectedCategory.name}`} onClick={() => setCategoryInlineField("name")}>
                                 <strong>{selectedCategory.name}</strong>
                                 <InlineIcon id="i-pencil" />
                               </button>
                             )
                           ) : <h3>Select a category</h3>}
                         </div>
-                        <div className="product-category-price-chip product-category-inline-group">
-                          <span>Per {minimumConsultationLabel}</span>
-                          {selectedCategory ? (
-                            categoryInlineField === "price" ? (
-                              <div className="product-category-price-editor">
-                                <span className="product-category-currency">{storeCurrency}</span>
-                                <input
-                                  ref={categoryPriceInputRef}
-                                  className="product-category-inline-input product-category-price-input"
-                                  type="number"
-                                  step="0.01"
-                                  value={categoryEditDraft.pricePerMinute}
-                                  onChange={(event) => setCategoryEditDraft((prev) => ({ ...prev, pricePerMinute: event.target.value }))}
-                                  onBlur={() => saveCategoryEdit("price")}
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Enter") {
-                                      event.preventDefault();
-                                      saveCategoryEdit("price");
-                                    }
-                                    if (event.key === "Escape") {
-                                      setCategoryEditDraft((prev) => ({ ...prev, pricePerMinute: String(selectedCategory.price || "") }));
-                                      setCategoryInlineField("");
-                                    }
-                                  }}
-                                />
-                              </div>
-                            ) : (
-                              <button className="product-category-inline-trigger product-category-price-trigger" type="button" onClick={() => setCategoryInlineField("price")}>
-                                {formatCategoryPricing(selectedCategory.price)}
-                                <InlineIcon id="i-pencil" />
-                              </button>
-                            )
-                          ) : <strong>Not set</strong>}
-                          {categorySaveNotice ? <small className="product-category-save-notice">{categorySaveNotice}</small> : null}
-                        </div>
+                        {categorySaveNotice ? <small className="product-category-save-notice">{categorySaveNotice}</small> : null}
                       </div>
                       {selectedCategory ? <>
-                        <section className="product-category-doctor-strip-card" data-component="DoctorAssignmentSection">
+                        {CATEGORY_DOCTOR_ASSIGNMENT_ENABLED ? <section className="product-category-doctor-strip-card" data-component="DoctorAssignmentSection">
                           <div className="panel-header product-category-products-header">
                             
                             <span className="pagination-summary">{formatNumber(assignedCategoryDoctorRows.length)} assigned</span>
@@ -11058,20 +11203,20 @@ function AdminStorefrontDashboard({
                               <div className="card-title">No doctors assigned yet. Search to add one.</div>
                             </div>
                           )}
-                        </section>
+                        </section> : null}
                         
                         <div className="product-category-products">
                           <div className="panel-header product-category-products-header">
                             <div>
                           
                               
-                              <p className="product-category-section-copy">Manage products attached to this consultation category.</p>
+                              <p className="product-category-section-copy">Manage products assigned to this category.</p>
                               <div className="product-category-searchbar">
                             
                           <label className="product-category-searchfield product-category-searchfield-inline">
                             
                             <InlineIcon id="i-search" />
-                            <input value={categoryProductSearch} onChange={(event) => setCategoryProductSearch(event.target.value)} placeholder="Search product name to add" />
+                            <input aria-label={`Search products to add to ${selectedCategory.name}`} value={categoryProductSearch} onChange={(event) => setCategoryProductSearch(event.target.value)} placeholder="Search product name to add" />
                           </label>
                         {categorySearchQuery ? <div className="product-category-add-results">
                           {categoryProductCandidates.length ? categoryProductCandidates.map((product) => {
@@ -11094,21 +11239,11 @@ function AdminStorefrontDashboard({
                           <div className="product-category-linked-list">
                             {paginatedSelectedCategoryProducts.length ? paginatedSelectedCategoryProducts.map((product) => (
                               <article className="product-category-product-card" key={`linked-${product.id}`}>
-                                <button
-                                  className="product-category-product-remove"
-                                  type="button"
-                                  aria-label={`Remove ${product.name || "product"} from ${selectedCategory.name}`}
-                                  disabled={categoryAssignmentLoading === `${product.id}:${selectedCategory.name}:remove`}
-                                  onClick={() => removeProductFromCategory(product, selectedCategory)}
-                                >
-                                  <InlineIcon id="i-x" />
-                                </button>
                                 <div className="product-thumb">{getProductImage(product) ? <img src={getProductImage(product)} alt={product.name || "Product"} /> : <InlineIcon id="i-pill" />}</div>
-                                <div className="table-title">
+                                <div className="table-title product-category-product-details">
                                   <strong>{product.name || `Product #${product.id}`}</strong>
-                                  <span>{product.sku || "No SKU"} • {getProductPriceLabel(product, storeCurrency)}</span>
+                                  <span className="product-category-product-price">{getProductPriceLabel(product, storeCurrency)}</span>
                                 </div>
-                                <StatusPill value={getProductStatus(product)}>{formatStatusLabel(getProductStatus(product))}</StatusPill>
                               </article>
                             )) : <div className="empty-card compact-empty"><div className="card-title">No products linked to this category yet.</div></div>}
                           </div>
@@ -11309,6 +11444,7 @@ function AdminStorefrontDashboard({
 
             {currentPage === "audit" && (
               <section className="page-view active">
+                <AdminPageHeading title="Audit Center" />
                 <section className="panel audit-panel">
                   <div className="panel-header audit-header">
                     <div>
@@ -11336,12 +11472,14 @@ function AdminStorefrontDashboard({
                       </label>
                     </div>
                   </div>
-                  <div className="audit-tabs">
+                  <div className="audit-tabs nevari-storefront-tabs" role="tablist" aria-label="Audit categories">
                     {["orders", "payments", "security", "consultation", "emails"].map((category) => (
                       <button
                         key={category}
                         className={`audit-tab ${category === audit.category ? "active" : ""}`}
                         type="button"
+                        role="tab"
+                        aria-selected={category === audit.category}
                         onClick={() => setAudit((prev) => ({ ...prev, category }))}
                       >
                         {category.toUpperCase()}
@@ -11395,6 +11533,7 @@ function AdminStorefrontDashboard({
 
             {currentPage === "settings" && (
               <section className="page-view active">
+                <AdminPageHeading title="Settings" />
                 <section className="page-surface admin-settings-surface">
                   <div className="segmented-mini admin-settings-tabs" role="tablist" aria-label="Settings groups">
                     {ADMIN_SETTINGS_TABS.map((tab) => (
@@ -11428,25 +11567,26 @@ function AdminStorefrontDashboard({
                       <div className="settings-form-grid">
                         <label className="field-card span-12">
                           <span>External meeting service endpoint</span>
-                          <input value={appointmentSettings.externalMeetingServiceUrl} onChange={(event) => setAppointmentSettings((current) => ({ ...current, externalMeetingServiceUrl: event.target.value }))} />
+                          <input value={appointmentSettings.externalMeetingServiceUrl} readOnly />
                         </label>
                         <label className="field-card span-6 customer-toggle-row">
                           <span>Google Meet integration</span>
-                          <input type="checkbox" checked={appointmentSettings.googleMeetEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, googleMeetEnabled: event.target.checked }))} />
+                          <input type="checkbox" checked={appointmentSettings.googleMeetEnabled} disabled />
                         </label>
                         <label className="field-card span-6 customer-toggle-row">
                           <span>{appointmentSettings.livePaymentsEnabled ? "Live payments enabled" : "Test mode enabled"}</span>
-                          <input type="checkbox" checked={appointmentSettings.livePaymentsEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, livePaymentsEnabled: event.target.checked }))} />
+                          <input type="checkbox" checked={appointmentSettings.livePaymentsEnabled} disabled />
                         </label>
                         <label className="field-card span-6 customer-toggle-row">
                           <span>Idempotency protection</span>
-                          <input type="checkbox" checked={appointmentSettings.idempotencyProtection} onChange={(event) => setAppointmentSettings((current) => ({ ...current, idempotencyProtection: event.target.checked }))} />
+                          <input type="checkbox" checked={appointmentSettings.idempotencyProtection} disabled />
                         </label>
                         <label className="field-card span-6 customer-toggle-row">
                           <span>API key rotation</span>
-                          <input type="checkbox" checked={appointmentSettings.apiKeyRotationEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, apiKeyRotationEnabled: event.target.checked }))} />
+                          <input type="checkbox" checked={appointmentSettings.apiKeyRotationEnabled} disabled />
                         </label>
                       </div>
+                      <p className="settings-panel-note">Automation and payment runtime values are deployment configuration and are read-only here.</p>
                     </section>
 
                     <section className={`settings-panel ${adminSettingsTab === "reminders" ? "active" : ""}`} data-settings-panel="reminders">
@@ -11457,31 +11597,32 @@ function AdminStorefrontDashboard({
                         </div>
                       </div>
                       <div className="settings-form-grid">
-                        <label className="efield-card span-4 customer-toggle-row">
+                        <label className="field-card span-4 customer-toggle-row">
                           <span>Email notifications enabled</span>
-                          <input type="checkbox" checked={appointmentSettings.emailNotificationsEnabled} onChange={(event) => setAppointmentSettings((current) => ({ ...current, emailNotificationsEnabled: event.target.checked }))} />
+                          <input type="checkbox" checked={appointmentSettings.emailNotificationsEnabled} disabled />
                         </label>
-                        <label className="efield-card span-4">
+                        <label className="field-card span-4">
                           <span>Primary reminder (minutes before)</span>
-                          <input type="number" min="1" value={appointmentSettings.reminderMinutesPrimary} onChange={(event) => setAppointmentSettings((current) => ({ ...current, reminderMinutesPrimary: event.target.value }))} />
+                          <input type="number" value={appointmentSettings.reminderMinutesPrimary} readOnly />
                         </label>
-                        <label className="efield-card span-4">
+                        <label className="field-card span-4">
                           <span>Secondary reminder (minutes before)</span>
-                          <input type="number" min="1" value={appointmentSettings.reminderMinutesSecondary} onChange={(event) => setAppointmentSettings((current) => ({ ...current, reminderMinutesSecondary: event.target.value }))} />
+                          <input type="number" value={appointmentSettings.reminderMinutesSecondary} readOnly />
                         </label>
-                        <label className="efield-card span-4">
+                        <label className="field-card span-4">
                           <span>SMTP host</span>
-                          <input value={appointmentSettings.smtpHost} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpHost: event.target.value }))} />
+                          <input value={appointmentSettings.smtpHost} readOnly />
                         </label>
-                        <label className="efield-card span-4">
+                        <label className="field-card span-4">
                           <span>SMTP port</span>
-                          <input value={appointmentSettings.smtpPort} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpPort: event.target.value }))} />
+                          <input value={appointmentSettings.smtpPort} readOnly />
                         </label>
-                        <label className="efield-card span-4">
+                        <label className="field-card span-4">
                           <span>Sender address</span>
-                          <input value={appointmentSettings.smtpSender} onChange={(event) => setAppointmentSettings((current) => ({ ...current, smtpSender: event.target.value }))} />
+                          <input value={appointmentSettings.smtpSender} readOnly />
                         </label>
                       </div>
+                      <p className="settings-panel-note">Reminder delivery and SMTP values are server configuration and are read-only here.</p>
                     </section>
 
                     <section className={`settings-panel ${adminSettingsTab === "pricing" ? "active" : ""}`} data-settings-panel="pricing">
@@ -11493,17 +11634,13 @@ function AdminStorefrontDashboard({
                       </div>
                       <div className="settings-form-grid">
                         <label className="field-card span-4">
-                          <span>Minimum consultation minutes</span>
-                          <input type="number" min="5" value={appointmentSettings.minimumConsultationMinutes} onChange={(event) => setAppointmentSettings((current) => ({ ...current, minimumConsultationMinutes: event.target.value }))} />
+                          <span>Global consultation fee ({storeCurrency})</span>
+                          <input type="number" min="1" value={globalConsultationFee} onChange={(event) => setGlobalConsultationFee(event.target.value)} />
                         </label>
-                        <label className="field-card span-4">
-                          <span>General category price</span>
-                          <input value={appointmentSettings.categoryPricing.general} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, general: event.target.value } }))} />
-                        </label>
-                        <label className="field-card span-4">
-                          <span>Cardiology category price</span>
-                          <input value={appointmentSettings.categoryPricing.cardiology} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, cardiology: event.target.value } }))} />
-                        </label>
+                      </div>
+                      <div className="settings-panel-actions">
+                        <button className="button-primary" type="button" disabled={globalConsultationFeeLoading} onClick={saveGlobalConsultationFee}>{globalConsultationFeeLoading ? "Saving..." : "Save pricing"}</button>
+                        <span className={globalConsultationFeeFeedback ? "form-feedback" : "muted"} role="status" aria-live="polite">{globalConsultationFeeFeedback || "This fee applies across consultation bookings."}</span>
                       </div>
                     </section>
 
@@ -11517,15 +11654,15 @@ function AdminStorefrontDashboard({
                       <div className="settings-form-grid">
                         <label className="field-card span-4 customer-toggle-row">
                           <span>Global two-step verification</span>
-                          <input type="checkbox" checked={authSecuritySettings.globalTwoStepVerification} onChange={(event) => setAuthSecuritySettings((current) => ({ ...current, globalTwoStepVerification: event.target.checked }))} />
+                          <input type="checkbox" checked disabled />
                         </label>
                         <label className="field-card span-4 customer-toggle-row">
                           <span>Role permissions locked</span>
-                          <input type="checkbox" checked={appointmentSettings.rolePermissionsLocked} onChange={(event) => setAppointmentSettings((current) => ({ ...current, rolePermissionsLocked: event.target.checked }))} />
+                          <input type="checkbox" checked disabled />
                         </label>
                         <label className="field-card span-4">
                           <span>Audit log retention (days)</span>
-                          <input type="number" min="7" value={appointmentSettings.auditLogRetention} onChange={(event) => setAppointmentSettings((current) => ({ ...current, auditLogRetention: event.target.value }))} />
+                          <input type="number" value={appointmentSettings.auditLogRetention} readOnly aria-describedby="audit-retention-note" />
                         </label>
                         <label className="field-card span-4">
                           <span>Visible consultations</span>
@@ -11540,7 +11677,7 @@ function AdminStorefrontDashboard({
                           <input value={formatNumber(emailItems[0]?.value || 0)} readOnly />
                         </label>
                       </div>
-                      <p className="settings-panel-note">When enabled, all customer, doctor, pharmacist, and admin sign-in forms request an email OTP challenge after credentials are accepted.</p>
+                      <p className="settings-panel-note" id="audit-retention-note">Two-step verification and role safeguards are enforced by the server. Audit retention is shown for reference until its maintenance job is connected.</p>
                     </section>
                   </div>
                 </section>
@@ -11814,7 +11951,7 @@ function AdminStorefrontDashboard({
                                     <button className="order-create-quantity-add" type="button" aria-label={`Increase quantity for ${productName}`} onClick={() => updateOrderCreateItem(index, { quantity: Number(item.quantity || 1) + 1 })}>+</button>
                                   </div>
                                 </td>
-                                <td className="order-create-item-price">{formatMoney((getProductPrice(product, "sale_price") || getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0) * Number(item.quantity || 1), storeCurrency)}</td>
+                                <td className="order-create-item-price">{formatMoney(getEffectiveProductPrice(product) * Number(item.quantity || 1), storeCurrency)}</td>
                                 <td><button className="icon-button order-create-remove-item" type="button" aria-label={`Remove ${productName}`} onClick={() => removeOrderCreateItem(index)}><InlineIcon id="i-x" /></button></td>
                               </tr>;
                             })}
@@ -11834,7 +11971,7 @@ function AdminStorefrontDashboard({
                         <span>Subtotal <strong>{formatMoney(orderCreateItems.reduce((total, item) => {
                           const product = popupOrderProducts.find((entry) => String(entry.id) === String(item.productId))
                             || (data.products || []).find((entry) => String(entry.id) === String(item.productId));
-                          const price = getProductPrice(product, "sale_price") || getProductPrice(product, "regular_price") || getProductPrice(product, "price") || 0;
+                          const price = getEffectiveProductPrice(product);
                           return total + (Number(price) * Number(item.quantity || 1));
                         }, 0), storeCurrency)}</strong></span>
                       </div>
@@ -11858,7 +11995,7 @@ function AdminStorefrontDashboard({
                             const productName = product.name || `Product #${productId}`;
                             const productImage = getProductImage(product);
                             const stockDisplay = getProductStockDisplay(product);
-                            const productMeta = [product.sku, getProductCategories(product), getProductBrands(product), getProductPrice(product, "regular_price") ? formatMoney(getProductPrice(product, "regular_price"), storeCurrency) : "", stockDisplay.label]
+                            const productMeta = [product.sku, getProductCategories(product), getProductBrands(product), getEffectiveProductPrice(product) ? formatMoney(getEffectiveProductPrice(product), storeCurrency) : "", stockDisplay.label]
                               .filter(Boolean)
                               .join(" • ");
                             return (
@@ -11951,9 +12088,13 @@ function AdminStorefrontDashboard({
                   <div className="toolbar order-modal-topbar-actions">
                     <button className="pill-button order-header-action-button" type="button" onClick={printSelectedOrder} disabled={orderMutationLoading}>
                       {orderMutationAction === "print" ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
-                      <span>Print</span>
+                      <span>Print {getOrderDocumentType(selectedOrderDetail)}</span>
                     </button>
-                    <button className="pill-button order-header-action-button" type="button" onClick={refundSelectedOrder} disabled={orderMutationLoading}>
+                    <button className="pill-button order-header-action-button" type="button" onClick={downloadSelectedOrderDocument} disabled={orderMutationLoading}>
+                      {orderMutationAction === "download" ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-download" />}
+                      <span>Download {getOrderDocumentType(selectedOrderDetail)}</span>
+                    </button>
+                    <button className="pill-button order-header-action-button" type="button" onClick={refundSelectedOrder} disabled={orderMutationLoading || normalizedPaymentStatus(selectedOrderDetail) !== "completed"}>
                       {orderMutationAction === "refund" ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
                       <span>Refund</span>
                     </button>
@@ -11965,7 +12106,7 @@ function AdminStorefrontDashboard({
                         onChange={(event) => setSelectedOrderStatus(event.target.value)}
                         disabled={orderMutationLoading}
                       >
-                        {["pending", "awaiting-doctor", "awaiting-prescription", "processing", "in-delivery", "on-hold", "completed", "cancelled", "failed", "refunded"].map((status) => (
+                        {orderStatusOptions(selectedOrderDetail).map((status) => (
                           <option key={status} value={status}>{formatStatusLabel(status)}</option>
                         ))}
                       </select>
@@ -12077,8 +12218,8 @@ function AdminStorefrontDashboard({
                   {(selectedOrderDetail.items || []).some((item) => htmlToTextMessage(item.product_prescription)) ? (
                     <section className="order-product-prescriptions" aria-labelledby="order-product-prescriptions-title">
                       <div>
-                        <p className="section-kicker">Prescriptions</p>
-                        <h4 id="order-product-prescriptions-title">Product prescriptions</h4>
+                        <p className="section-kicker">Product guidance</p>
+                        <h4 id="order-product-prescriptions-title">Product instructions</h4>
                       </div>
                       <div className="order-product-prescription-list">
                         {(selectedOrderDetail.items || []).filter((item) => htmlToTextMessage(item.product_prescription)).map((item) => (
@@ -12364,10 +12505,10 @@ function AdminStorefrontDashboard({
         <div className="app-modal-stack">
           <div className="app-modal-layer app-modal-layer-top is-open">
             <ModalScrim className="app-modal-backdrop" label="Close payment receipt" onDismiss={closePaymentReceiptModal} />
-            <section className="detail-section stacked-order-popup receipt-popup receipt-popup-redesign admin-surface-modal modal-frame detail-frame detail-flat-modal payment-receipt-detail-modal" role="dialog" aria-modal="true" aria-label={`Receipt for order #${selectedPaymentReceipt.number}`}>
+            <section className="detail-section stacked-order-popup receipt-popup receipt-popup-redesign admin-surface-modal modal-frame detail-frame detail-flat-modal payment-receipt-detail-modal" role="dialog" aria-modal="true" aria-label={`${getOrderDocumentType(selectedPaymentReceipt) === "receipt" ? "Receipt" : "Invoice"} for order #${selectedPaymentReceipt.number}`}>
             <div className="receipt-hero modal-head">
               <div>
-                <p className="section-kicker">Payment receipt</p>
+                <p className="section-kicker">Payment {getOrderDocumentType(selectedPaymentReceipt) === "receipt" ? "receipt" : "invoice"}</p>
                 <h3>Order #{selectedPaymentReceipt.number}</h3>
                 <div className="receipt-meta-row">
                   <span>{customerFullName(selectedPaymentReceipt)}</span>
@@ -12387,17 +12528,21 @@ function AdminStorefrontDashboard({
             <div className="app-modal-scroll modal-body">
             <div className="receipt-command-bar">
               <div>
-                <span>Total paid</span>
+                <span>{getOrderDocumentType(selectedPaymentReceipt) === "receipt" ? "Total paid" : "Amount due"}</span>
                 <strong>{formatMoney(selectedPaymentReceipt.total || 0, storeCurrency)}</strong>
               </div>
               <div className="receipt-command-actions">
                 <button className="pill-button" type="button" onClick={printPaymentReceipt} disabled={Boolean(receiptActionLoading)}>
                   {receiptActionLoading === "print" ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-printer" />}
-                  {receiptActionLoading === "print" ? "Preparing..." : "Print"}
+                  {receiptActionLoading === "print" ? "Preparing..." : `Print ${getOrderDocumentType(selectedPaymentReceipt)}`}
+                </button>
+                <button className="pill-button" type="button" onClick={downloadPaymentDocument} disabled={Boolean(receiptActionLoading)}>
+                  {receiptActionLoading === "download" ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-download" />}
+                  {receiptActionLoading === "download" ? "Preparing..." : `Download ${getOrderDocumentType(selectedPaymentReceipt)}`}
                 </button>
                 <button className="button-primary receipt-send-button" type="button" onClick={sendPaymentReceipt} disabled={Boolean(receiptActionLoading) || !customerEmail(selectedPaymentReceipt)}>
                   {receiptActionLoading === "send" ? <span className="category-saving-spinner" aria-hidden="true" /> : <InlineIcon id="i-mail" />}
-                  {receiptActionLoading === "send" ? "Sending..." : "Send Receipt"}
+                  {receiptActionLoading === "send" ? "Sending..." : `Send ${getOrderDocumentType(selectedPaymentReceipt) === "receipt" ? "Receipt" : "Invoice"}`}
                 </button>
               </div>
             </div>
@@ -12456,7 +12601,7 @@ function AdminStorefrontDashboard({
               <div className="panel-header">
                 <div>
                   <p className="section-kicker">Line items</p>
-                  <h3>Receipt items</h3>
+                  <h3>{getOrderDocumentType(selectedPaymentReceipt) === "receipt" ? "Receipt" : "Invoice"} items</h3>
                 </div>
               </div>
               <div className="receipt-items">
@@ -12479,7 +12624,7 @@ function AdminStorefrontDashboard({
                       </div>
                     </div>
                   </article>
-                )) : <div className="muted">No line items available on this receipt.</div>}
+                )) : <div className="muted">No line items available on this {getOrderDocumentType(selectedPaymentReceipt)}.</div>}
               </div>
             </div>
 
@@ -12488,12 +12633,12 @@ function AdminStorefrontDashboard({
 
             <div className="stacked-order-popup-actions receipt-footer-actions modal-actions">
               <button className="pill-button" type="button" onClick={printPaymentReceipt} disabled={Boolean(receiptActionLoading)}>
-                {receiptActionLoading === "print" ? "Preparing..." : "Print Receipt"}
+                {receiptActionLoading === "print" ? "Preparing..." : `Print ${getOrderDocumentType(selectedPaymentReceipt) === "receipt" ? "Receipt" : "Invoice"}`}
               </button>
               <div className="receipt-footer-actions-end">
                 <button className="pill-button" type="button" onClick={closePaymentReceiptModal}>Close</button>
                 <button className="button-primary" type="button" onClick={sendPaymentReceipt} disabled={Boolean(receiptActionLoading) || !customerEmail(selectedPaymentReceipt)}>
-                  {receiptActionLoading === "send" ? "Sending..." : "Email Receipt"}
+                  {receiptActionLoading === "send" ? "Sending..." : `Email ${getOrderDocumentType(selectedPaymentReceipt) === "receipt" ? "Receipt" : "Invoice"}`}
                 </button>
               </div>
             </div>
@@ -12571,7 +12716,7 @@ function AdminStorefrontDashboard({
                                       <div className="product-create-details-primary">
                                         <label className="creation-field product-create-name-row">
                                           <span>Product name</span>
-                                          <input className="form-control" value={productEditForm.title} placeholder="e.g. Loratadine 10mg" onBlur={() => setProductCreateValidationStep("identity")} onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.title)} />
+                                          <input className="form-control" value={productEditForm.title} placeholder="e.g. Loratadine 10mg" onBlur={() => { setProductCreateValidationStep("identity"); setProductCreateTouched((current) => ({ ...current, title: true })); }} onChange={(event) => setProductEditForm((prev) => ({ ...prev, title: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.title)} />
                                           {productCreateStepErrors.title ? <small className="field-error">{productCreateStepErrors.title}</small> : null}
                                         </label>
                                         <div className="creation-field product-create-primary-image-field product-create-images-widget">
@@ -12606,7 +12751,7 @@ function AdminStorefrontDashboard({
                                             ))}
                                             {productEditMedia.length < 6 ? (
                                               <button className="product-create-images-add" type="button" disabled={productMediaUploading || productEditLoading} onClick={() => triggerProductMediaUpload("append")}>
-                                                <InlineIcon id="i-upload" />
+                                                <img className="product-create-empty-placeholder" src="/product-image-placeholder.png" alt="" />
                                                 <span>Add images</span>
                                               </button>
                                             ) : null}
@@ -12619,7 +12764,7 @@ function AdminStorefrontDashboard({
                                             <span>Unit price</span>
                                             <div className="product-create-money-field">
                                               <span aria-hidden="true">{productEditorCurrencySymbol}</span>
-                                              <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.regularPrice} onBlur={() => setProductCreateValidationStep("identity")} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.regularPrice)} />
+                                              <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.regularPrice} onBlur={() => { setProductCreateValidationStep("identity"); setProductCreateTouched((current) => ({ ...current, regularPrice: true })); }} onChange={(event) => setProductEditForm((prev) => ({ ...prev, regularPrice: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.regularPrice)} />
                                             </div>
                                             {productCreateStepErrors.regularPrice ? <small className="field-error">{productCreateStepErrors.regularPrice}</small> : null}
                                           </label>
@@ -12627,7 +12772,7 @@ function AdminStorefrontDashboard({
                                             <span>Sales price</span>
                                             <div className="product-create-money-field">
                                               <span aria-hidden="true">{productEditorCurrencySymbol}</span>
-                                              <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.salePrice} onBlur={() => setProductCreateValidationStep("identity")} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.salePrice)} />
+                                              <input className="form-control" type="number" min="0" step="0.01" value={productEditForm.salePrice} onBlur={() => { setProductCreateValidationStep("identity"); setProductCreateTouched((current) => ({ ...current, salePrice: true })); }} onChange={(event) => setProductEditForm((prev) => ({ ...prev, salePrice: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.salePrice)} />
                                             </div>
                                             {productCreateStepErrors.salePrice ? <small className="field-error">{productCreateStepErrors.salePrice}</small> : null}
                                           </label>
@@ -12635,7 +12780,7 @@ function AdminStorefrontDashboard({
                                       </div>
                                       <label className="creation-field product-create-description-column">
                                         <span>Short description</span>
-                                        <textarea className="form-control" rows={2} maxLength={160} placeholder="Add a short customer-friendly description" value={productEditForm.shortDescription} onBlur={() => setProductCreateValidationStep("identity")} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.shortDescription)} />
+                                        <textarea className="form-control" rows={2} maxLength={160} placeholder="Add a short customer-friendly description" value={productEditForm.shortDescription} onChange={(event) => setProductEditForm((prev) => ({ ...prev, shortDescription: event.target.value }))} />
                                         <small className={productCreateStepErrors.shortDescription ? "field-error" : "field-hint"}>
                                           {productCreateStepErrors.shortDescription || `${productEditForm.shortDescription.length}/160`}
                                         </small>
@@ -12656,7 +12801,7 @@ function AdminStorefrontDashboard({
                                     <div className="creation-field-row creation-field-row-two full-width">
                                       <label className="creation-field">
                                         <span>Stock quantity</span>
-                                        <input className="form-control" type="number" min="0" value={productEditForm.stockQuantity} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} />
+                                        <input className="form-control" type="number" min="0" value={productEditForm.stockQuantity} onBlur={() => { setProductCreateValidationStep("commerce"); setProductCreateTouched((current) => ({ ...current, stockQuantity: true })); }} onChange={(event) => setProductEditForm((prev) => ({ ...prev, stockQuantity: event.target.value }))} aria-invalid={Boolean(productCreateStepErrors.stockQuantity)} />
                                         {productCreateStepErrors.stockQuantity ? <small className="field-error">{productCreateStepErrors.stockQuantity}</small> : null}
                                       </label>
                                       <label className="creation-field">
@@ -12669,9 +12814,8 @@ function AdminStorefrontDashboard({
                                       <div className="creation-field">
                                         <span>Categories</span>
                                         <div className="product-create-tag-picker">
-                                          <input className="form-control" list="product-create-category-options" value={productEditSearch.categories || ""} placeholder="Type to search categories" onChange={(event) => setProductEditSearch((prev) => ({ ...prev, categories: event.target.value }))} />
+                                          <input className="form-control" list="product-create-category-options" value={productEditSearch.categories || ""} placeholder="Choose an existing category" onBlur={() => { setProductCreateValidationStep("commerce"); setProductCreateTouched((current) => ({ ...current, category: true })); }} onChange={(event) => handleProductTermChange("categories", event.target.value)} onKeyDown={(event) => handleProductTermKeyDown("categories", event)} />
                                           <datalist id="product-create-category-options">{productCategoryOptions.filter((option) => !productEditForm.categories.includes(option)).map((option) => <option key={option} value={option} />)}</datalist>
-                                          <button className="pill-button" type="button" disabled={!productCategoryOptions.includes(productEditSearch.categories)} onClick={() => addProductTerm("categories")}>Add</button>
                                         </div>
                                         <div className="product-create-chip-row">{productEditForm.categories.map((category) => <button key={category} className="product-create-chip" type="button" aria-label={`Remove category ${category}`} onClick={() => toggleProductTerm("categories", category)}><span>{category}</span><InlineIcon id="i-x" /></button>)}</div>
                                         {productCreateStepErrors.category ? <small className="field-error">{productCreateStepErrors.category}</small> : null}
@@ -12679,9 +12823,8 @@ function AdminStorefrontDashboard({
                                       <div className="creation-field">
                                         <span>Tags</span>
                                         <div className="product-create-tag-picker">
-                                          <input className="form-control" list="product-create-tag-options" value={productEditSearch.tags || ""} placeholder="Type to search tags" onChange={(event) => setProductEditSearch((prev) => ({ ...prev, tags: event.target.value }))} />
+                                          <input className="form-control" list="product-create-tag-options" value={productEditSearch.tags || ""} placeholder="Type a tag, then press Enter or comma" onChange={(event) => handleProductTermChange("tags", event.target.value)} onKeyDown={(event) => handleProductTermKeyDown("tags", event)} />
                                           <datalist id="product-create-tag-options">{productTagOptions.filter((option) => !productEditForm.tags.includes(option)).map((option) => <option key={option} value={option} />)}</datalist>
-                                          <button className="pill-button" type="button" disabled={!productTagOptions.includes(productEditSearch.tags)} onClick={() => addProductTerm("tags")}>Add</button>
                                         </div>
                                         <div className="product-create-chip-row">{productEditForm.tags.map((tag) => <button key={tag} className="product-create-chip" type="button" aria-label={`Remove tag ${tag}`} onClick={() => toggleProductTerm("tags", tag)}><span>{tag}</span><InlineIcon id="i-x" /></button>)}</div>
                                         {productCreateStepErrors.tags ? <small className="field-error">{productCreateStepErrors.tags}</small> : null}
@@ -12711,11 +12854,6 @@ function AdminStorefrontDashboard({
                                       </div>
                                       <small className="field-hint">A sanitized snapshot is stored with every purchased order item and included in customer emails.</small>
                                       {productCreateStepErrors.prescriptionContent ? <small className="field-error">{productCreateStepErrors.prescriptionContent}</small> : null}
-                                      <label className="product-create-multiple">
-                                        <input type="checkbox" checked={createMultiple} onChange={(event) => setCreateMultiple(event.target.checked)} />
-                                        <span>Create multiple</span>
-                                        <small>Publish and start a new product</small>
-                                      </label>
                                     </div>
                                   </div>
                                 </div>
@@ -12792,7 +12930,7 @@ function AdminStorefrontDashboard({
                                           })}
                                         </div>
                                       ) : (
-                                        <div className="product-create-gallery-empty">No gallery images uploaded yet.</div>
+                                        <div className="product-create-gallery-empty"><img src="/product-image-placeholder.png" alt="" /><span>No gallery images uploaded yet.</span></div>
                                       )}
                                     </section>
                                   </div>
@@ -13164,16 +13302,17 @@ function AdminStorefrontDashboard({
                 </div>
 
                 <div className="product-editor-footer modal-actions">
-                  {productEditorMode === "create" ? <div /> : <button className="pill-button danger product-delete-button" type="button" onClick={deleteSelectedProduct} disabled={productEditLoading}>Delete Product</button>}
+                  {productEditorMode === "create" ? (
+                    productCreateStep > 0
+                      ? <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={() => setProductCreateStep((prev) => Math.max(0, prev - 1))}>Go back</button>
+                      : <div />
+                  ) : <button className="pill-button danger product-delete-button" type="button" onClick={deleteSelectedProduct} disabled={productEditLoading}>Delete Product</button>}
                   <div className="product-editor-footer-layout">
                     <div className="product-editor-footer-multiple" aria-hidden="true" />
                     <div className="product-editor-footer-end">
                       <div className="stacked-order-popup-actions product-editor-actions">
                         {productEditorMode === "create" ? (
                           <>
-                            {productCreateStep > 0 ? (
-                              <button className="pill-button product-cancel-button" type="button" disabled={productEditLoading} onClick={() => setProductCreateStep((prev) => Math.max(0, prev - 1))}>Go back</button>
-                            ) : <div />}
                             <button className="pill-button product-draft-button" type="submit" data-intent="draft" disabled={productEditLoading || productMediaUploading}>
                               {productEditLoading ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
                               <span>{productEditLoading ? "Saving..." : "Save draft"}</span>
@@ -13189,6 +13328,12 @@ function AdminStorefrontDashboard({
                                 <span>{productEditLoading ? "Saving..." : "Publish"}</span>
                               </button>
                             )}
+                            {productCreateStep === PRODUCT_CREATE_STEPS.length - 1 ? (
+                              <label className="product-create-multiple product-create-multiple-footer">
+                                <input type="checkbox" checked={createMultiple} onChange={(event) => setCreateMultiple(event.target.checked)} />
+                                <span>Create multiple</span>
+                              </label>
+                            ) : null}
                           </>
                         ) : (
                         <>
@@ -13231,7 +13376,10 @@ function AdminStorefrontDashboard({
                       <p className="muted popup-support-copy detail-field-wide">Loading consultation dependencies...</p>
                     ) : null}
                     {(consultationCreateDoctorsQuery.error || consultationCreatePatientsQuery.error || consultationCreateAppointmentsQuery.error) ? (
-                      <p className="muted popup-support-copy detail-field-wide">Some consultation dependencies could not be loaded. Existing cached options are shown where available.</p>
+                      <div className="mutation-error-panel detail-field-wide" role="alert">
+                        <p>Some consultation dependencies could not be loaded. Reload them before creating an appointment.</p>
+                        <button className="pill-button" type="button" onClick={() => Promise.all([consultationCreateDoctorsQuery.mutate(), consultationCreatePatientsQuery.mutate(), consultationCreateAppointmentsQuery.mutate()])}>Retry loading</button>
+                      </div>
                     ) : null}
 
                     <section className="consultation-design-card consultation-design-form-card">
@@ -13438,7 +13586,7 @@ function AdminStorefrontDashboard({
                             isAvailable: true
                           }))}
                         >
-                          {USER_ACCOUNT_ROLES.filter(([role]) => role !== "administrator" || (session.user?.roles || []).includes("administrator")).map(([role, label]) => <option key={role} value={role}>{label}</option>)}
+                          {USER_ACCOUNT_ROLES.map(([role, label]) => <option key={role} value={role}>{label}</option>)}
                         </select>
                       </div>
                     </label>
@@ -13488,7 +13636,8 @@ function AdminStorefrontDashboard({
                       {["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role) ? (
                         <label className="detail-field">
                           <span>License number</span>
-                          <input value={userAccountCreateForm.licenseNumber} maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, licenseNumber: event.target.value }))} />
+                          <input value={userAccountCreateForm.licenseNumber} maxLength={40} required onBlur={() => setUserAccountTouched((previous) => ({ ...previous, licenseNumber: true }))} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, licenseNumber: event.target.value }))} aria-invalid={Boolean(userAccountTouched.licenseNumber && userAccountValidationErrors.licenseNumber)} />
+                          {userAccountTouched.licenseNumber && userAccountValidationErrors.licenseNumber ? <span className="field-error">{userAccountValidationErrors.licenseNumber}</span> : null}
                         </label>
                       ) : null}
                       {["doctor", "nurse"].includes(userAccountCreateForm.role) ? (
@@ -13509,22 +13658,21 @@ function AdminStorefrontDashboard({
                       ) : null}
                     </div>
 
-                    {["administrator", "store_admin"].includes(userAccountCreateForm.role) ? (
+                    {userAccountCreateForm.role === "store_admin" ? (
                       <section className="user-account-permissions">
                         <div>
                           <span className="user-account-field-title">Role-based dashboard access</span>
-                          <p>{userAccountCreateForm.role === "administrator" ? "Administrators receive every dashboard permission." : "Choose the dashboard areas available to this Store Manager."}</p>
+                          <p>Choose the dashboard areas available to this Store Manager.</p>
                         </div>
                         <div className="user-permission-grid">
                           {USER_PERMISSION_OPTIONS.map(([permission, label]) => {
-                            const administratorRole = userAccountCreateForm.role === "administrator";
-                            const selected = administratorRole || userAccountCreateForm.permissions.includes(permission);
+                            const selected = userAccountCreateForm.permissions.includes(permission);
                             return (
                               <label className={`user-permission-option ${selected ? "selected" : ""}`} key={permission}>
                                 <input
                                   type="checkbox"
                                   checked={selected}
-                                  disabled={administratorRole || !(session.user?.roles || []).includes("administrator")}
+                                  disabled={!(session.user?.roles || []).includes("administrator")}
                                   onChange={() => setUserAccountCreateForm((previous) => ({
                                     ...previous,
                                     permissions: selected ? previous.permissions.filter((item) => item !== permission) : [...previous.permissions, permission]
@@ -13624,34 +13772,6 @@ function AdminStorefrontDashboard({
                             </div>
                           </label>
                           <label className="detail-field detail-field-wide">
-                            <span>Product categories</span>
-                            {doctorCreateCategoriesQuery.isLoading ? <small className="product-field-note">Loading categories...</small> : null}
-                            {doctorCreateCategoriesQuery.error ? <small className="product-field-note">Category options could not be refreshed.</small> : null}
-                            <div className="assignment-search-field">
-                              <div className="product-term-chips">
-                                {selectedDoctorCreateCategories.length ? selectedDoctorCreateCategories.map((category) => (
-                                  <button className="product-chip removable-chip" key={category.id} type="button" aria-label={`Remove ${category.name}`} onClick={() => removeDoctorCreateCategory(category.id)}>
-                                    {category.name} <InlineIcon id="i-x" />
-                                  </button>
-                                )) : <span className="muted">No products assigned yet.</span>}
-                              </div>
-                              <input
-                                value={doctorCreateCategorySearch}
-                                onChange={(event) => setDoctorCreateCategorySearch(event.target.value)}
-                                placeholder="Search product categories to assign"
-                              />
-                              {doctorCreateCategorySearch ? (
-                                <div className="product-term-options assignment-search-results">
-                                  {availableDoctorCreateCategories.length ? availableDoctorCreateCategories.map((category) => (
-                                    <button className="product-term-option" type="button" key={category.id} onClick={() => addDoctorCreateCategory(category.id)}>
-                                      {category.name}
-                                    </button>
-                                  )) : <div className="consultation-search-empty">No matching categories.</div>}
-                                </div>
-                              ) : null}
-                            </div>
-                          </label>
-                          <label className="detail-field detail-field-wide">
                             <span>Bio</span>
                             <textarea rows={4} value={doctorCreateForm.bio} onChange={(event) => setDoctorCreateForm((prev) => ({ ...prev, bio: event.target.value }))} />
                           </label>
@@ -13723,8 +13843,8 @@ function AdminStorefrontDashboard({
                   <StatusPill value={selectedConsultation.status}>
                     {formatStatusLabel(selectedConsultation.status)}
                   </StatusPill>
-                  <button className="consultation-action-pill consultation-action-secondary" type="button" onClick={() => setSelectedConsultation(null)}>
-                    Close details
+                  <button className="icon-button" type="button" aria-label="Close consultation details" onClick={() => setSelectedConsultation(null)}>
+                    <InlineIcon id="i-x" />
                   </button>
                 </div>
               </header>
@@ -13832,18 +13952,12 @@ function AdminStorefrontDashboard({
               <footer className="consultation-details-actions" aria-label="Consultation actions">
                 <button className="consultation-action-pill consultation-action-secondary" type="button" onClick={() => runAppointmentAction("notes", { doctor_notes: consultationDetailForm.doctorNotes })} disabled={Boolean(consultationActionLoading)}>
                   {consultationActionLoading === "notes" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
-                  <span>{consultationActionLoading === "notes" ? "Saving notes..." : "Save doctor notes"}</span>
+                  <span>{consultationActionLoading === "notes" ? "Saving..." : "Save"}</span>
                 </button>
                 <button className="consultation-action-pill consultation-action-secondary" type="button" onClick={() => runAppointmentAction("reschedule", { start_at: consultationDetailForm.startAt, end_at: consultationDetailForm.endAt })} disabled={Boolean(consultationActionLoading) || !consultationDetailForm.startAt || !consultationDetailForm.endAt}>
                   {consultationActionLoading === "reschedule" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
-                  <span>{consultationActionLoading === "reschedule" ? "Rescheduling..." : "Reschedule consultation"}</span>
+                  <span>{consultationActionLoading === "reschedule" ? "Rescheduling..." : "Reschedule"}</span>
                 </button>
-                {selectedConsultation.status === "requested" ? (
-                  <button className="consultation-action-pill consultation-action-primary" type="button" onClick={() => runAppointmentAction("confirm")} disabled={Boolean(consultationActionLoading)}>
-                    {consultationActionLoading === "confirm" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
-                    <span>{consultationActionLoading === "confirm" ? "Confirming..." : "Confirm consultation"}</span>
-                  </button>
-                ) : null}
                 {!["completed", "cancelled", "no_show"].includes(selectedConsultation.status) ? (
                   <button className="consultation-action-pill consultation-action-primary" type="button" onClick={() => runAppointmentAction("complete", { doctor_notes: consultationDetailForm.doctorNotes })} disabled={Boolean(consultationActionLoading)}>
                     {consultationActionLoading === "complete" ? <span className="nevari-branded-spinner staff-button-spinner" aria-hidden="true" /> : null}
@@ -13963,7 +14077,6 @@ function AdminStorefrontDashboard({
                       <span>Consultation fee</span>
                       <strong>{formatMoney(selectedDoctorProfile.consultation_fee || 5000, storeCurrency)}</strong>
                     </div>
-                    <div className="detail-block customer-detail-wide"><span>Product categories</span><strong>{(selectedDoctorProfile.product_categories || []).map((item) => item.name).join(", ") || "No categories assigned"}</strong></div>
                   </div>
                   <div className="detail-section receipt-panel"><div className="panel-header"><div><p className="section-kicker">Linked patients</p><h3>Contacts</h3></div></div>{selectedDoctorPatients.length ? selectedDoctorPatients.map((patient) => <div className="signal-row" key={patient.id}><div><strong>{patient.name}</strong><span>{patient.email}</span></div><span className="status-pill info">{patient.source}</span></div>) : <div className="muted">No linked patients found.</div>}</div>
                 </div>
@@ -14274,13 +14387,14 @@ function AdminStorefrontDashboard({
             <form className="category-create-popup" role="dialog" aria-modal="true" aria-label="Create new category" onSubmit={saveNewCategory}>
               <div className="category-create-copy">
                 <h3>Create new category</h3>
-                <p>Add a new consultation product category.</p>
+                <p>Add a new product category.</p>
               </div>
               <label className="category-create-field">
                 <span>Category name</span>
                 <input
                   autoFocus
                   value={categoryCreateForm.name}
+                  maxLength={80}
                   onChange={(event) => setCategoryCreateForm((prev) => ({ ...prev, name: event.target.value }))}
                   onKeyDown={(event) => {
                     if (event.key === "Escape") {
@@ -14291,7 +14405,6 @@ function AdminStorefrontDashboard({
                   placeholder="Enter category name"
                 />
               </label>
-              <input type="hidden" value={categoryCreateForm.pricePerMinute} readOnly />
               {categoryMutationFeedback ? <p className="category-create-feedback">{categoryMutationFeedback}</p> : null}
               <div className="category-create-actions">
                 <button className="pill-button category-create-cancel" type="button" onClick={closeCategoryCreateForm}>Cancel</button>
@@ -14300,6 +14413,26 @@ function AdminStorefrontDashboard({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {categoryDeleteTarget ? (
+        <div className="app-modal-stack">
+          <div className="app-modal-layer app-modal-layer-top is-open">
+            <ModalScrim className="app-modal-backdrop" label="Close delete category confirmation" onDismiss={() => setCategoryDeleteTarget(null)} />
+            <section className="category-delete-popup" role="alertdialog" aria-modal="true" aria-labelledby="category-delete-title" aria-describedby="category-delete-description">
+              <div className="category-create-copy">
+                <h3 id="category-delete-title">Delete {categoryDeleteTarget.name}</h3>
+                <p id="category-delete-description">Deleting a category automatically assigns all its products to the Uncategorized category.</p>
+              </div>
+              <div className="category-create-actions">
+                <button className="pill-button category-create-cancel" type="button" disabled={categoryMutationLoading === "delete-category"} onClick={() => setCategoryDeleteTarget(null)}>Cancel</button>
+                <button className="button-primary category-delete-confirm" type="button" disabled={categoryMutationLoading === "delete-category"} onClick={deleteProductCategory}>
+                  {categoryMutationLoading === "delete-category" ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            </section>
           </div>
         </div>
       ) : null}
@@ -14330,9 +14463,9 @@ function AdminStorefrontDashboard({
             <div className="auth-card-body">
               <div className="auth-intro">
                 <img className="auth-logo" src="/ne.webp" alt="Storefront logo" />
-                <h1 className="auth-title">
+                <h2 className="auth-title">
                   {authView === "reset" ? "Reset your password" : authView === "verify" ? "Verify your login" : "Signin to your storefront"}
-                </h1>
+                </h2>
               </div>
               <section hidden={authGate.stage !== "auth"}>
                 {authView === "login" ? (

@@ -717,6 +717,23 @@ final class Nevari_Helpers {
         return gmdate('Y-m-d H:i:s', $timestamp);
     }
 
+    public static function normalize_appointment_datetime($value, string $timezone = 'UTC'): ?string {
+        if (!$value) {
+            return null;
+        }
+        $raw = trim((string) $value);
+        try {
+            $zone = new DateTimeZone($timezone ?: 'UTC');
+            $has_explicit_zone = (bool) preg_match('/(?:Z|[+-]\d{2}:?\d{2})$/i', $raw);
+            $date = $has_explicit_zone
+                ? new DateTimeImmutable($raw)
+                : new DateTimeImmutable($raw, $zone);
+            return $date->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        } catch (Exception $exception) {
+            return null;
+        }
+    }
+
     public static function iso_datetime($mysql_datetime): ?string {
         if (!$mysql_datetime) {
             return null;

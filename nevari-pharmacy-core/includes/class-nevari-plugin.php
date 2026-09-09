@@ -1216,8 +1216,6 @@ final class Nevari_Plugin {
             ]);
         }, 10, 1);
         add_action('woocommerce_checkout_order_processed', [$this, 'apply_initial_rx_order_status'], 20, 1);
-        add_action('woocommerce_checkout_order_processed', [$this, 'assign_doctor_and_send_order_emails'], 30, 1);
-        add_action('woocommerce_new_order', [$this, 'assign_doctor_and_send_order_emails'], 30, 1);
 
         add_action('woocommerce_order_status_changed', static function ($order_id, $old_status, $new_status) {
             Nevari_Audit::log('orders', 'woocommerce', 'order.status_changed', 'success', [
@@ -1445,13 +1443,14 @@ final class Nevari_Plugin {
             return;
         }
 
-        // Step 2: assign one doctor from the primary product categories by workload, seniority, then ID.
-        $doctor = $primary ? $this->choose_doctor_for_category_ids($primary['category_ids']) : null;
+        // Step 2: use the shared doctor pool. Product categories no longer control
+        // eligibility; workload and the existing round-robin tracker choose the doctor.
+        $doctor = $this->choose_doctor_round_robin();
         if ($doctor) {
             $this->assign_doctor_to_order($order, $doctor, $primary);
         } else {
             $order->update_meta_data('_nevari_order_assignment_processed', '1');
-            $order->add_order_note(__('No eligible doctor was found for the primary order product category.', 'nevari-pharmacy-core'));
+            $order->add_order_note(__('No eligible doctor was available for round-robin assignment.', 'nevari-pharmacy-core'));
             $order->save();
         }
 
@@ -1487,42 +1486,84 @@ final class Nevari_Plugin {
         return $best;
     }
 
-    private function choose_doctor_for_category_ids(array $category_ids): ?WP_User {
-        $category_ids = array_values(array_filter(array_map('intval', $category_ids)));
-        if (!$category_ids) {
-            return null;
-        }
-
+    private function choose_doctor_round_robin(): ?WP_User {
+        global $wpdb;
         $query = new WP_User_Query([
             'role' => 'doctor',
             'fields' => 'all',
             'number' => 200,
         ]);
-        $doctors = array_values(array_filter($query->get_results(), function ($doctor) use ($category_ids) {
+        $doctors = array_values(array_filter($query->get_results(), function ($doctor) use ($wpdb) {
             if (!$doctor instanceof WP_User || get_user_meta((int) $doctor->ID, '_nevari_doctor_disabled', true)) {
                 return false;
             }
-            $linked = array_map('intval', (array) get_user_meta((int) $doctor->ID, '_nevari_product_category_ids', true));
-            return (bool) array_intersect($category_ids, $linked);
+            $available = $wpdb->get_var($wpdb->prepare(
+                'SELECT is_available FROM ' . Nevari_Helpers::table('doctor_settings') . ' WHERE doctor_user_id = %d LIMIT 1',
+                (int) $doctor->ID
+            ));
+            return $available === null || (bool) $available;
         }));
         if (!$doctors) {
             return null;
         }
 
-        usort($doctors, function (WP_User $a, WP_User $b) {
-            // Lowest upcoming workload wins first; highest seniority breaks availability ties; ID gives deterministic rotation fallback.
+        $positions = ['specialist' => [], 'senior' => [], 'junior' => []];
+        foreach ($doctors as $doctor) {
+            $position = sanitize_key((string) $wpdb->get_var($wpdb->prepare(
+                'SELECT position FROM ' . Nevari_Helpers::table('doctor_settings') . ' WHERE doctor_user_id = %d LIMIT 1',
+                (int) $doctor->ID
+            )));
+            if (!isset($positions[$position])) {
+                $position = 'specialist';
+            }
+            $positions[$position][] = $doctor;
+        }
+
+        foreach (['specialist', 'senior', 'junior'] as $position) {
+            if (!$positions[$position]) {
+                continue;
+            }
+            $tracker_table = Nevari_Helpers::table('round_robin_tracker');
+            $last_id = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT last_doctor_id FROM {$tracker_table} WHERE doctor_level = %s LIMIT 1",
+                $position
+            ));
+            $ids = array_map(static fn(WP_User $doctor): int => (int) $doctor->ID, $positions[$position]);
+            sort($ids);
+            $last_index = array_search($last_id, $ids, true);
+            $last_index = $last_index === false ? -1 : $last_index;
+            $ranks = [];
+            foreach ($ids as $index => $id) {
+                $ranks[$id] = ($index - $last_index - 1 + 2 * count($ids)) % count($ids);
+            }
+            usort($positions[$position], function (WP_User $a, WP_User $b) use ($ranks) {
             $workload = $this->doctor_upcoming_consultations((int) $a->ID) <=> $this->doctor_upcoming_consultations((int) $b->ID);
             if ($workload !== 0) {
                 return $workload;
             }
-            $seniority = $this->doctor_seniority_level((int) $b->ID) <=> $this->doctor_seniority_level((int) $a->ID);
-            if ($seniority !== 0) {
-                return $seniority;
+                $rank = ($ranks[(int) $a->ID] ?? PHP_INT_MAX) <=> ($ranks[(int) $b->ID] ?? PHP_INT_MAX);
+                if ($rank !== 0) {
+                    return $rank;
+                }
+                return strcasecmp((string) $a->display_name, (string) $b->display_name);
+            });
+            $selected = $positions[$position][0] ?? null;
+            if ($selected instanceof WP_User) {
+                $existing = (int) $wpdb->get_var($wpdb->prepare("SELECT id FROM {$tracker_table} WHERE doctor_level = %s", $position));
+                $tracker = [
+                    'doctor_level' => $position,
+                    'last_doctor_id' => (int) $selected->ID,
+                    'updated_at' => Nevari_Helpers::now(),
+                ];
+                if ($existing) {
+                    $wpdb->update($tracker_table, $tracker, ['id' => $existing], ['%s', '%d', '%s'], ['%d']);
+                } else {
+                    $wpdb->insert($tracker_table, $tracker, ['%s', '%d', '%s']);
+                }
+                return $selected;
             }
-            return (int) $a->ID <=> (int) $b->ID;
-        });
-
-        return $doctors[0] ?? null;
+        }
+        return null;
     }
 
     private function doctor_upcoming_consultations(int $doctor_id): int {
@@ -1566,7 +1607,7 @@ final class Nevari_Plugin {
         $order->update_meta_data('_nevari_primary_product_id', (int) $primary['product_id']);
         $order->update_meta_data('_nevari_primary_product_name', sanitize_text_field((string) $primary['name']));
         $order->update_meta_data('_nevari_order_assignment_processed', '1');
-        $order->add_order_note(sprintf('Nevari assigned Dr. %s to this order based on product category availability and seniority.', $doctor->display_name));
+        $order->add_order_note(sprintf('Nevari assigned Dr. %s using the active-doctor round-robin queue.', $doctor->display_name));
         if ((int) $order->get_user_id()) {
             Nevari_Helpers::ensure_doctor_patient_link((int) $doctor->ID, (int) $order->get_user_id(), 'order');
         }

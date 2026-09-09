@@ -94,17 +94,6 @@ function parseOrderId(orderId, invoiceNumber = "") {
   return match ? Number(match[1]) : 0;
 }
 
-function buildPaymentUrl(orderId, invoiceNumber, role = "admin", paymentToken = "") {
-  if (!paymentToken) return "";
-  return `/pay/${encodeURIComponent(invoiceNumber)}?role=${encodeURIComponent(role)}&payment_token=${encodeURIComponent(paymentToken)}`;
-}
-
-function withBrandedPaymentUrl(data, role = "admin") {
-  if (!data?.invoice_number || !data?.payment_token || typeof window === "undefined") return data;
-  const paymentUrl = `${window.location.origin}${buildPaymentUrl(data.order_id, data.invoice_number, role, data.payment_token)}`;
-  return { ...data, payment_url: paymentUrl, branded_payment_url: paymentUrl };
-}
-
 function normalizeDocumentData(rawOrder, prescription = null, role = "admin") {
   const order = rawOrder || {};
   const orderNumber = order.number || order.id || "";
@@ -125,6 +114,7 @@ function normalizeDocumentData(rawOrder, prescription = null, role = "admin") {
   const discount = Number(order?.totals?.discount_total || 0);
   const tax = Number(order?.totals?.tax_total || 0);
   const shipping = Number(order?.totals?.shipping_total || 0) + Number(order?.totals?.shipping_tax || 0);
+  const fees = Number(order?.totals?.fees_total || 0);
   const amountPaid = Number(order?.totals?.paid_total || 0);
   const total = Number(order?.totals?.grand_total || order?.total || 0);
   const balanceDue = Math.max(0, total - amountPaid);
@@ -141,13 +131,16 @@ function normalizeDocumentData(rawOrder, prescription = null, role = "admin") {
     invoice_date: order.created_at,
     due_date: order.due_date || order.created_at,
     customer: {
-      name: order?.billing ? `${order.billing.first_name || ""} ${order.billing.last_name || ""}`.trim() || "Patient" : "Patient",
+      name: (order?.billing ? `${order.billing.first_name || ""} ${order.billing.last_name || ""}`.trim() : "")
+        || `${order?.customer_first_name || ""} ${order?.customer_last_name || ""}`.trim()
+        || order?.customer_display_name
+        || "Patient",
       email: order?.billing?.email || "",
       phone: order?.billing?.phone || "",
       address: [order?.billing?.address_1, order?.billing?.address_2, order?.billing?.city, order?.billing?.state, order?.billing?.postcode, order?.billing?.country].filter(Boolean).join(", ")
     },
     items,
-    totals: { subtotal, discount, tax, shipping, total, amount_paid: amountPaid, balance_due: balanceDue },
+    totals: { subtotal, discount, tax, shipping, fees, total, amount_paid: amountPaid, balance_due: balanceDue },
     payment_method: order.payment_method_title || order.payment_method || "",
     payment_reference: order.transaction_id || "",
     diagnosis: prescription?.diagnosis || "",
@@ -171,6 +164,8 @@ function OrderDocumentsPageContent() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [previewScale, setPreviewScale] = useState(1);
+  const [documentSession, setDocumentSession] = useState(null);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -180,6 +175,7 @@ function OrderDocumentsPageContent() {
       try {
         const frontend = role === "doctor" ? "doctor" : role === "patient" ? "patient" : "admin";
         const session = hydrateSession(frontend);
+        setDocumentSession(session);
         const endpointOrderId = parseOrderId(String(orderId || ""));
         if (!endpointOrderId) {
           throw new Error("Invalid order ID.");
@@ -215,7 +211,7 @@ function OrderDocumentsPageContent() {
         }
 
         if (mounted) {
-          setData(withBrandedPaymentUrl(payload, role));
+          setData(payload);
         }
       } catch (nextError) {
         if (mounted) {
@@ -261,14 +257,39 @@ function OrderDocumentsPageContent() {
     return renderDocumentHtml(data, activeDocumentType, { appOrigin: window.location.origin, statusMode });
   }, [data, activeDocumentType, statusMode]);
 
-  function printPage() {
-    const frameWindow = previewRef.current?.contentWindow;
-    if (frameWindow) {
-      frameWindow.focus();
-      frameWindow.print();
-      return;
+  async function printPage() {
+    if (!documentSession || downloading) return;
+    setDownloading(true);
+    setError("");
+    try {
+      const endpoint = new URL(`/api/admin/orders/${encodeURIComponent(String(orderId))}/documents/pdf`, window.location.origin);
+      endpoint.searchParams.set("document_type", activeDocumentType);
+      endpoint.searchParams.set("frontendType", documentSession.frontendType);
+      endpoint.searchParams.set("baseUrl", documentSession.baseUrl);
+      endpoint.searchParams.set("statusMode", statusMode);
+      const response = await fetch(endpoint, {
+        credentials: "same-origin",
+        headers: { "X-Nevari-Frontend-Origin": window.location.origin }
+      });
+      if (!response.ok || response.headers.get("content-type") !== "application/pdf") {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error?.message || "PDF could not be generated.");
+      }
+      const blobUrl = URL.createObjectURL(await response.blob());
+      const disposition = response.headers.get("content-disposition") || "";
+      const filename = disposition.match(/filename="([^"]+)"/i)?.[1] || `nevari-${activeDocumentType}.pdf`;
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (nextError) {
+      setError(String(nextError?.message || "PDF could not be generated."));
+    } finally {
+      setDownloading(false);
     }
-    if (typeof window !== "undefined") window.print();
   }
 
   if (loading) {
@@ -283,7 +304,9 @@ function OrderDocumentsPageContent() {
       <div className="doc-toolbar">
         <div />
         <div>
-          <button className="doc-btn" type="button" onClick={printPage}>Print / Save PDF</button>
+          <button className="doc-btn" type="button" onClick={printPage} disabled={downloading}>
+            {downloading ? "Generating PDF..." : "Print / Save PDF"}
+          </button>
         </div>
       </div>
       <div

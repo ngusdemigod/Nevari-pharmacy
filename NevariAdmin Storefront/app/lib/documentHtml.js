@@ -194,6 +194,7 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
     const subtotal = Number(data?.totals?.subtotal || 0);
     const tax = Number(data?.totals?.tax || 0);
     const shipping = Number(data?.totals?.shipping || 0);
+    const fees = Number(data?.totals?.fees || 0);
     const discount = Number(data?.totals?.discount || 0);
     const total = Number(data?.totals?.total || 0);
     const balance = documentType === "receipt" ? Number(data?.totals?.amount_paid || total || 0) : Number(data?.totals?.balance_due || total || 0);
@@ -313,6 +314,7 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
       <div class="total-row"><span>Subtotal</span><span>${escapeHtml(money(subtotal, currency))}</span></div>
       ${tax ? `<div class="total-row"><span>Tax</span><span>${escapeHtml(money(tax, currency))}</span></div>` : ""}
       ${shipping ? `<div class="total-row"><span>Shipping</span><span>${escapeHtml(money(shipping, currency))}</span></div>` : ""}
+      ${fees ? `<div class="total-row"><span>Service fees</span><span>${escapeHtml(money(fees, currency))}</span></div>` : ""}
       ${discount ? `<div class="total-row"><span>Discount</span><span>-${escapeHtml(money(discount, currency))}</span></div>` : ""}
       <div class="total-row grand"><span>${escapeHtml(totalLabel)}</span><span>${escapeHtml(money(balance, currency))}</span></div>
     </div>
@@ -424,6 +426,7 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
         <div class="summary-row"><strong>Subtotal:</strong><strong>${escapeHtml(money(data?.totals?.subtotal || 0, currency))}</strong></div>
         <div class="summary-row"><span>Discount:</span><span>${escapeHtml(money(data?.totals?.discount || 0, currency))}</span></div>
         <div class="summary-row"><span>Shipping Cost:</span><span>${escapeHtml(money(data?.totals?.shipping || 0, currency))}</span></div>
+        <div class="summary-row"><span>Service Fees:</span><span>${escapeHtml(money(data?.totals?.fees || 0, currency))}</span></div>
         <div class="summary-row"><span>Sales Tax:</span><span>${escapeHtml(money(data?.totals?.tax || 0, currency))}</span></div>
         <div class="summary-row"><strong>Total:</strong><strong>${escapeHtml(money(data?.totals?.total || 0, currency))}</strong></div>
         <div class="summary-row"><span>Amount paid:</span><span>${escapeHtml(money(data?.totals?.amount_paid || 0, currency))}</span></div>

@@ -72,6 +72,14 @@ final class Nevari_Rest {
         return $user_id > 0 && Nevari_Auth::api_session_required() && !Nevari_Helpers::is_pharmacist($user_id);
     }
 
+    public static function order_document_access_required(WP_REST_Request $request) {
+        if (!Nevari_Auth::api_session_required()) {
+            return new WP_Error('rest_forbidden', 'A valid session is required.', ['status' => 401]);
+        }
+        $order = self::get_order_scoped((int) $request['id']);
+        return is_wp_error($order) ? $order : true;
+    }
+
     public static function doctor_or_admin_required(): bool {
         $user_id = Nevari_Auth::api_session_user_id();
         return $user_id > 0 && (Nevari_Helpers::is_doctor($user_id) || Nevari_Helpers::is_store_admin($user_id));
@@ -148,7 +156,7 @@ final class Nevari_Rest {
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/document-data', [
             'methods' => WP_REST_Server::READABLE,
             'callback' => [__CLASS__, 'orders_document_data'],
-            'permission_callback' => [__CLASS__, 'auth_required'],
+            'permission_callback' => [__CLASS__, 'order_document_access_required'],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/orders/(?P<id>\d+)/cancel', [
@@ -236,6 +244,12 @@ final class Nevari_Rest {
             'permission_callback' => [__CLASS__, 'store_admin_required'],
         ]);
 
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/(?P<id>\d+)/restore', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'products_restore'],
+            'permission_callback' => [__CLASS__, 'store_admin_required'],
+        ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/products/media', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [__CLASS__, 'products_upload_media'],
@@ -310,6 +324,18 @@ final class Nevari_Rest {
                 'callback' => [__CLASS__, 'customers_settings_update'],
                 'permission_callback' => [__CLASS__, 'auth_required'],
             ],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/customers/me/settings/two-factor/begin', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'customers_two_factor_begin'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
+        ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/customers/me/settings/two-factor/confirm', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [__CLASS__, 'customers_two_factor_confirm'],
+            'permission_callback' => [__CLASS__, 'auth_required'],
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/customers/me/profile-image', [
@@ -677,6 +703,7 @@ final class Nevari_Rest {
             'callback' => [__CLASS__, 'audit_summary'],
             'permission_callback' => [__CLASS__, 'store_admin_required'],
         ]);
+
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/dashboard/store-admin/analytics', [
             'methods' => WP_REST_Server::READABLE,
             'callback' => [__CLASS__, 'dashboard_analytics'],
@@ -1041,7 +1068,7 @@ final class Nevari_Rest {
             return Nevari_Helpers::error($order->get_error_code(), $order->get_error_message(), (int) $order->get_error_data('status') ?: 404);
         }
 
-        $items = $order->get_items();
+        $items = $order->get_items(['line_item', 'fee']);
         $subtotal = self::order_subtotal($order, $items);
         $discount = (float) $order->get_discount_total();
         $tax = (float) $order->get_total_tax();
@@ -1050,8 +1077,6 @@ final class Nevari_Rest {
         $total = (float) $order->get_total();
         $amount_paid = $order->get_date_paid() ? $total : 0.0;
         $balance_due = max(0.0, $total - $amount_paid);
-        $payment_token = ($balance_due > 0 && $order->needs_payment()) ? self::invoice_payment_token($order) : '';
-        $payment_url = ($balance_due > 0 && $order->needs_payment()) ? self::branded_invoice_payment_url($order) : '';
         $settings = Nevari_Helpers::payment_gateway_settings();
         $active_gateway = isset($settings['active_gateway']) ? (string) $settings['active_gateway'] : 'woocommerce';
         $invoice_number = self::invoice_number_for_order($order);
@@ -1098,9 +1123,7 @@ final class Nevari_Rest {
         }
 
         $order_number = $order->get_order_number();
-        $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
-        $customer_name = $customer_name ?: trim($order->get_shipping_first_name() . ' ' . $order->get_shipping_last_name());
-        $customer_name = $customer_name ?: $order->get_formatted_billing_full_name();
+        $customer_name = self::resolved_order_customer_name($order);
         $customer_name = $customer_name ?: $order->get_billing_email();
 
         return Nevari_Helpers::success([
@@ -1111,10 +1134,6 @@ final class Nevari_Rest {
             'prescription_number' => $order->get_meta('_nevari_prescription_id') ? 'NVH-RX-' . str_pad((string) $order->get_meta('_nevari_prescription_id'), 5, '0', STR_PAD_LEFT) : '',
             'order_status' => $order->get_status(),
             'payment_status' => $order->get_date_paid() ? 'completed' : $order->get_status(),
-            'payment_url' => $payment_url,
-            'branded_payment_url' => $payment_url,
-            'payment_token' => $payment_token,
-            'woocommerce_payment_url' => ($balance_due > 0 && $order->needs_payment()) ? $order->get_checkout_payment_url(false) : '',
             'payment_gateway_configured' => Nevari_Helpers::active_payment_gateway_configured(),
             'active_payment_gateway' => $active_gateway,
             'available_gateways' => self::available_invoice_gateways(),
@@ -1836,11 +1855,37 @@ final class Nevari_Rest {
             return Nevari_Helpers::error('order_not_found', 'Order not found.', 404);
         }
         $params = Nevari_Helpers::get_json_params($request);
+        if (array_diff(array_keys($params), ['status', 'customer_note', 'reason'])) {
+            return Nevari_Helpers::error('validation_error', 'Unexpected order fields were supplied.', 422);
+        }
         if (!empty($params['status'])) {
-            $order->update_status(sanitize_key((string) $params['status']), 'Updated from Nevari dashboard.');
+            $status = sanitize_key((string) $params['status']);
+            $allowed_statuses = array_map(static function ($key) {
+                return str_replace('wc-', '', sanitize_key((string) $key));
+            }, array_keys(wc_get_order_statuses()));
+            if (!in_array($status, $allowed_statuses, true)) {
+                return Nevari_Helpers::error('validation_error', 'Select a valid order status.', 422);
+            }
+            $current_status = sanitize_key((string) $order->get_status());
+            $terminal_statuses = ['cancelled', 'failed', 'refunded'];
+            $reason = isset($params['reason']) ? substr(sanitize_textarea_field((string) $params['reason']), 0, 500) : '';
+            if ($status !== $current_status && in_array($current_status, $terminal_statuses, true)) {
+                return Nevari_Helpers::error('invalid_status_transition', 'A terminal order cannot be reopened from the dashboard.', 409);
+            }
+            if ($status !== $current_status && in_array($status, array_merge($terminal_statuses, ['completed']), true) && $reason === '') {
+                return Nevari_Helpers::error('reason_required', 'A reason is required for this status change.', 422);
+            }
+            if ($status === 'refunded' && !$order->is_paid()) {
+                return Nevari_Helpers::error('invalid_status_transition', 'Only a paid order can be marked refunded.', 409);
+            }
+            $order->update_status($status, 'Updated from Nevari dashboard.');
         }
         if (!empty($params['customer_note'])) {
             $order->set_customer_note(sanitize_textarea_field((string) $params['customer_note']));
+        }
+        $reason = isset($params['reason']) ? substr(sanitize_textarea_field((string) $params['reason']), 0, 500) : '';
+        if ($reason !== '') {
+            $order->add_order_note('Admin status-change reason: ' . $reason, false, true);
         }
         $order->save();
         Nevari_Audit::log('orders', 'nevari', 'order.updated', 'success', ['order_id' => $order->get_id(), 'object_type' => 'shop_order', 'object_id' => $order->get_id()]);
@@ -1858,10 +1903,21 @@ final class Nevari_Rest {
         if (!$order) {
             return Nevari_Helpers::error('order_not_found', 'Order not found.', 404);
         }
+        $params = Nevari_Helpers::get_json_params($request);
+        if (array_diff(array_keys($params), ['reason'])) {
+            return Nevari_Helpers::error('validation_error', 'Unexpected order fields were supplied.', 422);
+        }
+        $reason = isset($params['reason']) ? substr(sanitize_textarea_field((string) $params['reason']), 0, 500) : '';
+        if ($reason === '') {
+            return Nevari_Helpers::error('validation_error', 'A reason is required to trash an order.', 422);
+        }
         $order_id = (int) $order->get_id();
-        $order->delete(true);
-        Nevari_Audit::log('orders', 'nevari', 'order.deleted', 'success', ['order_id' => $order_id, 'object_type' => 'shop_order', 'object_id' => $order_id, 'message' => 'Order deleted from Nevari dashboard.']);
-        return Nevari_Helpers::success(['deleted' => true, 'id' => $order_id]);
+        $deleted = $order->delete(false);
+        if (!$deleted) {
+            return Nevari_Helpers::error('order_trash_failed', 'The order could not be moved to trash.', 409);
+        }
+        Nevari_Audit::log('orders', 'nevari', 'order.trashed', 'success', ['order_id' => $order_id, 'object_type' => 'shop_order', 'object_id' => $order_id, 'message' => 'Order moved to trash from Nevari dashboard.', 'metadata' => ['reason' => $reason]]);
+        return Nevari_Helpers::success(['deleted' => true, 'trashed' => true, 'id' => $order_id]);
     }
 
     public static function orders_action(WP_REST_Request $request): WP_REST_Response {
@@ -2540,7 +2596,8 @@ final class Nevari_Rest {
         $amount = (float) $invoice->amount;
         $paid = (string) $invoice->status === 'paid';
         $payable = self::appointment_invoice_is_payable($appointment, $invoice);
-        $customer_name = (string) ($invoice->customer_name ?: ($patient ? $patient->display_name : 'Customer'));
+        $customer_name = $appointment ? self::resolved_user_full_name((int) $appointment->patient_user_id) : '';
+        $customer_name = (string) ($customer_name ?: $invoice->customer_name ?: ($patient ? $patient->display_name : 'Customer'));
         return [
             'entity_type' => 'appointment',
             'appointment_id' => (int) $invoice->appointment_id,
@@ -2575,9 +2632,9 @@ final class Nevari_Rest {
             'store_currency' => (string) $invoice->currency,
             'available_gateways' => $payable ? self::available_invoice_gateways() : [],
             'payment_token' => Nevari_Helpers::appointment_invoice_payment_token($invoice),
-            'branded_payment_url' => (string) Nevari_Helpers::appointment_invoice_payment_url($invoice),
-            'payment_url' => (string) Nevari_Helpers::appointment_invoice_payment_url($invoice),
-            'checkout_url' => (string) Nevari_Helpers::appointment_invoice_payment_url($invoice),
+            'branded_payment_url' => self::appointment_invoice_payment_url($invoice),
+            'payment_url' => self::appointment_invoice_payment_url($invoice),
+            'checkout_url' => self::appointment_invoice_payment_url($invoice),
             'doctor_name' => $doctor ? (string) $doctor->display_name : '',
             'doctor_notes' => $appointment ? (string) ($appointment->doctor_notes ?? '') : '',
         ];
@@ -2647,7 +2704,33 @@ final class Nevari_Rest {
     }
 
     private static function branded_invoice_payment_url($order): string {
-        return Nevari_Helpers::order_invoice_payment_url($order);
+        $frontend = Nevari_Connections::resolve_request_frontend();
+        $origin = is_array($frontend) ? (string) ($frontend['frontend_origin'] ?? '') : '';
+        if ($origin === '') {
+            $origin = Nevari_Helpers::payment_frontend_origin();
+        }
+        if ($origin === '') {
+            return '';
+        }
+        return add_query_arg(
+            ['payment_token' => self::invoice_payment_token($order)],
+            rtrim($origin, '/') . '/pay/' . rawurlencode(self::invoice_number_for_order($order))
+        );
+    }
+
+    private static function appointment_invoice_payment_url($invoice): string {
+        $frontend = Nevari_Connections::resolve_request_frontend();
+        $origin = is_array($frontend) ? (string) ($frontend['frontend_origin'] ?? '') : '';
+        if ($origin === '') {
+            $origin = Nevari_Helpers::payment_frontend_origin();
+        }
+        if ($origin === '') {
+            return '';
+        }
+        return add_query_arg(
+            ['payment_token' => Nevari_Helpers::appointment_invoice_payment_token($invoice)],
+            rtrim($origin, '/') . '/pay/' . rawurlencode((string) $invoice->invoice_number)
+        );
     }
 
     private static function documents_url_for_order($order): string {
@@ -2720,8 +2803,7 @@ final class Nevari_Rest {
         $total = (float) $order->get_total();
         $amount_paid = $order->get_date_paid() ? $total : 0.0;
         $balance_due = max(0.0, $total - $amount_paid);
-        $customer_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
-        $customer_name = $customer_name ?: $order->get_formatted_billing_full_name();
+        $customer_name = self::resolved_order_customer_name($order);
         $mtm_request_id = absint($order->get_meta('_nevari_mtm_request_id', true));
         $mtm_request = $mtm_request_id > 0 && class_exists('Nevari_Mtm')
             ? Nevari_Mtm::invoice_summary($mtm_request_id, (int) $order->get_id())
@@ -3633,10 +3715,17 @@ final class Nevari_Rest {
             'limit' => $per_page,
             'page' => $page,
             'paginate' => true,
-            'status' => ['publish', 'private', 'draft'],
+            'status' => ['publish', 'private', 'draft', 'pending'],
             'orderby' => 'date',
             'order' => 'DESC',
         ];
+        $requested_status = sanitize_key((string) $request->get_param('status'));
+        if ($requested_status !== '' && Nevari_Helpers::is_store_admin()) {
+            if (!in_array($requested_status, array_merge(self::allowed_product_statuses(), ['trash']), true)) {
+                return Nevari_Helpers::error('validation_error', 'Select a valid product status.', 422);
+            }
+            $args['status'] = $requested_status;
+        }
         if (!Nevari_Helpers::is_store_admin()) {
             $args['status'] = 'publish';
             $args['meta_query'] = [
@@ -3765,6 +3854,39 @@ final class Nevari_Rest {
         return $safe;
     }
 
+    private static function resolved_user_full_name(int $user_id): string {
+        if ($user_id < 1) {
+            return '';
+        }
+        $user = get_userdata($user_id);
+        if (!$user instanceof WP_User) {
+            return '';
+        }
+        $candidates = [
+            trim((string) get_user_meta($user_id, 'first_name', true) . ' ' . (string) get_user_meta($user_id, 'last_name', true)),
+            trim((string) get_user_meta($user_id, 'billing_first_name', true) . ' ' . (string) get_user_meta($user_id, 'billing_last_name', true)),
+            trim((string) $user->display_name),
+        ];
+        foreach ($candidates as $candidate) {
+            if (strpos($candidate, ' ') !== false) {
+                return sanitize_text_field($candidate);
+            }
+        }
+        return sanitize_text_field((string) reset($candidates));
+    }
+
+    private static function resolved_order_customer_name($order): string {
+        $account_name = self::resolved_user_full_name((int) $order->get_customer_id());
+        $billing_name = trim((string) $order->get_billing_first_name() . ' ' . (string) $order->get_billing_last_name());
+        $shipping_name = trim((string) $order->get_shipping_first_name() . ' ' . (string) $order->get_shipping_last_name());
+        foreach ([$account_name, $billing_name, $shipping_name] as $candidate) {
+            if (strpos($candidate, ' ') !== false) {
+                return sanitize_text_field($candidate);
+            }
+        }
+        return sanitize_text_field($account_name ?: $billing_name ?: $shipping_name);
+    }
+
     private static function sanitize_product_prescription_html(string $value): string {
         return wp_kses($value, [
             'p' => [],
@@ -3827,6 +3949,21 @@ final class Nevari_Rest {
         return $sku;
     }
 
+    private static function validate_product_write_fields(array $params, bool $allow_sku = false): ?WP_REST_Response {
+        $allowed = [
+            'name', 'status', 'description', 'short_description', 'regular_price', 'sale_price',
+            'purchase_note', 'stock_quantity', 'stock_status', 'catalog_visibility', 'categories',
+            'tags', 'pharmacy_rules', 'images', 'meta_data', 'shipping_information', 'linked_products', 'featured',
+        ];
+        if ($allow_sku) {
+            $allowed[] = 'sku';
+        }
+        if (array_diff(array_keys($params), $allowed)) {
+            return Nevari_Helpers::error('unexpected_fields', 'Unexpected request fields were supplied.', 422);
+        }
+        return null;
+    }
+
     public static function products_create(WP_REST_Request $request): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('rest_products_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id()])) {
             return $response;
@@ -3835,17 +3972,22 @@ final class Nevari_Rest {
             return Nevari_Helpers::error('woocommerce_missing', 'WooCommerce is required.', 503);
         }
         $params = Nevari_Helpers::get_json_params($request);
-        $name = isset($params['name']) ? sanitize_text_field((string) $params['name']) : '';
-        if (!$name) {
-            return Nevari_Helpers::error('validation_error', 'name is required.', 422);
+        if ($invalid_fields = self::validate_product_write_fields($params)) {
+            return $invalid_fields;
         }
+        $name = isset($params['name']) ? sanitize_text_field((string) $params['name']) : '';
+        if ($name === '' || strlen($name) > 80 || preg_match('/[\\\\\x00-\x1F]/', $name)) {
+            return Nevari_Helpers::error('validation_error', 'Enter a name up to 80 characters without control characters or backslashes.', 422);
+        }
+        $status = self::sanitize_product_status_value($params['status'] ?? 'draft');
+        $is_draft = $status === 'draft';
         $categories = self::sanitize_product_term_names($params['categories'] ?? []);
-        if (!$categories) {
+        if (!$is_draft && !$categories) {
             return Nevari_Helpers::error('validation_error', 'At least one category is required.', 422);
         }
         $regular_price = array_key_exists('regular_price', $params) ? wc_format_decimal($params['regular_price']) : '';
         $sale_price = array_key_exists('sale_price', $params) ? wc_format_decimal($params['sale_price']) : '';
-        if ($regular_price === '') {
+        if (!$is_draft && $regular_price === '') {
             return Nevari_Helpers::error('validation_error', 'regular_price is required.', 422);
         }
         if ($sale_price !== '' && (float) $sale_price > (float) $regular_price) {
@@ -3853,7 +3995,7 @@ final class Nevari_Rest {
         }
         $product = new WC_Product_Simple();
         $product->set_name($name);
-        $product->set_status(self::sanitize_product_status_value($params['status'] ?? 'draft'));
+        $product->set_status($status);
         $product->set_sku(self::generate_product_sku());
         $product->set_regular_price($regular_price);
         $product->set_sale_price($sale_price);
@@ -3911,7 +4053,10 @@ final class Nevari_Rest {
             return Nevari_Helpers::error('product_not_found', 'Product not found.', 404);
         }
         $params = Nevari_Helpers::get_json_params($request);
-        foreach (['name', 'status', 'description', 'short_description', 'regular_price', 'sale_price', 'sku', 'stock_quantity', 'stock_status'] as $field) {
+        if ($invalid_fields = self::validate_product_write_fields($params, true)) {
+            return $invalid_fields;
+        }
+        foreach (['name', 'status', 'description', 'short_description', 'regular_price', 'sale_price', 'sku', 'stock_quantity', 'stock_status', 'featured'] as $field) {
             if (!array_key_exists($field, $params)) {
                 continue;
             }
@@ -3928,6 +4073,7 @@ final class Nevari_Rest {
                     $product->set_stock_quantity(max(0, (int) $params[$field]));
                     break;
                 case 'stock_status': $product->set_stock_status(sanitize_key((string) $params[$field])); break;
+                case 'featured': $product->set_featured(rest_sanitize_boolean($params[$field])); break;
             }
         }
         if (array_key_exists('purchase_note', $params)) {
@@ -3969,6 +4115,28 @@ final class Nevari_Rest {
         }
         Nevari_Audit::log('orders', 'nevari', 'product.deleted', 'success', ['product_id' => (int) $request['id'], 'object_type' => 'product', 'object_id' => (int) $request['id']]);
         return Nevari_Helpers::success(['deleted' => true]);
+    }
+
+    public static function products_restore(WP_REST_Request $request): WP_REST_Response {
+        if ($response = Nevari_Helpers::rate_limit('rest_products_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), 'restore'])) {
+            return $response;
+        }
+        $product_id = (int) $request['id'];
+        $post = get_post($product_id);
+        if (!$post || $post->post_type !== 'product' || $post->post_status !== 'trash') {
+            return Nevari_Helpers::error('product_not_found', 'Trashed product not found.', 404);
+        }
+        $restored_id = wp_untrash_post($product_id);
+        if (!$restored_id) {
+            return Nevari_Helpers::error('product_restore_failed', 'The product could not be restored.', 409);
+        }
+        $product = wc_get_product($product_id);
+        Nevari_Audit::log('orders', 'nevari', 'product.restored', 'success', [
+            'product_id' => $product_id,
+            'object_type' => 'product',
+            'object_id' => $product_id,
+        ]);
+        return Nevari_Helpers::success($product ? self::format_product($product, true) : ['id' => $product_id, 'restored' => true]);
     }
 
     public static function products_duplicate(WP_REST_Request $request): WP_REST_Response {
@@ -4146,6 +4314,7 @@ final class Nevari_Rest {
             'price' => $product->get_price(),
             'regular_price' => $product->get_regular_price(),
             'sale_price' => $product->get_sale_price(),
+            'featured' => $product->is_featured(),
             'stock_status' => $product->get_stock_status(),
             'stock_quantity' => $stock_quantity,
             'stock' => $stock_quantity,
@@ -4194,8 +4363,15 @@ final class Nevari_Rest {
         if (is_wp_error($terms)) {
             return Nevari_Helpers::error('terms_error', $terms->get_error_message(), 400);
         }
-        return Nevari_Helpers::success(array_map(static function ($term) {
-            return ['id' => (int) $term->term_id, 'name' => $term->name, 'slug' => $term->slug, 'count' => (int) $term->count];
+        return Nevari_Helpers::success(array_map(static function ($term) use ($taxonomy) {
+            $term_link = get_term_link($term);
+            return [
+                'id' => (int) $term->term_id,
+                'name' => wp_specialchars_decode($term->name, ENT_QUOTES),
+                'slug' => $term->slug,
+                'count' => (int) $term->count,
+                'permalink' => is_wp_error($term_link) ? '' : esc_url_raw($term_link),
+            ];
         }, $terms));
     }
 
@@ -4204,15 +4380,26 @@ final class Nevari_Rest {
             return $response;
         }
         $params = Nevari_Helpers::get_json_params($request);
+        if (array_diff(array_keys($params), ['name', 'slug'])) {
+            return Nevari_Helpers::error('unexpected_fields', 'Unexpected request fields were supplied.', 422);
+        }
         $name = isset($params['name']) ? sanitize_text_field((string) $params['name']) : '';
-        if (!$name) {
-            return Nevari_Helpers::error('validation_error', 'name is required.', 422);
+        if ($name === '' || strlen($name) > 80 || preg_match('/[\\\\\x00-\x1F]/', $name)) {
+            return Nevari_Helpers::error('validation_error', 'Enter a name up to 80 characters without control characters or backslashes.', 422);
         }
         $result = wp_insert_term($name, $taxonomy, ['slug' => !empty($params['slug']) ? sanitize_title((string) $params['slug']) : '']);
         if (is_wp_error($result)) {
             return Nevari_Helpers::error('term_error', $result->get_error_message(), 400);
         }
-        return Nevari_Helpers::success(['id' => (int) $result['term_id'], 'name' => $name], [], 201);
+        $term_id = (int) $result['term_id'];
+        $term = get_term($term_id, $taxonomy);
+        $term_link = $term instanceof WP_Term ? get_term_link($term) : '';
+        return Nevari_Helpers::success([
+            'id' => $term_id,
+            'name' => $term instanceof WP_Term ? wp_specialchars_decode($term->name, ENT_QUOTES) : $name,
+            'slug' => $term instanceof WP_Term ? $term->slug : sanitize_title($name),
+            'permalink' => is_wp_error($term_link) ? '' : esc_url_raw((string) $term_link),
+        ], [], 201);
     }
 
     public static function terms_update(WP_REST_Request $request, string $taxonomy): WP_REST_Response {
@@ -4220,21 +4407,50 @@ final class Nevari_Rest {
             return $response;
         }
         $params = Nevari_Helpers::get_json_params($request);
+        if (array_diff(array_keys($params), ['name', 'slug'])) {
+            return Nevari_Helpers::error('unexpected_fields', 'Unexpected request fields were supplied.', 422);
+        }
         $args = [];
-        if (isset($params['name'])) { $args['name'] = sanitize_text_field((string) $params['name']); }
+        if (isset($params['name'])) {
+            $name = sanitize_text_field((string) $params['name']);
+            if ($name === '' || strlen($name) > 80 || preg_match('/[\\\\\x00-\x1F]/', $name)) {
+                return Nevari_Helpers::error('validation_error', 'Enter a name up to 80 characters without control characters or backslashes.', 422);
+            }
+            $args['name'] = $name;
+        }
         if (isset($params['slug'])) { $args['slug'] = sanitize_title((string) $params['slug']); }
         $result = wp_update_term((int) $request['id'], $taxonomy, $args);
         if (is_wp_error($result)) {
             return Nevari_Helpers::error('term_error', $result->get_error_message(), 400);
         }
-        return Nevari_Helpers::success(['id' => (int) $request['id']]);
+        $term_id = (int) $request['id'];
+        $term = get_term($term_id, $taxonomy);
+        $term_link = $term instanceof WP_Term ? get_term_link($term) : '';
+        return Nevari_Helpers::success([
+            'id' => $term_id,
+            'name' => $term instanceof WP_Term ? wp_specialchars_decode($term->name, ENT_QUOTES) : '',
+            'slug' => $term instanceof WP_Term ? $term->slug : '',
+            'permalink' => is_wp_error($term_link) ? '' : esc_url_raw((string) $term_link),
+        ]);
     }
 
     public static function terms_delete(WP_REST_Request $request, string $taxonomy): WP_REST_Response {
         if ($response = Nevari_Helpers::rate_limit('rest_terms_write', 20, MINUTE_IN_SECONDS, ['user:' . get_current_user_id(), $taxonomy])) {
             return $response;
         }
-        $result = wp_delete_term((int) $request['id'], $taxonomy);
+        $term_id = (int) $request['id'];
+        $delete_args = [];
+        if ($taxonomy === 'product_cat') {
+            $default_term_id = (int) get_option('default_product_cat', 0);
+            if ($default_term_id <= 0) {
+                return Nevari_Helpers::error('default_product_category_missing', 'Configure a default WooCommerce product category before deleting categories.', 409);
+            }
+            if ($term_id === $default_term_id) {
+                return Nevari_Helpers::error('default_product_category_protected', 'The default Uncategorized category cannot be deleted.', 409);
+            }
+            $delete_args['default'] = $default_term_id;
+        }
+        $result = wp_delete_term($term_id, $taxonomy, $delete_args);
         if (is_wp_error($result) || !$result) {
             return Nevari_Helpers::error('term_error', is_wp_error($result) ? $result->get_error_message() : 'Could not delete term.', 400);
         }
@@ -4455,6 +4671,14 @@ final class Nevari_Rest {
 
         $params = Nevari_Helpers::get_json_params($request);
         $previous_settings = self::customer_settings_payload($user_id);
+        if (array_key_exists('twoFactorEnabled', $params)
+            && (bool) Nevari_Helpers::bool_param($params['twoFactorEnabled']) !== !empty($previous_settings['twoFactorEnabled'])) {
+            return Nevari_Helpers::error(
+                'two_factor_verification_required',
+                'Two-factor authentication changes require email verification.',
+                409
+            );
+        }
         $settings = self::sanitize_customer_settings_payload($params, $user_id);
         if (is_wp_error($settings)) {
             return Nevari_Helpers::error(
@@ -4490,6 +4714,176 @@ final class Nevari_Rest {
         }
 
         return Nevari_Helpers::success(self::customer_settings_payload($user_id));
+    }
+
+    public static function customers_two_factor_begin(WP_REST_Request $request): WP_REST_Response {
+        $user_id = Nevari_Auth::api_session_user_id();
+        $ip = Nevari_Helpers::client_ip();
+        if ($response = Nevari_Helpers::rate_limit('rest_customer_2fa_begin_ip', 8, 15 * MINUTE_IN_SECONDS, [$ip])) {
+            return $response;
+        }
+        if ($response = Nevari_Helpers::rate_limit('rest_customer_2fa_begin_user', 5, 15 * MINUTE_IN_SECONDS, ['user:' . $user_id])) {
+            return $response;
+        }
+        if ($user_id <= 0 || !Nevari_Helpers::is_patient($user_id)) {
+            return Nevari_Helpers::error('forbidden', 'This security setting is only available to authenticated patients.', 403);
+        }
+
+        $params = Nevari_Helpers::get_json_params($request);
+        $action = sanitize_key((string) ($params['action'] ?? ''));
+        if (!in_array($action, ['enable', 'disable'], true)) {
+            return Nevari_Helpers::error('validation_error', 'A valid two-factor action is required.', 422);
+        }
+        $settings = self::customer_settings_payload($user_id);
+        $currently_enabled = !empty($settings['twoFactorEnabled']);
+        if (($action === 'enable') === $currently_enabled) {
+            return Nevari_Helpers::error('two_factor_state_unchanged', 'Two-factor authentication is already in the requested state.', 409);
+        }
+
+        $cooldown_key = 'nevari_2fa_begin_' . $user_id . '_' . $action;
+        $last_requested = (int) get_transient($cooldown_key);
+        $retry_after = $last_requested > 0 ? max(0, 60 - (time() - $last_requested)) : 0;
+        if ($retry_after > 0) {
+            return Nevari_Helpers::error(
+                'verification_resend_cooldown',
+                sprintf('Please wait %d seconds before requesting another code.', $retry_after),
+                429,
+                ['retry_after' => $retry_after]
+            );
+        }
+
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        $user = get_user_by('id', $user_id);
+        if (!$frontend || !$user instanceof WP_User || (string) ($frontend['frontend_type'] ?? '') !== 'patient_dashboard') {
+            return Nevari_Helpers::error('forbidden', 'Patient dashboard verification is required.', 403);
+        }
+        $purpose = $action === 'enable' ? 'enable_2fa' : 'disable_2fa';
+        $challenge = Nevari_Auth::create_purpose_challenge($user, $frontend, $purpose);
+        if (is_wp_error($challenge)) {
+            return Nevari_Helpers::error('verification_challenge_failed', 'A verification code could not be sent. Try again later.', 503);
+        }
+        set_transient($cooldown_key, time(), MINUTE_IN_SECONDS);
+
+        Nevari_Audit::log('security', 'nevari', 'customer.two_factor_verification_started', 'success', [
+            'actor_user_id' => $user_id,
+            'related_user_id' => $user_id,
+            'message' => 'Customer started a verified two-factor authentication preference change.',
+            'metadata' => ['action' => $action],
+        ]);
+
+        return Nevari_Helpers::success([
+            'challenge_id' => (string) $challenge['challenge_id'],
+            'masked_email' => self::mask_customer_email((string) $user->user_email),
+            'expires_in' => (int) $challenge['expires_in'],
+            'resend_cooldown' => 60,
+            'action' => $action,
+        ]);
+    }
+
+    public static function customers_two_factor_confirm(WP_REST_Request $request): WP_REST_Response {
+        global $wpdb;
+
+        $user_id = Nevari_Auth::api_session_user_id();
+        $params = Nevari_Helpers::get_json_params($request);
+        $challenge_id = sanitize_text_field((string) ($params['challenge_id'] ?? ''));
+        $code = preg_replace('/\D+/', '', (string) ($params['code'] ?? ''));
+        $action = sanitize_key((string) ($params['action'] ?? ''));
+        $ip = Nevari_Helpers::client_ip();
+        if ($response = Nevari_Helpers::rate_limit('rest_customer_2fa_confirm_ip', 12, 15 * MINUTE_IN_SECONDS, [$ip])) {
+            return $response;
+        }
+        if ($response = Nevari_Helpers::rate_limit('rest_customer_2fa_confirm_user', 8, 15 * MINUTE_IN_SECONDS, ['user:' . $user_id])) {
+            return $response;
+        }
+        if ($response = Nevari_Helpers::rate_limit('rest_customer_2fa_confirm_challenge', 5, 15 * MINUTE_IN_SECONDS, [$challenge_id ?: 'unknown'])) {
+            return $response;
+        }
+        if ($user_id <= 0 || !Nevari_Helpers::is_patient($user_id)
+            || !in_array($action, ['enable', 'disable'], true)
+            || $challenge_id === '' || strlen($code) !== 6) {
+            return Nevari_Helpers::error('invalid_verification_code', 'Verification code is invalid or expired.', 401);
+        }
+
+        $frontend = Nevari_Connections::resolve_request_frontend($params);
+        $user = get_user_by('id', $user_id);
+        if (!$frontend || !$user instanceof WP_User || (string) ($frontend['frontend_type'] ?? '') !== 'patient_dashboard') {
+            return Nevari_Helpers::error('forbidden', 'Patient dashboard verification is required.', 403);
+        }
+        $purpose = $action === 'enable' ? 'enable_2fa' : 'disable_2fa';
+        $verified = Nevari_Auth::verify_purpose_challenge($challenge_id, $code, $user, $frontend, $purpose);
+        if (is_wp_error($verified)) {
+            $status = (int) ($verified->get_error_data('status') ?: 401);
+            return Nevari_Helpers::error($verified->get_error_code(), $verified->get_error_message(), $status);
+        }
+
+        $next_enabled = $action === 'enable';
+        $settings = self::customer_settings_payload($user_id);
+        if (!empty($settings['twoFactorEnabled']) === $next_enabled) {
+            return Nevari_Helpers::success($settings);
+        }
+
+        $current_family = Nevari_Auth::current_session_family_uuid();
+        if (!$next_enabled && (!class_exists('Nevari_SSO') || $current_family === '' || !Nevari_SSO::is_session_family_active($current_family))) {
+            return Nevari_Helpers::error('session_revocation_unavailable', 'Two-factor authentication could not be disabled safely. Sign in again and retry.', 503);
+        }
+
+        $transaction_started = $wpdb->query('START TRANSACTION') !== false;
+        if (!$transaction_started) {
+            return Nevari_Helpers::error('security_update_failed', 'The security setting could not be updated safely.', 503);
+        }
+        try {
+            if (!$next_enabled) {
+                $other_families = $wpdb->get_col($wpdb->prepare(
+                    'SELECT family_uuid FROM ' . Nevari_Helpers::table('session_families') . ' WHERE user_id = %d AND family_uuid <> %s AND status = %s AND revoked_at IS NULL',
+                    $user_id,
+                    $current_family,
+                    'active'
+                ));
+                if (!is_array($other_families)) {
+                    throw new RuntimeException('Session families could not be resolved.');
+                }
+                foreach ($other_families as $family_uuid) {
+                    $family_uuid = sanitize_text_field((string) $family_uuid);
+                    if (!Nevari_SSO::revoke_session_family($family_uuid, [
+                        'actor_user_id' => $user_id,
+                        'reason' => 'customer_2fa_disabled',
+                    ]) || Nevari_SSO::is_session_family_active($family_uuid)) {
+                        throw new RuntimeException('A session family could not be revoked.');
+                    }
+                }
+            }
+
+            $settings['twoFactorEnabled'] = $next_enabled;
+            if (update_user_meta($user_id, self::CUSTOMER_SETTINGS_META_KEY, $settings) === false) {
+                throw new RuntimeException('Security preference could not be stored.');
+            }
+            $wpdb->query('COMMIT');
+        } catch (Throwable $error) {
+            $wpdb->query('ROLLBACK');
+            clean_user_cache($user_id);
+            return Nevari_Helpers::error('security_update_failed', 'The security setting could not be updated safely.', 503);
+        }
+
+        clean_user_cache($user_id);
+        Nevari_Audit::log('security', 'nevari', 'customer.two_factor_preference_updated', 'success', [
+            'actor_user_id' => $user_id,
+            'related_user_id' => $user_id,
+            'message' => $next_enabled
+                ? 'Customer enabled email two-factor authentication after verification.'
+                : 'Customer disabled email two-factor authentication after verification.',
+            'metadata' => ['enabled' => $next_enabled, 'other_sessions_revoked' => !$next_enabled],
+        ]);
+
+        return Nevari_Helpers::success(self::customer_settings_payload($user_id));
+    }
+
+    private static function mask_customer_email(string $email): string {
+        if (!is_email($email)) {
+            return '';
+        }
+        [$local, $domain] = explode('@', $email, 2);
+        $visible = substr($local, 0, min(2, strlen($local)));
+        return $visible . str_repeat('*', max(1, strlen($local) - strlen($visible))) . '@' . $domain;
     }
 
     public static function customers_profile_image_update(WP_REST_Request $request): WP_REST_Response {
@@ -4821,27 +5215,11 @@ final class Nevari_Rest {
         }
         $doctor_id = (int) $request['id'];
         if (!Nevari_Helpers::is_store_admin() && get_current_user_id() !== $doctor_id) {
-            return Nevari_Helpers::error('forbidden', 'You can view only your own assigned products.', 403);
-        }
-        $category_ids = self::doctor_product_category_ids($doctor_id);
-        if (!$category_ids) {
-            return Nevari_Helpers::success([]);
-        }
-        $terms = get_terms([
-            'taxonomy' => 'product_cat',
-            'include' => $category_ids,
-            'hide_empty' => false,
-        ]);
-        $slugs = array_values(array_filter(array_map(static function ($term) {
-            return $term instanceof WP_Term ? $term->slug : '';
-        }, is_array($terms) ? $terms : [])));
-        if (!$slugs) {
-            return Nevari_Helpers::success([]);
+            return Nevari_Helpers::error('forbidden', 'You can view only your own product catalogue.', 403);
         }
         $products = wc_get_products([
             'limit' => min(100, max(1, (int) $request->get_param('per_page') ?: 100)),
             'status' => Nevari_Helpers::is_store_admin() ? ['publish', 'private', 'draft'] : 'publish',
-            'category' => $slugs,
             'orderby' => 'date',
             'order' => 'DESC',
         ]);
@@ -4902,9 +5280,6 @@ final class Nevari_Rest {
         }
         if (!empty($params['languages']) && is_array($params['languages'])) {
             wp_set_object_terms($profile_id, array_map('sanitize_text_field', $params['languages']), 'nevari_doctor_language');
-        }
-        if (isset($params['product_category_ids']) && is_array($params['product_category_ids'])) {
-            self::save_doctor_product_categories($doctor_user_id, $params['product_category_ids']);
         }
         return (int) $profile_id;
     }
@@ -4971,8 +5346,6 @@ final class Nevari_Rest {
             'max_workload_per_week' => $settings ? (int) $settings->max_workload_per_week : 40,
             'profile_image' => $profile_image,
             'disabled' => (bool) get_user_meta((int) $user->ID, '_nevari_doctor_disabled', true),
-            'product_category_ids' => self::doctor_product_category_ids((int) $user->ID),
-            'product_categories' => self::doctor_product_categories((int) $user->ID),
             'consultation_fee' => Nevari_Helpers::doctor_consultation_fee((int) $user->ID),
             'years_experience' => $profile_id ? (string) get_post_meta($profile_id, '_nevari_years_experience', true) : '',
             'rating_average' => $review_summary['average'],
@@ -5432,8 +5805,9 @@ final class Nevari_Rest {
             $patient_id = get_current_user_id();
         }
         $type = isset($params['type']) ? sanitize_key((string) $params['type']) : 'video';
-        $start = Nevari_Helpers::normalize_datetime($params['start_at'] ?? null);
-        $end = Nevari_Helpers::normalize_datetime($params['end_at'] ?? null);
+        $timezone = isset($params['timezone']) ? sanitize_text_field((string) $params['timezone']) : 'UTC';
+        $start = Nevari_Helpers::normalize_appointment_datetime($params['start_at'] ?? null, $timezone);
+        $end = Nevari_Helpers::normalize_appointment_datetime($params['end_at'] ?? null, $timezone);
         $reason = isset($params['reason']) && trim((string) $params['reason']) !== '' ? sanitize_textarea_field((string) $params['reason']) : 'Doctor consultation booking';
         $title = isset($params['title']) ? sanitize_text_field((string) $params['title']) : '';
 
@@ -5532,7 +5906,7 @@ final class Nevari_Rest {
             'start_at' => $start,
             'end_at' => $end,
             'duration_minutes' => $requested_duration,
-            'timezone' => isset($params['timezone']) ? sanitize_text_field((string) $params['timezone']) : 'UTC',
+            'timezone' => $timezone,
             'reason' => $reason,
             'symptoms' => isset($params['symptoms']) ? Nevari_Helpers::json_encode_safe($params['symptoms']) : null,
             'intake_form' => isset($params['intake_form']) ? Nevari_Helpers::json_encode_safe($params['intake_form']) : null,
@@ -5567,7 +5941,7 @@ final class Nevari_Rest {
         }
         $patient = get_user_by('id', $patient_id);
         $doctor = get_user_by('id', $doctor_id);
-        $payment_link = Nevari_Helpers::appointment_invoice_payment_url($invoice);
+        $payment_link = self::appointment_invoice_payment_url($invoice);
         if (!$auto_paid_by_quota && $patient && is_email($patient->user_email) && $payment_link) {
             $appointment_start = gmdate('F j, Y \\a\\t g:i A', strtotime((string) $start . ' UTC'));
             $appointment_date = gmdate('F j, Y', strtotime((string) $start . ' UTC'));
@@ -5690,8 +6064,11 @@ final class Nevari_Rest {
             $data['doctor_notes'] = wp_kses_post((string) $params['doctor_notes']);
             $action = 'appointment.completed';
         } elseif (str_ends_with($route, '/reschedule')) {
-            $start = Nevari_Helpers::normalize_datetime($params['start_at'] ?? null);
-            $end = Nevari_Helpers::normalize_datetime($params['end_at'] ?? null);
+            $timezone = isset($params['timezone'])
+                ? sanitize_text_field((string) $params['timezone'])
+                : sanitize_text_field((string) ($appointment->timezone ?: 'UTC'));
+            $start = Nevari_Helpers::normalize_appointment_datetime($params['start_at'] ?? null, $timezone);
+            $end = Nevari_Helpers::normalize_appointment_datetime($params['end_at'] ?? null, $timezone);
             if (!$start || !$end || strtotime($end) <= strtotime($start)) { return Nevari_Helpers::error('validation_error', 'Valid start_at and end_at are required.', 422); }
             if (strtotime($start) <= time()) {
                 return Nevari_Helpers::error('invalid_datetime', 'Appointment must be in the future.', 422);
@@ -5710,6 +6087,7 @@ final class Nevari_Rest {
             $data['start_at'] = $start;
             $data['end_at'] = $end;
             $data['duration_minutes'] = (int) round((strtotime($end) - strtotime($start)) / 60);
+            $data['timezone'] = $timezone;
             $data['status'] = 'confirmed';
             $data['rescheduled_at'] = Nevari_Helpers::now();
             $data['customer_reminder_24h_sent_at'] = null;

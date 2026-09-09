@@ -1106,6 +1106,13 @@ final class Nevari_Subscriptions {
 
         $existing_plan_key = $existing && !empty($existing->plan_key) ? sanitize_key((string) $existing->plan_key) : '';
         $existing_system_definition = $existing_plan_key !== '' ? self::system_plan_definition($existing_plan_key) : null;
+        if (!$existing || !$existing_system_definition) {
+            return Nevari_Helpers::error(
+                'subscription_plan_creation_disabled',
+                'Only the Free and Nevari Access Pro plans can be managed.',
+                422
+            );
+        }
         $reserved_request = self::reserved_plan_for_value($plan_name) ?: self::reserved_plan_for_value($requested_plan_key ?: $plan_slug);
         if ($reserved_request && (!$existing_system_definition || ($reserved_request['plan_key'] ?? '') !== $existing_plan_key)) {
             return Nevari_Helpers::error('reserved_subscription_plan_name', sprintf('"%s" is reserved by the system and cannot be used for a custom subscription plan.', (string) ($reserved_request['name'] ?? $plan_name)), 400, [
@@ -1460,7 +1467,7 @@ final class Nevari_Subscriptions {
         if ($latest_ids) {
             $placeholders = implode(',', array_fill(0, count($latest_ids), '%d'));
             $subscription_rows = $wpdb->get_results($wpdb->prepare(
-                "SELECT s.*, u.display_name, u.user_email FROM {$subscriptions_table} s LEFT JOIN {$users_table} u ON u.ID = s.user_id WHERE s.id IN ({$placeholders}) ORDER BY s.id DESC",
+                "SELECT s.*, u.display_name, u.user_email, u.user_registered FROM {$subscriptions_table} s LEFT JOIN {$users_table} u ON u.ID = s.user_id WHERE s.id IN ({$placeholders}) ORDER BY s.id DESC",
                 ...$latest_ids
             ));
         }
@@ -1505,6 +1512,7 @@ final class Nevari_Subscriptions {
                 'user_id' => (int) $row->user_id,
                 'name' => $user_name,
                 'email' => $email,
+                'joined_at' => !empty($row->created_at) ? (string) $row->created_at : (string) ($row->user_registered ?? ''),
                 'plan' => $is_paid ? self::PLAN_NAME : 'Free',
                 'plan_name' => $is_paid ? self::PLAN_NAME : 'Free',
                 'status' => self::status_label($status),
@@ -1533,7 +1541,7 @@ final class Nevari_Subscriptions {
         $existing_user_ids = array_fill_keys(array_map(static function ($item) {
             return (int) ($item['user_id'] ?? 0);
         }, $users), true);
-        $all_users = $wpdb->get_results("SELECT ID, display_name, user_email FROM {$users_table} ORDER BY ID ASC");
+        $all_users = $wpdb->get_results("SELECT ID, display_name, user_email, user_registered FROM {$users_table} ORDER BY ID ASC");
         foreach ($all_users ?: [] as $user_row) {
             $user_id = (int) ($user_row->ID ?? 0);
             if ($user_id <= 0 || isset($existing_user_ids[$user_id])) {
@@ -1548,6 +1556,7 @@ final class Nevari_Subscriptions {
                 'user_id' => $user_id,
                 'name' => $user_name,
                 'email' => $email,
+                'joined_at' => (string) ($user_row->user_registered ?? ''),
                 'plan' => 'Free',
                 'plan_name' => 'Free',
                 'status' => self::status_label('none'),
@@ -1604,6 +1613,9 @@ final class Nevari_Subscriptions {
 
             $plan_key = sanitize_key((string) ($plan_definition['plan_key'] ?? $row->plan_key ?? ''));
             if ($plan_key === self::FREE_PLAN_KEY) {
+                continue;
+            }
+            if (!self::is_system_plan_key($plan_key)) {
                 continue;
             }
             $billing = trim((string) ($plan_definition['interval_unit'] ?? $row->interval_unit ?? ''));
@@ -3502,6 +3514,21 @@ final class Nevari_Subscriptions {
         return $payload;
     }
 
+    private static function upgrade_plan_payload(): array {
+        $definition = self::current_plan_definition();
+        $amount = self::normalize_subscription_amount($definition['amount_kobo'] ?? self::PLAN_AMOUNT_KOBO);
+
+        return [
+            'plan_key' => sanitize_key((string) ($definition['plan_key'] ?? self::PLAN_KEY)) ?: self::PLAN_KEY,
+            'name' => self::sanitize_subscription_text($definition['name'] ?? self::PLAN_NAME),
+            'price' => $amount,
+            'amount' => $amount,
+            'currency' => sanitize_text_field((string) ($definition['currency'] ?? self::PLAN_CURRENCY)) ?: self::PLAN_CURRENCY,
+            'interval' => self::requested_interval((string) ($definition['interval_unit'] ?? self::PLAN_INTERVAL)),
+            'tier' => self::infer_plan_tier($definition),
+        ];
+    }
+
     private static function payment_method_summary_from_subscription(object $row): ?array {
         $metadata = self::subscription_metadata($row);
         $authorization = null;
@@ -3570,6 +3597,7 @@ final class Nevari_Subscriptions {
             'interval' => $plan_definition['interval_unit'] === 'manual' ? 'month' : $plan_definition['interval_unit'],
             'payment_method' => null,
             'available_plans' => self::available_plans_payload(),
+            'upgrade_plan' => self::upgrade_plan_payload(),
             'paystack_subscription_code' => '',
             'paystack_email_token' => '',
             'subscription_code_masked' => '',
@@ -3594,6 +3622,7 @@ final class Nevari_Subscriptions {
         $payload = self::subscription_payload_from_claims($user_id, $claims);
         $legacy = self::legacy_subscription_payload_for_user($user_id);
         $payload['available_plans'] = self::available_plans_payload();
+        $payload['upgrade_plan'] = self::upgrade_plan_payload();
         if (!empty($legacy['start_date'])) {
             $payload['start_date'] = $legacy['start_date'];
         }
@@ -3772,6 +3801,7 @@ final class Nevari_Subscriptions {
             'interval' => $plan_definition['interval_unit'] === 'manual' ? 'month' : $plan_definition['interval_unit'],
             'payment_method' => null,
             'available_plans' => self::available_plans_payload(),
+            'upgrade_plan' => self::upgrade_plan_payload(),
             'paystack_subscription_code' => '',
             'paystack_email_token' => '',
             'subscription_code_masked' => '',

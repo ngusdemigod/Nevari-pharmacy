@@ -102,15 +102,22 @@ export async function GET(request, { params }) {
     }
 
     const data = await proxyRequest(url.origin, session, `/orders/${encodeURIComponent(orderId)}/document-data`);
+    const printableData = {
+      ...data,
+      payment_token: "",
+      payment_url: "",
+      branded_payment_url: "",
+      woocommerce_payment_url: ""
+    };
     const statusMode = url.searchParams.get("statusMode") === "payment" ? "payment" : "order";
-    const html = renderDocumentHtml(data, documentType, { appOrigin: url.origin, statusMode });
+    const html = renderDocumentHtml(printableData, documentType, { appOrigin: url.origin, statusMode });
     const pdf = await htmlToPdf(html);
-    const filename = documentFilename(data, documentType);
+    const filename = documentFilename(printableData, documentType);
 
     return new Response(pdf, {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="${filename}"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "no-store"
       }
     });
