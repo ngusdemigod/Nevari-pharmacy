@@ -580,7 +580,10 @@ final class Nevari_Mtm {
         if (is_array($value)) {
             $out = [];
             foreach ($value as $key => $item) {
-                $safe_key = is_int($key) ? $key : sanitize_key((string) $key);
+                $safe_key = is_int($key) ? $key : preg_replace('/[^A-Za-z0-9_\-]/', '', (string) $key);
+                if ($safe_key === '') {
+                    continue;
+                }
                 $out[$safe_key] = self::sanitize_deep($item);
             }
             return $out;

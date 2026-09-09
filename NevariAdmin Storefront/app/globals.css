@@ -21663,6 +21663,8 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
   font-weight: 600;
   line-height: 1;
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  padding: 0;
+  text-align: center;
 }
 
 .auth-otp-box:focus-visible,
@@ -21800,6 +21802,8 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
   font-weight: 700;
   line-height: 1;
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  padding: 0;
+  text-align: center;
 }
 
 .subscription-otp-box:focus-visible,
@@ -40137,6 +40141,40 @@ body:has(.modal-design-system-parity) .order-modal .order-detail-scroll {
   width: min(960px, calc(100vw - 32px)) !important;
 }
 
+/* Shared patient-dashboard segmented tabs and desktop navigation typography. */
+.customer-dashboard-tabs button {
+  min-height: 34px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: #667085;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: color 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.customer-dashboard-tabs button.active,
+.customer-dashboard-tabs button[aria-selected="true"] {
+  border-color: #e1e5ea;
+  background: #f1f3f5;
+  color: #667085;
+  box-shadow: none;
+}
+
+.customer-dashboard-tabs button:focus-visible {
+  outline: 2px solid rgba(11, 50, 109, .28);
+  outline-offset: 3px;
+}
+
+@media (min-width: 961px) {
+  .customer-desktop-shell .nav-item {
+    font-size: 12px;
+  }
+}
+
 .app-modal-layer .product-editor-modal.product-editor-create-mode .product-editor-shell {
   display: block !important;
   min-height: 0 !important;
@@ -45799,10 +45837,10 @@ body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-pa
 }
 
 .session-reauth-dialog h1 {
-  margin: 0 0 22px;
+  margin: 0 0 18px;
   color: #050505;
   font-family: "Product Sans", "Google Sans", Arial, sans-serif;
-  font-size: 42px;
+  font-size: 22px;
   font-weight: 400;
   line-height: 1.05;
   letter-spacing: -0.04em;
@@ -45816,15 +45854,16 @@ body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-pa
 
 .session-reauth-form {
   display: grid;
-  gap: 20px;
+  gap: 16px;
 }
 
 .session-reauth-form > .auth-primary-button {
-  width: 100%;
-  min-height: 61px;
-  margin-top: 14px;
+  width: min(375px, 100%);
+  min-height: 48px;
+  margin: 8px auto 0;
+  padding-inline: 29px;
   border-radius: 999px;
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .session-reauth-form > .auth-google-panel {
@@ -45834,26 +45873,26 @@ body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-pa
 
 .session-reauth-form label {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   color: #3e3e3e;
-  font-size: 17px;
+  font-size: 12px;
   font-weight: 400;
 }
 
 .session-reauth-form input {
   width: 100%;
-  min-height: 51px;
-  padding: 0 18px;
-  border: 1px solid #bdcdea;
-  border-radius: 10px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid rgba(10, 42, 94, 0.14);
+  border-radius: 8px;
   color: #111;
-  background: #edf3fc;
+  background: #f9fbff;
   font: inherit;
 }
 
 .session-reauth-form input:focus {
-  border-color: #7da9ea;
-  outline: 3px solid rgba(55, 125, 230, 0.15);
+  border-color: #0a2a5e;
+  outline: 3px solid rgba(10, 42, 94, 0.15);
 }
 
 .session-reauth-password-field {
@@ -45890,7 +45929,7 @@ body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-pa
 
 .session-reauth-links a {
   color: #111;
-  font-size: 15px;
+  font-size: 14px;
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -45913,7 +45952,7 @@ body:has(.customer-mtm-payment-page) .customer-mtm-payment-card .customer-mtm-pa
 @media (max-width: 520px) {
   .session-reauth-layer { padding: 14px; }
   .session-reauth-dialog { padding: 22px 16px 20px; border-radius: 26px; }
-  .session-reauth-dialog h1 { font-size: 40px; }
+  .session-reauth-dialog h1 { font-size: 22px; }
   .session-reauth-form > .auth-google-panel { width: calc(100% - 36px); }
 }
 

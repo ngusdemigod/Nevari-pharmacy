@@ -15,6 +15,8 @@ import {
   validateFrontendSession
 } from "../../mtm/_server.js";
 
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,99}$/;
+
 const CARE_TYPES = new Set(["Elderly Care", "Post Surgery Recovery", "Medication Assistance", "Wound Dressing", "Injection Administration", "Chronic Disease Monitoring", "Palliative Care"]);
 const VISIT_TYPES = new Set(["Recurring", "One Time"]);
 const CARE_SHIFTS = new Set(["Day", "Night"]);
@@ -249,6 +251,10 @@ export async function POST(request) {
     }
 
     const payload = validation.payload;
+    const idempotencyKey = String(request.headers.get("idempotency-key") || "").trim();
+    if (!IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+      return invalid("A valid idempotency key is required.", "idempotencyKey");
+    }
     const url = new URL(request.url);
     const session = buildSessionFromRequest(request, url, payload.baseUrl, payload.frontendType);
     const sessionError = validateFrontendSession(session);
@@ -256,6 +262,7 @@ export async function POST(request) {
 
     const data = await proxyRequest(url.origin, session, "/nurse-requests", {
       method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
       body: {
         careType: payload.careType,
         patient: payload.patient,

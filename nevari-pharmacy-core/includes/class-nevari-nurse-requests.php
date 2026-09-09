@@ -7,6 +7,7 @@ final class Nevari_Nurse_Requests {
     private const META_KEY = 'nevari_nurse_requests';
     private const NOTIFY_HOOK = 'nevari_send_nurse_request_notifications';
     private const STATUS_PENDING_REVIEW = 'pending_review';
+    private const IDEMPOTENCY_TTL = DAY_IN_SECONDS;
 
     public static function init(): void {
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
@@ -63,6 +64,35 @@ final class Nevari_Nurse_Requests {
 
     public static function customer_create(WP_REST_Request $request): WP_REST_Response {
         $user_id = Nevari_Auth::api_session_user_id();
+        $idempotency_key = sanitize_text_field((string) $request->get_header('Idempotency-Key'));
+        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._:-]{15,99}$/', $idempotency_key)) {
+            return Nevari_Helpers::error('validation_error', 'A valid idempotency key is required.', 422, ['field' => 'idempotencyKey']);
+        }
+        $idempotency_option = 'nevari_nurse_idem_' . hash('sha256', $user_id . ':' . $idempotency_key);
+        $existing = get_option($idempotency_option, null);
+        if (is_array($existing) && !empty($existing['resource_id'])) {
+            global $wpdb;
+            $stored_payload = $wpdb->get_var($wpdb->prepare(
+                'SELECT payload_json FROM ' . Nevari_Care_Journeys::table('nurse_requests') . ' WHERE id = %d AND customer_user_id = %d LIMIT 1',
+                absint($existing['resource_id']),
+                $user_id
+            ));
+            $stored_request = json_decode((string) $stored_payload, true);
+            if (is_array($stored_request)) {
+                return Nevari_Helpers::success([
+                    'request' => $stored_request,
+                    'notifications' => 'queued',
+                ], ['idempotent_replay' => true], 200);
+            }
+            delete_option($idempotency_option);
+            $existing = null;
+        }
+        if (is_array($existing) && (time() - absint($existing['created_at'] ?? 0)) < self::IDEMPOTENCY_TTL) {
+            return Nevari_Helpers::error('request_in_progress', 'This nurse request is already being processed.', 409);
+        }
+        if ($existing !== null) {
+            delete_option($idempotency_option);
+        }
         $body = is_array($request->get_json_params()) ? $request->get_json_params() : [];
         $allowed = ['patient','careType','careDetails','clinicalRequirements','uploadedMedicalFiles','customerEmail','customerName','customerPhone','baseUrl','appOrigin','adminEmail','frontendType'];
         if (strlen((string) $request->get_body()) > 262144) {
@@ -99,6 +129,10 @@ final class Nevari_Nurse_Requests {
         }
         if (empty($care_details['preferredTime'])) {
             return Nevari_Helpers::error('validation_error', 'Preferred time is required.', 422, ['field' => 'preferredTime']);
+        }
+
+        if (!add_option($idempotency_option, ['created_at' => time()], '', 'no')) {
+            return Nevari_Helpers::error('request_in_progress', 'This nurse request is already being processed.', 409);
         }
 
         $created_at = current_time('mysql');
@@ -139,9 +173,12 @@ final class Nevari_Nurse_Requests {
             'updated_at' => $created_at,
         ]);
         if (!$inserted) {
+            delete_option($idempotency_option);
             return Nevari_Helpers::error('request_create_failed', 'The nurse request could not be submitted.', 500);
         }
-        Nevari_Care_Journeys::event('nurse', (int) $wpdb->insert_id, 'submitted', 'Your nurse request was submitted.', $user_id);
+        $resource_id = (int) $wpdb->insert_id;
+        update_option($idempotency_option, ['created_at' => time(), 'resource_id' => $resource_id], false);
+        Nevari_Care_Journeys::event('nurse', $resource_id, 'submitted', 'Your nurse request was submitted.', $user_id);
 
         if (!wp_next_scheduled(self::NOTIFY_HOOK, [$user_id, $request_id])) {
             wp_schedule_single_event(time() + 5, self::NOTIFY_HOOK, [$user_id, $request_id]);

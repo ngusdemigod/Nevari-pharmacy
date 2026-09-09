@@ -71,7 +71,7 @@ export default function NurseRegistrationPage() {
 
   return <main className="nurse-registration-page">
     <section className="nurse-registration-card" aria-labelledby="nurse-registration-title">
-      <p className="section-kicker">Join Nevari Health</p>
+      <p className="section-kicker">Join NevariHealth</p>
       <h1 id="nurse-registration-title">Nurse registration</h1>
       {complete ? <div className="nurse-registration-success" role="status">
         <h2>Application received</h2>

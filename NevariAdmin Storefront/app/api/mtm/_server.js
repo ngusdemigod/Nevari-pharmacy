@@ -35,6 +35,7 @@ export function buildFrontendSession(request, url, frontendType, baseUrl) {
   const session = {
     baseUrl: sanitizeText(baseUrl || "", { max: 300 }),
     accessToken: requestCookie(request, cookieName(frontendType)),
+    csrfToken: requestCookie(request, "nevari_csrf"),
     frontendType: sanitizeText(frontendType || "patient", { max: 40 }),
     frontendOrigin: url.origin,
   };
@@ -62,11 +63,15 @@ export function assertCsrfRequest(request) {
 }
 
 export async function proxyRawRequest(origin, session, path, { method = "GET", body, headers = {} } = {}) {
+  const sessionCookie = `${cookieName(session.frontendType)}=${encodeURIComponent(session.accessToken)}`;
+  const csrfCookie = session.csrfToken ? `; nevari_csrf=${encodeURIComponent(session.csrfToken)}` : "";
   return fetch(proxyUrl(origin, session.baseUrl, path), {
     method,
     headers: {
       Accept: headers.Accept || "application/json",
       Authorization: session.accessToken ? `Bearer ${session.accessToken}` : "",
+      Cookie: `${sessionCookie}${csrfCookie}`,
+      ...(session.csrfToken ? { "X-Nevari-CSRF": session.csrfToken } : {}),
       "X-Nevari-Frontend-Type": session.frontendType || "patient",
       "X-Nevari-Frontend-Origin": session.frontendOrigin || origin,
       ...headers,
@@ -78,12 +83,16 @@ export async function proxyRawRequest(origin, session, path, { method = "GET", b
 }
 
 export async function proxyRequest(origin, session, path, { method = "GET", body, headers = {} } = {}) {
+  const sessionCookie = `${cookieName(session.frontendType)}=${encodeURIComponent(session.accessToken)}`;
+  const csrfCookie = session.csrfToken ? `; nevari_csrf=${encodeURIComponent(session.csrfToken)}` : "";
   const response = await fetch(proxyUrl(origin, session.baseUrl, path), {
     method,
     headers: {
       Accept: "application/json",
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       Authorization: session.accessToken ? `Bearer ${session.accessToken}` : "",
+      Cookie: `${sessionCookie}${csrfCookie}`,
+      ...(session.csrfToken ? { "X-Nevari-CSRF": session.csrfToken } : {}),
       "X-Nevari-Frontend-Type": session.frontendType || "patient",
       "X-Nevari-Frontend-Origin": session.frontendOrigin || origin,
       ...headers,

@@ -133,7 +133,7 @@ export default function MtmJoinPage({ params }) {
     <main style={BRAND.shell}>
       <section style={BRAND.stack}>
         <div style={BRAND.logo}>
-          <Image src="/ne.webp" alt="Nevari Health" width={56} height={56} priority />
+          <Image src="/ne.webp" alt="NevariHealth" width={56} height={56} priority />
         </div>
         {busy ? (
           <>

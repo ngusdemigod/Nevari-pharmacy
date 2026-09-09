@@ -395,8 +395,8 @@ export function normalizeCustomerSettingsPayload(payload = {}) {
 }
 
 export async function fetchCustomerSettings(session) {
-  const payload = await apiRequest(session, "/customers/me/settings", { suppressHttpError: true });
-  return normalizeCustomerSettingsPayload(payload || {});
+  const payload = await apiRequest(session, "/customers/me/settings");
+  return normalizeCustomerSettingsPayload(payload);
 }
 
 export async function fetchCustomerSearch(session, query, limit = 20) {
@@ -416,9 +416,8 @@ export async function updateCustomerSettings(session, body = {}) {
   const payload = await apiRequest(session, "/customers/me/settings", {
     method: "POST",
     body: normalizedBody,
-    suppressHttpError: true,
   });
-  return normalizeCustomerSettingsPayload(payload || normalizedBody);
+  return normalizeCustomerSettingsPayload(payload);
 }
 
 export async function uploadCustomerProfileImage(session, body = {}) {

@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useState } from "react";
 import ModalScrim from "./ModalScrim";
 import { titleCase } from "./role-dashboard-utils";
@@ -25,22 +24,23 @@ export function RoleShell({
   logoutBusy = false,
   sidebarFooter = null,
   hideMobileBottomNav = false,
-  hideTabletToolbar = false
+  hideTabletToolbar = false,
+  shellClassName = ""
 }) {
   const roleLabel = title.replace(/^Nevari\s+/i, "");
   const labelFor = (page) => pageLabels[page] || titleCase(page);
   const [sideNavOpen, setSideNavOpen] = useState(false);
-  return <div className={`doctor-flow-shell ${hideMobileBottomNav ? "hide-mobile-bottom-nav" : ""}`.trim()}>
+  return <div className={`doctor-flow-shell ${hideMobileBottomNav ? "hide-mobile-bottom-nav" : ""} ${shellClassName}`.trim()}>
     <section className="app-shell">
       {sideNavOpen ? <ModalScrim className="dashboard-side-nav-backdrop" label="Close navigation" onDismiss={() => setSideNavOpen(false)} /> : null}
       <aside className={`sidebar dashboard-side-nav ${sideNavOpen ? "is-open" : ""}`} aria-label={`${roleLabel} sections`}>
         <div>
           <div className="brand">
             <div className="brand-mark">
-              <Image src="/ne.webp" alt="Nevari Health" width={48} height={48} />
+              <img src="/ne.webp" alt="NevariHealth" width="48" height="48" />
             </div>
             <div>
-              <p className="brand-title">Nevari Health</p>
+              <p className="brand-title">NevariHealth</p>
               <span className="brand-subtitle">{roleLabel} Dashboard</span>
             </div>
           </div>

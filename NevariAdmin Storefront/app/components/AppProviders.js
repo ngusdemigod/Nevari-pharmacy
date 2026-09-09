@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
 import { SWRConfig } from "swr";
-import { isLocalDevelopment, requireRecaptchaToken } from "../lib/recaptcha-client";
+import { requireRecaptchaToken } from "../lib/recaptcha-client";
 import { ensureIdempotencyKey, isRecoverableClinicalMutation, shouldRecoverMutation } from "../lib/session-recovery.mjs";
 import { FRONTENDS } from "./frontend-config";
 import SessionReauthModal from "./SessionReauthModal";
@@ -111,6 +111,11 @@ export default function AppProviders({ children }) {
       const isMutating = !["GET", "HEAD", "OPTIONS"].includes(method);
       const isSameOriginApi = requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith("/api/");
       const recoverableMutation = isSameOriginApi && isRecoverableClinicalMutation(requestUrl.toString(), method);
+      const proxyPath = requestUrl.pathname === "/api/nevari-proxy"
+        ? String(requestUrl.searchParams.get("path") || "")
+        : "";
+      const requiresPublicCaptcha = requestUrl.pathname === "/api/nurse-registration"
+        || (requestUrl.pathname === "/api/nevari-proxy" && (proxyPath.startsWith("/auth/") || proxyPath.startsWith("/sso/")));
 
       let headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined) || {});
       if (recoverableMutation) {
@@ -121,16 +126,15 @@ export default function AppProviders({ children }) {
         if (csrf && !headers.has("x-nevari-csrf")) {
           headers.set("x-nevari-csrf", csrf);
         }
-        // A CSRF cookie can outlive the session; local requests still need their marker.
-        if ((!csrf || isLocalDevelopment()) && !headers.has("x-nevari-recaptcha-token")) {
+        // CAPTCHA protects unauthenticated public submissions. Authenticated
+        // clinical writes use the HttpOnly session, CSRF, ownership checks and
+        // idempotency instead, and must not depend on Google's availability.
+        if (requiresPublicCaptcha && !headers.has("x-nevari-recaptcha-token")) {
           headers.set("x-nevari-recaptcha-token", await requireRecaptchaToken("public_submit"));
         }
       }
 
       const response = await originalFetch(input, { ...init, headers });
-      const proxyPath = requestUrl.pathname === "/api/nevari-proxy"
-        ? String(requestUrl.searchParams.get("path") || "")
-        : "";
       const isAuthRoute = requestUrl.pathname.startsWith("/api/auth/")
         || requestUrl.pathname.startsWith("/api/sso/")
         || proxyPath.startsWith("/auth/")

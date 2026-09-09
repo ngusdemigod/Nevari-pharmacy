@@ -145,7 +145,7 @@ const FRONTEND_PAGES = [
     ]
   },
   {
-    label: "Nevari Health",
+    label: "NevariHealth",
     items: [
       ["subscriptions", "Subscriptions", "i-credit-card"],
       ["doctors", "Staffs", "i-briefcase-medical"],
@@ -2538,7 +2538,7 @@ function AdminStorefrontDashboard({
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false);
   const [subscriptionProtectionOpen, setSubscriptionProtectionOpen] = useState(false);
   const [subscriptionOtp, setSubscriptionOtp] = useState({ code: "", status: "", challengeId: "", maskedEmail: "" });
-  const subscriptionOtpInputRef = useRef(null);
+  const subscriptionOtpInputRef = useRef([]);
   const [subscriptionModalMode, setSubscriptionModalMode] = useState("create");
   const [selectedSubscriptionPlanKey, setSelectedSubscriptionPlanKey] = useState("");
   const [selectedSubscriptionPlanId, setSelectedSubscriptionPlanId] = useState("");
@@ -2735,7 +2735,7 @@ function AdminStorefrontDashboard({
   const latestSessionRef = useRef(session);
   const refreshPromiseRef = useRef(null);
   const bootstrapStartedRef = useRef(false);
-  const customerPrivilegeOtpInputRef = useRef(null);
+  const customerPrivilegeOtpInputRef = useRef([]);
   const orderNotificationSeenRef = useRef(new Set());
   const orderNotificationReadyRef = useRef(false);
   const categoryNameInputRef = useRef(null);
@@ -3151,6 +3151,40 @@ function AdminStorefrontDashboard({
     setSubscriptionProtectionOpen(false);
     setSubscriptionOtp({ code: "", status: "", challengeId: "", maskedEmail: "" });
     setSubscriptionCreateLoading(false);
+  }
+
+  function updateSubscriptionOtpDigit(index, rawValue) {
+    const digits = String(rawValue || "").replace(/\D/g, "").slice(0, 6 - index);
+    if (!digits) {
+      setSubscriptionOtp((current) => {
+        if (index >= current.code.length) return current;
+        return { ...current, code: `${current.code.slice(0, index)}${current.code.slice(index + 1)}` };
+      });
+      return;
+    }
+    const insertionIndex = Math.min(index, subscriptionOtp.code.length);
+    setSubscriptionOtp((current) => ({
+      ...current,
+      code: `${current.code.slice(0, insertionIndex)}${digits}${current.code.slice(insertionIndex + digits.length)}`.slice(0, 6)
+    }));
+    window.requestAnimationFrame(() => {
+      subscriptionOtpInputRef.current[Math.min(5, insertionIndex + digits.length)]?.focus();
+    });
+  }
+
+  function handleSubscriptionOtpKeyDown(event, index) {
+    if (event.key === "Backspace" && !subscriptionOtp.code[index] && index > 0) {
+      subscriptionOtpInputRef.current[index - 1]?.focus();
+    } else if (event.key === "ArrowLeft" && index > 0) {
+      event.preventDefault();
+      subscriptionOtpInputRef.current[index - 1]?.focus();
+    } else if (event.key === "ArrowRight" && index < 5) {
+      event.preventDefault();
+      subscriptionOtpInputRef.current[index + 1]?.focus();
+    } else if (event.key === "Enter" && subscriptionOtp.code.length === 6) {
+      event.preventDefault();
+      void createSubscriptionPlanAfterOtp();
+    }
   }
 
   async function createSubscriptionPlanAfterOtp() {
@@ -3780,10 +3814,18 @@ function AdminStorefrontDashboard({
   }, [consultationFilter, deferredSearch, data.appointments]);
 
   useEffect(() => {
+    if (!subscriptionProtectionOpen) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => subscriptionOtpInputRef.current[0]?.focus(), 40);
+    return () => window.clearTimeout(timer);
+  }, [subscriptionProtectionOpen]);
+
+  useEffect(() => {
     if (!customerPrivilegeEscalationOpen) {
       return undefined;
     }
-    const timer = window.setTimeout(() => customerPrivilegeOtpInputRef.current?.focus(), 40);
+    const timer = window.setTimeout(() => customerPrivilegeOtpInputRef.current[0]?.focus(), 40);
     return () => window.clearTimeout(timer);
   }, [customerPrivilegeEscalationOpen]);
 
@@ -5505,6 +5547,40 @@ function AdminStorefrontDashboard({
     setCustomerPrivilegeEscalationLoading(false);
     setCustomerPrivilegeOtp({ code: "", status: "", challengeId: "", maskedEmail: "" });
     setCustomerPrivilegeSubject(null);
+  }
+
+  function updateCustomerPrivilegeOtpDigit(index, rawValue) {
+    const digits = String(rawValue || "").replace(/\D/g, "").slice(0, 6 - index);
+    if (!digits) {
+      setCustomerPrivilegeOtp((current) => {
+        if (index >= current.code.length) return current;
+        return { ...current, code: `${current.code.slice(0, index)}${current.code.slice(index + 1)}` };
+      });
+      return;
+    }
+    const insertionIndex = Math.min(index, customerPrivilegeOtp.code.length);
+    setCustomerPrivilegeOtp((current) => {
+      const nextCode = `${current.code.slice(0, insertionIndex)}${digits}${current.code.slice(insertionIndex + digits.length)}`.slice(0, 6);
+      return { ...current, code: nextCode };
+    });
+    window.requestAnimationFrame(() => {
+      customerPrivilegeOtpInputRef.current[Math.min(5, insertionIndex + digits.length)]?.focus();
+    });
+  }
+
+  function handleCustomerPrivilegeOtpKeyDown(event, index) {
+    if (event.key === "Backspace" && !customerPrivilegeOtp.code[index] && index > 0) {
+      customerPrivilegeOtpInputRef.current[index - 1]?.focus();
+    } else if (event.key === "ArrowLeft" && index > 0) {
+      event.preventDefault();
+      customerPrivilegeOtpInputRef.current[index - 1]?.focus();
+    } else if (event.key === "ArrowRight" && index < 5) {
+      event.preventDefault();
+      customerPrivilegeOtpInputRef.current[index + 1]?.focus();
+    } else if (event.key === "Enter" && customerPrivilegeOtp.code.length === 6) {
+      event.preventDefault();
+      void submitCustomerPrivilegeEscalation();
+    }
   }
 
   async function openRoleChangeModal(subject) {
@@ -9941,29 +10017,29 @@ function AdminStorefrontDashboard({
                 <div className="subscription-otp-card">
                   <h3 id="subscriptionProtectionTitle">Verify to Continue</h3>
                   
-                  <input
-                    ref={subscriptionOtpInputRef}
-                    className="subscription-otp-hidden-input"
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    autoFocus
-                    value={subscriptionOtp.code}
-                    onChange={(event) => setSubscriptionOtp((current) => ({ ...current, code: event.target.value.replace(/\D+/g, "").slice(0, 6) }))}
-                    aria-label="One time password"
-                  />
                   <div className="subscription-otp-boxes" role="group" aria-label="One time password digits">
                     {Array.from({ length: 6 }).map((_, index) => (
-                      <button
+                      <input
+                        ref={(element) => { subscriptionOtpInputRef.current[index] = element; }}
                         className={`subscription-otp-box ${subscriptionOtp.code[index] ? "filled" : ""}`}
                         key={`subscription-otp-box-${index}`}
-                        type="button"
-                        onClick={() => subscriptionOtpInputRef.current?.focus()}
-                        aria-label={`Digit ${index + 1}`}
-                      >
-                        {subscriptionOtp.code[index] || ""}
-                      </button>
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        autoComplete={index === 0 ? "one-time-code" : "off"}
+                        maxLength={index === 0 ? 6 : 1}
+                        value={subscriptionOtp.code[index] || ""}
+                        disabled={subscriptionCreateLoading}
+                        onChange={(event) => updateSubscriptionOtpDigit(index, event.target.value)}
+                        onKeyDown={(event) => handleSubscriptionOtpKeyDown(event, index)}
+                        onPaste={(event) => {
+                          const digits = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+                          if (!digits) return;
+                          event.preventDefault();
+                          updateSubscriptionOtpDigit(0, digits);
+                        }}
+                        aria-label={`One time password digit ${index + 1}`}
+                      />
                     ))}
                   </div>
                   {subscriptionOtp.status ? <p className="subscription-otp-status">{subscriptionOtp.status}</p> : null}
@@ -14339,27 +14415,29 @@ function AdminStorefrontDashboard({
                 <div className="auth-form auth-reference-form auth-otp-form">
                   <div className="auth-otp-card">
                   <h2 className="auth-otp-title" id="customerPrivilegeOtpTitle">{customerPrivilegeSubject?.mode === "downgrade" ? "Approve Downgrade" : "Approve Upgrade"}</h2>
-                  <input
-                    ref={customerPrivilegeOtpInputRef}
-                    className="auth-otp-hidden-input"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    value={customerPrivilegeOtp.code}
-                    onChange={(event) => setCustomerPrivilegeOtp((current) => ({ ...current, code: event.target.value.replace(/\D/g, "").slice(0, 6) }))}
-                    aria-label="Role change verification code"
-                  />
                   <div className="auth-otp-boxes" role="group" aria-label="Role change verification code digits">
                     {Array.from({ length: 6 }, (_, index) => (
-                      <button
+                      <input
+                        ref={(element) => { customerPrivilegeOtpInputRef.current[index] = element; }}
                         className={`auth-otp-box ${customerPrivilegeOtp.code[index] ? "filled" : ""}`}
                         key={`customer-privilege-otp-box-${index}`}
-                        type="button"
-                        onClick={() => customerPrivilegeOtpInputRef.current?.focus()}
-                        aria-label={`Digit ${index + 1}`}
-                      >
-                        {customerPrivilegeOtp.code[index] || ""}
-                      </button>
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        autoComplete={index === 0 ? "one-time-code" : "off"}
+                        maxLength={index === 0 ? 6 : 1}
+                        value={customerPrivilegeOtp.code[index] || ""}
+                        disabled={customerPrivilegeEscalationLoading}
+                        onChange={(event) => updateCustomerPrivilegeOtpDigit(index, event.target.value)}
+                        onKeyDown={(event) => handleCustomerPrivilegeOtpKeyDown(event, index)}
+                        onPaste={(event) => {
+                          const digits = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+                          if (!digits) return;
+                          event.preventDefault();
+                          updateCustomerPrivilegeOtpDigit(0, digits);
+                        }}
+                        aria-label={`Verification code digit ${index + 1}`}
+                      />
                     ))}
                   </div>
                   {customerPrivilegeOtp.status ? <p className="customer-privilege-otp-status" role="status">{customerPrivilegeOtp.status}</p> : null}

@@ -2880,10 +2880,10 @@ function DoctorMobileShell({
       <aside className="customer-mobile-drawer doctor-mobile-drawer" aria-label="Doctor navigation">
         <div className="doctor-mobile-brand customer-mobile-drawer-brand">
           <div className="doctor-mobile-brand-mark">
-            <Image src="/ne.webp" alt="Nevari Health" width={44} height={44} />
+            <Image src="/ne.webp" alt="NevariHealth" width={44} height={44} />
           </div>
           <div>
-            <p className="doctor-mobile-brand-title">Nevari Health</p>
+            <p className="doctor-mobile-brand-title">NevariHealth</p>
             <p className="doctor-mobile-brand-copy">Doctor Dashboard</p>
           </div>
         </div>

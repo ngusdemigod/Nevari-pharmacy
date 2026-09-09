@@ -92,7 +92,7 @@ function fallbackBody(documentType, data, paymentUrl = "") {
   const paymentLink = documentType === "invoice" && paymentUrl && Number(data?.totals?.balance_due || 0) > 0
     ? `<p><a href="${escapeHtml(paymentUrl)}" target="_blank" rel="noopener noreferrer">Pay now</a></p>`
     : "";
-  return `<p>Hello ${escapeHtml(data.customer?.name || "Patient")},</p><p>Your ${escapeHtml(title.toLowerCase())} for order <strong>#${escapeHtml(data.order_number)}</strong> is attached.</p>${paymentLink}<p>Thank you for choosing Nevari Health.</p>`;
+  return `<p>Hello ${escapeHtml(data.customer?.name || "Patient")},</p><p>Your ${escapeHtml(title.toLowerCase())} for order <strong>#${escapeHtml(data.order_number)}</strong> is attached.</p>${paymentLink}<p>Thank you for choosing NevariHealth.</p>`;
 }
 
 function fallbackText(documentType, data, paymentUrl = "") {

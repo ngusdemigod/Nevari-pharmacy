@@ -4690,10 +4690,13 @@ final class Nevari_Rest {
 
         $display_name = trim((string) ($settings['displayName'] ?? ''));
         if ($display_name !== '') {
-            wp_update_user([
+            $display_name_update = wp_update_user([
                 'ID' => (int) $user_id,
                 'display_name' => $display_name,
             ]);
+            if (is_wp_error($display_name_update)) {
+                return Nevari_Helpers::error('profile_update_failed', 'Your profile could not be saved. Please try again.', 500);
+            }
         }
 
         update_user_meta($user_id, self::CUSTOMER_SETTINGS_META_KEY, $settings);
@@ -7277,11 +7280,12 @@ final class Nevari_Rest {
                 ? sanitize_textarea_field($value)
                 : sanitize_text_field($value);
             $value = trim(wp_html_excerpt($value, $max_length, ''));
-            if ($field === 'email' && $value !== '' && !is_email($value)) {
-                return new WP_Error('validation_error', 'A valid notification email is required.', ['status' => 422]);
+            if ($field === 'email') {
+                // Account identity changes require a separate verified flow.
+                $value = (string) $defaults['email'];
             }
             if ($field === 'phone' || $field === 'emergencyContactPhoneNumber') {
-                $value = preg_replace('/[^0-9+-s()]/', '', $value);
+                $value = preg_replace('/[^0-9+\-\s()]/', '', $value);
             }
             $settings[$field] = $value;
         }
@@ -7322,7 +7326,7 @@ final class Nevari_Rest {
         $emergency_name = (string) ($settings['emergencyContactName'] ?? '');
         $emergency_phone = (string) ($settings['emergencyContactPhoneNumber'] ?? '');
         if ($emergency_phone !== '') {
-            $digits = preg_replace('/D+/', '', $emergency_phone);
+            $digits = preg_replace('/\D+/', '', $emergency_phone);
             if (strpos($digits, '234') === 0 && strlen($digits) === 13) {
                 $digits = '0' . substr($digits, 3);
             }

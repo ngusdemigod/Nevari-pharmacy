@@ -152,14 +152,19 @@ function loginFailureMessage(response, payload) {
 export default function RoleLoginPage({ config }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const requestedView = String(searchParams.get("view") || "").trim().toLowerCase();
   const [session, setSession] = useState(() => defaultSession(config));
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [resetUsername, setResetUsername] = useState("");
   const [registration, setRegistration] = useState({ firstName: "", lastName: "", email: "", password: "" });
   const [verification, setVerification] = useState({ challengeId: "", maskedEmail: "", code: "", ssoTransactionId: "", returnPath: "" });
-  const verificationInputRef = useRef(null);
-  const [view, setView] = useState("login");
+  const verificationInputRef = useRef([]);
+  const [view, setView] = useState(() => {
+    if (requestedView === "reset") return "reset";
+    if (requestedView === "register" && config.allowRegistration) return "register";
+    return "login";
+  });
   const [notice, setNotice] = useState({ message: config.loginPrompt || `Sign in to ${config.label}.`, tone: "warning" });
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [registrationPasswordVisible, setRegistrationPasswordVisible] = useState(false);
@@ -299,6 +304,40 @@ export default function RoleLoginPage({ config }) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [resendCooldown, view]);
+
+  useEffect(() => {
+    if (view !== "verify") return undefined;
+    const timer = window.setTimeout(() => verificationInputRef.current[0]?.focus(), 40);
+    return () => window.clearTimeout(timer);
+  }, [view]);
+
+  function updateVerificationDigit(index, rawValue) {
+    const digits = String(rawValue || "").replace(/\D/g, "").slice(0, 6 - index);
+    if (!digits) {
+      setVerification((current) => ({
+        ...current,
+        code: `${current.code.slice(0, index)}${current.code.slice(index + 1)}`
+      }));
+      return;
+    }
+    setVerification((current) => ({
+      ...current,
+      code: `${current.code.slice(0, index)}${digits}${current.code.slice(index + digits.length)}`.slice(0, 6)
+    }));
+    window.requestAnimationFrame(() => verificationInputRef.current[Math.min(5, index + digits.length)]?.focus());
+  }
+
+  function handleVerificationKeyDown(event, index) {
+    if (event.key === "Backspace" && !verification.code[index] && index > 0) {
+      verificationInputRef.current[index - 1]?.focus();
+    } else if (event.key === "ArrowLeft" && index > 0) {
+      event.preventDefault();
+      verificationInputRef.current[index - 1]?.focus();
+    } else if (event.key === "ArrowRight" && index < 5) {
+      event.preventDefault();
+      verificationInputRef.current[index + 1]?.focus();
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -760,27 +799,29 @@ export default function RoleLoginPage({ config }) {
                 <div className="auth-otp-card">
                   <h2 className="auth-otp-title">{screenTitle}</h2>
                   <p className="auth-otp-recipient">Recipient: {verification.maskedEmail || "Waiting for OTP"}</p>
-                  <input
-                    ref={verificationInputRef}
-                    className="auth-otp-hidden-input"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    value={verification.code}
-                    onChange={(event) => setVerification((prev) => ({ ...prev, code: event.target.value.replace(/\D+/g, "").slice(0, 6) }))}
-                    aria-label="Verification code"
-                  />
                   <div className="auth-otp-boxes" role="group" aria-label="Verification code digits">
                     {Array.from({ length: 6 }).map((_, index) => (
-                      <button
+                      <input
+                        ref={(element) => { verificationInputRef.current[index] = element; }}
                         className={`auth-otp-box ${verification.code[index] ? "filled" : ""}`}
                         key={`auth-otp-box-${index}`}
-                        type="button"
-                        onClick={() => verificationInputRef.current?.focus()}
-                        aria-label={`Digit ${index + 1}`}
-                      >
-                        {verification.code[index] || ""}
-                      </button>
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        autoComplete={index === 0 ? "one-time-code" : "off"}
+                        maxLength={index === 0 ? 6 : 1}
+                        value={verification.code[index] || ""}
+                        disabled={loadingAction === "verify"}
+                        onChange={(event) => updateVerificationDigit(index, event.target.value)}
+                        onKeyDown={(event) => handleVerificationKeyDown(event, index)}
+                        onPaste={(event) => {
+                          const digits = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+                          if (!digits) return;
+                          event.preventDefault();
+                          updateVerificationDigit(0, digits);
+                        }}
+                        aria-label={`Verification code digit ${index + 1}`}
+                      />
                     ))}
                   </div>
                   <div className="auth-actions auth-otp-actions">

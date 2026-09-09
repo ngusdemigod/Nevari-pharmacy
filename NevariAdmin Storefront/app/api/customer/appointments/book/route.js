@@ -409,26 +409,18 @@ export async function POST(request) {
           return NextResponse.json(customerSessionError().data, { status: 401 });
         }
         if (createResponse.status >= 500) {
-          Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "degraded_local_fallback" } });
+          Sentry.metrics.count("appointment_booking_requests", 1, { attributes: { outcome: "upstream_unavailable" } });
           Sentry.metrics.distribution("appointment_booking_latency", Date.now() - startedAt, { unit: "millisecond" });
-          Sentry.logger.warn("Appointment booking fell back to local pending sync state.", {
+          Sentry.logger.warn("Appointment booking failed because the upstream service was unavailable.", {
             status_code: createResponse.status,
             has_doctor: Boolean(doctorId),
           });
           await Sentry.flush(2000);
           return NextResponse.json({
-            ok: true,
-            degraded: true,
-            appointment: fallbackAppointment({ startAt, endAt, reason }),
-            meeting: { url: "" },
-            warning: "The appointment server is temporarily unavailable. The appointment was added locally as pending sync.",
-            upstream_status: createResponse.status,
-            emailDispatch: {
-              customer: { sent: false, status: createResponse.status, skipped: true },
-              admin: { sent: false, status: createResponse.status, skipped: true },
-              reminders: []
-            }
-          });
+            ok: false,
+            error: { message: "The appointment service is temporarily unavailable. Your appointment was not booked. Please try again." },
+            upstream_status: createResponse.status
+          }, { status: 503 });
         }
 
         Sentry.metrics.count("appointment_booking_requests", 1, {

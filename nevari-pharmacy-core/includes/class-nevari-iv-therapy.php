@@ -458,7 +458,11 @@ final class Nevari_Iv_Therapy {
         if (is_array($value)) {
             $result = [];
             foreach ($value as $key => $item) {
-                $result[sanitize_key((string) $key)] = self::sanitize_deep($item);
+                $safe_key = is_int($key) ? $key : preg_replace('/[^A-Za-z0-9_\-]/', '', (string) $key);
+                if ($safe_key === '') {
+                    continue;
+                }
+                $result[$safe_key] = self::sanitize_deep($item);
             }
             return $result;
         }

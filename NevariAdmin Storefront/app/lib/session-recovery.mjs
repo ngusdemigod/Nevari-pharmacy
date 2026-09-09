@@ -1,5 +1,6 @@
 const RECOVERABLE_CLINICAL_ROUTES = new Set([
   "/api/customer/iv-therapy",
+  "/api/customer/nurse-requests",
 ]);
 
 export function isRecoverableClinicalMutation(url, method) {

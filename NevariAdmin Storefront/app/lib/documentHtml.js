@@ -263,12 +263,12 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
 </head>
 <body>
   <div class="inv-wrap">
-    <h2 class="sr-only">Nevari Health ${escapeHtml(badgeLabel.toLowerCase())} for ${escapeHtml(customer.name || "Patient")}</h2>
+    <h2 class="sr-only">NevariHealth ${escapeHtml(badgeLabel.toLowerCase())} for ${escapeHtml(customer.name || "Patient")}</h2>
     <div class="inv-header">
       <div class="brand-lockup">
         <img src="${escapeHtml(appOrigin)}/ne.webp" alt="Nevari logo" class="brand-logo" />
         <div>
-          <div class="brand-name">Nevari Health</div>
+          <div class="brand-name">NevariHealth</div>
           <div class="brand-sub">12 Adeola Odeku St, Victoria Island · Lagos, NG</div>
         </div>
       </div>
@@ -321,7 +321,7 @@ export function renderDocumentHtml(data, documentType = "invoice", { appOrigin =
     <div class="inv-footer">
       <div class="footer-note">
         ${footerNote}
-        Payment via approved Nevari Health payment channels.<br>
+        Payment via approved NevariHealth payment channels.<br>
         For queries: billing@nevarihealth.com
       </div>
       <div class="status-pill ${escapeHtml(statusClass)}"><span class="dot"></span>${escapeHtml(statusLabel)}</div>

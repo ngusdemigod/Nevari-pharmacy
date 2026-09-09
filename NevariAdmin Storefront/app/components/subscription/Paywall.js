@@ -33,11 +33,11 @@ export default function Paywall({
 }) {
   return (
     <section className="subscription-shell">
-      <button className="subscription-menu-button" type="button" aria-label="Open menu" onClick={onOpenMenu}>
+      {onOpenMenu ? <button className="subscription-menu-button" type="button" aria-label="Open menu" onClick={onOpenMenu}>
         <span />
         <span />
         <span />
-      </button>
+      </button> : null}
 
       <div className="subscription-copy-block">
         <h1 className="subscription-title">

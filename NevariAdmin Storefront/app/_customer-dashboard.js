@@ -25,7 +25,7 @@ import SubscriptionGate from "./components/subscription/SubscriptionGate";
 import Paywall from "./components/subscription/Paywall";
 import { useSubscription } from "./hooks/use-subscription";
 import { RoleShell, SkeletonBox } from "./components/role-shell";
-import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, fetchCustomerSearch, fetchMtmBookingContext, normalizeCustomerSettingsPayload, prepareCustomerMtmPdf, requestMtmReschedule, reserveMtmSlot, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest, updateCustomerSettings, uploadCustomerProfileImage } from "./lib/nevari-api";
+import { fetchCustomerIvTherapyRequests, fetchCustomerMtmRequests, fetchCustomerNurseRequests, fetchCustomerSearch, fetchCustomerSettings, fetchMtmBookingContext, normalizeCustomerSettingsPayload, prepareCustomerMtmPdf, requestMtmReschedule, reserveMtmSlot, resolveSubscriptionMonthlyAmount, submitCustomerIvTherapyRequest, submitCustomerMtmRequest, updateCustomerSettings, uploadCustomerProfileImage } from "./lib/nevari-api";
 import { citiesForNigeriaState, NIGERIA_STATES } from "./lib/nigeria-locations";
 
 const CUSTOMER_SETTINGS_KEY = "nevari_customer_frontend_settings";
@@ -1151,7 +1151,7 @@ function getCustomerSettingsFieldErrors(settings, { requireAll = false } = {}) {
 
   if (!displayName && requireAll) {
     errors.displayName = "Display name is required.";
-  } else if (displayName && !/^[a-zA-Zs'.-]{2,120}$/.test(displayName)) {
+  } else if (displayName && !/^[a-zA-Z\s'.-]{2,120}$/.test(displayName)) {
     errors.displayName = minLengthError("Display name", 2);
   }
   if (!email && requireAll) {
@@ -1759,27 +1759,35 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
             data_base64: await readFileAsBase64(file),
           };
       const result = await uploadCustomerProfileImage(session, payload);
-      uploadedAvatarUrl = normalizeProfileAvatarUrl(result?.avatar_url || result?.src || "");
-      if (uploadedAvatarUrl) {
-        const refreshedAvatarUrl = withProfileAvatarRefreshToken(uploadedAvatarUrl, Date.now());
-        setPendingProfileAvatarUrl(refreshedAvatarUrl);
-        setProfileImageRefreshing(true);
-        await mutateSummary((current) => patchCustomerProfileAvatarState(current, refreshedAvatarUrl), { revalidate: false });
-        setSession((current) => current ? {
-          ...current,
-          user: {
-            ...(current.user || {}),
-            avatar_url: refreshedAvatarUrl,
-            avatarUrl: refreshedAvatarUrl,
-            picture: refreshedAvatarUrl,
-          },
-        } : current);
-        persistPatientSessionAvatar(refreshedAvatarUrl);
-        if (cacheKey) {
-          writeDashboardCache(cacheKey, {
-            state: patchCustomerProfileAvatarState(summaryState, refreshedAvatarUrl),
-          });
-        }
+      uploadedAvatarUrl = normalizeProfileAvatarUrl(
+        result?.avatar_url
+        || result?.profile_image
+        || result?.src
+        || result?.profile?.avatar_url
+        || result?.profile?.profile_image
+        || ""
+      );
+      if (!uploadedAvatarUrl) {
+        throw new Error("The server accepted the image but did not return the saved profile photo. Please try again.");
+      }
+      const refreshedAvatarUrl = withProfileAvatarRefreshToken(uploadedAvatarUrl, Date.now());
+      setPendingProfileAvatarUrl(refreshedAvatarUrl);
+      setProfileImageRefreshing(true);
+      await mutateSummary((current) => patchCustomerProfileAvatarState(current, refreshedAvatarUrl), { revalidate: false });
+      setSession((current) => current ? {
+        ...current,
+        user: {
+          ...(current.user || {}),
+          avatar_url: refreshedAvatarUrl,
+          avatarUrl: refreshedAvatarUrl,
+          picture: refreshedAvatarUrl,
+        },
+      } : current);
+      persistPatientSessionAvatar(refreshedAvatarUrl);
+      if (cacheKey) {
+        writeDashboardCache(cacheKey, {
+          state: patchCustomerProfileAvatarState(summaryState, refreshedAvatarUrl),
+        });
       }
       setProfileImageSuccess("Profile image updated successfully.");
       showDashboardToast("Profile image updated successfully.", "success");
@@ -1853,33 +1861,40 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     setOverviewProfilePromptVisible(false);
   }
   useEffect(() => {
-    if (!resolveCustomerSessionStorageIdentity(session?.user) || customerSettingsHydratedRef.current) {
-      return;
+    const sessionIdentity = resolveCustomerSessionStorageIdentity(session?.user);
+    if (!sessionIdentity || !session?.accessToken || customerSettingsHydratedRef.current) {
+      return undefined;
     }
-    const summarySettings = normalizeCustomerSettingsPayload(summaryState.settings || state.dashboard?.settings || {});
-    const storedSettingsPayload = readStoredCustomerSettingsPayload(session.user);
-    const storedSettings = normalizeCustomerSettingsPayload(storedSettingsPayload);
-    const storedSettingKeys = new Set(Object.keys(storedSettingsPayload));
-    const mergedSettings = normalizeCustomerSettingsPayload({
-      ...defaultCustomerSettings(),
-      ...summarySettings,
-      displayName: summarySettings.displayName || customerDisplayName,
-      email: summarySettings.email || profile.email || session.user?.email || settings.email || "",
-      phone: summarySettings.phone || profile.phone || settings.phone || "",
-      address: summarySettings.address || profile.address || settings.address || "",
-      timezone: summarySettings.timezone || settings.timezone || storedStoreTimeZone(),
-    });
-    Object.keys(storedSettingsPayload).forEach((key) => {
-      if (storedSettingKeys.has(key) && Object.prototype.hasOwnProperty.call(mergedSettings, key)) {
-        mergedSettings[key] = storedSettings[key];
+
+    let cancelled = false;
+    async function hydrateCustomerSettings() {
+      try {
+        // WordPress owns patient profile data. Browser storage is only an offline
+        // fallback and must never overwrite a newer server record after sign-in.
+        const serverSettings = normalizeCustomerSettingsPayload(await fetchCustomerSettings(session));
+        if (cancelled || resolveCustomerSessionStorageIdentity(session.user) !== sessionIdentity) {
+          return;
+        }
+        customerSettingsHydratedRef.current = true;
+        setCustomerSettingsHydrated(true);
+        customerSettingsFingerprintRef.current = JSON.stringify(serverSettings);
+        persistCustomerSettings(serverSettings, session.user);
+        setSettings(serverSettings);
+      } catch (error) {
+        if (cancelled) return;
+        const storedSettings = loadCustomerSettings(session.user);
+        customerSettingsHydratedRef.current = true;
+        setCustomerSettingsHydrated(true);
+        customerSettingsFingerprintRef.current = JSON.stringify(storedSettings);
+        setSettings(storedSettings);
+        showDashboardToast(error?.message || "Unable to load your saved profile.", "error");
       }
-    });
-    customerSettingsHydratedRef.current = true;
-    setCustomerSettingsHydrated(true);
-    customerSettingsFingerprintRef.current = JSON.stringify(mergedSettings);
-    persistCustomerSettings(mergedSettings, session.user);
-    setSettings(mergedSettings);
-  }, [customerDisplayName, profile.address, profile.email, profile.phone, session?.user, settings, state.dashboard?.settings, summaryState.settings]);
+    }
+    hydrateCustomerSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
   const visibleDoctors = useMemo(() => sortPreferredDoctors(state.doctors, settings.preferredDoctorIds), [settings.preferredDoctorIds, state.doctors]);
   const subscriptionState = useSubscription(session);
   const mtmRequestsKey = session && page === "therapy"
@@ -2584,6 +2599,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
       renderNavIcon={renderCustomerNavIcon}
       onLogout={handleLogout}
       logoutBusy={logoutBusy}
+      shellClassName="customer-desktop-shell"
       sidebarFooter={<div
         className="customer-desktop-sidebar-profile"
         role="button"
@@ -4280,7 +4296,7 @@ function AppointmentPage({
 
     <div className="customer-appointment-layout">
       {!replaceListWithBooking ? <section className="customer-list-shell book-doctor-shell customer-appointment-history-shell customer-appointment-list-panel">
-        <div className="customer-mobile-pill-tabs" role="tablist" aria-label="Appointment filters">
+        <div className="customer-mobile-pill-tabs customer-dashboard-tabs" role="tablist" aria-label="Appointment filters">
           {filters.map((item) => <button className={`customer-mobile-pill-tab ${filter === item.id ? "active" : ""}`} key={item.id} type="button" role="tab" aria-selected={filter === item.id} onClick={() => setFilter(item.id)}>
             {item.label}
           </button>)}
@@ -4757,9 +4773,17 @@ function ConfirmationPage({ journey, doctor, onBack, calendarDownloadUrl, storeT
   const appointment = confirmation?.appointment || journey.appointment;
   const joinUrl = appointmentIsUpcoming(appointment) ? getAppointmentJoinUrl(appointment, confirmation) : "";
   const doctorName = doctor?.display_name || appointment?.doctor?.display_name || "Assigned doctor";
-  return <div className="customer-confirmation-modal customer-appointment-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="appointment-confirmation-title">
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === "Escape") onBack();
+    }
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onBack]);
+
+  return <div className="customer-confirmation-modal customer-appointment-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="appointment-confirmation-title" onClick={onBack}>
     <section className="customer-flow-status-page customer-flow-status-page-success customer-flow-status-page-modal">
-      <div className="customer-flow-status-card customer-flow-status-card-confirmed is-success">
+      <div className="customer-flow-status-card customer-flow-status-card-confirmed is-success" onClick={(event) => event.stopPropagation()}>
       <header className="customer-flow-status-head">
         <CustomerStatusIcon tone="success" type="check" />
         <h2 id="appointment-confirmation-title">Appointment confirmed</h2>
@@ -5850,7 +5874,7 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
       <span />
       <span />
     </button> : null}
-    <div className="customer-subscription-management-tabs" role="tablist" aria-label="Nevari Access Pro sections">
+    <div className="customer-subscription-management-tabs customer-dashboard-tabs" role="tablist" aria-label="Nevari Access Pro sections">
       <button className={activeTab === "subscription" ? "active" : ""} type="button" role="tab" aria-selected={activeTab === "subscription"} onClick={() => setActiveTab("subscription")}>Subscription</button>
       <button className={activeTab === "history" ? "active" : ""} type="button" role="tab" aria-selected={activeTab === "history"} onClick={() => setActiveTab("history")}>History</button>
     </div>
@@ -5895,7 +5919,7 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
       <Paywall
         busy={Boolean(subscriptionState?.isActionBusy)}
         error={subscriptionState?.actionError || ""}
-        onOpenMenu={onOpenMenu}
+        onOpenMenu={embeddedDesktop ? null : onOpenMenu}
         onSubscribe={() => subscriptionState?.launchCheckout?.({
           plan: "nevari_access_pro",
           frequency: "monthly",
@@ -6147,7 +6171,7 @@ function ProfilePage({ session, profile, orders, appointments, doctors, settings
   }
 
   return <div className={`customer-dashboard-stack customer-desktop-boxed-page ${profileTab === "notifications" ? "customer-profile-notifications-active" : ""}`}>
-    <div className="customer-profile-desktop-tabs" role="tablist" aria-label="Profile sections">
+    <div className="customer-profile-desktop-tabs customer-dashboard-tabs" role="tablist" aria-label="Profile sections">
       <button type="button" role="tab" aria-selected={profileTab === "user"} className={profileTab === "user" ? "active" : ""} onClick={() => setProfileTab("user")}>User</button>
       <button type="button" role="tab" aria-selected={profileTab === "notifications"} className={profileTab === "notifications" ? "active" : ""} onClick={() => setProfileTab("notifications")}>Notification Settings</button>
     </div>
@@ -6210,7 +6234,7 @@ function ProfilePage({ session, profile, orders, appointments, doctors, settings
         </div>
         <div className="customer-profile-detail-grid">
           <label><span>Display Name</span><input ref={firstEditableInputRef} value={profileDraft.displayName} readOnly={false} className={profileFieldErrors.displayName ? "has-error" : ""} onChange={(event) => updateProfileDraft("displayName", sanitizeClientText(event.target.value, { max: 120 }))} />{profileFieldErrors.displayName ? <small className="customer-mobile-field-error">{profileFieldErrors.displayName}</small> : null}</label>
-          <label><span>Email</span><input value={profileDraft.email} onChange={(event) => updateProfileDraft("email", sanitizeClientText(event.target.value, { max: 160 }))} /></label>
+          <label><span>Email</span><input type="email" value={profileDraft.email} readOnly aria-readonly="true" /></label>
           <label><span>Phone Number</span><input type="tel" inputMode="tel" maxLength={11} value={profileDraft.phone} readOnly={false} className={profileFieldErrors.phone ? "has-error" : ""} onChange={(event) => updateProfileDraft("phone", normalizeMtmPhoneNumber(event.target.value))} />{profileFieldErrors.phone ? <small className="customer-mobile-field-error">{profileFieldErrors.phone}</small> : null}</label>
           <label className="customer-profile-detail-grid-wide"><span>Address</span><textarea rows={3} value={profileDraft.address} readOnly={false} className={profileFieldErrors.address ? "has-error" : ""} onChange={(event) => updateProfileDraft("address", sanitizeClientText(event.target.value, { max: 200 }))} />{profileFieldErrors.address ? <small className="customer-mobile-field-error">{profileFieldErrors.address}</small> : null}</label>
         </div>
@@ -7566,7 +7590,7 @@ function CustomerMobileDashboard({
   const [mobileProfileDraft, setMobileProfileDraft] = useState(() => normalizeCustomerSettingsPayload(settings));
   const [mobileProfileErrors, setMobileProfileErrors] = useState({});
   const normalizedMobileProfileSource = normalizeCustomerSettingsPayload(settings);
-  const mobileProfileDirty = ["displayName", "email", "phone", "address"].some((key) => JSON.stringify(mobileProfileDraft[key]) !== JSON.stringify(normalizedMobileProfileSource[key]));
+  const mobileProfileDirty = ["displayName", "phone", "address"].some((key) => JSON.stringify(mobileProfileDraft[key]) !== JSON.stringify(normalizedMobileProfileSource[key]));
   const mobileHealthDirty = ["bloodGroup", "genotype", "allergies", "currentMedications", "existingConditions", "emergencyContactName", "emergencyContactPhoneNumber"]
     .some((key) => JSON.stringify(mobileHealthDraft[key]) !== JSON.stringify(normalizedMobileProfileSource[key]));
   const appointmentPageLoading = page === "appointment"
@@ -8675,7 +8699,7 @@ function CustomerMobileDashboard({
       displayName: sanitizeClientText(mobileProfileDraft.displayName || '', { max: 120 }),
       phone: normalizeMtmPhoneNumber(mobileProfileDraft.phone || ''),
       address: sanitizeClientText(mobileProfileDraft.address || '', { max: 200 }),
-      email: sanitizeClientText(mobileProfileDraft.email || '', { max: 254 }).replace(/\s+/g, ''),
+      email: settings.email,
     });
     const errors = getCustomerSettingsFieldErrors(normalizedDraft, { requireAll: true });
     if (Object.keys(errors).length) {
@@ -9551,7 +9575,7 @@ function CustomerMobileDashboard({
               <span>Welcome back, {customerDisplayName}</span>
               <h1>Medication Therapy Management</h1>
             </header> : renderHeader("Medication Therapy Management")}
-            <div className="customer-mobile-pill-tabs" role="tablist" aria-label="MTM tabs">
+          <div className="customer-mobile-pill-tabs customer-dashboard-tabs" role="tablist" aria-label="MTM tabs">
               {[
                 ["request", "Request"],
                 ["history", "History"]
@@ -10096,7 +10120,7 @@ function CustomerMobileDashboard({
       <main className={`customer-mobile-frame ${pageTransitionClass}`}>
         {renderHeader("Profile")}
         {stateError ? <p className="customer-mobile-alert">{stateError}</p> : null}
-        <div className="customer-mobile-profile-tabs" role="tablist" aria-label="Profile tabs">
+        <div className="customer-mobile-profile-tabs customer-dashboard-tabs" role="tablist" aria-label="Profile tabs">
           {[
             { id: "user", label: "User" },
             { id: "notifications", label: "Notification Settings" }
@@ -10160,7 +10184,7 @@ function CustomerMobileDashboard({
           </label>
           <label className="customer-mobile-field">
             <span>Email:</span>
-            <input type="email" inputMode="email" value={mobileProfileDraft.email} className={mobileProfileErrors.email ? "has-error" : ""} onChange={(event) => setMobileProfileDraft((current) => ({ ...current, email: sanitizeClientText(event.target.value, { max: 254 }).replace(/\s+/g, "") }))} />
+            <input type="email" inputMode="email" value={mobileProfileDraft.email} readOnly aria-readonly="true" />
             {mobileProfileErrors.email ? <small className="customer-mobile-field-error">{mobileProfileErrors.email}</small> : null}
           </label>
           {customerSettingsSaveStatus === "saving" ? <small className="customer-mobile-save-status">Saving profile...</small> : null}
@@ -10428,7 +10452,7 @@ function CustomerMobileDashboard({
           onResetJourney,
           null
         )}
-        <div className={showNurseRequestFlow ? "customer-request-tabs" : "customer-mobile-appointment-tabs"} role="tablist" aria-label={showNurseRequestFlow ? "Nurse request tabs" : "Appointment tabs"}>
+        <div className={`${showNurseRequestFlow ? "customer-request-tabs" : "customer-mobile-appointment-tabs"} customer-dashboard-tabs`} role="tablist" aria-label={showNurseRequestFlow ? "Nurse request tabs" : "Appointment tabs"}>
           {(showNurseRequestFlow ? [
             ["request", "Request"],
             ["upcoming", "Upcoming Visits"],
