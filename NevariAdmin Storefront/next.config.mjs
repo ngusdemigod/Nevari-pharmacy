@@ -6,9 +6,19 @@ const hasSentryUploadCredentials = Boolean(
   && process.env.SENTRY_PROJECT
 );
 
+const DEVELOPMENT_BRANCH = "dev";
+const DEVELOPMENT_BACKEND_URL = "https://demo.nevarihealth.com";
+const isDevelopmentBranchDeployment = process.env.VERCEL_GIT_COMMIT_REF === DEVELOPMENT_BRANCH;
+const effectiveBackendUrl = isDevelopmentBranchDeployment
+  ? DEVELOPMENT_BACKEND_URL
+  : (process.env.NEXT_PUBLIC_NEVARI_BASE_URL || "https://nevarihealth.com");
+
 const nextConfig = {
   distDir: process.env.NEVARI_NEXT_DIST_DIR || ".next",
   productionBrowserSourceMaps: true,
+  env: {
+    NEXT_PUBLIC_NEVARI_BASE_URL: effectiveBackendUrl,
+  },
   // The MTM intake PDF is read from disk at runtime; Vercel's file tracing
   // cannot detect the dynamic fs path, so include it in each MTM function.
   outputFileTracingIncludes: {
