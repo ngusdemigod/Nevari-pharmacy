@@ -113,6 +113,7 @@ export default function AppProviders({ children }) {
     reauthPromiseRef.current = null;
     lastActivityRef.current = Date.now();
     setReauthConfig(null);
+    return { accepted: true };
   }
 
   function continueWithDifferentAccount() {
@@ -192,22 +193,31 @@ export default function AppProviders({ children }) {
       const method = String(init.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
       const isMutating = !["GET", "HEAD", "OPTIONS"].includes(method);
       const isSameOriginApi = requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith("/api/");
+      const recoverableMutation = isSameOriginApi && isRecoverableClinicalMutation(requestUrl.toString(), method);
+      const proxyPath = requestUrl.pathname === "/api/nevari-proxy"
+        ? String(requestUrl.searchParams.get("path") || "")
+        : "";
+      const requiresPublicCaptcha = requestUrl.pathname === "/api/nurse-registration"
+        || (requestUrl.pathname === "/api/nevari-proxy" && (proxyPath.startsWith("/auth/") || proxyPath.startsWith("/sso/")));
 
-      const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined) || {});
+      let headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined) || {});
+      if (recoverableMutation) {
+        headers = ensureIdempotencyKey(headers);
+      }
       if (isMutating && isSameOriginApi) {
         const csrf = readCookie("nevari_csrf");
         if (csrf && !headers.has("x-nevari-csrf")) {
           headers.set("x-nevari-csrf", csrf);
         }
-        if (!csrf && !headers.has("x-nevari-recaptcha-token")) {
+        // CAPTCHA protects unauthenticated public submissions. Authenticated
+        // clinical writes use the HttpOnly session, CSRF, ownership checks and
+        // idempotency instead, and must not depend on Google's availability.
+        if (requiresPublicCaptcha && !headers.has("x-nevari-recaptcha-token")) {
           headers.set("x-nevari-recaptcha-token", await requireRecaptchaToken("public_submit"));
         }
       }
 
       const response = await originalFetch(input, { ...init, headers });
-      const proxyPath = requestUrl.pathname === "/api/nevari-proxy"
-        ? String(requestUrl.searchParams.get("path") || "")
-        : "";
       const isAuthRoute = requestUrl.pathname.startsWith("/api/auth/")
         || requestUrl.pathname.startsWith("/api/sso/")
         || proxyPath.startsWith("/auth/")
@@ -250,6 +260,13 @@ export default function AppProviders({ children }) {
         }
         const reauthenticated = requestReauthentication(config);
         if (!isMutating) {
+          await reauthenticated;
+          const retryHeaders = new Headers(headers);
+          const refreshedCsrf = readCookie("nevari_csrf");
+          if (refreshedCsrf) retryHeaders.set("x-nevari-csrf", refreshedCsrf);
+          return originalFetch(input, { ...init, headers: retryHeaders });
+        }
+        if (shouldRecoverMutation({ responseStatus: response.status, requestUrl: requestUrl.toString(), method, retryCount: 0 })) {
           await reauthenticated;
           const retryHeaders = new Headers(headers);
           const refreshedCsrf = readCookie("nevari_csrf");

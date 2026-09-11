@@ -194,7 +194,6 @@ export default function SessionReauthModal({ open, config, initialUsername = "",
       throw new Error(result.message || "Sign in with the same account to continue.");
     }
     saveSession(config, session);
-    onAuthenticated(session);
   }
 
   async function submitLogin(event) {
@@ -303,8 +302,8 @@ export default function SessionReauthModal({ open, config, initialUsername = "",
             <label><span>Password</span><span className="session-reauth-password-field"><input ref={passwordRef} type={passwordVisible ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="button" onClick={() => setPasswordVisible((visible) => !visible)}>{passwordVisible ? "Hide" : "Show"}</button></span></label>
             <button className="auth-primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign In"}</button>
             <div className="session-reauth-links">
-              <a href={config.loginPath}>Reset password</a>
-              {config.allowRegistration ? <a href={config.loginPath}>Create account</a> : null}
+              <a href={`${config.loginPath}${config.loginPath.includes("?") ? "&" : "?"}view=reset`}>Reset password</a>
+              {config.allowRegistration ? <a href={`${config.loginPath}${config.loginPath.includes("?") ? "&" : "?"}view=register`}>Create account</a> : null}
             </div>
             {googleAuth.enabled ? (
               <div className="auth-google-panel" aria-busy={googleBusy ? "true" : "false"}>
