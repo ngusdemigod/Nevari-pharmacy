@@ -3090,7 +3090,17 @@ final class Nevari_Subscriptions {
             "SELECT * FROM {$plans_table} WHERE plan_key = %s LIMIT 1",
             $plan_key
         ));
-        if ($existing && !empty($existing->plan_code)) {
+        $settings = Nevari_Helpers::payment_gateway_settings();
+        $paystack_mode = sanitize_key((string) ($settings['mode'] ?? 'test')) === 'live' ? 'live' : 'test';
+        $existing_metadata = [];
+        if ($existing && !empty($existing->metadata)) {
+            $decoded = json_decode((string) $existing->metadata, true);
+            if (is_array($decoded)) {
+                $existing_metadata = $decoded;
+            }
+        }
+        $existing_paystack_mode = sanitize_key((string) ($existing_metadata['paystack_mode'] ?? ''));
+        if ($existing && !empty($existing->plan_code) && $existing_paystack_mode === $paystack_mode) {
             return [
                 'plan_code' => sanitize_text_field((string) $existing->plan_code),
             ];
@@ -3136,14 +3146,8 @@ final class Nevari_Subscriptions {
 
         // Merge into existing metadata (checkout_link/description/features/etc.) rather than
         // overwriting it with the raw Paystack response, which would otherwise wipe those fields.
-        $existing_metadata = [];
-        if ($existing && !empty($existing->metadata)) {
-            $decoded = json_decode((string) $existing->metadata, true);
-            if (is_array($decoded)) {
-                $existing_metadata = $decoded;
-            }
-        }
         $existing_metadata['paystack'] = $body['data'];
+        $existing_metadata['paystack_mode'] = $paystack_mode;
         $merged_metadata = wp_json_encode($existing_metadata);
 
         if ($existing) {

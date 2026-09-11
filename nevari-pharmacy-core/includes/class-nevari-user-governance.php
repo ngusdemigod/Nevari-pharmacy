@@ -274,15 +274,24 @@ final class Nevari_User_Governance {
         $target_id = absint($request['id']);
         $target = get_user_by('id', $target_id);
         $target_role = $target instanceof WP_User ? self::primary_role($target) : '';
+        $requested_role = sanitize_key((string) $request->get_param('target_role'));
         $required_permission = in_array($target_role, self::PATIENT_ROLES, true) ? 'patients' : 'staff';
         $actor_is_administrator = in_array('administrator', Nevari_Helpers::current_user_roles($actor_id), true);
         $allowed = Nevari_Auth::api_session_required()
             && $actor_id > 0
             && Nevari_Helpers::is_store_admin($actor_id)
             && ($actor_is_administrator || self::user_has_permission($actor_id, $required_permission))
+            && ($requested_role !== 'administrator' || $actor_is_administrator)
             && $target instanceof WP_User
             && (int) $target->ID !== $actor_id
-            && !array_intersect(['administrator', 'shop_manager', 'store_admin'], (array) $target->roles)
+            && (
+                !array_intersect(['administrator', 'shop_manager', 'store_admin'], (array) $target->roles)
+                || (
+                    $requested_role === 'administrator'
+                    && $actor_is_administrator
+                    && !in_array('administrator', (array) $target->roles, true)
+                )
+            )
             && $target_role !== '';
         if (!$allowed && $actor_id > 0) {
             self::audit_event(

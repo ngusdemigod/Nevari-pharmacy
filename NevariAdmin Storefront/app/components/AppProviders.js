@@ -6,8 +6,12 @@ import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
 import { SWRConfig } from "swr";
 import { requireRecaptchaToken } from "../lib/recaptcha-client";
-import { FRONTENDS } from "./frontend-config";
+import { ensureIdempotencyKey, isRecoverableClinicalMutation, shouldRecoverMutation } from "../lib/session-recovery.mjs";
+import { DEFAULT_NEVARI_BASE_URL, FRONTENDS } from "./frontend-config";
+import { clearStoredSessions, saveSession } from "./role-session";
 import SessionReauthModal from "./SessionReauthModal";
+
+const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 function PostHogPageView() {
   const pathname = usePathname();
@@ -45,7 +49,9 @@ export default function AppProviders({ children }) {
   const previousFocusRef = useRef(null);
   const reauthPromiseRef = useRef(null);
   const reauthResolveRef = useRef(null);
+  const lastActivityRef = useRef(Date.now());
   const [reauthConfig, setReauthConfig] = useState(null);
+  const [pendingAccountSwitch, setPendingAccountSwitch] = useState(null);
 
   function frontendForPath(pathname) {
     if (pathname.startsWith("/admin/doctor")) return FRONTENDS.doctor;
@@ -54,22 +60,113 @@ export default function AppProviders({ children }) {
     return FRONTENDS.patient;
   }
 
-  function requestReauthentication() {
+  function storedUserId(config) {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(config.storageKey) || "{}");
+      return String(stored?.user?.id || "");
+    } catch {
+      return "";
+    }
+  }
+
+  function isPatientDashboardPath(pathname) {
+    return pathname === "/dashboard" || pathname.startsWith("/dashboard/");
+  }
+
+  function requestReauthentication(config, options = {}) {
     if (reauthPromiseRef.current) return reauthPromiseRef.current;
-    setReauthConfig(frontendForPath(window.location.pathname));
+    setReauthConfig({ config, expectedUserId: storedUserId(config), ...options });
     reauthPromiseRef.current = new Promise((resolve) => {
       reauthResolveRef.current = resolve;
     });
     return reauthPromiseRef.current;
   }
 
+  useEffect(() => {
+    function handleReauthenticationRequest(event) {
+      const detail = event.detail || {};
+      detail.handled = true;
+      const config = frontendForPath(window.location.pathname);
+      void requestReauthentication(config, {
+        initialUsername: String(detail.username || "").trim(),
+        title: String(detail.title || "").trim(),
+      }).then((session) => detail.onAuthenticated?.(session));
+    }
+
+    window.addEventListener("nevari:request-reauthentication", handleReauthenticationRequest);
+    return () => window.removeEventListener("nevari:request-reauthentication", handleReauthenticationRequest);
+  }, []);
+
   function completeReauthentication(session) {
-    window.dispatchEvent(new CustomEvent("nevari:session-restored", { detail: { session, frontendType: reauthConfig?.type || "" } }));
+    const authenticatedUserId = String(session?.user?.id || "");
+    if (reauthConfig?.expectedUserId && authenticatedUserId !== reauthConfig.expectedUserId) {
+      if (reauthConfig.config?.type !== FRONTENDS.patient.type) {
+        return { accepted: false, message: "Sign in with the same account to continue." };
+      }
+      setPendingAccountSwitch({ config: reauthConfig.config, session });
+      setReauthConfig(null);
+      return { accepted: false, pending: true };
+    }
+    window.dispatchEvent(new CustomEvent("nevari:session-restored", { detail: { session, frontendType: reauthConfig?.config?.type || "" } }));
     reauthResolveRef.current?.(session);
     reauthResolveRef.current = null;
     reauthPromiseRef.current = null;
+    lastActivityRef.current = Date.now();
     setReauthConfig(null);
   }
+
+  function continueWithDifferentAccount() {
+    if (!pendingAccountSwitch) return;
+    clearStoredSessions();
+    saveSession(pendingAccountSwitch.config, pendingAccountSwitch.session);
+    reauthResolveRef.current?.(pendingAccountSwitch.session);
+    reauthResolveRef.current = null;
+    reauthPromiseRef.current = null;
+    window.location.reload();
+  }
+
+  async function logoutDifferentAccount() {
+    const config = pendingAccountSwitch?.config;
+    if (!config) return;
+    try {
+      const csrf = String(document.cookie || "").split(";").map((part) => part.trim()).find((part) => part.startsWith("nevari_csrf="))?.slice("nevari_csrf=".length) || "";
+      const params = new URLSearchParams({
+        baseUrl: process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL,
+        path: "/auth/logout",
+      });
+      await fetch(`/api/nevari-proxy?${params.toString()}`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Nevari-Frontend-Type": config.type,
+          "X-Nevari-Frontend-Origin": window.location.origin,
+          ...(csrf ? { "X-Nevari-Csrf": decodeURIComponent(csrf) } : {}),
+        },
+        body: JSON.stringify({ frontend_type: config.type, frontend_origin: window.location.origin, frontend_url: window.location.href }),
+      });
+    } catch {}
+    clearStoredSessions();
+    window.location.replace(config.loginPath);
+  }
+
+  useEffect(() => {
+    const markActivity = () => {
+      if (!reauthPromiseRef.current && !pendingAccountSwitch) lastActivityRef.current = Date.now();
+    };
+    const activityEvents = ["pointerdown", "keydown", "touchstart", "scroll"];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, markActivity, { passive: true }));
+    const intervalId = window.setInterval(() => {
+      if (reauthPromiseRef.current || !isPatientDashboardPath(window.location.pathname)) return;
+      if (Date.now() - lastActivityRef.current <= SESSION_IDLE_TIMEOUT_MS) return;
+      const config = frontendForPath(window.location.pathname);
+      if (storedUserId(config)) void requestReauthentication(config);
+    }, 30_000);
+    return () => {
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, markActivity));
+      window.clearInterval(intervalId);
+    };
+  }, [pendingAccountSwitch]);
 
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
@@ -117,7 +214,41 @@ export default function AppProviders({ children }) {
         || proxyPath.startsWith("/sso/");
       const isLoginPage = /\/login\/?$/.test(window.location.pathname);
       if (isSameOriginApi && response.status === 401 && !isAuthRoute && !isLoginPage) {
-        const reauthenticated = requestReauthentication();
+        const config = frontendForPath(window.location.pathname);
+        const hasBeenIdle = Date.now() - lastActivityRef.current > SESSION_IDLE_TIMEOUT_MS;
+        if (isPatientDashboardPath(window.location.pathname) && !hasBeenIdle) {
+          const refreshParams = new URLSearchParams({
+            baseUrl: process.env.NEXT_PUBLIC_NEVARI_BASE_URL || DEFAULT_NEVARI_BASE_URL,
+            path: "/auth/refresh",
+          });
+          const refreshHeaders = new Headers({
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-Nevari-Frontend-Type": config.type,
+            "X-Nevari-Frontend-Origin": window.location.origin,
+          });
+          const refreshCsrf = readCookie("nevari_csrf");
+          if (refreshCsrf) refreshHeaders.set("x-nevari-csrf", refreshCsrf);
+          let refreshResponse;
+          try {
+            refreshHeaders.set("x-nevari-recaptcha-token", await requireRecaptchaToken("public_submit"));
+            refreshResponse = await originalFetch(`/api/nevari-proxy?${refreshParams.toString()}`, {
+              method: "POST",
+              headers: refreshHeaders,
+              body: JSON.stringify({ frontend_type: config.type, frontend_origin: window.location.origin, frontend_url: window.location.href }),
+            });
+          } catch {
+            return response;
+          }
+          if (refreshResponse.ok) {
+            const retryHeaders = new Headers(headers);
+            const refreshedCsrf = readCookie("nevari_csrf");
+            if (refreshedCsrf) retryHeaders.set("x-nevari-csrf", refreshedCsrf);
+            return originalFetch(input, { ...init, headers: retryHeaders });
+          }
+          return response;
+        }
+        const reauthenticated = requestReauthentication(config);
         if (!isMutating) {
           await reauthenticated;
           const retryHeaders = new Headers(headers);
@@ -332,7 +463,23 @@ export default function AppProviders({ children }) {
     focusThrottleInterval: 60_000
     }}>
       {children}
-      <SessionReauthModal open={Boolean(reauthConfig)} config={reauthConfig} onAuthenticated={completeReauthentication} />
+      <SessionReauthModal
+        open={Boolean(reauthConfig)}
+        config={reauthConfig?.config || null}
+        initialUsername={reauthConfig?.initialUsername || ""}
+        title={reauthConfig?.title || ""}
+        onAuthenticated={completeReauthentication}
+      />
+      {pendingAccountSwitch ? <div className="account-switch-layer" role="presentation">
+        <section className="account-switch-dialog" role="alertdialog" aria-modal="true" aria-labelledby="account-switch-title">
+          <h2 id="account-switch-title">You have logged in with another account.</h2>
+          <p>Continuing will discard any in-progress drafts and refresh the dashboard for this account.</p>
+          <div className="account-switch-actions">
+            <button className="auth-primary-button" type="button" onClick={continueWithDifferentAccount}>Continue</button>
+            <button className="auth-text-link" type="button" onClick={logoutDifferentAccount}>Log out</button>
+          </div>
+        </section>
+      </div> : null}
     </SWRConfig>
   </PostHogProvider>;
 }

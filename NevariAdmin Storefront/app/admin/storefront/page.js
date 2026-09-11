@@ -43,10 +43,9 @@ const CUSTOMER_PRIVILEGE_ROLE_OPTIONS = [
   { value: "pharmacist", label: "Pharmacist" }
 ];
 const ADMIN_SETTINGS_TABS = [
-  { key: "automation", label: "Automation", count: 4 },
-  { key: "reminders", label: "Reminders", count: 3 },
-  { key: "pricing", label: "Pricing", count: 2 },
-  { key: "security", label: "Security", count: 4 }
+  { key: "automation", label: "Automation", description: "Meetings and service status", count: 4 },
+  { key: "reminders", label: "Reminders", description: "Email delivery schedule", count: 3 },
+  { key: "security", label: "Security", description: "Access and audit controls", count: 4 }
 ];
 const SESSION_EXPIRY_SKEW_MS = 30 * 1000;
 const ADMIN_OTP_TEMPORARILY_DISABLED = true;
@@ -764,6 +763,8 @@ function sanitizedPersistedSession(session = {}) {
     user: session?.user ? {
       id: session.user.id || "",
       display_name: session.user.display_name || session.user.name || "",
+      first_name: session.user.first_name || "",
+      last_name: session.user.last_name || "",
       email: session.user.email || "",
       avatar_url: session.user.avatar_url || session.user.avatarUrl || session.user.picture || "",
       role: session.user.role || "",
@@ -2252,7 +2253,7 @@ function BookingCalendarWidget({
         </div>
         <div className="booking-section-label">Available slots</div>
         <div className="booking-slots-grid">
-          {loading ? Array.from({ length: 9 }, (_, index) => <SkeletonBox className="booking-t-slot-skeleton" key={index} />) : slotOptions.slice(0, 9).map((slot) => (
+          {loading ? Array.from({ length: 16 }, (_, index) => <SkeletonBox className="booking-t-slot-skeleton" key={index} />) : slotOptions.slice(0, 16).map((slot) => (
             <button className={`booking-t-slot ${slot.disabled ? "taken" : ""} ${slot.selected ? "chosen" : ""}`} type="button" key={slot.time} disabled={slot.disabled} onClick={() => onSlotSelect?.(selectedDateKey, slot.time)} aria-pressed={Boolean(slot.selected)}>
               {new Date(`2000-01-01T${slot.time}:00`).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
             </button>
@@ -2739,6 +2740,7 @@ function AdminStorefrontDashboard({
   const [customerPrivilegeEscalationLoading, setCustomerPrivilegeEscalationLoading] = useState(false);
   const [customerPrivilegeOtp, setCustomerPrivilegeOtp] = useState({ code: "", status: "", challengeId: "", maskedEmail: "" });
   const [customerPrivilegeSubject, setCustomerPrivilegeSubject] = useState(null);
+  const [staffDirectoryRefreshRequest, setStaffDirectoryRefreshRequest] = useState(null);
   const [customerOrderPage, setCustomerOrderPage] = useState(1);
   const [customerProductPage, setCustomerProductPage] = useState(1);
   const [customerHistoryOrders, setCustomerHistoryOrders] = useState([]);
@@ -2752,6 +2754,14 @@ function AdminStorefrontDashboard({
   const [ivTherapyPage, setIvTherapyPage] = useState(1);
   const [ivTherapyPreviewRequestId, setIvTherapyPreviewRequestId] = useState(null);
   const [adminSettingsTab, setAdminSettingsTab] = useState("automation");
+  const [adminProfileDraft, setAdminProfileDraft] = useState({ displayName: "", firstName: "", lastName: "" });
+  const [adminProfileSaving, setAdminProfileSaving] = useState(false);
+  const [adminProfileFeedback, setAdminProfileFeedback] = useState("");
+  const [adminProfileImageDraft, setAdminProfileImageDraft] = useState({ file: null, preview: "", error: "" });
+  const [adminProfileImageSaving, setAdminProfileImageSaving] = useState(false);
+  const [orderCreateStep, setOrderCreateStep] = useState(0);
+  const [consultationCreateStep, setConsultationCreateStep] = useState(0);
+  const [userAccountCreateStep, setUserAccountCreateStep] = useState(0);
   const [consultationDetailForm, setConsultationDetailForm] = useState({ startAt: "", endAt: "", doctorNotes: "", cancellationReason: "" });
   const [consultationActionLoading, setConsultationActionLoading] = useState("");
   const [selectedDoctorId, setSelectedDoctorId] = useState(null);
@@ -2777,9 +2787,36 @@ function AdminStorefrontDashboard({
     : authSecuritySettings;
   const [doctorDetailTierLoading, setDoctorDetailTierLoading] = useState(false);
   const [staffPage, setStaffPage] = useState(1);
-  const [globalConsultationFee, setGlobalConsultationFee] = useState("5000");
-  const [globalConsultationFeeLoading, setGlobalConsultationFeeLoading] = useState(false);
-  const [globalConsultationFeeFeedback, setGlobalConsultationFeeFeedback] = useState("");
+  function sortTableRows(rows, tableKey, columns) {
+    const sort = tableSorts[tableKey];
+    const getter = sort?.key ? columns[sort.key] : null;
+    if (!getter) return rows;
+    const direction = sort.direction === "desc" ? -1 : 1;
+    return [...rows].sort((left, right) => {
+      const leftValue = getter(left);
+      const rightValue = getter(right);
+      const leftNumber = typeof leftValue === "number" ? leftValue : Number.NaN;
+      const rightNumber = typeof rightValue === "number" ? rightValue : Number.NaN;
+      if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return (leftNumber - rightNumber) * direction;
+      const leftDate = /date|created|start|end|joined/i.test(sort.key) ? Date.parse(leftValue || "") : Number.NaN;
+      const rightDate = /date|created|start|end|joined/i.test(sort.key) ? Date.parse(rightValue || "") : Number.NaN;
+      if (Number.isFinite(leftDate) && Number.isFinite(rightDate)) return (leftDate - rightDate) * direction;
+      return String(leftValue ?? "").localeCompare(String(rightValue ?? ""), undefined, { numeric: true, sensitivity: "base" }) * direction;
+    });
+  }
+  function sortableHeader(tableKey, key, label, className = "") {
+    const current = tableSorts[tableKey];
+    const active = current?.key === key;
+    const direction = active ? current.direction : "none";
+    return <th className={className} aria-sort={direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none"}>
+      <button className="sortable-table-header" type="button" onClick={() => setTableSorts((sorts) => ({
+        ...sorts,
+        [tableKey]: { key, direction: active && current.direction === "asc" ? "desc" : "asc" }
+      }))}>
+        <span>{label}</span><span className={`sort-direction ${direction}`} aria-hidden="true" />
+      </button>
+    </th>;
+  }
   adminStorefrontClientHydrated = hydrated;
   const latestSessionRef = useRef(session);
   const refreshPromiseRef = useRef(null);
@@ -2797,6 +2834,7 @@ function AdminStorefrontDashboard({
   const productEditorCloseButtonRef = useRef(null);
   const productEditorTriggerRef = useRef(null);
   const productEditorWasOpenRef = useRef(false);
+  const adminProfileImageInputRef = useRef(null);
   const DELETE_EXIT_DURATION = 220;
   const createProductMutation = useCreateProduct(session);
   const updateProductMutation = useUpdateProduct(session);
@@ -2902,6 +2940,15 @@ function AdminStorefrontDashboard({
   useEffect(() => {
     latestSessionRef.current = session;
   }, [session]);
+
+  useEffect(() => {
+    setAdminProfileDraft({
+      displayName: session.user?.display_name || "",
+      firstName: session.user?.first_name || "",
+      lastName: session.user?.last_name || ""
+    });
+    setAdminProfileFeedback("");
+  }, [session.user?.display_name, session.user?.first_name, session.user?.last_name]);
 
   useEffect(() => {
     const analyticsUuid = session.user?.analytics_uuid || "";
@@ -3076,15 +3123,16 @@ function AdminStorefrontDashboard({
     setSubscriptionPriceEditing(false);
   }
 
-  function continueInlineSubscriptionPriceEdit() {
+  async function continueInlineSubscriptionPriceEdit() {
     const amount = normalizeNairaAmount(subscriptionInlinePrice);
     if (!Number.isFinite(Number(amount)) || Number(amount) < 0) {
       showSnackbar("Enter a valid subscription price.", "warning");
       return;
     }
-    setSubscriptionDetailsOpen(false);
     setSubscriptionPriceEditing(false);
-    openSubscriptionModal("edit", { ...selectedSubscriptionPlan, amount });
+    openSubscriptionModal("edit", { ...selectedSubscriptionPlan, amount, amount_kobo: null });
+    setSubscriptionModalOpen(false);
+    await requestSubscriptionProtectionCode();
   }
 
   function openSubscriptionModal(mode = "create", planData = "") {
@@ -3151,11 +3199,7 @@ function AdminStorefrontDashboard({
     setSubscriptionModalOpen(false);
   }
 
-  async function openSubscriptionProtectionModal() {
-    if (!subscriptionCreateReady) {
-      showSnackbar(subscriptionCreateBlockerMessage || "Complete all required fields before creating the subscription plan.", "warning");
-      return;
-    }
+  async function requestSubscriptionProtectionCode() {
     setSubscriptionProtectionOpen(true);
     setSubscriptionOtp({ code: "", status: "Sending OTP to your email...", challengeId: "", maskedEmail: "" });
     try {
@@ -3172,8 +3216,16 @@ function AdminStorefrontDashboard({
         status: `OTP sent${payload.data?.masked_email ? ` to ${payload.data.masked_email}` : ""}.`
       });
     } catch (error) {
-      setSubscriptionOtp({ code: "", status: describeRequestError(error) });
+      setSubscriptionOtp({ code: "", status: describeRequestError(error), challengeId: "", maskedEmail: "" });
     }
+  }
+
+  async function openSubscriptionProtectionModal() {
+    if (!subscriptionCreateReady) {
+      showSnackbar(subscriptionCreateBlockerMessage || "Complete all required fields before creating the subscription plan.", "warning");
+      return;
+    }
+    await requestSubscriptionProtectionCode();
   }
 
   function closeSubscriptionProtectionModal() {
@@ -3189,7 +3241,8 @@ function AdminStorefrontDashboard({
     }
 
     setSubscriptionCreateLoading(true);
-    setSubscriptionOtp((current) => ({ ...current, status: "Verifying code and creating subscription plan..." }));
+    const isEditingPlan = subscriptionModalMode === "edit";
+    setSubscriptionOtp((current) => ({ ...current, status: `Verifying code and ${isEditingPlan ? "updating" : "creating"} subscription plan...` }));
 
     try {
       const payload = await apiRequest("/subscriptions/admin", {
@@ -3226,11 +3279,11 @@ function AdminStorefrontDashboard({
       }
       setSubscriptionOtp((current) => ({
         ...current,
-        status: "Subscription plan created."
+        status: `Subscription plan ${isEditingPlan ? "updated" : "created"}.`
       }));
       closeSubscriptionModal();
       await refreshSubscriptionStatus();
-      showSnackbar("Subscription plan created.", "success");
+      showSnackbar(`Subscription plan ${isEditingPlan ? "updated" : "created"}.`, "success");
     } catch (error) {
       const message = describeRequestError(error);
       setSubscriptionOtp((current) => ({ ...current, status: message }));
@@ -3630,7 +3683,7 @@ function AdminStorefrontDashboard({
 
   useEffect(() => {
     setCustomerPage(1);
-  }, [customerFilter, deferredSearch, data.customers, data.orderDetails, data.appointments, data.prescriptionDetails]);
+  }, [customerFilter, deferredSearch]);
 
   const query = deferredSearch.trim().toLowerCase();
   const matchesSearch = (text, enabled) => !enabled || !query || normalizeText(text).includes(query);
@@ -3795,6 +3848,17 @@ function AdminStorefrontDashboard({
     const timer = window.setTimeout(() => customerPrivilegeOtpInputRef.current?.focus(), 40);
     return () => window.clearTimeout(timer);
   }, [customerPrivilegeEscalationOpen]);
+
+  useEffect(() => {
+    if (!customerPrivilegeEscalationOpen) return undefined;
+    const dismissOnEscape = (event) => {
+      if (event.key === "Escape" && !(customerPrivilegeEscalationLoading && customerPrivilegeOtp.challengeId)) {
+        closeCustomerPrivilegeEscalationModal();
+      }
+    };
+    document.addEventListener("keydown", dismissOnEscape);
+    return () => document.removeEventListener("keydown", dismissOnEscape);
+  }, [customerPrivilegeEscalationLoading, customerPrivilegeEscalationOpen, customerPrivilegeOtp.challengeId]);
 
   useEffect(() => {
     setMtmPage(1);
@@ -4211,12 +4275,14 @@ function AdminStorefrontDashboard({
     setOrderCreateCustomerMenuOpen(false);
     setOrderCreateManualCustomer(false);
     setOrderCreateFeedback("");
+    setOrderCreateStep(0);
     setOrderCreateModalOpen(true);
   }
 
   function openCreateModal(type) {
     setCreateMenuOpen(false);
     setCreateFeedback("");
+    setCreateLoading(false);
     if (type === "order") {
       openOrderCreateModal();
       return;
@@ -4233,6 +4299,7 @@ function AdminStorefrontDashboard({
       setConsultationCreateCalendarViewDate(new Date());
       setConsultationDoctorSearch("");
       setConsultationPatientSearch("");
+      setConsultationCreateStep(0);
       setCreateModalType("consultation");
       return;
     }
@@ -4244,6 +4311,7 @@ function AdminStorefrontDashboard({
       setUserAccountTouched({});
       setUserAccountAvatarError("");
       setUserAccountPasswordFocused(false);
+      setUserAccountCreateStep(0);
       setCreateModalType("user");
     }
   }
@@ -4251,6 +4319,7 @@ function AdminStorefrontDashboard({
   function closeCreateModal() {
     setCreateModalType("");
     setCreateFeedback("");
+    setCreateLoading(false);
     setOrderCreateSearch("");
     setCustomerCreateForm(EMPTY_CUSTOMER_FORM);
     setDoctorCreateForm(EMPTY_DOCTOR_FORM);
@@ -4265,6 +4334,8 @@ function AdminStorefrontDashboard({
     setUserAccountTouched({});
     setUserAccountAvatarError("");
     setUserAccountPasswordFocused(false);
+    setConsultationCreateStep(0);
+    setUserAccountCreateStep(0);
   }
 
   function closeOrderCreateModal() {
@@ -4275,6 +4346,7 @@ function AdminStorefrontDashboard({
     setOrderCreateCustomerSearch("");
     setOrderCreateCustomerMenuOpen(false);
     setOrderCreateManualCustomer(false);
+    setOrderCreateStep(0);
   }
 
   function requestCloseCreateModal() {
@@ -4580,6 +4652,24 @@ function AdminStorefrontDashboard({
         customersQuery.mutate(),
         globalMutate(isGovernedUsersKey, undefined, { revalidate: true })
       ]);
+      await customersQuery.mutate((current) => {
+        if (!Array.isArray(current?.data?.items)) return current;
+        return {
+          ...current,
+          data: {
+            ...current.data,
+            items: current.data.items.map((item) => Number(item.user_id || item.id) === Number(userId)
+              ? { ...item, ...updatedUser, account_status: nextStatus }
+              : item)
+          }
+        };
+      }, false);
+      setData((current) => ({
+        ...current,
+        customers: (current.customers || []).map((item) => Number(item.user_id || item.id) === Number(userId)
+          ? { ...item, ...updatedUser, account_status: nextStatus }
+          : item)
+      }));
       setSnackbar({
         tone: payload.data?.notification?.warning ? "warning" : "success",
         message: payload.data?.notification?.warning || (action === "reset-password" ? "Dashboard password reset email sent." : "Patient account updated.")
@@ -5089,41 +5179,6 @@ function AdminStorefrontDashboard({
     }
   }
 
-  async function saveGlobalConsultationFee() {
-    const normalizedFee = String(globalConsultationFee || "").trim();
-    const feeValue = Number(normalizedFee);
-    if (!Number.isFinite(feeValue) || feeValue <= 0) {
-      const message = "Enter a valid global consultation fee.";
-      setGlobalConsultationFeeFeedback(message);
-      showSnackbar(message, "error");
-      return;
-    }
-    setGlobalConsultationFeeLoading(true);
-    setGlobalConsultationFeeFeedback("");
-    try {
-      const payload = await apiRequest("/doctors/settings", {
-        method: "POST",
-        body: { global_consultation_fee: feeValue }
-      });
-      const nextFee = String(payload?.data?.global_consultation_fee ?? feeValue);
-      setGlobalConsultationFee(nextFee);
-      setGlobalConsultationFeeFeedback("Global consultation fee saved.");
-      setData((prev) => ({
-        ...prev,
-        doctors: (prev.doctors || []).map((doctor) => ({ ...doctor, consultation_fee: Number(nextFee) || 5000 }))
-      }));
-      patchCacheList(isDoctorListKey, (list) => list.map((doctor) => ({ ...doctor, consultation_fee: Number(nextFee) || 5000 })));
-      revalidateCacheGroups(isDoctorListKey);
-      showSnackbar("Global consultation fee saved.", "success");
-    } catch (error) {
-      const message = extractApiErrorMessage(error) || "Global consultation fee could not be updated.";
-      setGlobalConsultationFeeFeedback(message);
-      showSnackbar(message, "error");
-    } finally {
-      setGlobalConsultationFeeLoading(false);
-    }
-  }
-
   async function updateDoctorRoutingSettings(doctor, updates) {
     if (!doctor) {
       return;
@@ -5511,6 +5566,45 @@ function AdminStorefrontDashboard({
     setCustomerPrivilegeSubject(null);
   }
 
+  function dismissCustomerPrivilegeEscalationModal() {
+    if (customerPrivilegeEscalationLoading && customerPrivilegeOtp.challengeId) return;
+    closeCustomerPrivilegeEscalationModal();
+  }
+
+  function updateCustomerPrivilegeOtpDigit(index, rawValue) {
+    const digits = String(rawValue || "").replace(/\D/g, "").slice(0, 6 - index);
+    if (!digits) {
+      setCustomerPrivilegeOtp((current) => {
+        if (index >= current.code.length) return current;
+        return { ...current, code: `${current.code.slice(0, index)}${current.code.slice(index + 1)}` };
+      });
+      return;
+    }
+    const insertionIndex = Math.min(index, customerPrivilegeOtp.code.length);
+    setCustomerPrivilegeOtp((current) => {
+      const nextCode = `${current.code.slice(0, insertionIndex)}${digits}${current.code.slice(insertionIndex + digits.length)}`.slice(0, 6);
+      return { ...current, code: nextCode };
+    });
+    window.requestAnimationFrame(() => {
+      customerPrivilegeOtpInputRef.current[Math.min(5, insertionIndex + digits.length)]?.focus();
+    });
+  }
+
+  function handleCustomerPrivilegeOtpKeyDown(event, index) {
+    if (event.key === "Backspace" && !customerPrivilegeOtp.code[index] && index > 0) {
+      customerPrivilegeOtpInputRef.current[index - 1]?.focus();
+    } else if (event.key === "ArrowLeft" && index > 0) {
+      event.preventDefault();
+      customerPrivilegeOtpInputRef.current[index - 1]?.focus();
+    } else if (event.key === "ArrowRight" && index < 5) {
+      event.preventDefault();
+      customerPrivilegeOtpInputRef.current[index + 1]?.focus();
+    } else if (event.key === "Enter" && customerPrivilegeOtp.code.length === 6) {
+      event.preventDefault();
+      void submitCustomerPrivilegeEscalation();
+    }
+  }
+
   async function openRoleChangeModal(subject) {
     if (!subject?.userId || !subject?.name || !subject?.sourceRole || !subject?.targetRole) {
       return;
@@ -5568,6 +5662,21 @@ function AdminStorefrontDashboard({
     });
   }
 
+  async function openStaffRoleChangeModal(user, targetRole) {
+    const userId = user?.user_id || user?.id;
+    if (!canEscalateCustomerPrivileges || !userId || !targetRole) {
+      return;
+    }
+    await openRoleChangeModal({
+      mode: "staff",
+      userId,
+      name: user.display_name || user.user_email || "Staff account",
+      sourceRole: user.managed_role || primaryRoleValue(user.roles || []),
+      targetRole,
+      permissions: user.permissions || []
+    });
+  }
+
   async function submitCustomerPrivilegeEscalation() {
     if (!customerPrivilegeSubject?.userId || !customerPrivilegeSubject?.sourceRole || !customerPrivilegeTargetRole) {
       return;
@@ -5598,7 +5707,8 @@ function AdminStorefrontDashboard({
         body: JSON.stringify({
           target_role: customerPrivilegeTargetRole,
           challenge_id: customerPrivilegeOtp.challengeId,
-          code: customerPrivilegeOtp.code
+          code: customerPrivilegeOtp.code,
+          ...(customerPrivilegeSubject.mode === "staff" ? { permissions: customerPrivilegeSubject.permissions || [] } : {})
         })
       });
       const payload = await response.json().catch(() => null);
@@ -5634,10 +5744,26 @@ function AdminStorefrontDashboard({
         doctorsQuery?.mutate ? doctorsQuery.mutate() : Promise.resolve()
       ]);
 
+      if (customerPrivilegeSubject.mode === "staff") {
+        const confirmedUser = payload?.data?.user || {};
+        setStaffDirectoryRefreshRequest({
+          nonce: Date.now(),
+          userId: upgradedUserId,
+          user: {
+            ...confirmedUser,
+            user_id: confirmedUser.user_id || confirmedUser.id || upgradedUserId,
+            managed_role: customerPrivilegeTargetRole,
+            roles: Array.isArray(confirmedUser.roles) && confirmedUser.roles.length
+              ? confirmedUser.roles
+              : [customerPrivilegeTargetRole]
+          }
+        });
+      }
+
       closeCustomerPrivilegeEscalationModal();
       if (customerPrivilegeSubject.mode === "downgrade") {
         setSelectedDoctorId(null);
-      } else {
+      } else if (customerPrivilegeSubject.mode !== "staff") {
         closeCustomerDetails();
       }
       const notificationWarning = payload?.data?.notification?.warning || "";
@@ -6641,6 +6767,10 @@ function AdminStorefrontDashboard({
       headers["Content-Type"] = "application/json";
     }
 
+    if (!["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase())) {
+      headers["X-Nevari-Csrf"] = decodeURIComponent(document.cookie.match(/(?:^|;\s*)nevari_csrf=([^;]+)/)?.[1] || "");
+    }
+
     if (auth && activeSession.accessToken) {
       headers.Authorization = `Bearer ${activeSession.accessToken}`;
     }
@@ -6692,6 +6822,94 @@ function AdminStorefrontDashboard({
     }
 
     return payload;
+  }
+
+  async function saveAdminProfile(event) {
+    event.preventDefault();
+    const displayName = adminProfileDraft.displayName.trim();
+    const firstName = adminProfileDraft.firstName.trim();
+    const lastName = adminProfileDraft.lastName.trim();
+    if (displayName.length < 2) {
+      setAdminProfileFeedback("Display name must contain at least 2 characters.");
+      return;
+    }
+
+    setAdminProfileSaving(true);
+    setAdminProfileFeedback("");
+    try {
+      const payload = await apiRequest("/auth/me", {
+        method: "PATCH",
+        body: {
+          display_name: displayName,
+          first_name: firstName,
+          last_name: lastName
+        }
+      });
+      const updatedUser = payload.data?.user;
+      if (!updatedUser) throw new Error("The updated profile was not returned.");
+      const nextSession = { ...(latestSessionRef.current || session), user: updatedUser };
+      latestSessionRef.current = nextSession;
+      setSession(nextSession);
+      persistSessionSnapshot(nextSession, currentPage);
+      setAdminProfileFeedback("Profile updated successfully.");
+      showSnackbar("Profile updated successfully.", "success");
+    } catch (error) {
+      setAdminProfileFeedback(describeRequestError(error));
+    } finally {
+      setAdminProfileSaving(false);
+    }
+  }
+
+  function selectAdminProfileImage(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length) return;
+    if (files.length !== 1) {
+      setAdminProfileImageDraft({ file: null, preview: "", error: "Choose one profile image at a time." });
+      return;
+    }
+    const file = files[0];
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    const allowedExtensions = ["jpg", "jpeg", "png", "webp"];
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    if (!allowedTypes.includes(file.type) || !allowedExtensions.includes(extension) || file.size > 2 * 1024 * 1024) {
+      setAdminProfileImageDraft({ file: null, preview: "", error: "Choose one JPG, PNG, or WebP image no larger than 2 MB." });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setAdminProfileImageDraft({ file, preview: String(reader.result || ""), error: "" });
+    reader.onerror = () => setAdminProfileImageDraft({ file: null, preview: "", error: "The selected image could not be read." });
+    reader.readAsDataURL(file);
+  }
+
+  async function uploadAdminProfileImage() {
+    const file = adminProfileImageDraft.file;
+    if (!file || adminProfileImageSaving) return;
+    setAdminProfileImageSaving(true);
+    setAdminProfileImageDraft((current) => ({ ...current, error: "" }));
+    try {
+      const payload = await apiRequest("/auth/me/profile-image", {
+        method: "POST",
+        body: {
+          filename: file.name,
+          mime_type: file.type,
+          data_base64: await fileToBase64(file)
+        }
+      });
+      const avatarUrl = String(payload.data?.avatar_url || "").trim();
+      if (!avatarUrl) throw new Error("The uploaded profile image was not returned.");
+      const currentSession = latestSessionRef.current || session;
+      const nextSession = { ...currentSession, user: { ...currentSession.user, avatar_url: avatarUrl } };
+      latestSessionRef.current = nextSession;
+      setSession(nextSession);
+      persistSessionSnapshot(nextSession, currentPage);
+      setAdminProfileImageDraft({ file: null, preview: "", error: "" });
+      showSnackbar("Profile image updated.", "success");
+    } catch (error) {
+      setAdminProfileImageDraft((current) => ({ ...current, error: describeRequestError(error) }));
+    } finally {
+      setAdminProfileImageSaving(false);
+    }
   }
 
   async function adminApiRequest(route, { params = {}, retry = true } = {}, activeSession = session) {
@@ -8519,12 +8737,15 @@ function AdminStorefrontDashboard({
     )
   );
   const orderCreateNeedsAddress = ["local_delivery", "shipping"].includes(orderCreateForm.deliveryMethod);
-  const orderCreateCanSubmit = Boolean(
+  const orderCreateCustomerReady = Boolean(
     orderCreateHasCustomer
-    && orderCreateItems.length
     && orderCreateForm.status
     && orderCreateForm.deliveryMethod
     && (!orderCreateNeedsAddress || orderCreateForm.address.trim())
+  );
+  const orderCreateCanSubmit = Boolean(
+    orderCreateCustomerReady
+    && orderCreateItems.length
   );
   const orderCreateDirty = Boolean(
     orderCreateItems.length
@@ -8562,6 +8783,8 @@ function AdminStorefrontDashboard({
     password: userAccountPasswordValid ? "" : "Use 12+ characters with upper/lowercase, a number, and a symbol.",
   };
   const userAccountCanSubmit = !Object.values(userAccountValidationErrors).some(Boolean);
+  const userAccountIdentityReady = !["firstName", "lastName", "email", "phone"].some((key) => userAccountValidationErrors[key]);
+  const userAccountAccessReady = !["role", "licenseNumber", "password"].some((key) => userAccountValidationErrors[key]);
   const pendingProductTag = String(productEditSearch.tags || "");
 
   const activeProductMedia = productEditMedia.find((item) => item.id === activeProductMediaId) || productEditMedia[0] || null;
@@ -8690,7 +8913,6 @@ function AdminStorefrontDashboard({
     && consultationCreateForm.endAt
     && consultationCreateForm.type
   );
-
   useEffect(() => {
     if (createModalType !== "consultation" || consultationCreateForm.doctorUserId || !popupConsultationDoctors.length) {
       return;
@@ -8827,6 +9049,10 @@ function AdminStorefrontDashboard({
     .slice(0, 8);
 
   const selectedAuditEvent = data.auditEvents[selectedAuditIndex] || null;
+  const selectedAuditIsEmailEvent = Boolean(
+    selectedAuditEvent
+    && (selectedAuditEvent.email_log_id || selectedAuditEvent.category === "emails" || String(selectedAuditEvent.action || "").startsWith("email."))
+  );
 
   useEffect(() => {
     if (auditDetailModalOpen && !selectedAuditEvent) {
@@ -8972,28 +9198,6 @@ function AdminStorefrontDashboard({
     }
   ];
 
-  const profileCards = [
-    {
-      label: "Display name",
-      value: session.user?.display_name || siteName,
-      note: "visible in the storefront command center"
-    },
-    {
-      label: "Email",
-      value: session.user?.email || "Not available",
-      note: "current authenticated WordPress account"
-    },
-    {
-      label: "Role",
-      value: session.user?.roles?.join(", ") || "Frontend guest",
-      note: "active session permissions"
-    },
-    {
-      label: "Connection",
-      value: session.baseUrl || "Not configured",
-      note: "WordPress environment"
-    }
-  ];
   const dashboardRevealSignature = useMemo(
     () => buildSWRRevealSignature([
       data.orderDetails?.length ? data.orderDetails : data.orders,
@@ -9552,9 +9756,26 @@ function AdminStorefrontDashboard({
                             <dd className="subscription-inline-price">
                               {subscriptionPriceEditing ? <>
                                 <label className="sr-only" htmlFor="subscription-inline-price-input">Subscription price</label>
-                                <input id="subscription-inline-price-input" type="number" min="0" step="0.01" value={subscriptionInlinePrice} autoFocus onChange={(event) => setSubscriptionInlinePrice(event.target.value)} />
-                                <button type="button" onClick={continueInlineSubscriptionPriceEdit}>Continue</button>
-                                <button type="button" onClick={() => setSubscriptionPriceEditing(false)}>Cancel</button>
+                                <input
+                                  id="subscription-inline-price-input"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={subscriptionInlinePrice}
+                                  autoFocus
+                                  onChange={(event) => setSubscriptionInlinePrice(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      void continueInlineSubscriptionPriceEdit();
+                                    } else if (event.key === "Escape") {
+                                      event.preventDefault();
+                                      setSubscriptionInlinePrice(String(selectedSubscriptionPlan.amount ?? selectedSubscriptionPlan.amount_kobo ?? "").trim());
+                                      setSubscriptionPriceEditing(false);
+                                    }
+                                  }}
+                                />
+                                <small className="subscription-inline-edit-hint">Enter to save · Esc to cancel</small>
                               </> : <>
                                 <span>{selectedSubscriptionPlan.price || (selectedSubscriptionPlan.amount != null ? formatMoney(selectedSubscriptionPlan.amount, selectedSubscriptionPlan.currency || "NGN") : "NGN 0")}</span>
                                 <button className="subscription-inline-edit-button" type="button" aria-label="Edit subscription price" onClick={() => setSubscriptionPriceEditing(true)}>
@@ -9787,7 +10008,7 @@ function AdminStorefrontDashboard({
             </article>
           </div>
 
-          <div className={`subscription-modal-backdrop subscription-protection-backdrop ${subscriptionProtectionOpen ? "open" : ""}`} aria-hidden={!subscriptionProtectionOpen}>
+          {subscriptionProtectionOpen && typeof document !== "undefined" ? createPortal(<div className="subscription-modal-backdrop subscription-protection-backdrop open" aria-hidden="false">
             <article className="subscription-modal-frame subscription-protection-frame subscription-otp-card-frame" role="dialog" aria-modal="true" aria-labelledby="subscriptionProtectionTitle">
               <div className="subscription-otp-topbar">
                 <button className="btn btn-outline btn-icon subscription-otp-close" type="button" onClick={closeSubscriptionProtectionModal} aria-label="Close subscription verification popup">
@@ -9828,11 +10049,13 @@ function AdminStorefrontDashboard({
               </div>
               <div className="modal-actions sticky-modal-actions subscription-otp-actions">
                 <button className="btn btn-primary subscription-otp-submit" type="button" disabled={subscriptionCreateLoading || subscriptionOtp.code.length !== 6} onClick={createSubscriptionPlanAfterOtp}>
-                  {subscriptionCreateLoading ? "Creating..." : "Create Subscription"}
+                  {subscriptionCreateLoading
+                    ? (subscriptionModalMode === "edit" ? "Updating..." : "Creating...")
+                    : (subscriptionModalMode === "edit" ? "Update Subscription" : "Create Subscription")}
                 </button>
               </div>
             </article>
-          </div>
+          </div>, document.body) : null}
         </section>
       );
     }
@@ -11132,7 +11355,12 @@ function AdminStorefrontDashboard({
 
             {currentPage === "doctors" && (
               <section className="page-view active">
-                <StaffDirectory session={session} search={deferredSearch} />
+                <StaffDirectory
+                  session={session}
+                  search={deferredSearch}
+                  refreshRequest={staffDirectoryRefreshRequest}
+                  onRequestRoleChange={openStaffRoleChangeModal}
+                />
               </section>
             )}
 
@@ -11310,10 +11538,21 @@ function AdminStorefrontDashboard({
             {currentPage === "audit" && (
               <section className="page-view active">
                 <section className="panel audit-panel">
-                  <div className="panel-header audit-header">
+                  <header className="audit-center-intro">
                     <div>
-                     
+                      <p className="section-kicker">Store activity</p>
                       <h2>Audit center</h2>
+                      <p>Review important account, commerce, and clinical workflow events in one searchable view.</p>
+                    </div>
+                    <div className="audit-center-summary" aria-label={`${data.auditEvents.length} events in the current view`}>
+                      <strong>{formatNumber(data.auditEvents.length)}</strong>
+                      <span>events in view</span>
+                    </div>
+                  </header>
+                  <div className="audit-controls" aria-label="Audit filters">
+                    <div className="audit-controls-copy">
+                      <strong>Filter activity</strong>
+                      <span>Narrow the log by outcome or originating system.</span>
                     </div>
                     <div className="toolbar">
                       <label className="select-wrap">
@@ -11336,7 +11575,7 @@ function AdminStorefrontDashboard({
                       </label>
                     </div>
                   </div>
-                  <div className="audit-tabs">
+                  <div className="audit-tabs segmented-mini nevari-storefront-tabs" role="tablist" aria-label="Audit categories">
                     {["orders", "payments", "security", "consultation", "emails"].map((category) => (
                       <button
                         key={category}
@@ -11350,6 +11589,10 @@ function AdminStorefrontDashboard({
                   </div>
                   <div className="audit-layout">
                     <div className="audit-table-wrap">
+                      <div className="audit-table-heading">
+                        <div><strong>Activity log</strong><span>Newest events appear first</span></div>
+                        <span>Select a row to view full details</span>
+                      </div>
                       <div className="table-scroll">
                         <table>
                           <thead>
@@ -11396,6 +11639,15 @@ function AdminStorefrontDashboard({
             {currentPage === "settings" && (
               <section className="page-view active">
                 <section className="page-surface admin-settings-surface">
+                  <header className="admin-settings-intro">
+                    <div>
+                      <p className="section-kicker">Store configuration</p>
+                      <h2>Settings and safeguards</h2>
+                      <p>Review how appointments, messages, and security controls operate across the storefront.</p>
+                    </div>
+                    <span className="admin-settings-health"><i aria-hidden="true" />Configuration available</span>
+                  </header>
+                  <div className="admin-settings-workspace">
                   <div className="segmented-mini admin-settings-tabs" role="tablist" aria-label="Settings groups">
                     {ADMIN_SETTINGS_TABS.map((tab) => (
                       <button
@@ -11403,17 +11655,20 @@ function AdminStorefrontDashboard({
                         type="button"
                         className={adminSettingsTab === tab.key ? "active" : ""}
                         role="tab"
+                        id={`settings-tab-${tab.key}`}
+                        aria-controls={`settings-panel-${tab.key}`}
                         aria-selected={adminSettingsTab === tab.key}
                         onClick={() => setAdminSettingsTab(tab.key)}
                       >
-                        {tab.label} <span className="badge-count">{tab.count}</span>
+                        <span className="admin-settings-tab-copy"><strong>{tab.label}</strong><small>{tab.description}</small></span>
+                        <span className="badge-count">{tab.count}</span>
                       </button>
                     ))}
                   </div>
 
 
                   <div className="settings-panels">
-                    <section className={`settings-panel ${adminSettingsTab === "automation" ? "active" : ""}`} data-settings-panel="automation">
+                    <section id="settings-panel-automation" className={`settings-panel ${adminSettingsTab === "automation" ? "active" : ""}`} data-settings-panel="automation" role="tabpanel" aria-labelledby="settings-tab-automation" hidden={adminSettingsTab !== "automation"}>
                       <div className="panel-heading">
                         <div>
                           <h4>Meeting service</h4>
@@ -11449,7 +11704,7 @@ function AdminStorefrontDashboard({
                       </div>
                     </section>
 
-                    <section className={`settings-panel ${adminSettingsTab === "reminders" ? "active" : ""}`} data-settings-panel="reminders">
+                    <section id="settings-panel-reminders" className={`settings-panel ${adminSettingsTab === "reminders" ? "active" : ""}`} data-settings-panel="reminders" role="tabpanel" aria-labelledby="settings-tab-reminders" hidden={adminSettingsTab !== "reminders"}>
                       <div className="panel-heading">
                         <div>
                           <h4>Reminder and email rules</h4>
@@ -11484,30 +11739,7 @@ function AdminStorefrontDashboard({
                       </div>
                     </section>
 
-                    <section className={`settings-panel ${adminSettingsTab === "pricing" ? "active" : ""}`} data-settings-panel="pricing">
-                      <div className="panel-heading">
-                        <div>
-                          <h4>Consultation pricing</h4>
-                          <p>Maintain transparent consultation fees for each care level.</p>
-                        </div>
-                      </div>
-                      <div className="settings-form-grid">
-                        <label className="field-card span-4">
-                          <span>Minimum consultation minutes</span>
-                          <input type="number" min="5" value={appointmentSettings.minimumConsultationMinutes} onChange={(event) => setAppointmentSettings((current) => ({ ...current, minimumConsultationMinutes: event.target.value }))} />
-                        </label>
-                        <label className="field-card span-4">
-                          <span>General category price</span>
-                          <input value={appointmentSettings.categoryPricing.general} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, general: event.target.value } }))} />
-                        </label>
-                        <label className="field-card span-4">
-                          <span>Cardiology category price</span>
-                          <input value={appointmentSettings.categoryPricing.cardiology} onChange={(event) => setAppointmentSettings((current) => ({ ...current, categoryPricing: { ...current.categoryPricing, cardiology: event.target.value } }))} />
-                        </label>
-                      </div>
-                    </section>
-
-                    <section className={`settings-panel ${adminSettingsTab === "security" ? "active" : ""}`} data-settings-panel="security">
+                    <section id="settings-panel-security" className={`settings-panel ${adminSettingsTab === "security" ? "active" : ""}`} data-settings-panel="security" role="tabpanel" aria-labelledby="settings-tab-security" hidden={adminSettingsTab !== "security"}>
                       <div className="panel-heading">
                         <div>
                           <h4>Security and logging</h4>
@@ -11543,33 +11775,71 @@ function AdminStorefrontDashboard({
                       <p className="settings-panel-note">When enabled, all customer, doctor, pharmacist, and admin sign-in forms request an email OTP challenge after credentials are accepted.</p>
                     </section>
                   </div>
+                  </div>
                 </section>
               </section>
             )}
 
             {currentPage === "profile" && (
               <section className="page-view active">
-                <section className="page-banner panel">
-                  <div>
-                    <p className="section-kicker">Profile</p>
-                    <h2>Storefront account and identity</h2>
-                    <p className="hero-text">Review the current signed-in user, WordPress environment, and storefront identity in one place.</p>
+                <AdminPageHeading title="Profile" />
+                <section className="admin-profile-page">
+                  <header className="admin-profile-hero">
+                    <div className="admin-profile-identity">
+                      <span className="admin-profile-avatar">
+                        {session.user?.avatar_url ? <img src={session.user.avatar_url} alt={`${session.user?.display_name || "Admin"} profile`} /> : getNameInitials(session.user?.display_name || "Admin", "AD")}
+                      </span>
+                      <div><p className="section-kicker">Signed-in account</p><h2>{session.user?.display_name || "Administrator"}</h2><p>{session.user?.email || "Email unavailable"}</p></div>
+                    </div>
+                    <div className="admin-profile-hero-actions">
+                      <button className="pill-button" type="button" onClick={() => switchPage("settings")}>Open settings</button>
+                      <button className="pill-button danger" type="button" onClick={handleLogout}>Logout</button>
+                    </div>
+                  </header>
+
+                  <div className="admin-profile-layout">
+                    <form className="admin-profile-card admin-profile-form" onSubmit={saveAdminProfile}>
+                      <div className="admin-profile-section-heading"><div><p className="section-kicker">Personal details</p><h3>Edit your profile</h3><p>These details identify you inside the admin storefront.</p></div></div>
+                      <section className="admin-profile-photo-editor" aria-labelledby="admin-profile-photo-title">
+                        <span className="admin-profile-photo-preview">
+                          {adminProfileImageDraft.preview || session.user?.avatar_url ? <img src={adminProfileImageDraft.preview || session.user.avatar_url} alt="Profile preview" /> : getNameInitials(session.user?.display_name || "Admin", "AD")}
+                        </span>
+                        <div className="admin-profile-photo-copy">
+                          <h4 id="admin-profile-photo-title">Profile image</h4>
+                          <p>JPG, PNG, or WebP. Maximum 2 MB.</p>
+                          <input ref={adminProfileImageInputRef} className="sr-only" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={selectAdminProfileImage} />
+                          {adminProfileImageDraft.file ? (
+                            <div className="admin-profile-photo-file">
+                              <span title={adminProfileImageDraft.file.name}>{adminProfileImageDraft.file.name}</span>
+                              <button type="button" onClick={() => adminProfileImageInputRef.current?.click()}>Replace</button>
+                              <button type="button" onClick={() => setAdminProfileImageDraft({ file: null, preview: "", error: "" })}>Remove</button>
+                              <button className="button-primary" type="button" disabled={adminProfileImageSaving} onClick={uploadAdminProfileImage}>{adminProfileImageSaving ? "Uploading..." : "Save image"}</button>
+                            </div>
+                          ) : <button className="pill-button admin-profile-photo-select" type="button" onClick={() => adminProfileImageInputRef.current?.click()}>Upload image</button>}
+                          {adminProfileImageDraft.error ? <p className="form-feedback error" role="alert">{adminProfileImageDraft.error}</p> : null}
+                        </div>
+                      </section>
+                      <div className="admin-profile-fields">
+                        <label><span>Display name</span><input required minLength={2} maxLength={80} autoComplete="name" value={adminProfileDraft.displayName} onChange={(event) => { setAdminProfileDraft((current) => ({ ...current, displayName: event.target.value })); setAdminProfileFeedback(""); }} /></label>
+                        <label><span>First name</span><input maxLength={60} autoComplete="given-name" value={adminProfileDraft.firstName} onChange={(event) => { setAdminProfileDraft((current) => ({ ...current, firstName: event.target.value })); setAdminProfileFeedback(""); }} /></label>
+                        <label><span>Last name</span><input maxLength={60} autoComplete="family-name" value={adminProfileDraft.lastName} onChange={(event) => { setAdminProfileDraft((current) => ({ ...current, lastName: event.target.value })); setAdminProfileFeedback(""); }} /></label>
+                      </div>
+                      <footer className="admin-profile-form-footer">
+                        <p className={adminProfileFeedback.includes("successfully") ? "form-feedback success" : adminProfileFeedback ? "form-feedback error" : "muted"} role="status" aria-live="polite">{adminProfileFeedback || "Email, role, and permissions are protected account fields."}</p>
+                        <div><button className="pill-button" type="button" disabled={adminProfileSaving} onClick={() => setAdminProfileDraft({ displayName: session.user?.display_name || "", firstName: session.user?.first_name || "", lastName: session.user?.last_name || "" })}>Reset</button><button className="button-primary" type="submit" disabled={adminProfileSaving}>{adminProfileSaving ? "Saving..." : "Save profile"}</button></div>
+                      </footer>
+                    </form>
+
+                    <aside className="admin-profile-card admin-profile-access">
+                      <div className="admin-profile-section-heading"><div><p className="section-kicker">Account access</p><h3>Security and permissions</h3><p>Protected values are managed by authenticated account workflows.</p></div></div>
+                      <dl>
+                        <div><dt>Email address</dt><dd>{session.user?.email || "Not available"}</dd><small>Used for sign-in and security messages</small></div>
+                        <div><dt>Role</dt><dd>{session.user?.roles?.join(", ") || "Frontend guest"}</dd><small>Controls storefront permissions</small></div>
+                        <div><dt>Two-step verification</dt><dd>{effectiveAuthSecuritySettings.globalTwoStepVerification ? "Enabled" : "Disabled"}</dd><small>Enforced during protected sign-in flows</small></div>
+                        <div><dt>WordPress connection</dt><dd>{session.baseUrl || "Not configured"}</dd><small>Current authenticated environment</small></div>
+                      </dl>
+                    </aside>
                   </div>
-                  <div className="banner-actions">
-                    <button className="button-primary" type="button" onClick={() => showAuthGate("auth")}>Manage session</button>
-                    <button className="pill-button" type="button" onClick={() => switchPage("subscriptions")}>Subscriptions</button>
-                    <button className="pill-button" type="button" onClick={() => switchPage("settings")}>Open settings</button>
-                    <button className="pill-button danger" type="button" onClick={handleLogout}>Logout</button>
-                  </div>
-                </section>
-                <section className="settings-grid profile-grid">
-                  {profileCards.map((card) => (
-                    <article className="mini-stat" key={card.label}>
-                      <span>{card.label}</span>
-                      <strong>{card.value}</strong>
-                      <small>{card.note}</small>
-                    </article>
-                  ))}
                 </section>
               </section>
             )}
@@ -11599,7 +11869,11 @@ function AdminStorefrontDashboard({
                 </button>
               </div>
 
-              <div className="order-create-shell modal-body">
+              <div className={`order-create-shell modal-body workflow-step-${orderCreateStep}`}>
+                <ol className="creation-flow" aria-label="Order creation progress">
+                  <li className={orderCreateStep === 0 ? "current" : "complete"} aria-current={orderCreateStep === 0 ? "step" : undefined}><span>1</span><div><strong>Create order</strong><small>Customer, fulfilment, and items</small></div></li>
+                  <li className={orderCreateStep === 1 ? "current" : ""} aria-current={orderCreateStep === 1 ? "step" : undefined}><span>2</span><div><strong>Review</strong><small>Confirm and create</small></div></li>
+                </ol>
                 <section className="creation-main order-create-full-width">
                   <div className="order-create-left-column">
                   <div className="creation-section-title order-create-customer-heading">
@@ -11915,15 +12189,40 @@ function AdminStorefrontDashboard({
                   </div>
                   </div>
                 </section>
+                <section className="order-create-review creation-review" aria-labelledby="order-create-review-title">
+                  <div className="creation-review-heading">
+                    <p className="section-kicker">Final check</p>
+                    <h4 id="order-create-review-title">Review this order</h4>
+                    <p>Confirm the customer, fulfilment, and totals before creating the order.</p>
+                  </div>
+                  <dl className="creation-review-grid">
+                    <div><dt>Customer</dt><dd>{getOrderCreateCustomerName()}</dd><small>{orderCreateForm.email || "No email selected"}</small></div>
+                    <div><dt>Payment</dt><dd>{formatStatusLabel(orderCreateForm.status || "Not selected")}</dd><small>{formatStatusLabel(orderCreateForm.deliveryMethod || "Delivery not selected")}</small></div>
+                    <div><dt>Order items</dt><dd>{orderCreateItems.reduce((total, item) => total + Number(item.quantity || 0), 0)}</dd><small>{orderCreateItems.length} distinct product{orderCreateItems.length === 1 ? "" : "s"}</small></div>
+                    <div><dt>Total</dt><dd>{formatMoney(orderCreateSubtotal, storeCurrency)}</dd><small>Calculated from selected products</small></div>
+                  </dl>
+                  {orderCreateForm.prescription ? <div className="creation-review-note"><span>Fulfilment note</span><p>{orderCreateForm.prescription}</p></div> : null}
+                </section>
               </div>
 
               {orderCreateFeedback ? <p className="muted popup-support-copy">{orderCreateFeedback}</p> : null}
               <div className="stacked-order-popup-actions modal-actions">
-                <button className="pill-button" type="button" onClick={requestCloseOrderCreateModal}>Cancel</button>
+                <button className="pill-button" type="button" onClick={orderCreateStep > 0 ? () => setOrderCreateStep((current) => current - 1) : requestCloseOrderCreateModal}>{orderCreateStep > 0 ? "Back" : "Cancel"}</button>
                 <span className="order-create-footer-total">Total <strong>{formatMoney(orderCreateSubtotal, storeCurrency)}</strong></span>
-                <button className="button-primary" type="submit" disabled={orderCreateLoading || !orderCreateCanSubmit}>
+                <button
+                  className="button-primary"
+                  type="button"
+                  disabled={orderCreateLoading || !orderCreateCanSubmit}
+                  onClick={(event) => {
+                    if (orderCreateStep === 0) {
+                      setOrderCreateStep((current) => current + 1);
+                      return;
+                    }
+                    event.currentTarget.form?.requestSubmit();
+                  }}
+                >
                   {orderCreateLoading ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
-                  <span>{orderCreateLoading ? "Creating..." : "Create order"}</span>
+                  <span>{orderCreateLoading ? "Creating..." : orderCreateStep === 1 ? "Create order" : "Review order"}</span>
                 </button>
               </div>
             </form>
@@ -13226,7 +13525,11 @@ function AdminStorefrontDashboard({
                 </div>
 
                 {createModalType === "consultation" ? (
-                  <div className="creation-modal__body appointment-creation__body">
+                  <div className={`creation-modal__body appointment-creation__body workflow-step-${consultationCreateStep}`}>
+                    <ol className="creation-flow" aria-label="Appointment creation progress">
+                      <li className={consultationCreateStep === 0 ? "current" : "complete"} aria-current={consultationCreateStep === 0 ? "step" : undefined}><span>1</span><div><strong>Details</strong><small>People, date and time</small></div></li>
+                      <li className={consultationCreateStep === 1 ? "current" : ""} aria-current={consultationCreateStep === 1 ? "step" : undefined}><span>2</span><div><strong>Confirm</strong><small>Review and book</small></div></li>
+                    </ol>
                     {(consultationCreateDoctorsQuery.isLoading || consultationCreatePatientsQuery.isLoading || consultationCreateAppointmentsQuery.isLoading) ? (
                       <p className="muted popup-support-copy detail-field-wide">Loading consultation dependencies...</p>
                     ) : null}
@@ -13236,6 +13539,7 @@ function AdminStorefrontDashboard({
 
                     <section className="consultation-design-card consultation-design-form-card">
                       <div className="consultation-design-grid">
+                        <div className="appointment-identity-panel">
                         <div className="consultation-design-card-title">
                           <InlineIcon id="i-calendar" />
                           <span>Appointment details</span>
@@ -13359,6 +13663,7 @@ function AdminStorefrontDashboard({
                           />
                           {consultationCreateForm.reason.length >= 450 ? <small>{consultationCreateForm.reason.length}/500</small> : null}
                         </label>
+                        </div>
 
                         <div className="consultation-design-calendar">
                           <BookingCalendarWidget
@@ -13385,13 +13690,32 @@ function AdminStorefrontDashboard({
                             compactAppointmentLayout
                           />
                         </div>
+                        <section className="consultation-create-review creation-review" aria-labelledby="consultation-create-review-title">
+                          <div className="creation-review-heading">
+                            <p className="section-kicker">Final check</p>
+                            <h4 id="consultation-create-review-title">Review appointment</h4>
+                            <p>Confirm the care team and selected time before booking.</p>
+                          </div>
+                          <dl className="creation-review-grid">
+                            <div><dt>Patient</dt><dd>{consultationSelectedPatient?.name || consultationSelectedPatient?.label || "Not selected"}</dd><small>{consultationSelectedPatient?.email || "Patient email unavailable"}</small></div>
+                            <div><dt>Doctor</dt><dd>{consultationDoctorProfile?.display_name || "Not selected"}</dd><small>{consultationDoctorProfile?.specialty || consultationDoctorProfile?.specialties?.[0] || "Clinical consultation"}</small></div>
+                            <div><dt>Date</dt><dd>{consultationSummaryDate}</dd><small>{consultationSummaryTime}</small></div>
+                            <div><dt>Duration</dt><dd>{consultationDuration} minutes</dd><small>{formatStatusLabel(consultationCreateForm.type || "Consultation")}</small></div>
+                          </dl>
+                          {consultationCreateForm.reason ? <div className="creation-review-note"><span>Reason for visit</span><p>{consultationCreateForm.reason}</p></div> : null}
+                        </section>
                       </div>
-                      {!consultationCanSubmit ? <p className="consultation-validation-message">Select a patient, doctor, booking day, and booking time to continue.</p> : null}
+                      {consultationCreateStep === 0 && !consultationCanSubmit ? <p className="consultation-validation-message">Complete the appointment details to continue.</p> : null}
                     </section>
 
                   </div>
                 ) : createModalType === "user" ? (
-                  <div className="user-account-create modal-body">
+                  <div className={`user-account-create modal-body workflow-step-${userAccountCreateStep}`}>
+                    <ol className="creation-flow" aria-label="User account creation progress">
+                      <li className={userAccountCreateStep === 0 ? "current" : "complete"} aria-current={userAccountCreateStep === 0 ? "step" : undefined}><span>1</span><div><strong>Identity</strong><small>Profile and contact</small></div></li>
+                      <li className={userAccountCreateStep === 1 ? "current" : userAccountCreateStep > 1 ? "complete" : ""} aria-current={userAccountCreateStep === 1 ? "step" : undefined}><span>2</span><div><strong>Access</strong><small>Role and credentials</small></div></li>
+                      <li className={userAccountCreateStep === 2 ? "current" : ""} aria-current={userAccountCreateStep === 2 ? "step" : undefined}><span>3</span><div><strong>Review</strong><small>Validate and create</small></div></li>
+                    </ol>
                     <div className="user-account-reference-top">
                     <section className="user-account-avatar-section" aria-label="User avatar">
                       <div className="user-account-avatar">
@@ -13402,7 +13726,7 @@ function AdminStorefrontDashboard({
                         )}
                       </div>
                       <div className="user-account-avatar-copy">
-                        <span className="user-account-field-title">User avatar</span>
+                        <span className="user-account-field-title">Upload User avatar</span>
                         <span>JPG, PNG, or WebP. Maximum 2 MB.</span>
                         <div className="user-account-inline-actions">
                           <label className="pill-button user-avatar-upload">
@@ -13422,7 +13746,7 @@ function AdminStorefrontDashboard({
                       </div>
                     </section>
                     <label className="detail-field user-account-role">
-                      <span>Role</span>
+                      <span>Assign a role</span>
                       <div className="select-wrap">
                         <select
                           value={userAccountCreateForm.role}
@@ -13444,28 +13768,35 @@ function AdminStorefrontDashboard({
                     </label>
                     </div>
 
+                    <div className="user-account-section-heading">
+                      <div>
+                        <p className="section-kicker">{userAccountCreateStep === 0 ? "Identity" : userAccountCreateStep === 1 ? "Access" : "Review"}</p>
+                        <h4>{userAccountCreateStep === 0 ? "Personal and contact details" : userAccountCreateStep === 1 ? "Role and secure access" : "Confirm account details"}</h4>
+                      </div>
+                      <span>{userAccountCreateStep === 0 ? "Add the information used to identify this user." : "Set only the permissions and credentials this role needs."}</span>
+                    </div>
                     <div className="detail-form-grid user-account-grid">
-                      <label className="detail-field">
+                      <label className="detail-field user-field-identity">
                         <span>First name</span>
                         <input value={userAccountCreateForm.firstName} placeholder="Enter first name" maxLength={80} onBlur={() => setUserAccountTouched((previous) => ({ ...previous, firstName: true }))} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, firstName: event.target.value }))} aria-invalid={Boolean(userAccountTouched.firstName && userAccountValidationErrors.firstName)} required />
                         {userAccountTouched.firstName && userAccountValidationErrors.firstName ? <span className="field-error">{userAccountValidationErrors.firstName}</span> : null}
                       </label>
-                      <label className="detail-field">
+                      <label className="detail-field user-field-identity">
                         <span>Last name</span>
                         <input value={userAccountCreateForm.lastName} placeholder="Enter last name" maxLength={80} onBlur={() => setUserAccountTouched((previous) => ({ ...previous, lastName: true }))} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, lastName: event.target.value }))} aria-invalid={Boolean(userAccountTouched.lastName && userAccountValidationErrors.lastName)} required />
                         {userAccountTouched.lastName && userAccountValidationErrors.lastName ? <span className="field-error">{userAccountValidationErrors.lastName}</span> : null}
                       </label>
-                      <label className="detail-field">
+                      <label className="detail-field user-field-identity">
                         <span>Email address</span>
                         <div className="modal-icon-field"><InlineIcon id="i-mail" /><input type="email" placeholder="name@example.com" value={userAccountCreateForm.email} onBlur={() => setUserAccountTouched((previous) => ({ ...previous, email: true }))} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, email: event.target.value }))} aria-invalid={Boolean(userAccountTouched.email && userAccountValidationErrors.email)} autoComplete="email" required /></div>
                         {userAccountTouched.email && userAccountValidationErrors.email ? <span className="field-error">{userAccountValidationErrors.email}</span> : null}
                       </label>
-                      <label className="detail-field">
+                      <label className="detail-field user-field-identity">
                         <span>Phone number{["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role) ? "" : " (optional)"}</span>
                         <div className="modal-icon-field"><InlineIcon id="i-phone" /><input type="tel" placeholder="Enter phone number" value={userAccountCreateForm.phone} onBlur={() => setUserAccountTouched((previous) => ({ ...previous, phone: true }))} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, phone: event.target.value }))} aria-invalid={Boolean(userAccountTouched.phone && userAccountValidationErrors.phone)} autoComplete="tel" required={userAccountRequiresPhone} /></div>
                         {userAccountTouched.phone && userAccountValidationErrors.phone ? <span className="field-error">{userAccountValidationErrors.phone}</span> : null}
                       </label>
-                      <label className="detail-field detail-field-wide">
+                      <label className="detail-field detail-field-wide user-field-access">
                         <span>Password</span>
                         <div className="user-password-control">
                           <div className="modal-icon-field user-password-input">
@@ -13486,26 +13817,26 @@ function AdminStorefrontDashboard({
                       </label>
 
                       {["doctor", "nurse", "pharmacist"].includes(userAccountCreateForm.role) ? (
-                        <label className="detail-field">
+                        <label className="detail-field user-field-access">
                           <span>License number</span>
                           <input value={userAccountCreateForm.licenseNumber} maxLength={80} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, licenseNumber: event.target.value }))} />
                         </label>
                       ) : null}
                       {["doctor", "nurse"].includes(userAccountCreateForm.role) ? (
-                        <label className="detail-field">
+                        <label className="detail-field user-field-access">
                           <span>Specialty</span>
                           <input value={userAccountCreateForm.specialty} maxLength={100} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, specialty: event.target.value }))} />
                         </label>
                       ) : null}
                       {userAccountCreateForm.role === "doctor" ? (
                         <>
-                          <label className="detail-field"><span>Location</span><input value={userAccountCreateForm.location} maxLength={120} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, location: event.target.value }))} /></label>
-                          <label className="detail-field"><span>Weekly capacity</span><input type="number" min="1" max="168" value={userAccountCreateForm.weeklyCapacity} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, weeklyCapacity: event.target.value }))} /></label>
-                          <label className="detail-field"><span>Available for assignment</span><div className="select-wrap"><select value={userAccountCreateForm.isAvailable ? "yes" : "no"} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, isAvailable: event.target.value === "yes" }))}><option value="yes">Yes</option><option value="no">No</option></select></div></label>
+                          <label className="detail-field user-field-access"><span>Location</span><input value={userAccountCreateForm.location} maxLength={120} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, location: event.target.value }))} /></label>
+                          <label className="detail-field user-field-access"><span>Weekly capacity</span><input type="number" min="1" max="168" value={userAccountCreateForm.weeklyCapacity} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, weeklyCapacity: event.target.value }))} /></label>
+                          <label className="detail-field user-field-access"><span>Available for assignment</span><div className="select-wrap"><select value={userAccountCreateForm.isAvailable ? "yes" : "no"} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, isAvailable: event.target.value === "yes" }))}><option value="yes">Yes</option><option value="no">No</option></select></div></label>
                         </>
                       ) : null}
                       {userAccountCreateForm.role === "patient" ? (
-                        <label className="detail-field detail-field-wide"><span>Address</span><textarea rows={3} placeholder="Enter residential address" maxLength={300} value={userAccountCreateForm.address} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, address: event.target.value }))} /></label>
+                        <label className="detail-field detail-field-wide user-field-identity"><span>Address</span><textarea rows={3} placeholder="Enter residential address" maxLength={300} value={userAccountCreateForm.address} onChange={(event) => setUserAccountCreateForm((previous) => ({ ...previous, address: event.target.value }))} /></label>
                       ) : null}
                     </div>
 
@@ -13537,6 +13868,25 @@ function AdminStorefrontDashboard({
                         </div>
                       </section>
                     ) : null}
+                    <section className="user-account-review creation-review" aria-labelledby="user-account-review-title">
+                      <div className="creation-review-heading">
+                        <p className="section-kicker">Final check</p>
+                        <h4 id="user-account-review-title">Review user account</h4>
+                        <p>Confirm identity and access before creating this account.</p>
+                      </div>
+                      <div className="user-account-review-profile">
+                        <span className="user-account-avatar">
+                          {userAccountCreateForm.avatar?.data ? <img src={userAccountCreateForm.avatar.data} alt="New user avatar preview" /> : getNameInitials(`${userAccountCreateForm.firstName} ${userAccountCreateForm.lastName}`, "NU")}
+                        </span>
+                        <div><strong>{`${userAccountCreateForm.firstName} ${userAccountCreateForm.lastName}`.trim() || "Unnamed user"}</strong><span>{userAccountCreateForm.email || "No email provided"}</span></div>
+                      </div>
+                      <dl className="creation-review-grid">
+                        <div><dt>Role</dt><dd>{USER_ACCOUNT_ROLES.find(([role]) => role === userAccountCreateForm.role)?.[1] || "Not selected"}</dd><small>Determines dashboard access</small></div>
+                        <div><dt>Phone</dt><dd>{userAccountCreateForm.phone || "Not provided"}</dd><small>{userAccountRequiresPhone ? "Required for this role" : "Optional contact"}</small></div>
+                        <div><dt>Password</dt><dd>{userAccountPasswordValid ? "Secure password ready" : "Needs attention"}</dd><small>Never displayed after creation</small></div>
+                        <div><dt>Professional details</dt><dd>{userAccountRequiresPhone ? (userAccountCreateForm.licenseNumber || "Not provided") : "Not required"}</dd><small>{userAccountCreateForm.specialty || "No specialty required"}</small></div>
+                      </dl>
+                    </section>
                     {createFeedback ? <p className="create-feedback" role="status">{createFeedback}</p> : null}
                   </div>
                 ) : (
@@ -13680,10 +14030,34 @@ function AdminStorefrontDashboard({
                   </div>
                 )}
                 <div className={createModalType === "consultation" ? "creation-modal__footer" : "stacked-order-popup-actions modal-actions"}>
-                  <button className={createModalType === "consultation" ? "creation-modal__secondary-action" : "pill-button"} type="button" onClick={requestCloseCreateModal}>Cancel</button>
-                  <button className={createModalType === "consultation" ? "creation-modal__primary-action" : "button-primary"} type="submit" disabled={createLoading || (createModalType === "consultation" && !consultationCanSubmit) || (createModalType === "user" && !userAccountCanSubmit)}>
+                  <button
+                    className={createModalType === "consultation" ? "creation-modal__secondary-action" : "pill-button"}
+                    type="button"
+                    onClick={createModalType === "consultation"
+                      ? (consultationCreateStep > 0 ? () => setConsultationCreateStep((current) => current - 1) : requestCloseCreateModal)
+                      : (userAccountCreateStep > 0 ? () => setUserAccountCreateStep((current) => current - 1) : requestCloseCreateModal)}
+                  >{(createModalType === "consultation" ? consultationCreateStep : userAccountCreateStep) > 0 ? "Back" : "Cancel"}</button>
+                  <button
+                    className={createModalType === "consultation" ? "creation-modal__primary-action" : "button-primary"}
+                    type="button"
+                    disabled={createLoading || (createModalType === "consultation"
+                      ? !consultationCanSubmit
+                      : (userAccountCreateStep === 0 ? !userAccountIdentityReady : userAccountCreateStep === 1 ? !userAccountAccessReady : !userAccountCanSubmit))}
+                    onClick={(event) => {
+                      const activeStep = createModalType === "consultation" ? consultationCreateStep : userAccountCreateStep;
+                      const reviewStep = createModalType === "consultation" ? 1 : 2;
+                      if (activeStep < reviewStep) {
+                        if (createModalType === "consultation") setConsultationCreateStep(1);
+                        else setUserAccountCreateStep((current) => current + 1);
+                        return;
+                      }
+                      event.currentTarget.form?.requestSubmit();
+                    }}
+                  >
                     {createLoading ? <span className="category-saving-spinner" aria-hidden="true" /> : null}
-                    <span>{createLoading ? (createModalType === "consultation" ? "Booking..." : "Creating...") : (createModalType === "consultation" ? "Book appointment" : (createModalType === "user" ? "Create user" : "Create"))}</span>
+                    <span>{createLoading
+                      ? (createModalType === "consultation" ? "Booking..." : "Creating...")
+                      : (createModalType === "consultation" ? consultationCreateStep === 1 ? "Book appointment" : "Continue" : userAccountCreateStep === 2 ? "Create user" : "Continue")}</span>
                   </button>
                 </div>
               </form>
@@ -13891,7 +14265,16 @@ function AdminStorefrontDashboard({
                     <div className="detail-block"><span>Object</span><strong>{selectedAuditEvent.object_type || "n/a"}{selectedAuditEvent.object_id ? ` #${selectedAuditEvent.object_id}` : ""}</strong></div>
                     <div className="detail-block"><span>Severity</span><strong>{selectedAuditEvent.severity || "n/a"}</strong></div>
                   </div>
-                  <div className="meta-block"><span>Message</span><pre>{selectedAuditEvent.message || selectedAuditEvent.error_message || "No message stored."}</pre></div>
+                  {selectedAuditIsEmailEvent ? (
+                    <div className="meta-block audit-email-message">
+                      <span>Message</span>
+                      <dl>
+                        <div><dt>To:</dt><dd>{selectedAuditEvent.email_recipient || "Unavailable"}</dd></div>
+                        <div><dt>Subject:</dt><dd>{selectedAuditEvent.email_subject || "Unavailable"}</dd></div>
+                        <div><dt>Message:</dt><dd>&quot;Redacted for privacy&quot;</dd></div>
+                      </dl>
+                    </div>
+                  ) : <div className="meta-block"><span>Message</span><pre>{selectedAuditEvent.message || selectedAuditEvent.error_message || "No message stored."}</pre></div>}
                   <div className="meta-block"><span>Metadata JSON</span><pre>{JSON.stringify(selectedAuditEvent.metadata || {}, null, 2)}</pre></div>
                 </div>
               </div>
@@ -14219,52 +14602,58 @@ function AdminStorefrontDashboard({
               </footer>
             </section>
           </div>
-          {customerPrivilegeEscalationOpen ? (
-            <div className="app-modal-layer app-modal-layer-top is-open">
-              <ModalScrim className="app-modal-backdrop" label="Close role change verification" onDismiss={closeCustomerPrivilegeEscalationModal} />
-              <article className="customer-privilege-auth-modal auth-screen-card" role="dialog" aria-modal="true" aria-labelledby="customerPrivilegeOtpTitle">
-                <div className="auth-form auth-reference-form auth-otp-form">
-                  <div className="auth-otp-card">
-                  <h2 className="auth-otp-title" id="customerPrivilegeOtpTitle">{customerPrivilegeSubject?.mode === "downgrade" ? "Approve Downgrade" : "Approve Upgrade"}</h2>
-                  <input
-                    ref={customerPrivilegeOtpInputRef}
-                    className="auth-otp-hidden-input"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    value={customerPrivilegeOtp.code}
-                    onChange={(event) => setCustomerPrivilegeOtp((current) => ({ ...current, code: event.target.value.replace(/\D/g, "").slice(0, 6) }))}
-                    aria-label="Role change verification code"
-                  />
-                  <div className="auth-otp-boxes" role="group" aria-label="Role change verification code digits">
-                    {Array.from({ length: 6 }, (_, index) => (
-                      <button
-                        className={`auth-otp-box ${customerPrivilegeOtp.code[index] ? "filled" : ""}`}
-                        key={`customer-privilege-otp-box-${index}`}
-                        type="button"
-                        onClick={() => customerPrivilegeOtpInputRef.current?.focus()}
-                        aria-label={`Digit ${index + 1}`}
-                      >
-                        {customerPrivilegeOtp.code[index] || ""}
-                      </button>
-                    ))}
-                  </div>
-                  {customerPrivilegeOtp.status ? <p className="customer-privilege-otp-status" role="status">{customerPrivilegeOtp.status}</p> : null}
-                  <div className="customer-privilege-otp-actions">
-                  <button className="pill-button" type="button" disabled={customerPrivilegeEscalationLoading} onClick={closeCustomerPrivilegeEscalationModal}>Cancel</button>
+        </div>
+      ) : null}
+
+      {customerPrivilegeEscalationOpen && typeof document !== "undefined" ? createPortal(
+        <div className="app-modal-layer app-modal-layer-top role-change-auth-layer is-open">
+          <ModalScrim className="app-modal-backdrop" label="Close role change verification" onDismiss={dismissCustomerPrivilegeEscalationModal} />
+          <article className="customer-privilege-auth-modal auth-screen-card" role="dialog" aria-modal="true" aria-labelledby="customerPrivilegeOtpTitle">
+            <button className="icon-button customer-privilege-close" type="button" aria-label="Dismiss role change verification" disabled={customerPrivilegeEscalationLoading && Boolean(customerPrivilegeOtp.challengeId)} onClick={dismissCustomerPrivilegeEscalationModal}><InlineIcon id="i-x" /></button>
+            <div className="auth-form auth-reference-form auth-otp-form">
+              <div className="auth-otp-card">
+                <h2 className="auth-otp-title" id="customerPrivilegeOtpTitle">{customerPrivilegeSubject?.mode === "staff" ? "Confirm role change" : customerPrivilegeSubject?.mode === "downgrade" ? "Approve Downgrade" : "Approve Upgrade"}</h2>
+                <p className="customer-privilege-otp-intro">Enter the six-digit code sent to your administrator email to authorize this change.</p>
+                <div className="auth-otp-boxes" role="group" aria-label="Role change verification code digits">
+                  {Array.from({ length: 6 }, (_, index) => (
+                    <input
+                      ref={(element) => { customerPrivilegeOtpInputRef.current[index] = element; }}
+                      className={`auth-otp-box ${customerPrivilegeOtp.code[index] ? "filled" : ""}`}
+                      key={`customer-privilege-otp-box-${index}`}
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      autoComplete={index === 0 ? "one-time-code" : "off"}
+                      maxLength={index === 0 ? 6 : 1}
+                      value={customerPrivilegeOtp.code[index] || ""}
+                      disabled={customerPrivilegeEscalationLoading}
+                      onChange={(event) => updateCustomerPrivilegeOtpDigit(index, event.target.value)}
+                      onKeyDown={(event) => handleCustomerPrivilegeOtpKeyDown(event, index)}
+                      onPaste={(event) => {
+                        const digits = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+                        if (!digits) return;
+                        event.preventDefault();
+                        updateCustomerPrivilegeOtpDigit(0, digits);
+                      }}
+                      aria-label={`Verification code digit ${index + 1}`}
+                    />
+                  ))}
+                </div>
+                {customerPrivilegeOtp.status ? <p className="customer-privilege-otp-status" role="status">{customerPrivilegeOtp.status}</p> : null}
+                <div className="customer-privilege-otp-actions">
+                  <button className="pill-button" type="button" disabled={customerPrivilegeEscalationLoading && Boolean(customerPrivilegeOtp.challengeId)} onClick={dismissCustomerPrivilegeEscalationModal}>Cancel</button>
                   <button className="auth-primary-button auth-otp-submit" type="button" disabled={customerPrivilegeEscalationLoading || customerPrivilegeOtp.code.length !== 6} onClick={submitCustomerPrivilegeEscalation}>
                     {customerPrivilegeEscalationLoading ? <span className="nevari-branded-spinner staff-button-spinner" aria-label={customerPrivilegeOtp.challengeId ? "Approving role change" : "Sending verification code"} /> : null}
                     <span>{customerPrivilegeEscalationLoading
                       ? (customerPrivilegeOtp.challengeId ? "Approving..." : "Sending OTP...")
-                      : `${customerPrivilegeSubject?.mode === "downgrade" ? "Downgrade" : "Upgrade"} to ${formatRoleLabel(customerPrivilegeTargetRole)}`}</span>
+                      : `${customerPrivilegeSubject?.mode === "staff" ? "Change" : customerPrivilegeSubject?.mode === "downgrade" ? "Downgrade" : "Upgrade"} to ${formatRoleLabel(customerPrivilegeTargetRole)}`}</span>
                   </button>
-                  </div>
-                  </div>
                 </div>
-              </article>
+              </div>
             </div>
-          ) : null}
-        </div>
+          </article>
+        </div>,
+        document.body
       ) : null}
 
       {categoryCreateOpen ? (

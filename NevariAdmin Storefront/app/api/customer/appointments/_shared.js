@@ -83,12 +83,22 @@ export async function requestUpstreamJson(baseUrl, accessToken, path, { method =
     ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
   };
 
-  const response = await fetch(endpoint, {
-    method,
-    headers,
-    cache: "no-store",
-    body: body ? JSON.stringify(body) : undefined
-  });
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method,
+      headers,
+      cache: "no-store",
+      body: body ? JSON.stringify(body) : undefined
+    });
+  } catch {
+    return {
+      ok: false,
+      status: 503,
+      data: { error: { code: "upstream_unavailable", message: "The appointment service is temporarily unavailable." } },
+      raw: ""
+    };
+  }
   const raw = await response.text().catch(() => "");
   let data = null;
   try {

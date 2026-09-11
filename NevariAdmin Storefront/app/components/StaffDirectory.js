@@ -37,12 +37,17 @@ function numberedPages(page, pages) {
   return Array.from({ length: Math.min(5, pages) }, (_, index) => start + index);
 }
 
-export default function StaffDirectory({ session, search = "" }) {
+export default function StaffDirectory({ session, search = "", refreshRequest = null, onRequestRoleChange = null }) {
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState("");
   const [selected, setSelected] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [pendingAction, setPendingAction] = useState(null);
+  const [actionReason, setActionReason] = useState("");
   const closeRef = useRef(null);
+  const dialogRef = useRef(null);
+  const confirmationDialogRef = useRef(null);
+  const returnFocusRef = useRef(null);
   const isAdministrator = (session.user?.roles || []).includes("administrator");
   const normalizedSearch = String(search || "").trim().slice(0, 100);
   const key = session.baseUrl ? swrKeys.admin.users(withBaseUrl(session, { scope: "staff", page, per_page: 10, search: normalizedSearch })) : null;
@@ -60,6 +65,20 @@ export default function StaffDirectory({ session, search = "" }) {
   const pages = useMemo(() => numberedPages(Number(pagination.page || page), Number(pagination.pages || 1)), [page, pagination.page, pagination.pages]);
   const selectedRole = selected?.managed_role === "shop_manager" ? "store_admin" : selected?.managed_role;
   const selectedCanCustomizePermissions = canCustomizeDashboardPermissions(selectedRole);
+  const selectedRoleOptions = isAdministrator
+    ? [["administrator", "Administrator"], ...roles]
+    : roles;
+  function sortableHeader(key, label) {
+    const active = sort.key === key;
+    const direction = active ? sort.direction : "none";
+    return <th aria-sort={direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none"}><button className="sortable-table-header" type="button" onClick={() => setSort({ key, direction: active && sort.direction === "asc" ? "desc" : "asc" })}><span>{label}</span><span className={`sort-direction ${direction}`} aria-hidden="true" /></button></th>;
+  }
+
+  function closeModal() {
+    setSelected(null);
+    setPendingAction(null);
+    setActionReason("");
+  }
 
   useEffect(() => {
     mutate();
@@ -72,14 +91,101 @@ export default function StaffDirectory({ session, search = "" }) {
   useEffect(() => {
     if (!selected) return undefined;
     closeRef.current?.focus();
-    const onKeyDown = (event) => { if (event.key === "Escape") setSelected(null); };
+    const onKeyDown = (event) => {
+      if (pendingAction) {
+        if (event.key === "Escape") {
+          setPendingAction(null);
+          setActionReason("");
+          return;
+        }
+        if (event.key !== "Tab") return;
+        const confirmationFocusable = Array.from(confirmationDialogRef.current?.querySelectorAll('button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') || []);
+        if (!confirmationFocusable.length) return;
+        const confirmationFirst = confirmationFocusable[0];
+        const confirmationLast = confirmationFocusable[confirmationFocusable.length - 1];
+        if (event.shiftKey && document.activeElement === confirmationFirst) {
+          event.preventDefault();
+          confirmationLast.focus();
+        } else if (!event.shiftKey && document.activeElement === confirmationLast) {
+          event.preventDefault();
+          confirmationFirst.focus();
+        }
+        return;
+      }
+      if (event.key === "Escape") {
+        closeModal();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(dialogRef.current?.querySelectorAll('button:not([disabled]), select:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') || []);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
     document.addEventListener("keydown", onKeyDown);
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.removeEventListener("keydown", onKeyDown); document.body.style.overflow = overflow; };
-  }, [selected]);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = overflow;
+      returnFocusRef.current?.focus?.();
+    };
+  }, [selected, pendingAction]);
 
-  async function requestAction(user, name, extra = {}) {
+  useEffect(() => {
+    if (!notice?.message) return undefined;
+    const timeoutId = window.setTimeout(() => setNotice(null), notice.tone === "error" ? 6000 : 3600);
+    return () => window.clearTimeout(timeoutId);
+  }, [notice]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const refreshed = rows.find((user) => String(user.user_id) === String(selected.user_id));
+    if (refreshed) {
+      setSelected((current) => current ? { ...current, ...refreshed } : current);
+    }
+  }, [rows, selected?.user_id]);
+
+  useEffect(() => {
+    if (!refreshRequest?.nonce || !refreshRequest?.userId) return undefined;
+
+    const refreshedUser = refreshRequest.user || {};
+    const refreshUserId = String(refreshRequest.userId);
+    const patchDirectoryUser = (current) => {
+      if (!Array.isArray(current?.items)) return current;
+      return {
+        ...current,
+        items: current.items.map((item) => String(item.user_id || item.id) === refreshUserId
+          ? { ...item, ...refreshedUser }
+          : item)
+      };
+    };
+
+    setSelected((current) => String(current?.user_id || current?.id || "") === refreshUserId
+      ? { ...current, ...refreshedUser }
+      : current);
+    void mutate(patchDirectoryUser, { revalidate: true });
+    return undefined;
+  }, [mutate, refreshRequest]);
+
+  function requestAction(user, name, extra = {}) {
+    if (["ban", "suspend", "decline", "reset-password", "access"].includes(name)) {
+      setPendingAction({ user, name, extra });
+      setActionReason("");
+      setNotice(null);
+      return;
+    }
+    void executeAction(user, name, extra, "Storefront administrator action");
+  }
+
+  async function executeAction(user, name, extra = {}, reason = "") {
     setBusy(`${user.user_id}:${name}`);
     setNotice(null);
     try {
@@ -91,18 +197,52 @@ export default function StaffDirectory({ session, search = "" }) {
       });
       const payload = await response.json();
       if (!response.ok || !payload?.success) throw new Error(payload?.error?.message || "Unable to update staff.");
-      await mutate();
       const updated = payload.data?.user || { ...user, account_status: payload.data?.status || user.account_status };
-      setSelected((value) => value ? { ...value, ...updated } : value);
+      const confirmedUser = { ...user, ...updated };
+      const patchDirectoryUser = (current) => {
+        if (!Array.isArray(current?.items)) return current;
+        return {
+          ...current,
+          items: current.items.map((item) => String(item.user_id || item.id) === String(user.user_id || user.id)
+            ? { ...item, ...confirmedUser }
+            : item)
+        };
+      };
+      await mutate(patchDirectoryUser, false);
+      setSelected((value) => value ? { ...value, ...confirmedUser } : value);
+      try {
+        await mutate();
+      } catch {
+        // The mutation already succeeded; keep the confirmed response visible if refresh is temporarily unavailable.
+      }
+      await mutate(patchDirectoryUser, false);
+      setSelected((value) => value ? { ...value, ...confirmedUser } : value);
       setNotice({
         tone: payload.data?.notification?.warning ? "warning" : "success",
         message: payload.data?.notification?.warning || (name === "reset-password" ? "Dashboard password reset email sent." : "Staff account updated.")
       });
+      setPendingAction(null);
+      setActionReason("");
     } catch (actionError) {
       setNotice({ tone: "error", message: actionError.message || "Unable to update staff." });
     } finally {
       setBusy("");
     }
+  }
+
+  function submitPendingAction(event) {
+    event.preventDefault();
+    const reason = actionReason.trim();
+    if (!pendingAction || !reason) return;
+    void executeAction(pendingAction.user, pendingAction.name, pendingAction.extra, reason);
+  }
+
+  function changeSelectedRole(user, role) {
+    if (typeof onRequestRoleChange !== "function") {
+      setNotice({ tone: "error", message: "Two-factor role verification is unavailable. Reload the dashboard and try again." });
+      return;
+    }
+    onRequestRoleChange(user, role);
   }
 
   function actionButton(user, name) {
@@ -116,15 +256,15 @@ export default function StaffDirectory({ session, search = "" }) {
   }
 
   function avatar(user, large = false) {
-    return <span className={`customer-list-avatar ${large ? "staff-modal-avatar" : ""}`}>{user.avatar_url ? <img src={user.avatar_url} alt="" /> : initials(user.display_name || user.user_email)}</span>;
+    return <span className={`customer-list-avatar ${large ? "staff-modal-avatar" : ""}`}>{user.avatar_url ? <img src={user.avatar_url} alt={`${user.display_name || "Staff"} profile`} /> : initials(user.display_name || user.user_email)}</span>;
   }
 
   const modal = selected && typeof document !== "undefined" ? createPortal(
-    <div className="staff-modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
-      <section className="staff-fullscreen-modal detail-flat-modal staff-directory-detail-modal" role="dialog" aria-modal="true" aria-labelledby="staff-modal-title">
+    <div className="staff-modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModal(); }}>
+      <section ref={dialogRef} className="staff-fullscreen-modal detail-flat-modal staff-directory-detail-modal" role="dialog" aria-modal="true" aria-labelledby="staff-modal-title">
         <header className="staff-modal-header">
           <div className="staff-modal-identity">{avatar(selected, true)}<div><p className="section-kicker">Staff details</p><h2 id="staff-modal-title">{selected.display_name}</h2><p>{selected.user_email}</p></div></div>
-          <button ref={closeRef} className="icon-button" type="button" aria-label="Close staff details" onClick={() => setSelected(null)}>×</button>
+          <button ref={closeRef} className="icon-button" type="button" aria-label="Close staff details" onClick={closeModal}>×</button>
         </header>
         <div className="staff-modal-body">
           <dl className="staff-detail-grid">
@@ -136,14 +276,27 @@ export default function StaffDirectory({ session, search = "" }) {
             <div><dt>Linked patients</dt><dd>{selected.linked_patients || 0}</dd></div>
           </dl>
           {isAdministrator ? <section className="staff-access-section">
-            <label className="detail-field"><span>Role</span><select value={selected.managed_role === "shop_manager" ? "store_admin" : selected.managed_role} disabled={Boolean(busy)} onChange={(event) => requestAction(selected, "access", { role: event.target.value, permissions: selected.permissions || [] })}>{roles.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label className="detail-field"><span>Role</span><select value={selected.managed_role === "shop_manager" ? "store_admin" : selected.managed_role} disabled={Boolean(busy)} onChange={(event) => changeSelectedRole(selected, event.target.value)}>{selectedRoleOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             {selectedCanCustomizePermissions ? <div><h3>Dashboard permissions</h3><p>Remove a tag to revoke access or add an available area.</p>
               <div className="staff-permission-tags">{(selected.permissions || []).map((permission) => <button key={permission} className="staff-permission-tag" type="button" disabled={Boolean(busy) || selected.managed_role === "administrator"} onClick={() => requestAction(selected, "access", { role: selected.managed_role, permissions: selected.permissions.filter((item) => item !== permission) })}>{permissionLabels[permission] || permission}<span aria-hidden="true">×</span></button>)}</div>
               <label className="detail-field"><span>Add permission</span><select defaultValue="" disabled={Boolean(busy)} onChange={(event) => { if (event.target.value) requestAction(selected, "access", { role: selected.managed_role, permissions: [...(selected.permissions || []), event.target.value] }); event.target.value = ""; }}><option value="">Select an area</option>{Object.entries(permissionLabels).filter(([key]) => !(selected.permissions || []).includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
             </div> : <div className="staff-permission-restriction"><h3>Role-based dashboard access</h3><p>Custom dashboard permissions are available only to Administrator and Store Manager roles. This role uses its protected default access.</p></div>}
           </section> : null}
+          {notice?.message ? <p className={`staff-modal-notice ${notice.tone || "info"}`} role="status" aria-live="polite">{notice.message}</p> : null}
           <div className="staff-modal-actions">{selected.account_status === "pending_review" ? <>{modalActionButton(selected, "approve")}{modalActionButton(selected, "decline")}</> : null}{selected.account_status === "banned" ? modalActionButton(selected, "unban") : modalActionButton(selected, "ban")}{selected.account_status !== "suspended" ? modalActionButton(selected, "suspend") : null}{modalActionButton(selected, "reset-password")}</div>
         </div>
+      </section>
+    </div>, document.body
+  ) : null;
+
+  const confirmationModal = pendingAction && typeof document !== "undefined" ? createPortal(
+    <div className="staff-confirmation-overlay" role="presentation">
+      <section ref={confirmationDialogRef} className="staff-confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="staff-confirmation-title" aria-describedby="staff-confirmation-description">
+        <form className="staff-action-confirmation" onSubmit={submitPendingAction}>
+          <div><strong id="staff-confirmation-title">Confirm {labels[pendingAction.name]?.toLowerCase() || "access change"}</strong><p id="staff-confirmation-description">This action is recorded in the security audit log.</p></div>
+          <label><span>Reason</span><textarea autoFocus required maxLength={500} value={actionReason} onChange={(event) => setActionReason(event.target.value)} placeholder="Enter the reason for this action" /></label>
+          <div className="staff-action-confirmation-buttons"><button className="pill-button" type="button" disabled={Boolean(busy)} onClick={() => { setPendingAction(null); setActionReason(""); }}>Cancel</button><button className="pill-button primary" type="submit" disabled={Boolean(busy) || !actionReason.trim()}>{busy ? <span className="nevari-branded-spinner staff-button-spinner" aria-label="Updating staff account" /> : null}<span>Confirm</span></button></div>
+        </form>
       </section>
     </div>, document.body
   ) : null;
@@ -163,6 +316,6 @@ export default function StaffDirectory({ session, search = "" }) {
         {isLoading ? Array.from({ length: 6 }, (_, row) => <tr className="table-skeleton-row" key={`staff-skeleton-${row}`}>{Array.from({ length: 6 }, (_, column) => <td key={column}><span className={`skeleton skeleton-line ${column % 2 ? "skeleton-line-md" : "skeleton-line-lg"}`} /></td>)}</tr>) : rows.length ? rows.map((user) => <tr key={user.user_id} className={`table-row-button ${user.account_status === "pending_review" ? "staff-row-review" : ""}`} tabIndex={0} onClick={() => setSelected(user)} onKeyDown={(event) => { if (event.key === "Enter") setSelected(user); }}><td><div className="customer-list-profile">{avatar(user)}<span><strong>{user.display_name}</strong><small>{user.user_email}</small></span></div></td><td>{roles.find(([value]) => value === user.managed_role)?.[1] || user.managed_role}</td><td>{user.last_activity || user.date_joined || "—"}</td><td><span className={`status-pill ${adminStatusTone(user.account_status)}`}>{user.account_status === "pending_review" ? "Awaiting review" : String(user.account_status).replaceAll("_", " ")}</span></td><td>{user.linked_patients || 0}</td><td><div className="staff-row-actions">{user.account_status === "banned" ? actionButton(user, "unban") : actionButton(user, "ban")}{user.account_status === "pending_review" ? actionButton(user, "approve") : null}{user.account_status !== "suspended" ? actionButton(user, "suspend") : null}{actionButton(user, "reset-password")}</div></td></tr>) : <tr><td colSpan="6">No matching staff.</td></tr>}
       </tbody></table></div>
       <div className="pagination-row"><div className="pagination"><button className="page-item" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Prev</button>{pages.map((value) => <button key={value} className={`page-item ${value === page ? "active" : ""}`} aria-current={value === page ? "page" : undefined} onClick={() => setPage(value)}>{value}</button>)}<button className="page-item" disabled={page >= pagination.pages} onClick={() => setPage((value) => value + 1)}>Next</button></div><div className="pagination-summary">Showing {rows.length ? `${((page - 1) * 10) + 1}-${Math.min(page * 10, pagination.total)}` : "0"} of {pagination.total} staff records</div></div>
-    </section>{modal}{notice?.message ? <div className={`snackbar ${notice.tone || "info"} staff-snackbar`} role="status" aria-live="polite"><span>{notice.message}</span><button className="auth-snackbar-close" type="button" aria-label="Dismiss notification" onClick={() => setNotice(null)}>×</button></div> : null}
+    </section>{modal}{confirmationModal}{notice?.message ? <div className={`snackbar ${notice.tone || "info"} staff-snackbar`} role="status" aria-live="polite"><span>{notice.message}</span><button className="auth-snackbar-close" type="button" aria-label="Dismiss notification" onClick={() => setNotice(null)}>×</button></div> : null}
   </section>;
 }

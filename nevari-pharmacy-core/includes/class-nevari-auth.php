@@ -106,9 +106,16 @@ final class Nevari_Auth {
         ]);
 
         register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/me', [
-            'methods' => WP_REST_Server::READABLE,
-            'callback' => [__CLASS__, 'me'],
-            'permission_callback' => [__CLASS__, 'api_session_required'],
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'me'],
+                'permission_callback' => [__CLASS__, 'api_session_required'],
+            ],
+            [
+                'methods' => 'PATCH',
+                'callback' => [__CLASS__, 'update_me'],
+                'permission_callback' => [__CLASS__, 'api_session_required'],
+            ],
         ]);
     }
 
@@ -749,6 +756,57 @@ final class Nevari_Auth {
                 'origin' => !empty($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_NEVARI_FRONTEND_ORIGIN'])) : null,
             ],
         ]);
+    }
+
+    public static function update_me(WP_REST_Request $request): WP_REST_Response {
+        $user_id = get_current_user_id();
+        if ($user_id <= 0) {
+            return Nevari_Helpers::error('unauthorized', 'Authentication is required.', 401);
+        }
+        if ($response = Nevari_Helpers::rate_limit('auth_profile_update', 20, HOUR_IN_SECONDS, ['user:' . $user_id])) {
+            return $response;
+        }
+
+        $params = Nevari_Helpers::get_json_params($request);
+        $allowed_fields = ['display_name', 'first_name', 'last_name'];
+        $unexpected_fields = array_diff(array_keys($params), $allowed_fields);
+        if ($unexpected_fields) {
+            return Nevari_Helpers::error('validation_error', 'Unexpected profile fields were provided.', 422);
+        }
+
+        $display_name = sanitize_text_field((string) ($params['display_name'] ?? ''));
+        $first_name = sanitize_text_field((string) ($params['first_name'] ?? ''));
+        $last_name = sanitize_text_field((string) ($params['last_name'] ?? ''));
+        $text_length = static function (string $value): int {
+            return function_exists('mb_strlen') ? mb_strlen($value) : strlen($value);
+        };
+        if ($text_length($display_name) < 2 || $text_length($display_name) > 80
+            || $text_length($first_name) > 60 || $text_length($last_name) > 60) {
+            return Nevari_Helpers::error('validation_error', 'Profile fields are invalid or too long.', 422);
+        }
+
+        $updated = wp_update_user([
+            'ID' => $user_id,
+            'display_name' => $display_name,
+            'first_name' => $first_name,
+            'last_name' => $last_name,
+        ]);
+        if (is_wp_error($updated)) {
+            return Nevari_Helpers::error('profile_update_failed', 'The profile could not be updated.', 500);
+        }
+
+        Nevari_Audit::log('security', 'nevari', 'auth.profile_updated', 'success', [
+            'actor_user_id' => $user_id,
+            'related_user_id' => $user_id,
+            'object_type' => 'user',
+            'object_id' => $user_id,
+            'message' => 'Signed-in user updated low-risk profile fields.',
+        ]);
+        $user = get_user_by('id', $user_id);
+        if (!$user instanceof WP_User) {
+            return Nevari_Helpers::error('profile_update_failed', 'The updated profile could not be loaded.', 500);
+        }
+        return Nevari_Helpers::success(['user' => self::format_user($user)]);
     }
 
     public static function resend_code(WP_REST_Request $request): WP_REST_Response {

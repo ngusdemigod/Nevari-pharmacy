@@ -599,6 +599,19 @@ The admin staff action proxy now validates the double-submit CSRF token before f
 - Banned and suspended users may complete a valid administrator-requested password reset, but authentication remains blocked until their governance status is restored.
 - The role-upgrade proxy now requires the same double-submit CSRF token used by other storefront governance mutations.
 
+# 2026-09-10 administrator promotion from staff governance
+
+- Staff-to-administrator promotion uses the existing authenticated role-upgrade proxy and requires OTP verification plus the same double-submit CSRF protection as other governance mutations.
+- WordPress independently requires the acting user to hold the Administrator role for an Administrator target role, denies self-targets and existing Administrator targets, revokes the affected user's sessions, and records sanitized audit values. Store Manager accounts may be promoted only through this same Administrator-only path.
+
+# 2026-09-10 signed-in profile editing
+
+- `PATCH /auth/me` requires an authenticated API session, accepts only display name, first name, and last name, enforces bounded sanitized values, and rate-limits writes per user.
+- The Next.js signed proxy applies same-origin double-submit CSRF validation. Email, roles, permissions, credentials, and connection configuration cannot be changed through this endpoint.
+- Successful changes create a sanitized audit event without recording the submitted name values.
+- `POST /auth/me/profile-image` is self-scoped through the authenticated session and accepts only one base64-encoded JPG, PNG, or WebP image up to 2 MB. The server repeats filename-extension, declared MIME, decoded-size, and image-content validation, rejects extra fields, rate-limits writes, and records only a value-free audit event.
+- The existing customer profile-image route now uses the same authenticated self-only handler; expanding it to admin/staff accounts does not permit selecting or mutating another user's record.
+
 # 2026-07-24 pharmacist dashboard rebuild — access reduction and IV therapy IDOR fix
 
 - **Fixed:** `product_manager_required()` in `class-nevari-rest.php` previously granted pharmacists full product mutation authority. It is removed; product mutations are store-admin-only, and all general `Nevari_Rest` routes now fail closed for pharmacist sessions, including product reads and individual order reads.

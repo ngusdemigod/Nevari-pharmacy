@@ -319,6 +319,14 @@ final class Nevari_Rest {
                 'permission_callback' => [__CLASS__, 'auth_required'],
             ],
         ]);
+
+        register_rest_route(NEVARI_PHARMACY_REST_NS, '/auth/me/profile-image', [
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'customers_profile_image_update'],
+                'permission_callback' => [__CLASS__, 'auth_required'],
+            ],
+        ]);
     }
 
     private static function doctors_routes(): void {
@@ -4494,8 +4502,8 @@ final class Nevari_Rest {
 
     public static function customers_profile_image_update(WP_REST_Request $request): WP_REST_Response {
         $user_id = get_current_user_id();
-        if (!$user_id || !Nevari_Helpers::is_patient($user_id)) {
-            return Nevari_Helpers::error('forbidden', 'Customer profile images can only be updated by authenticated patients.', 403);
+        if (!$user_id) {
+            return Nevari_Helpers::error('forbidden', 'Profile images can only be updated by authenticated users.', 403);
         }
         if ($response = Nevari_Helpers::rate_limit('rest_customer_profile_image_write', 12, HOUR_IN_SECONDS, ['user:' . $user_id])) {
             return $response;
@@ -4515,13 +4523,12 @@ final class Nevari_Rest {
         $allowed_mimes = [
             'image/jpeg' => ['jpg', 'jpeg'],
             'image/png' => ['png'],
-            'image/gif' => ['gif'],
             'image/webp' => ['webp'],
         ];
         $extension = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
 
         if ($filename === '' || $data_base64 === '' || !isset($allowed_mimes[$mime_type]) || !in_array($extension, $allowed_mimes[$mime_type], true)) {
-            return Nevari_Helpers::error('validation_error', 'A valid JPG, PNG, GIF, or WebP image is required.', 422);
+            return Nevari_Helpers::error('validation_error', 'A valid JPG, PNG, or WebP image is required.', 422);
         }
 
         $bytes = base64_decode($data_base64, true);
@@ -4554,6 +4561,14 @@ final class Nevari_Rest {
         update_user_meta($user_id, self::CUSTOMER_PROFILE_IMAGE_ID_META_KEY, (int) $attachment_id);
         update_user_meta($user_id, self::CUSTOMER_PROFILE_IMAGE_URL_META_KEY, $url);
 
+        Nevari_Audit::log('security', 'nevari', 'auth.profile_image_updated', 'success', [
+            'actor_user_id' => $user_id,
+            'related_user_id' => $user_id,
+            'object_type' => 'user',
+            'object_id' => $user_id,
+            'message' => 'Signed-in user updated their profile image.',
+        ]);
+
         return Nevari_Helpers::success([
             'id' => (int) $attachment_id,
             'avatar_url' => $url,
@@ -4564,13 +4579,14 @@ final class Nevari_Rest {
     private static function role_change_allowed_targets(string $current_role): array {
         return match ($current_role) {
             'customer', 'patient', 'subscriber' => ['doctor', 'pharmacist'],
-            'doctor', 'pharmacist' => ['customer'],
+            'doctor', 'pharmacist' => ['customer', 'administrator'],
+            'nurse', 'store_admin', 'shop_manager' => ['administrator'],
             default => [],
         };
     }
 
     private static function role_change_primary_role(WP_User $user): string {
-        foreach (['doctor', 'pharmacist', 'customer', 'patient', 'subscriber'] as $role) {
+        foreach (['administrator', 'store_admin', 'shop_manager', 'doctor', 'pharmacist', 'nurse', 'customer', 'patient', 'subscriber'] as $role) {
             if (in_array($role, (array) $user->roles, true)) {
                 return $role;
             }
@@ -7172,6 +7188,7 @@ final class Nevari_Rest {
             return $response;
         }
         $result = Nevari_Audit::query($request->get_params());
+        $result['items'] = self::enrich_email_audit_items($result['items']);
         return Nevari_Helpers::success($result['items'], Nevari_Helpers::pagination_meta($result['page'], $result['per_page'], $result['total']));
     }
 
@@ -7182,7 +7199,47 @@ final class Nevari_Rest {
         global $wpdb;
         $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM " . Nevari_Helpers::table('audit_logs') . " WHERE id = %d", (int) $request['id']));
         if (!$row) { return Nevari_Helpers::error('audit_log_not_found', 'Audit log not found.', 404); }
-        return Nevari_Helpers::success(Nevari_Audit::format($row));
+        $items = self::enrich_email_audit_items([Nevari_Audit::format($row)]);
+        return Nevari_Helpers::success($items[0]);
+    }
+
+    private static function enrich_email_audit_items(array $items): array {
+        global $wpdb;
+
+        $email_log_ids = [];
+        foreach ($items as $item) {
+            $email_log_id = isset($item['email_log_id']) ? (int) $item['email_log_id'] : 0;
+            if ($email_log_id > 0) {
+                $email_log_ids[] = $email_log_id;
+            }
+        }
+        $email_log_ids = array_values(array_unique($email_log_ids));
+        if (!$email_log_ids) {
+            return $items;
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($email_log_ids), '%d'));
+        $table = Nevari_Helpers::table('email_logs');
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, recipient_email, subject FROM {$table} WHERE id IN ({$placeholders})",
+            $email_log_ids
+        ));
+        $email_logs = [];
+        foreach ($rows ?: [] as $row) {
+            $email_logs[(int) $row->id] = [
+                'recipient' => sanitize_email((string) $row->recipient_email),
+                'subject' => sanitize_text_field((string) $row->subject),
+            ];
+        }
+
+        return array_map(static function (array $item) use ($email_logs): array {
+            $email_log_id = isset($item['email_log_id']) ? (int) $item['email_log_id'] : 0;
+            if ($email_log_id > 0 && isset($email_logs[$email_log_id])) {
+                $item['email_recipient'] = $email_logs[$email_log_id]['recipient'];
+                $item['email_subject'] = $email_logs[$email_log_id]['subject'];
+            }
+            return $item;
+        }, $items);
     }
 
     public static function audit_summary(WP_REST_Request $request): WP_REST_Response {

@@ -286,6 +286,12 @@ function composeCityStateValue(city = "", state = "") {
   return [String(city || "").trim(), String(state || "").trim()].filter(Boolean).join(", ");
 }
 
+function formatDoctorDisplayName(value, fallback = "Assigned doctor") {
+  const name = String(value || "").trim();
+  if (!name) return fallback;
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 function buildIvTherapyPatientPayload(patient = {}) {
   const state = String(patient.state || "").trim();
   const city = String(patient.city || "").trim();
@@ -314,7 +320,7 @@ function buildIvTherapyStepErrors(step, form) {
     if (!String(patient.address || "").trim()) errors.address = "Address is required.";
     if (!String(patient.state || "").trim()) errors.state = "State is required.";
     if (!String(patient.city || "").trim()) errors.city = "City is required.";
-    if (!/^[0-9+\-()\s]{7,24}$/.test(String(patient.phoneNumber || "").trim())) errors.phoneNumber = "Enter a valid phone number.";
+    if (!/^\d{11}$/.test(String(patient.phoneNumber || "").trim())) errors.phoneNumber = "Enter an 11-digit phone number.";
   }
 
   if (step === 2) {
@@ -1278,7 +1284,6 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const [orderActionError, setOrderActionError] = useState("");
   const [refillOrderBusy, setRefillOrderBusy] = useState(null);
   const [desktopSearchQuery, setDesktopSearchQuery] = useState("");
-  const [desktopSearchPreviousPage, setDesktopSearchPreviousPage] = useState("overview");
   const [desktopSearchOpen, setDesktopSearchOpen] = useState(false);
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [desktopSearchActiveIndex, setDesktopSearchActiveIndex] = useState(-1);
@@ -1309,6 +1314,12 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   useEffect(() => {
     setDocumentMetadata(`Nevari Patient | ${pageLabels[page] || titleCase(page)}`, `${pageLabels[page] || titleCase(page)} view for the Nevari Patient dashboard.`);
   }, [page]);
+
+  useEffect(() => {
+    if (!profileImageSuccess) return undefined;
+    const timeoutId = window.setTimeout(() => setProfileImageSuccess(""), 3200);
+    return () => window.clearTimeout(timeoutId);
+  }, [profileImageSuccess]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1347,6 +1358,14 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
     body.classList.remove("customer-mobile-mode");
     return undefined;
   }, [isCustomerMobile]);
+
+  useEffect(() => {
+    if (isCustomerMobile || page !== "search" || typeof window === "undefined") {
+      return;
+    }
+    setPage("overview");
+    window.history.replaceState({ ...(window.history.state || {}), nevariPage: "overview" }, "", customerDashboardPagePath("overview"));
+  }, [isCustomerMobile, page]);
 
   useEffect(() => {
     if (!dashboardToast.message || typeof window === "undefined") {
@@ -1642,13 +1661,6 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   const customerEmailAddress = String(profile.email || session?.user?.email || settings.email || "No email available").trim() || "No email available";
   const customerProfileCompletion = useMemo(() => getCustomerProfileCompletion(settings, profile), [profile, settings]);
   const customerProfileReminderItems = useMemo(() => getCustomerProfileReminderItems(customerProfileCompletion.missingLabels), [customerProfileCompletion.missingLabels]);
-
-  useEffect(() => {
-    if (pendingProfileAvatarUrl && confirmedProfileAvatarUrl && profileAvatarUrlKey(confirmedProfileAvatarUrl) === profileAvatarUrlKey(pendingProfileAvatarUrl)) {
-      setPendingProfileAvatarUrl("");
-      setProfileImageRefreshing(false);
-    }
-  }, [confirmedProfileAvatarUrl, pendingProfileAvatarUrl]);
 
   function showDashboardToast(message, type = "success") {
     setDashboardToast({ type, message: String(message || "").trim() });
@@ -2035,22 +2047,14 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
   }
 
   function openDesktopSearch(nextValue = desktopSearchQuery) {
-    if (page !== "search") {
-      setDesktopSearchPreviousPage(page);
-    }
     setDesktopSearchQuery(sanitizeClientText(nextValue, { max: 120 }));
-    setPage("search");
+    setDesktopSearchOpen(true);
   }
 
   function navigateToPage(nextPage) {
     const safePage = pages.includes(nextPage) ? nextPage : "overview";
     setPage(safePage);
     router.push(customerDashboardPagePath(safePage));
-  }
-
-  function closeDesktopSearch() {
-    setDesktopSearchQuery("");
-    setPage(desktopSearchPreviousPage || "overview");
   }
 
   function openOrderDocuments(order) {
@@ -2580,30 +2584,49 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
             value={desktopSearchQuery}
             placeholder="Search here for orders, appointments etc"
             aria-label="Search here for orders, appointments etc"
-            onFocus={() => {
-              setDesktopSearchOpen(true);
-              if (page !== "search") {
-                openDesktopSearch(desktopSearchQuery);
-              }
-            }}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={desktopSearchOpen}
+            aria-controls="customer-desktop-search-listbox"
+            aria-activedescendant={desktopSearchActiveIndex >= 0 ? `customer-desktop-search-option-${desktopSearchActiveIndex}` : undefined}
+            onFocus={() => setDesktopSearchOpen(true)}
             onChange={(event) => openDesktopSearch(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "ArrowDown" && desktopSearchResults.length) { event.preventDefault(); setDesktopSearchActiveIndex((current) => Math.min(desktopSearchResults.length - 1, current + 1)); }
-              else if (event.key === "ArrowUp" && desktopSearchResults.length) { event.preventDefault(); setDesktopSearchActiveIndex((current) => Math.max(0, current - 1)); }
-              else if (event.key === "Enter" && desktopSearchActiveIndex >= 0) { event.preventDefault(); desktopSearchResults[desktopSearchActiveIndex]?.onSelect(); }
+              const isQuickSearch = desktopSearchQuery.trim().length < 3;
+              const optionCount = isQuickSearch ? CUSTOMER_SEARCH_QUICK_OPTIONS.length : Math.min(4, desktopSearchResults.length);
+              if (event.key === "ArrowDown" && optionCount) { event.preventDefault(); setDesktopSearchActiveIndex((current) => Math.min(optionCount - 1, current + 1)); }
+              else if (event.key === "ArrowUp" && optionCount) { event.preventDefault(); setDesktopSearchActiveIndex((current) => Math.max(0, current - 1)); }
+              else if (event.key === "Enter" && desktopSearchActiveIndex >= 0) {
+                event.preventDefault();
+                if (isQuickSearch) {
+                  const nextPage = CUSTOMER_SEARCH_QUICK_OPTIONS[desktopSearchActiveIndex]?.[0];
+                  if (nextPage) {
+                    setDesktopSearchOpen(false);
+                    setDesktopSearchQuery("");
+                    navigateToPage(nextPage);
+                  }
+                } else {
+                  desktopSearchResults[desktopSearchActiveIndex]?.onSelect();
+                }
+              }
             }}
           />
           {desktopSearchQuery ? <button type="button" className="customer-desktop-search-clear" aria-label="Clear search" onClick={() => {
             setDesktopSearchQuery("");
             setDesktopSearchOpen(true);
-          }}>?</button> : null}
-          {desktopSearchOpen ? <div className="customer-desktop-search-dropdown">
+          }}><span aria-hidden="true">×</span></button> : null}
+          {desktopSearchOpen ? <div className="customer-desktop-search-dropdown" aria-label="Dashboard search">
+            <div className="customer-desktop-search-dropdown-head" aria-live="polite">
+              <strong>{desktopSearchQuery.trim().length < 3 ? "Quick links" : "Search results"}</strong>
+              {desktopSearchQuery.trim().length >= 3 && !patientSearchQuery.isLoading && !patientSearchQuery.error ? <span>{desktopSearchResults.length} found</span> : null}
+            </div>
+            <div id="customer-desktop-search-listbox" className="customer-desktop-search-options" role="listbox" aria-label="Dashboard search results">
             {desktopSearchQuery.trim().length < 3
-              ? CUSTOMER_SEARCH_QUICK_OPTIONS.map(([nextPage, label]) => <button key={nextPage} type="button" onClick={() => {
+              ? CUSTOMER_SEARCH_QUICK_OPTIONS.map(([nextPage, label], index) => <button id={`customer-desktop-search-option-${index}`} role="option" aria-selected={desktopSearchActiveIndex === index} className={desktopSearchActiveIndex === index ? "is-active" : ""} key={nextPage} type="button" onMouseEnter={() => setDesktopSearchActiveIndex(index)} onClick={() => {
                 setDesktopSearchOpen(false);
                 setDesktopSearchQuery("");
-                setPage(nextPage);
-              }}>{label}</button>)
+                navigateToPage(nextPage);
+              }}><span className="customer-desktop-search-option-copy"><strong>{label}</strong><small>Open dashboard section</small></span><MobileIcon name="arrow-right" /></button>)
               : patientSearchQuery.isLoading
                 ? <div className="customer-desktop-search-empty" aria-live="polite">Searching...</div>
                 : patientSearchQuery.error
@@ -2612,9 +2635,11 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
                     ? desktopSearchResults.slice(0, 4).map((result, index) => <button key={result.key} type="button" className={desktopSearchActiveIndex === index ? "is-active" : ""} onMouseEnter={() => setDesktopSearchActiveIndex(index)} onClick={() => {
                       setDesktopSearchOpen(false);
                       result.onSelect();
-                    }}><span>{result.label}</span><small>{result.area}</small></button>)
-                    : <div className="customer-desktop-search-empty">No results found</div>}          </div> : null}
-        </label>
+                    }}><span className="customer-desktop-search-option-copy"><small>{result.area}</small><strong>{result.label}</strong>{result.meta ? <em>{result.meta}</em> : null}</span><MobileIcon name="arrow-right" /></button>)
+                    : <div className="customer-desktop-search-empty">No results found</div>}
+            </div>
+          </div> : null}
+        </div>
       </div>}
     >
       {showSkeleton ? <CustomerDesktopSkeleton page={page} /> : null}
@@ -2809,32 +2834,6 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         onPrefillConsumed={() => setGuestConsultationDraft(null)}
         embeddedDesktop
       /> : null}
-      {!showSkeleton && page === "search" ? <section className="customer-desktop-panel customer-desktop-search-results-panel">
-        <div className="customer-panel-head">
-          <div>
-            <span className="customer-section-kicker">Search</span>
-            <h2>Results</h2>
-          </div>
-          <button className="customer-mobile-back-link" type="button" onClick={closeDesktopSearch}>
-            <MobileIcon name="arrow-left" />
-            <span>Back</span>
-          </button>
-        </div>
-        <div className="customer-mobile-search-results customer-desktop-search-results">
-          {desktopSearchQuery.trim().length < 3 ? <div className="customer-mobile-search-empty">
-            <strong className="customer-mobile-search-empty-hint">start typing to see results</strong>
-          </div> : patientSearchQuery.isLoading ? <div className="customer-mobile-search-empty" aria-live="polite"><BrandedSpinner label="Searching patient records" /></div> : patientSearchQuery.error ? <div className="customer-mobile-search-empty" role="alert"><strong>Search is unavailable</strong><small>Try again in a moment.</small></div> : desktopSearchResults.length ? desktopSearchResults.map((result) => <button className="customer-mobile-search-result" key={result.key} type="button" onClick={result.onSelect}>
-            <div>
-              <span className="customer-mobile-search-result-area">{result.area}</span>
-              <strong>{result.label}</strong>
-              <small>{result.meta}</small>
-            </div>
-            <MobileIcon name="arrow-right" />
-          </button>) : <div className="customer-mobile-search-empty">
-            <strong>no results found</strong>
-          </div>}
-        </div>
-      </section> : null}
       {!showSkeleton && page === "settings" ? <SettingsPage
         profile={profile}
         doctors={visibleDoctors}
@@ -3216,7 +3215,7 @@ export default function CustomerDashboard({ initialPage = "overview", initialMtm
         </div>
         <div className="customer-profile-reminder-actions">
           <button type="button" className="customer-profile-reminder-secondary" onClick={dismissOverviewProfilePrompt}>Remind me later</button>
-          <button type="button" className="customer-profile-reminder-primary" onClick={() => { setOverviewProfilePromptVisible(false); setPage("profile"); }}>Update profile <span aria-hidden="true">-&gt;</span></button>
+          <button type="button" className="customer-profile-reminder-primary" onClick={() => { setOverviewProfilePromptVisible(false); navigateToPage("profile"); }}>Update profile</button>
         </div>
       </div>
     </div> : null}
@@ -3619,7 +3618,7 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
     ["Date", friendlyDate(appointment.start_at, storeTimeZone)],
     ["Time", formatTime(appointment.start_at, storeTimeZone)],
     ["Duration", appointmentDurationLabel(appointment) || "Not set"],
-    ["Doctor", doctor?.display_name || `Doctor #${appointment.doctor_user_id}`],
+    ["Doctor", formatDoctorDisplayName(doctor?.display_name, `Doctor #${appointment.doctor_user_id}`)],
     ["Title", appointment?.title || "Not set"],
     ["Payment", titleCase(appointment.payment_status || "pending")],
     ["Appointment ID", `#${appointment.id}`]
@@ -3631,7 +3630,7 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
       <div className="customer-panel-head">
         <div>
           <span className="customer-section-kicker">Appointment details</span>
-          <h2>{doctor?.display_name || `Doctor #${appointment.doctor_user_id}`}</h2>
+          <h2>{formatDoctorDisplayName(doctor?.display_name, `Doctor #${appointment.doctor_user_id}`)}</h2>
         </div>
         <button className="icon-btn" type="button" aria-label="Close appointment details" onClick={onClose}>x</button>
       </div>
@@ -3639,7 +3638,7 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
         <div className="customer-detail-summary-head">
           <span className="customer-detail-summary-icon"><DashboardIcon name="appointment" /></span>
           <div>
-            <div className="customer-detail-summary-title">{doctor?.display_name || `Doctor #${appointment.doctor_user_id}`}</div>
+            <div className="customer-detail-summary-title">{formatDoctorDisplayName(doctor?.display_name, `Doctor #${appointment.doctor_user_id}`)}</div>
             <div className="customer-detail-summary-sub">{friendlyDate(appointment.start_at, storeTimeZone)} • {formatTime(appointment.start_at, storeTimeZone)}</div>
           </div>
           <div className="appointment-status-stack">
@@ -3667,13 +3666,13 @@ function AppointmentDetailsModal({ appointment, doctors, storeTimeZone, busy = f
         <div className="note-card">Order #{prescriptionOrderId}</div>
       </div> : null}
       {(!isPastAppointment || canReschedule || prescriptionOrderId) ? <div className="action-stack">
+        {appointment.calendar?.ics_url ? <a className="btn btn-outline btn-wide appointment-link-cta appointment-detail-secondary-action" href={appointment.calendar.ics_url} target="_blank" rel="noreferrer">Download calendar invite</a> : null}
         {isPendingPayment ? <a className="btn btn-primary btn-wide appointment-link-cta" href={paymentUrl} target="_blank" rel="noreferrer">Pay now</a> : null}
         {isConfirmedPaid && !isPastAppointment && joinUrl ? <a className="btn btn-primary btn-wide appointment-link-cta" href={joinUrl} target="_blank" rel="noreferrer">Join Appointment</a> : null}
         {isConfirmedPaid && !isPastAppointment && !joinUrl ? <div className="appointment-inline-alert">The appointment join link will appear when the appointment is ready.</div> : null}
         {canReschedule ? <button className="btn btn-outline btn-wide appointment-detail-secondary-action" type="button" onClick={() => onRescheduleAppointment(appointment)}>{attendanceStatus === "doctor_absent" ? "Reschedule with doctor" : "Reschedule appointment"}</button> : null}
         {prescriptionOrderId && typeof onOpenOrderDocuments === "function" ? <button className="btn btn-outline btn-wide appointment-detail-secondary-action" type="button" onClick={() => onOpenOrderDocuments({ id: prescriptionOrderId })}>Open prescription order details</button> : null}
         {canCancel ? <button className="btn btn-danger btn-wide appointment-detail-cancel-action" type="button" disabled={busy} onClick={() => onCancelAppointment(appointment.id)}>{busy ? <BrandedSpinner label="Cancelling appointment" /> : "Cancel appointment"}</button> : null}
-        {appointment.calendar?.ics_url ? <a className="btn btn-outline btn-wide appointment-link-cta appointment-detail-secondary-action" href={appointment.calendar.ics_url} target="_blank" rel="noreferrer">Download calendar invite</a> : null}
       </div> : null}
     </section>
   </div>;
@@ -4030,7 +4029,7 @@ function AppointmentPage({
   const allAppointments = useMemo(() => [...upcoming, ...past], [past, upcoming]);
   const visibleAppointments = useMemo(() => filterAppointmentsList(allAppointments, filter), [allAppointments, filter]);
   const replaceListWithBooking = bookingOpen;
-  const showBookAppointmentPlus = !bookingOpen && visibleAppointments.length > 0;
+  const showFloatingAppointmentAction = !bookingOpen && !appointmentsLoading && visibleAppointments.length > 0;
   const todayBookingDate = localDateInputValue(new Date());
   const currentBookingTime = localTimeInputValue(new Date());
   const availableBookingTimes = useMemo(() => buildConstantTimeframes(bookingDate), [bookingDate]);
@@ -4363,7 +4362,7 @@ function AppointmentPage({
       </section> : null}
     </div>
 
-    {showBookAppointmentPlus ? <AppointmentBookingButton className="customer-mobile-appointment-booknow-btn" onClick={handleNewAppointmentClick} /> : null}
+    {showFloatingAppointmentAction ? <AppointmentFloatingCalendarButton onClick={handleNewAppointmentClick} /> : null}
   </div>;
 }
 
@@ -4706,9 +4705,6 @@ function CheckoutPage({ journey, doctor, onBack, onRefreshConfirmation, onCancel
         {canCancelAppointment ? <button className="customer-mobile-secondary-button customer-flow-status-danger-button" type="button" onClick={onCancelCheckoutAppointment} disabled={journey.loading}>Cancel Appointment</button> : null}
       </CustomerStatusActions>
 
-      <CustomerStatusSecurityNote tone={statusTone === "error" ? "warning" : "success"}>
-        Your appointment information is secure and only used for your consultation.
-      </CustomerStatusSecurityNote>
       </div>
     </section>
   </div>;
@@ -4719,13 +4715,21 @@ function ConfirmationPage({ journey, doctor, onBack, calendarDownloadUrl, storeT
   const confirmation = journey.confirmation;
   const appointment = confirmation?.appointment || journey.appointment;
   const joinUrl = appointmentIsUpcoming(appointment) ? getAppointmentJoinUrl(appointment, confirmation) : "";
-  const doctorName = doctor?.display_name || appointment?.doctor?.display_name || "Assigned doctor";
-  return <div className="customer-confirmation-modal customer-appointment-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="appointment-confirmation-title">
+  const doctorName = formatDoctorDisplayName(doctor?.display_name || appointment?.doctor?.display_name);
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === "Escape") onBack();
+    }
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onBack]);
+
+  return <div className="customer-confirmation-modal customer-appointment-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="appointment-confirmation-title" onClick={onBack}>
     <section className="customer-flow-status-page customer-flow-status-page-success customer-flow-status-page-modal">
       <div className="customer-flow-status-card customer-flow-status-card-confirmed is-success">
       <header className="customer-flow-status-head">
         <CustomerStatusIcon tone="success" type="check" />
-        <h2 id="appointment-confirmation-title">Appointment confirmed</h2>
+        <h2 id="appointment-confirmation-title">Appointment Confirmed</h2>
         <p>Your consultation is booked and the appointment details are ready.</p>
       </header>
 
@@ -4740,13 +4744,8 @@ function ConfirmationPage({ journey, doctor, onBack, calendarDownloadUrl, storeT
 
       <CustomerStatusActions>
         {joinUrl ? <a className="customer-mobile-primary-button customer-flow-status-link" href={joinUrl} target="_blank" rel="noreferrer">Join meeting</a> : <button className="customer-mobile-primary-button" type="button" onClick={onBack}>View appointments</button>}
-        {calendarDownloadUrl ? <a className="customer-mobile-secondary-button customer-flow-status-link" href={calendarDownloadUrl} target="_blank" rel="noreferrer">Add to Apple Calendar</a> : null}
-        {confirmation?.calendar?.outlook_url ? <a className="customer-mobile-secondary-button customer-flow-status-link" href={confirmation.calendar.outlook_url} target="_blank" rel="noreferrer">Add to Outlook</a> : null}
+        {(calendarDownloadUrl || confirmation?.calendar?.outlook_url) ? <a className="customer-mobile-secondary-button customer-flow-status-link" href={calendarDownloadUrl || confirmation.calendar.outlook_url} target="_blank" rel="noreferrer">Add to calendar</a> : null}
       </CustomerStatusActions>
-
-      <CustomerStatusSecurityNote tone="success">
-        Your appointment information is secure and only used for your consultation.
-      </CustomerStatusSecurityNote>
       </div>
     </section>
   </div>;
@@ -5545,12 +5544,34 @@ function CustomerSubscriptionBenefit({ accentClass, description, icon, title }) 
   </article>;
 }
 
+function subscriptionHistoryTone(status) {
+  const normalized = String(status || "pending").trim().toLowerCase();
+  if (["successful", "activated", "active", "paid", "completed"].includes(normalized)) return "successful";
+  if (["failed", "deactivated", "expired", "cancelled", "canceled"].includes(normalized)) return "failed";
+  return normalized || "pending";
+}
+
+function compactSubscriptionReference(reference) {
+  const value = String(reference || "").trim();
+  if (value.length <= 22) return value;
+  return `${value.slice(0, 10)}…${value.slice(-7)}`;
+}
+
+function SubscriptionHistoryStatusIcon({ tone }) {
+  return <span className={`customer-subscription-history-icon is-${tone}`} aria-hidden="true">
+    {tone === "successful" ? <svg viewBox="0 0 24 24" fill="none"><path d="m7 12.5 3.2 3.2L17.5 8.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> : null}
+    {tone === "failed" ? <svg viewBox="0 0 24 24" fill="none"><path d="m8 8 8 8m0-8-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg> : null}
+    {!["successful", "failed"].includes(tone) ? <svg viewBox="0 0 24 24" fill="none"><path d="M12 7v5l3 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.8" /></svg> : null}
+  </span>;
+}
+
 function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenMenu, subscriptionState }) {
   const subscription = subscriptionState?.subscription || {};
   const [activeTab, setActiveTab] = useState("subscription");
   const [dialogStep, setDialogStep] = useState("");
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
+  const [historyFilter, setHistoryFilter] = useState("all");
   const primaryActionRef = useRef(null);
   const restoreFocusRef = useRef(null);
   const monthlyAmount = Number(resolveSubscriptionMonthlyAmount(subscription) || 0);
@@ -5562,25 +5583,33 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
   const paymentMethodLabel = formatSubscriptionPaymentMethodLabel(subscription?.paymentMethod || subscription?.payment_method);
   const manageBillingUrl = String(subscription?.manage_billing_url || "").trim();
   const isActiveSubscriber = Boolean(subscriptionState?.active);
+  const subscriptionHistory = Array.isArray(subscriptionState?.history) ? subscriptionState.history : [];
+  const successfulHistoryCount = subscriptionHistory.filter((item) => subscriptionHistoryTone(item.status) === "successful").length;
+  const failedHistoryCount = subscriptionHistory.filter((item) => subscriptionHistoryTone(item.status) === "failed").length;
+  const membershipHistoryCount = subscriptionHistory.filter((item) => item.type !== "payment").length;
+  const filteredSubscriptionHistory = subscriptionHistory.filter((item) => {
+    if (historyFilter === "all") return true;
+    return subscriptionHistoryTone(item.status) === historyFilter;
+  });
   const dialogLabelId = "customer-subscription-dialog-title";
   const benefits = [
     {
       accentClass: "is-violet",
       description: "Access more doctor and care specialist consultations, giving you faster medical attention, consistent follow-ups, and better continuity of care whenever you need support.",
       icon: micBenefitIcon,
-      title: "5x more Doctor Consultations.",
+      title: "Expanded Service Access",
     },
     {
       accentClass: "is-amber",
       description: "Get professional medication reviews and guidance to help you understand your prescriptions, manage side effects, and stay on track with your treatment plan.",
       icon: pillBenefitIcon,
-      title: "Medical Therapy Management",
+      title: "Medication Therapy Management",
     },
     {
       accentClass: "is-green",
       description: "Enjoy convenient prescription refill processing and doorstep medication delivery, helping you stay consistent with treatment.",
       icon: cartBenefitIcon,
-      title: "Free Prescription Refills and Deliveries",
+      title: "Priority Prescription Refills & Delivery",
     }
   ];
 
@@ -5684,7 +5713,7 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
   }
 
   return <section className={surfaceClassName}>
-    {!embeddedDesktop && (isActiveSubscriber || activeTab === "history") ? <button className="subscription-menu-button" type="button" aria-label="Open menu" onClick={onOpenMenu}>
+    {!embeddedDesktop ? <button className="subscription-menu-button customer-subscription-menu-button" type="button" aria-label="Open menu" onClick={onOpenMenu}>
       <span />
       <span />
       <span />
@@ -5734,7 +5763,7 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
       <Paywall
         busy={Boolean(subscriptionState?.isActionBusy)}
         error={subscriptionState?.actionError || ""}
-        onOpenMenu={onOpenMenu}
+        onOpenMenu={null}
         onSubscribe={() => subscriptionState?.launchCheckout?.({
           plan: "nevari_access_pro",
           frequency: "monthly",
@@ -5744,11 +5773,26 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
     </div>) : <section className="customer-subscription-history-panel" role="tabpanel" aria-label="History">
       <header className="customer-subscription-history-header">
         <div>
+          <span className="customer-subscription-history-eyebrow">Billing activity</span>
           <h2>Payment history</h2>
-          <p>Payments and Nevari Access Pro membership changes.</p>
+          <p>Review payments and changes to your Nevari Access Pro membership.</p>
         </div>
-        <button type="button" onClick={() => subscriptionState?.refreshHistory?.()} disabled={Boolean(subscriptionState?.isHistoryLoading)}>Refresh</button>
       </header>
+
+      {subscriptionHistory.length ? <>
+        <section className="customer-subscription-history-summary" aria-label="Payment history overview">
+          <article className="is-successful"><span>Successful</span><strong>{successfulHistoryCount}</strong><small>Completed activities</small></article>
+          <article className="is-failed"><span>Needs attention</span><strong>{failedHistoryCount}</strong><small>Failed activities</small></article>
+          <article className="is-membership"><span>Membership</span><strong>{membershipHistoryCount}</strong><small>Plan updates</small></article>
+        </section>
+        <div className="customer-subscription-history-filters" role="tablist" aria-label="Filter payment history">
+          {[
+            ["all", "All", subscriptionHistory.length],
+            ["successful", "Successful", successfulHistoryCount],
+            ["failed", "Failed", failedHistoryCount],
+          ].map(([value, label, count]) => <button key={value} type="button" role="tab" aria-selected={historyFilter === value} className={historyFilter === value ? "active" : ""} onClick={() => setHistoryFilter(value)}>{label}<span>{count}</span></button>)}
+        </div>
+      </> : null}
 
       {subscriptionState?.isHistoryLoading ? <div className="customer-subscription-history-state" aria-busy="true"><BrandedSpinner label="Loading subscription history" /></div> : null}
       {subscriptionState?.historyError ? <p className="customer-mobile-field-error customer-subscription-history-error" role="alert">{subscriptionState.historyError}</p> : null}
@@ -5756,19 +5800,27 @@ function CustomerSubscriptionManagementScreen({ embeddedDesktop = false, onOpenM
         <strong>No payment history yet</strong>
         <p>Your subscription payments and membership changes will appear here.</p>
       </div> : null}
-      {subscriptionState?.history?.length ? <div className="customer-subscription-history-list">
-        {subscriptionState.history.map((item) => <article className="customer-subscription-history-item" key={item.id}>
-          <span className={`customer-subscription-history-icon is-${String(item.status || "pending").toLowerCase()}`} aria-hidden="true" />
+      {!subscriptionState?.isHistoryLoading && !subscriptionState?.historyError && subscriptionHistory.length && !filteredSubscriptionHistory.length ? <div className="customer-subscription-history-state is-filtered">
+        <strong>No {historyFilter} activity</strong>
+        <p>Try another filter to review the rest of your billing activity.</p>
+      </div> : null}
+      {filteredSubscriptionHistory.length ? <div className="customer-subscription-history-list" aria-live="polite">
+        {filteredSubscriptionHistory.map((item) => {
+          const tone = subscriptionHistoryTone(item.status);
+          const reference = String(item.reference || "").trim();
+          return <article className={`customer-subscription-history-item is-${tone}`} key={item.id}>
+          <SubscriptionHistoryStatusIcon tone={tone} />
           <div className="customer-subscription-history-copy">
             <div>
               <strong>{item.title || "Subscription update"}</strong>
-              <span className={`customer-subscription-history-badge is-${String(item.status || "pending").toLowerCase()}`}>{titleCase(item.status || "pending")}</span>
+              <span className={`customer-subscription-history-badge is-${tone}`}>{titleCase(item.status || "pending")}</span>
             </div>
             <p>{item.description || "Nevari Access Pro activity"}</p>
-            <small>{shortDate(item.occurred_at) || "Date unavailable"}{item.reference ? ` · ${item.reference}` : ""}</small>
+            <small><time dateTime={item.occurred_at || undefined}>{shortDate(item.occurred_at) || "Date unavailable"}</time>{reference ? <><span aria-hidden="true"> · </span><span className="customer-subscription-history-reference" title={reference}>{compactSubscriptionReference(reference)}</span></> : null}</small>
           </div>
-          {item.type === "payment" ? <strong className="customer-subscription-history-amount">{money(Number(item.amount || 0), item.currency || "NGN")}</strong> : null}
-        </article>)}
+          <div className="customer-subscription-history-value"><strong className="customer-subscription-history-amount">{item.type === "payment" ? money(Number(item.amount || 0), item.currency || "NGN") : "Plan update"}</strong><span>{item.type === "payment" ? "Payment" : "Membership"}</span></div>
+        </article>;
+        })}
       </div> : null}
     </section>}
 
@@ -7057,7 +7109,7 @@ function NurseRequestHistorySection({ title, items = [], auth }) {
       const statusLabel = nurseRequestChipLabel(request);
       const subtitle = String(request?.patient?.name || request?.customerName || "Nurse care request").trim();
       const titleText = String(request?.careType || request?.title || "Nurse Visit Request").trim();
-      return <article className="customer-mobile-visit-row" key={request?.id || `nurse-request-${index}`}>
+      return <article className="customer-mobile-visit-row customer-nurse-request-visit-row" key={request?.id || `nurse-request-${index}`}>
         <div className="customer-mobile-clock">
           <MobileIcon name="clock" />
         </div>
@@ -7196,6 +7248,11 @@ function CustomerMobileDashboard({
   const [profileImageSuccess, setProfileImageSuccess] = useState("");
   const [profileImageCooldownUntil, setProfileImageCooldownUntil] = useState(0);
   const profileImageInputRef = useRef(null);
+  useEffect(() => {
+    if (!profileImageSuccess) return undefined;
+    const timeoutId = window.setTimeout(() => setProfileImageSuccess(""), 3200);
+    return () => window.clearTimeout(timeoutId);
+  }, [profileImageSuccess]);
   const confirmedProfileAvatarUrl = normalizeProfileAvatarUrl(profile?.avatar_url || profile?.profile_image);
   const fallbackProfileAvatarUrl = normalizeProfileAvatarUrl(session?.user?.avatar_url || session?.user?.avatarUrl || session?.user?.picture);
   const resolvedProfileAvatarUrl = pendingProfileAvatarUrl && profileAvatarUrlKey(confirmedProfileAvatarUrl) !== profileAvatarUrlKey(pendingProfileAvatarUrl)
@@ -7206,12 +7263,6 @@ function CustomerMobileDashboard({
     avatar_url: resolvedProfileAvatarUrl,
     profile_image: resolvedProfileAvatarUrl || normalizeProfileAvatarUrl(profile?.profile_image),
   }), [profile, resolvedProfileAvatarUrl]);
-  useEffect(() => {
-    if (pendingProfileAvatarUrl && confirmedProfileAvatarUrl && profileAvatarUrlKey(confirmedProfileAvatarUrl) === profileAvatarUrlKey(pendingProfileAvatarUrl)) {
-      setPendingProfileAvatarUrl("");
-      setProfileImageRefreshing(false);
-    }
-  }, [confirmedProfileAvatarUrl, pendingProfileAvatarUrl]);
   const customerDisplayName = resolveCustomerPreferredName({
     settingsDisplayName: settings?.displayName,
     profile: resolvedProfile,
@@ -7313,6 +7364,7 @@ function CustomerMobileDashboard({
   const [ivTherapyAnimatingOut, setIvTherapyAnimatingOut] = useState(false);
   const [ivTherapyForm, setIvTherapyForm] = useState(() => createIvTherapyFormState());
   const [ivTherapyShowErrors, setIvTherapyShowErrors] = useState(false);
+  const [ivTherapyTouched, setIvTherapyTouched] = useState({});
   const [ivTherapySubmitted, setIvTherapySubmitted] = useState(false);
   const [ivTherapySubmitting, setIvTherapySubmitting] = useState(false);
   const [ivTherapySubmitError, setIvTherapySubmitError] = useState("");
@@ -7766,6 +7818,7 @@ function CustomerMobileDashboard({
   );
   const searchResults = useMemo(() => (Array.isArray(mobilePatientSearchQuery.data) ? mobilePatientSearchQuery.data : []).map((item, index) => ({
     key: `mobile-patient-search-${item.type || "result"}-${item.id || index}`,
+    type: item.type || "result",
     area: item.area || "Dashboard",
     label: item.title || "Result",
     meta: item.meta || "",
@@ -8251,8 +8304,14 @@ function CustomerMobileDashboard({
     }, 140);
   }
 
+  function markIvTherapyFieldBlurred(key) {
+    setIvTherapyTouched((current) => ({ ...current, [key]: true }));
+  }
+
   function updateIvTherapyField(section, key, value) {
-    const sanitizedValue = sanitizeClientText(value, { max: ["primaryReason", "expectedResults", "chronicConditionsDetails", "currentMedicationsDetails", "allergiesDetails", "priorIvTherapyDetails"].includes(key) ? 800 : 200 });
+    const sanitizedValue = key === "phoneNumber"
+      ? String(value || "").replace(/\D/g, "").slice(0, 11)
+      : sanitizeClientText(value, { max: ["primaryReason", "expectedResults", "chronicConditionsDetails", "currentMedicationsDetails", "allergiesDetails", "priorIvTherapyDetails"].includes(key) ? 800 : 200 });
     setIvTherapyForm((current) => ({
       ...current,
       [section]: {
@@ -8263,6 +8322,7 @@ function CustomerMobileDashboard({
   }
 
   function toggleIvTherapyType(option) {
+    setIvTherapyTouched((current) => ({ ...current, therapyTypes: true }));
     setIvTherapyForm((current) => {
       const currentTypes = Array.isArray(current.therapyTypes) ? current.therapyTypes : [];
       const selected = currentTypes.includes(option);
@@ -8274,11 +8334,12 @@ function CustomerMobileDashboard({
   }
 
   function setIvTherapyConsent(value) {
+    setIvTherapyTouched((current) => ({ ...current, consent: true }));
     setIvTherapyForm((current) => ({ ...current, consent: value }));
   }
 
   const ivTherapyStepErrors = buildIvTherapyStepErrors(ivTherapyStep, ivTherapyForm);
-  const showIvTherapyFieldError = (key) => Boolean(ivTherapyStepErrors[key]) && ivTherapyShowErrors;
+  const showIvTherapyFieldError = (key) => Boolean(ivTherapyStepErrors[key]) && (ivTherapyTouched[key] || ivTherapyShowErrors);
   const ivTherapyAvailableCities = useMemo(() => citiesForNigeriaState(ivTherapyForm.patient.state), [ivTherapyForm.patient.state]);
 
   async function handleIvTherapyContinue() {
@@ -8491,6 +8552,16 @@ function CustomerMobileDashboard({
     }
   }
 
+  function handleMobileHealthFormBlur(event) {
+    if (event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+    if (!mobileHealthDirty || customerSettingsSaveStatus === "saving") {
+      return;
+    }
+    void saveMobileHealthRecords();
+  }
+
   async function saveMobileProfileChanges() {
     const normalizedDraft = normalizeCustomerSettingsPayload({
       ...settings,
@@ -8622,7 +8693,7 @@ function CustomerMobileDashboard({
           || refreshedState?.profile?.avatar_url
           || refreshedState?.profile?.profile_image
         );
-        if (uploadedAvatarUrl && refreshedAvatarUrl === uploadedAvatarUrl) {
+        if (uploadedAvatarUrl && profileAvatarUrlKey(refreshedAvatarUrl) === profileAvatarUrlKey(uploadedAvatarUrl)) {
           setPendingProfileAvatarUrl("");
         }
       }).finally(() => {
@@ -9244,21 +9315,36 @@ function CustomerMobileDashboard({
               placeholder="Search here for orders, appointments etc"
               aria-label="Search here for orders, appointments etc"
             />
+            {searchQuery ? <button className="customer-mobile-search-clear" type="button" aria-label="Clear search" onClick={() => setSearchQuery("")}><span aria-hidden="true">×</span></button> : null}
           </div>
         </header>
-        <section className="customer-mobile-search-results">
-          {searchQuery.trim().length < 3 ? <div className="customer-mobile-search-empty">
-            <strong className="customer-mobile-search-empty-hint">start typing to see results</strong>
-          </div> : mobilePatientSearchQuery.isLoading ? <div className="customer-mobile-search-empty" aria-live="polite"><BrandedSpinner label="Searching patient records" /></div> : mobilePatientSearchQuery.error ? <div className="customer-mobile-search-empty" role="alert"><strong>Search is unavailable</strong><small>Try again in a moment.</small></div> : searchResults.length ? searchResults.map((result) => <button className="customer-mobile-search-result" key={result.key} type="button" onClick={result.onSelect}>
+        <section className="customer-mobile-search-results" aria-label="Patient dashboard search">
+          <div className="customer-mobile-search-results-head" aria-live="polite">
             <div>
-              <span className="customer-mobile-search-result-area">{result.area}</span>
-              <strong>{result.label}</strong>
-              <small>{result.meta}</small>
+              <span>{searchQuery.trim().length >= 3 ? "Search results" : "Search your dashboard"}</span>
+              <strong>{searchQuery.trim().length >= 3 && !mobilePatientSearchQuery.isLoading && !mobilePatientSearchQuery.error ? `${searchResults.length} ${searchResults.length === 1 ? "result" : "results"} for “${searchQuery.trim()}”` : "Find orders, appointments, prescriptions and care requests."}</strong>
             </div>
-            <MobileIcon name="arrow-right" />
-          </button>) : <div className="customer-mobile-search-empty">
-            <strong>no results found</strong>
-          </div>}
+          </div>
+          <div id="customer-mobile-search-listbox" className="customer-mobile-search-results-list" role="listbox" aria-label="Patient dashboard search results" aria-busy={mobilePatientSearchQuery.isLoading}>
+            {searchQuery.trim().length < 3 ? <div className="customer-mobile-search-empty">
+              <strong>Start typing to search</strong>
+              <small>Enter at least three characters.</small>
+            </div> : mobilePatientSearchQuery.isLoading ? <div className="customer-mobile-search-empty" aria-live="polite"><BrandedSpinner label="Searching patient records" /></div> : mobilePatientSearchQuery.error ? <div className="customer-mobile-search-empty" role="alert"><strong>Search is unavailable</strong><small>Try again in a moment.</small></div> : searchResults.length ? searchResults.map((result, index) => {
+              const resultIcon = result.type === "order" ? "orders" : result.type === "appointment" ? "calendar" : result.type === "doctor" ? "doctor" : result.type === "nurse-request" ? "nurse" : result.type === "subscription" ? "wallet" : "cross";
+              return <button id={`customer-mobile-search-option-${index}`} role="option" aria-selected={mobileSearchActiveIndex === index} className={`customer-mobile-search-result ${mobileSearchActiveIndex === index ? "is-active" : ""}`} key={result.key} type="button" onMouseEnter={() => setMobileSearchActiveIndex(index)} onClick={result.onSelect}>
+                <span className="customer-mobile-search-result-icon" aria-hidden="true"><MobileIcon name={resultIcon} /></span>
+                <span className="customer-mobile-search-result-copy">
+                  <span className="customer-mobile-search-result-area">{result.area}</span>
+                  <strong>{result.label}</strong>
+                  {result.meta ? <small>{result.meta}</small> : null}
+                </span>
+                <span className="customer-mobile-search-result-arrow" aria-hidden="true"><MobileIcon name="arrow-right" /></span>
+              </button>;
+            }) : <div className="customer-mobile-search-empty">
+              <strong>No results found</strong>
+              <small>Try another name, reference, or keyword.</small>
+            </div>}
+          </div>
         </section>
       </main>
     </div>;
@@ -9993,7 +10079,7 @@ function CustomerMobileDashboard({
               </div>
             </div>
             
-            <div className="customer-profile-mobile-health-form">
+            <div className="customer-profile-mobile-health-form" onBlur={handleMobileHealthFormBlur}>
               <label className="customer-profile-mobile-health-field"><span>Blood group</span><select value={mobileHealthDraft.bloodGroup} onChange={(event) => updateMobileHealthDraft("bloodGroup", event.target.value)}><option value="">Not added</option>{CUSTOMER_HEALTH_BLOOD_GROUP_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{mobileHealthErrors.bloodGroup ? <small className="customer-mobile-field-error">{mobileHealthErrors.bloodGroup}</small> : null}</label>
               <label className="customer-profile-mobile-health-field"><span>Genotype</span><select value={mobileHealthDraft.genotype} onChange={(event) => updateMobileHealthDraft("genotype", event.target.value)}><option value="">Not added</option>{CUSTOMER_HEALTH_GENOTYPE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{mobileHealthErrors.genotype ? <small className="customer-mobile-field-error">{mobileHealthErrors.genotype}</small> : null}</label>
               {[["allergies", "Allergies"], ["currentMedications", "Current medications"], ["existingConditions", "Existing conditions"]].map(([key, label]) => renderMobileHealthChipField(key, label))}
@@ -10003,7 +10089,6 @@ function CustomerMobileDashboard({
             {customerSettingsSaveStatus === "saving" ? <small className="customer-mobile-save-status">Saving health records...</small> : null}
             {customerSettingsSaveStatus === "saved" ? <small className="customer-mobile-save-success">Health records saved.</small> : null}
             {customerSettingsSaveStatus === "error" && customerSettingsSaveError ? <small className="customer-mobile-field-error">{customerSettingsSaveError}</small> : null}
-            {mobileHealthDirty ? <div className="customer-profile-mobile-health-actions"><button type="button" className="pill-button tertiary" onClick={() => { setMobileHealthDraft(normalizeCustomerSettingsPayload(settings)); setMobileHealthErrors({}); }} disabled={customerSettingsSaveStatus === "saving"}>Cancel</button><button type="button" className="pill-button" onClick={() => { void saveMobileHealthRecords(); }} disabled={customerSettingsSaveStatus === "saving"}>{customerSettingsSaveStatus === "saving" ? <span className="appointment-cta-spinner" aria-label="Saving health records" /> : "Save health records"}</button></div> : null}
           </article>
         </section> : <section className="customer-mobile-panel customer-mobile-toggle-panel customer-profile-mobile-notification-panel">
           {CUSTOMER_NOTIFICATION_OPTIONS.map(([key, label]) => (
@@ -10036,8 +10121,8 @@ function CustomerMobileDashboard({
         </header> : renderHeader("IV Therapy (Wellness infusions)")}
         <section className="customer-mobile-flow customer-iv-therapy-shell">
           {!ivTherapySubmitted ? <>
-            <div className="customer-mobile-step-title">Step {ivTherapyStep} of 5 - {IV_THERAPY_STEP_TITLES[ivTherapyStep] || "IV Therapy"}</div>
-            <p className="customer-mobile-step-copy">{ivTherapyStep === 3 ? "Please select the type(s) of IV therapy you are interested in." : "Please fill out the IV therapy form."}</p>
+            <div className="customer-mobile-step-title">Step {ivTherapyStep} of 6 - {IV_THERAPY_STEP_TITLES[ivTherapyStep] || "IV Therapy"}</div>
+            {ivTherapyStep === 3 ? <p className="customer-mobile-step-copy">Please select the type(s) of IV therapy you are interested in.</p> : null}
             <div className={`customer-mobile-step-panel customer-iv-therapy-panel ${ivTherapyAnimatingOut ? "is-out" : "is-in"}`}>
               {ivTherapyStep === 1 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
                 {[
@@ -10048,9 +10133,13 @@ function CustomerMobileDashboard({
                   <span>{label}</span>
                   <input
                     type={type}
+                    inputMode={key === "phoneNumber" ? "numeric" : undefined}
+                    pattern={key === "phoneNumber" ? "\\d{11}" : undefined}
+                    maxLength={key === "phoneNumber" ? 11 : undefined}
                     value={ivTherapyForm.patient[key]}
                     placeholder={placeholder}
                     className={showIvTherapyFieldError(key) ? "has-error" : ""}
+                    onBlur={() => markIvTherapyFieldBlurred(key)}
                     onChange={(event) => updateIvTherapyField("patient", key, event.target.value)}
                   />
                   {showIvTherapyFieldError(key) ? <small className="customer-mobile-field-error">{ivTherapyStepErrors[key]}</small> : null}
@@ -10062,6 +10151,7 @@ function CustomerMobileDashboard({
                     value={ivTherapyForm.patient.state}
                     placeholder="Search state"
                     className={showIvTherapyFieldError("state") ? "has-error" : ""}
+                    onBlur={() => markIvTherapyFieldBlurred("state")}
                     onChange={(event) => {
                       const nextState = event.target.value;
                       updateIvTherapyField("patient", "state", nextState);
@@ -10082,6 +10172,7 @@ function CustomerMobileDashboard({
                     value={ivTherapyForm.patient.city}
                     placeholder={ivTherapyForm.patient.state ? "Search city" : "Select state first"}
                     className={showIvTherapyFieldError("city") ? "has-error" : ""}
+                    onBlur={() => markIvTherapyFieldBlurred("city")}
                     onChange={(event) => updateIvTherapyField("patient", "city", event.target.value)}
                   />
                   <datalist id="customer-iv-therapy-city-options">
@@ -10094,7 +10185,8 @@ function CustomerMobileDashboard({
                   <select
                     value={ivTherapyForm.patient.gender}
                     className={showIvTherapyFieldError("gender") ? "has-error" : ""}
-                    onChange={(event) => updateIvTherapyField("patient", "gender", event.target.value)}
+                    onBlur={() => markIvTherapyFieldBlurred("gender")}
+                    onChange={(event) => { markIvTherapyFieldBlurred("gender"); updateIvTherapyField("patient", "gender", event.target.value); }}
                   >
                     <option value="">Select gender</option>
                     <option value="Female">Female</option>
@@ -10119,7 +10211,7 @@ function CustomerMobileDashboard({
                         type="radio"
                         name={key}
                         checked={ivTherapyForm.clinicalHistory[key] === choice}
-                        onChange={() => updateIvTherapyField("clinicalHistory", key, choice)}
+                        onChange={() => { markIvTherapyFieldBlurred(key); updateIvTherapyField("clinicalHistory", key, choice); }}
                       />
                       <span className="customer-mobile-radio" aria-hidden="true" />
                       {choice}
@@ -10133,6 +10225,7 @@ function CustomerMobileDashboard({
                         rows={5}
                         value={ivTherapyForm.clinicalHistory[detailKey]}
                         className={showIvTherapyFieldError(detailKey) ? "has-error" : ""}
+                        onBlur={() => markIvTherapyFieldBlurred(detailKey)}
                         onChange={(event) => updateIvTherapyField("clinicalHistory", detailKey, event.target.value)}
                       />
                     </label>
@@ -10159,17 +10252,24 @@ function CustomerMobileDashboard({
               {ivTherapyStep === 4 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
                 <label className="customer-mobile-field">
                   <span>What is your main reason for seeking I.V. therapy?</span>
-                  <textarea rows={5} value={ivTherapyForm.goals.primaryReason} className={showIvTherapyFieldError("primaryReason") ? "has-error" : ""} onChange={(event) => updateIvTherapyField("goals", "primaryReason", event.target.value)} />
+                  <textarea rows={5} value={ivTherapyForm.goals.primaryReason} className={showIvTherapyFieldError("primaryReason") ? "has-error" : ""} onBlur={() => markIvTherapyFieldBlurred("primaryReason")} onChange={(event) => updateIvTherapyField("goals", "primaryReason", event.target.value)} />
                   {showIvTherapyFieldError("primaryReason") ? <small className="customer-mobile-field-error">{ivTherapyStepErrors.primaryReason}</small> : null}
                 </label>
                 <label className="customer-mobile-field">
                   <span>What results do you hope to achieve?</span>
-                  <textarea rows={5} value={ivTherapyForm.goals.expectedResults} className={showIvTherapyFieldError("expectedResults") ? "has-error" : ""} onChange={(event) => updateIvTherapyField("goals", "expectedResults", event.target.value)} />
+                  <textarea rows={5} value={ivTherapyForm.goals.expectedResults} className={showIvTherapyFieldError("expectedResults") ? "has-error" : ""} onBlur={() => markIvTherapyFieldBlurred("expectedResults")} onChange={(event) => updateIvTherapyField("goals", "expectedResults", event.target.value)} />
                   {showIvTherapyFieldError("expectedResults") ? <small className="customer-mobile-field-error">{ivTherapyStepErrors.expectedResults}</small> : null}
                 </label>
               </div> : null}
 
-              {ivTherapyStep === 5 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
+              {ivTherapyStep === 5 ? <div className="customer-clinical-review customer-iv-therapy-review" aria-label="Review IV therapy request">
+                <section><div className="customer-clinical-review-head"><h4>Patient details</h4><button type="button" onClick={() => transitionToIvTherapyStep(1)}>Edit</button></div><dl><div><dt>Name</dt><dd>{ivTherapyForm.patient.name}</dd></div><div><dt>Location</dt><dd>{composeCityStateValue(ivTherapyForm.patient.city, ivTherapyForm.patient.state)}</dd></div><div><dt>Phone</dt><dd>{ivTherapyForm.patient.phoneNumber}</dd></div></dl></section>
+                <section><div className="customer-clinical-review-head"><h4>Clinical history</h4><button type="button" onClick={() => transitionToIvTherapyStep(2)}>Edit</button></div><p>{Object.entries(ivTherapyForm.clinicalHistory).filter(([key]) => !key.endsWith("Details")).map(([key, value]) => `${titleCase(key.replace(/([A-Z])/g, " $1"))}: ${value || "Not answered"}`).join("; ")}</p></section>
+                <section><div className="customer-clinical-review-head"><h4>Therapies</h4><button type="button" onClick={() => transitionToIvTherapyStep(3)}>Edit</button></div><p>{ivTherapyForm.therapyTypes.join(", ")}</p></section>
+                <section><div className="customer-clinical-review-head"><h4>Goals</h4><button type="button" onClick={() => transitionToIvTherapyStep(4)}>Edit</button></div><p>{ivTherapyForm.goals.primaryReason}</p><p>{ivTherapyForm.goals.expectedResults}</p></section>
+              </div> : null}
+
+              {ivTherapyStep === 6 ? <div className="customer-mobile-form-stack customer-iv-therapy-stack">
                 <div className="customer-mobile-radio-group customer-iv-therapy-question">
                   <span>I confirm that the information provided is accurate and I consent to receiving I.V. therapy as selected.</span>
                   <div className="customer-mobile-inline-radios customer-iv-therapy-inline-radios">
@@ -10437,21 +10537,23 @@ function CustomerMobileDashboard({
             <button className="customer-mobile-primary-button" type="button" disabled={requestContinueDisabled} onClick={handleRequestContinue}>{requestSubmitting ? <BrandedSpinner label="Submitting nurse request" /> : "Continue"}</button>
             {requestSubmitError ? <small className="customer-mobile-field-error">{requestSubmitError}</small> : null}
             {requestStep > 1 ? <button className="customer-mobile-secondary-button" type="button" onClick={() => transitionToRequestStep(Math.max(1, requestStep - 1))}>Go Back</button> : null}
-          </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="nurse-request-confirmation-title">
+          </> : <div className="customer-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="nurse-request-confirmation-title" aria-describedby={requestSubmitLoadingState ? undefined : "nurse-request-confirmation-copy"}>
             <section className="customer-mobile-panel customer-mobile-submit-state customer-confirmation-shell customer-nurse-request-confirmation-shell">
               <div className="customer-confirmation-icon" aria-hidden="true">
                 <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#22A06B" strokeWidth="2" /><path d="M16 24L22 30L32 18" stroke="#22A06B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </div>
-              <h2 id="nurse-request-confirmation-title">{requestSubmitLoadingState ? "Submitting request..." : "Request Received!"}</h2>
-              {!requestSubmitLoadingState ? <p>Your nurse request has been received. Our care team will review your details and assign a suitable nurse. You’ll be notified once the visit is confirmed.</p> : null}
+              <h2 id="nurse-request-confirmation-title">{requestSubmitLoadingState ? "Submitting request..." : "Request received"}</h2>
+              {!requestSubmitLoadingState ? <p id="nurse-request-confirmation-copy">Your request is with our care team for review. We’ll notify you when a suitable nurse has been assigned.</p> : null}
               {!requestSubmitLoadingState ? <div className="customer-confirmation-next">
                 <h3>What happens next?</h3>
                 <div className="customer-confirmation-next-row"><span>Status</span><strong className="badge">Pending Review</strong></div>
                 <div className="customer-confirmation-next-row"><span>Next step</span><strong>Nurse assignment</strong></div>
                 <div className="customer-confirmation-next-row"><span>Notification</span><strong>Email sent</strong></div>
               </div> : null}
-              {!requestSubmitLoadingState ? <button className="customer-mobile-primary-button" type="button" onClick={() => goToPage("overview")}>View Request Status</button> : null}
-              {!requestSubmitLoadingState ? <button className="customer-mobile-secondary-button" type="button" onClick={() => goToPage("overview")}>Back to Home</button> : null}
+              {!requestSubmitLoadingState ? <div className="customer-confirmation-actions">
+                <button className="customer-mobile-primary-button" type="button" onClick={() => setAppointmentTab("upcoming")}>View Request Status</button>
+                <button className="customer-mobile-secondary-button" type="button" onClick={() => goToPage("overview")}>Back to Home</button>
+              </div> : null}
             </section>
           </div>}
         </section> : null}
@@ -10711,6 +10813,15 @@ function AppointmentBookingButton({ onClick, className = "", label = "Book an ap
     <span className="appointment-booking-cta-icon" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none"><path d="M22 16.92V20A2 2 0 0 1 19.82 22C10.95 21.36 3.64 14.05 3 5.18A2 2 0 0 1 5 3H8.09A2 2 0 0 1 10.04 4.63L10.7 7.86A2 2 0 0 1 10.13 9.81L8.91 11.03A16 16 0 0 0 12.97 15.09L14.19 13.87A2 2 0 0 1 16.14 13.3L19.37 13.96A2 2 0 0 1 21 15.91V16.92Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
     </span>
+  </button>;
+}
+
+function AppointmentFloatingCalendarButton({ onClick }) {
+  return <button className="customer-appointment-floating-calendar" type="button" onClick={onClick} aria-label="Book an appointment" title="Book an appointment">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M7 3v3m10-3v3M4.5 9h15M6.5 5h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 12v5m-2.5-2.5h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
   </button>;
 }
 

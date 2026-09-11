@@ -6,7 +6,7 @@ const BENEFITS = [
   {
     iconSrc: "/subscription-icon-consultations.png",
     tone: "lavender",
-    title: "5x more Doctor Consultations.",
+    title: "Expanded Service Access",
     description: "Access more doctor and care specialist consultations, giving you faster medical attention, consistent follow-ups, and better continuity of care whenever you need support.",
   },
   {
@@ -18,7 +18,7 @@ const BENEFITS = [
   {
     iconSrc: "/subscription-icon-refills.png",
     tone: "mint",
-    title: "Free Prescription Refills and Deliveries",
+    title: "Priority Prescription Refills & Delivery",
     description: "Enjoy convenient prescription refill processing and doorstep medication delivery, helping you stay consistent with treatment.",
   },
 ];

@@ -2890,9 +2890,9 @@ body:has(.role-shell-exact) {
 .customer-appointment-detail-card .appointment-detail-cancel-action {
   display: inline-flex;
   width: 100%;
-  background: #b23b3b !important;
-  color: #ffffff !important;
-  border: 1px solid #b23b3b !important;
+  background: #ffffff !important;
+  color: #ff4d4d !important;
+  border: 1px solid #ffffff !important;
 }
 
 .customer-appointment-detail-card .appointment-detail-secondary-action:hover {
@@ -2900,7 +2900,7 @@ body:has(.role-shell-exact) {
 }
 
 .customer-appointment-detail-card .appointment-detail-cancel-action:hover {
-  background: #a43131 !important;
+  background: rgba(255, 77, 77, 0.06) !important;
 }
 
 .customer-appointment-detail-card .order-item {
@@ -5432,6 +5432,30 @@ td {
   color: var(--color-text-main);
 }
 
+.audit-email-message dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.audit-email-message dl > div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.audit-email-message dt,
+.audit-email-message dd {
+  margin: 0;
+  color: var(--color-text-main);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.audit-email-message dt {
+  font-weight: 700;
+}
+
 .select-wrap {
   gap: 8px;
   padding: 0 0 0 12px;
@@ -5576,6 +5600,14 @@ td {
   min-height: 42px;
   display: grid;
   place-items: center;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.auth-google-button-slot > div,
+.auth-google-button-slot iframe {
+  max-width: 100% !important;
 }
 
 .auth-google-loading {
@@ -5636,7 +5668,7 @@ td {
   pointer-events: none;
 }
 
-.auth-reference-form input {
+.auth-reference-form input:not(.auth-otp-box) {
   width: 100%;
   height: 40px;
   padding: 0 52px 0 14px;
@@ -5648,11 +5680,11 @@ td {
   transition: border-color 180ms ease, background 180ms ease;
 }
 
-.auth-reference-form input::placeholder {
+.auth-reference-form input:not(.auth-otp-box)::placeholder {
   color: rgba(15, 23, 42, 0.35);
 }
 
-.auth-reference-form input:focus {
+.auth-reference-form input:not(.auth-otp-box):focus {
   border-color: #0a2a5e;
   background: #fff;
   box-shadow: none;
@@ -6020,7 +6052,7 @@ td {
     font-weight: 400;
   }
 
-  .auth-reference-form input {
+  .auth-reference-form input:not(.auth-otp-box) {
     height: 42px;
     font-size: 14px;
   }
@@ -11552,6 +11584,109 @@ body.auth-locked .page-shell {
   transform: translateY(-2px);
 }
 
+/* Patient dashboard audit fixes: accessibility, clinical review, and responsive controls. */
+.customer-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.customer-mobile-app :is(button, [role="button"], a.btn),
+.customer-profile-reminder-modal button,
+.customer-appointment-modal button {
+  min-height: 44px;
+}
+
+.customer-mobile-app :is(.customer-mobile-icon-button, .customer-mobile-more, .customer-mobile-back-link),
+.customer-profile-reminder-close,
+.customer-desktop-search-clear {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.customer-mobile-search-empty,
+.customer-overview-reference-empty,
+.customer-mobile-empty-state :is(p, small),
+.compact-empty {
+  color: #475569 !important;
+}
+
+.customer-mobile-search-result.is-active,
+.customer-desktop-search-dropdown [role="option"].is-active {
+  outline: 3px solid rgba(26, 91, 173, .28);
+  outline-offset: -3px;
+  background: #edf5ff;
+}
+
+.customer-mobile-drawer-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.customer-mobile-drawer-close {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #102f5f;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.customer-mobile-drawer-profile {
+  width: 100%;
+  border: 0;
+  text-align: left;
+}
+
+.customer-clinical-review {
+  display: grid;
+  gap: 14px;
+}
+
+.customer-clinical-review > section {
+  padding: 16px;
+  border: 1px solid #d6e0eb;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.customer-clinical-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.customer-clinical-review :is(h3, h4, p, dl) { margin: 0; }
+.customer-clinical-review dl { display: grid; gap: 8px; }
+.customer-clinical-review dl > div { display: grid; grid-template-columns: minmax(110px, .4fr) 1fr; gap: 12px; }
+.customer-clinical-review dt { color: #475569; }
+.customer-clinical-review dd { margin: 0; color: #102f5f; font-weight: 600; overflow-wrap: anywhere; }
+.customer-clinical-review-head button { padding: 0 14px; border: 1px solid #1a5bad; border-radius: 10px; background: #fff; color: #174f96; }
+
+.customer-mobile-upload-row-button { border-radius: 12px !important; }
+.customer-mobile-upload-filename { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.customer-mobile-upload-meta { min-width: 0; }
+
+@media (min-width: 961px) {
+  .customer-desktop-embedded-page .customer-mobile-icon-button[aria-label="Open menu"],
+  .customer-desktop-embedded-page .customer-mobile-searchbar-button + .customer-mobile-greeting-row > .customer-mobile-icon-button {
+    display: none !important;
+  }
+}
+
 .booking-t-slot.chosen .booking-t-time {
   color: #fff;
 }
@@ -14219,60 +14354,163 @@ body.doctor-mobile-mode .desktop-dashboard-title {
   width: 100%;
 }
 
-.customer-mobile-search-results {
-  margin-top: 16px;
+.customer-mobile-search-clear {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
   display: grid;
-  gap: 8px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #f0f3f7;
+  color: #66758b;
+  font: inherit;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.customer-mobile-search-results {
+  margin-top: 22px;
+  display: grid;
+  gap: 14px;
+}
+
+.customer-mobile-search-results-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
+}
+
+.customer-mobile-search-results-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.customer-mobile-search-results-head span {
+  color: #0b326d;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.customer-mobile-search-results-head strong {
+  color: #68778e;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.customer-mobile-search-results-list {
+  display: grid;
+  gap: 10px;
 }
 
 .customer-mobile-search-result {
+  box-sizing: border-box;
   width: 100%;
-  min-height: 72px;
-  border: 1px solid #dde2ea;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 14px 12px;
-  display: flex;
+  min-width: 0;
+  min-height: 84px;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 20px;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #dce4ee;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #0b326d;
+  font: inherit;
   text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms ease, background-color 180ms ease;
 }
 
-.customer-mobile-search-result>div {
+.customer-mobile-search-result:is(:hover, :focus-visible, .is-active) {
+  border-color: #9fb3cc;
+  background: #f6f9fd;
+  outline: none;
+}
+
+.customer-mobile-search-result-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #edf3fa;
+  color: #0b326d;
+}
+
+.customer-mobile-search-result-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.customer-mobile-search-result-copy {
   min-width: 0;
   display: grid;
   gap: 3px;
 }
 
 .customer-mobile-search-result strong {
-  color: #101828;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #132f5d;
   font-size: 15px;
   font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .customer-mobile-search-result small {
-  color: #7a8494;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #6d7c91;
   font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .customer-mobile-search-result-area {
-  color: #0b326d;
-  font-size: 11px;
-  font-weight: 500;
+  color: #66758b;
+  font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.06em;
+}
+
+.customer-mobile-search-result-arrow {
+  display: grid;
+  place-items: center;
+  color: #718096;
+}
+
+.customer-mobile-search-result-arrow svg {
+  width: 18px;
+  height: 18px;
 }
 
 .customer-mobile-search-empty {
-  min-height: 180px;
+  min-height: 210px;
   display: grid;
   align-content: center;
   justify-items: center;
   gap: 6px;
+  border: 1px solid #e1e7ef;
+  border-radius: 16px;
+  background: #fafbfd;
   text-align: center;
   color: #7a8494;
-  padding: 24px 8px;
+  padding: 28px 18px;
 }
 
 .customer-mobile-search-empty strong {
@@ -15820,7 +16058,7 @@ body.doctor-mobile-mode .desktop-dashboard-title {
 .customer-mtm-sticky-actions {
   margin-top: 18px;
   display: grid;
-  gap: 8px;
+  gap: 4px;
 }
 
 .customer-mtm-sticky-actions .customer-mobile-secondary-button {
@@ -21476,14 +21714,22 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
 .auth-otp-boxes {
   display: grid;
   width: 100%;
+  min-width: 0;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
+  gap: clamp(6px, 2vw, 10px);
+  max-width: 430px;
+  margin-inline: auto;
 }
 
 .auth-otp-box {
   display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: 48px;
   min-height: 48px;
-  aspect-ratio: 1.02;
+  aspect-ratio: auto;
   place-items: center;
   border: 1px solid rgba(10, 42, 94, 0.14);
   border-radius: 8px;
@@ -21494,6 +21740,9 @@ body.doctor-mobile-mode .role-shell-exact .segment.active {
   font-weight: 600;
   line-height: 1;
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  padding: 0;
+  text-align: center;
+  text-indent: 0;
 }
 
 .auth-otp-box:focus-visible,
@@ -34164,7 +34413,8 @@ body .customer-mobile-panel>.subscription-manage-card .subscription-feedback.err
 }
 
 .customer-desktop-search-shell-interactive.is-open {
-  box-shadow: 0 0 0 3px rgba(11, 50, 109, 0.12);
+  border-color: #9fb3cc;
+  box-shadow: 0 0 0 3px rgba(11, 50, 109, 0.08);
   border-radius: 999px;
 }
 
@@ -34180,54 +34430,110 @@ body .customer-mobile-panel>.subscription-manage-card .subscription-feedback.err
 
 .customer-desktop-search-dropdown {
   position: absolute;
-  top: calc(100% + 12px);
+  top: calc(100% + 10px);
   left: 0;
-  width: min(100%, 420px);
-  min-width: 280px;
-  padding: 10px;
-  border: 1px solid #dde2ea;
-  border-radius: 18px;
+  box-sizing: border-box;
+  width: min(520px, calc(100vw - 48px));
+  min-width: min(360px, calc(100vw - 48px));
+  max-height: min(560px, calc(100dvh - 140px));
+  padding: 22px;
+  border: 1px solid #005ac7;
+  border-radius: 33px;
   background: #ffffff;
-  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.14);
+  box-shadow: 0 18px 44px rgba(13, 39, 79, 0.16);
   display: grid;
-  gap: 8px;
-  z-index: 30;
+  gap: 4px;
+  overflow: hidden;
+  z-index: 80;
+}
+
+.customer-desktop-search-dropdown-head {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 8px 8px;
+  color: #0b326d;
+}
+
+.customer-desktop-search-dropdown-head strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.customer-desktop-search-dropdown-head span {
+  color: #718096;
+  font-size: 11px;
+}
+
+.customer-desktop-search-options {
+  min-height: 0;
+  display: grid;
+  gap: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .customer-desktop-search-dropdown button {
-  min-height: 44px;
-  border: 0;
-  border-radius: 14px;
-  background: #f8fafc;
+  width: 100%;
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
   color: #0f2a5c;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
+  font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
 }
 
 .customer-desktop-search-dropdown button:hover,
 .customer-desktop-search-dropdown button:focus-visible {
-  background: #eef4ff;
+  border-color: #d8e2ee;
+  background: #f5f8fc;
   outline: none;
 }
 
-.customer-desktop-search-dropdown button span {
-  font-weight: 700;
+.customer-desktop-search-option-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
 }
 
-.customer-desktop-search-dropdown button small,
+.customer-desktop-search-option-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #123465;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-desktop-search-option-copy small,
+.customer-desktop-search-option-copy em,
 .customer-desktop-search-empty {
-  color: #667085;
-  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  color: #718096;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .customer-desktop-search-empty {
-  min-height: 44px;
-  border-radius: 14px;
+  min-height: 64px;
+  border-radius: 12px;
   background: #f8fafc;
   display: flex;
   align-items: center;
@@ -34612,7 +34918,7 @@ body .customer-mobile-panel>.subscription-manage-card .subscription-feedback.err
 .customer-profile-mobile-health-field {
   display: grid;
   gap: 8px;
-  padding: 16px 0;
+  padding: 10px 0;
   border-bottom: 1px solid var(--profile-line-soft);
 }
 
@@ -35523,24 +35829,6 @@ body .customer-mobile-panel>.subscription-manage-card .subscription-feedback.err
   color: #7e8ba1;
   font-size: 13px;
   line-height: 1.45;
-}
-
-.customer-subscription-history-header button {
-  min-height: 36px;
-  padding: 7px 14px;
-  border: 1px solid #d5deea;
-  border-radius: 999px;
-  background: #fff;
-  color: #153b77;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.customer-subscription-history-header button:disabled {
-  cursor: wait;
-  opacity: .62;
 }
 
 .customer-subscription-history-list {
@@ -38521,6 +38809,53 @@ body:has(.modal-design-system-parity) .order-modal .order-detail-scroll {
   width: min(100%, 420px);
 }
 
+.customer-appointment-floating-calendar {
+  position: fixed;
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(22px, calc(env(safe-area-inset-bottom) + 14px));
+  z-index: 38;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 4px solid #fff;
+  border-radius: 50%;
+  background: #0b326d;
+  color: #fff;
+  box-shadow: 0 10px 28px rgba(11, 50, 109, .28);
+  cursor: pointer;
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.customer-appointment-floating-calendar svg {
+  width: 25px;
+  height: 25px;
+}
+
+.customer-appointment-floating-calendar:hover {
+  background: #164983;
+  box-shadow: 0 12px 32px rgba(11, 50, 109, .34);
+}
+
+.customer-appointment-floating-calendar:focus-visible {
+  outline: 3px solid rgba(11, 50, 109, .28);
+  outline-offset: 3px;
+}
+
+@media (min-width: 961px) {
+  .customer-appointment-floating-calendar {
+    right: 30px;
+    bottom: 30px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .customer-appointment-floating-calendar {
+    transition: none;
+  }
+}
+
 /* Appointment and nurse history rows */
 .customer-mobile-visit-row {
   grid-template-columns: 40px minmax(0, 1fr) max-content;
@@ -38602,19 +38937,6 @@ body:has(.modal-design-system-parity) .order-modal .order-detail-scroll {
   color: #68778e;
   font-size: 14px;
   font-weight: 400;
-}
-
-.customer-subscription-history-header button {
-  min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid #d6e0eb;
-  border-radius: 999px;
-  color: #40536f;
-  background: #fff;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 400;
-  cursor: pointer;
 }
 
 .customer-subscription-history-list {
@@ -39427,6 +39749,110 @@ body:has(.modal-design-system-parity) .order-modal .order-detail-scroll {
   white-space: nowrap;
 }
 
+.customer-nurse-request-visit-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "icon copy status"
+    "journey journey journey";
+  align-items: start;
+  column-gap: 12px;
+  row-gap: 0;
+  min-height: 0;
+  padding: 14px 0;
+  cursor: default;
+}
+
+.customer-nurse-request-visit-row > .customer-mobile-clock {
+  grid-area: icon;
+}
+
+.customer-nurse-request-visit-row > .customer-mobile-visit-copy {
+  grid-area: copy;
+  align-self: center;
+  padding-right: 0;
+}
+
+.customer-nurse-request-visit-row > .customer-mobile-appointment-status {
+  grid-area: status;
+  align-self: center;
+}
+
+.customer-nurse-request-visit-row > .customer-care-journey-details {
+  grid-area: journey;
+  width: 100%;
+  min-width: 0;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.customer-nurse-request-visit-row > .customer-care-journey-details summary {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #0b326d;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  list-style: none;
+}
+
+.customer-nurse-request-visit-row > .customer-care-journey-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.customer-nurse-request-visit-row > .customer-care-journey-details summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 180ms ease;
+}
+
+.customer-nurse-request-visit-row > .customer-care-journey-details[open] summary::after {
+  transform: rotate(225deg) translate(-2px, -2px);
+}
+
+.customer-nurse-request-visit-row > .customer-care-journey-details[open] summary {
+  margin-bottom: 10px;
+}
+
+.customer-nurse-request-visit-row .customer-care-documents {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #e1e7ef;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #52627a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.customer-nurse-request-visit-row .customer-care-documents > strong {
+  color: #0b326d;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 360px) {
+  .customer-nurse-request-visit-row {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    column-gap: 9px;
+  }
+
+  .customer-nurse-request-visit-row > .customer-mobile-clock {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+  }
+}
+
 .iv-operations-panel {
   margin-bottom: 20px;
 }
@@ -39906,6 +40332,107 @@ body:has(.modal-design-system-parity) .order-modal .order-detail-scroll {
 /* Create product is a true paged form that uses the full modal content area. */
 .app-modal-layer .product-editor-modal.modal-design-system-parity.product-editor-create-mode {
   width: min(960px, calc(100vw - 32px)) !important;
+}
+
+/* Shared patient-dashboard segmented tabs and desktop navigation typography. */
+.customer-dashboard-tabs {
+  width: 100%;
+  gap: 4px;
+  padding: 5px;
+  overflow-x: auto;
+  border: 1px solid #dce4ee;
+  border-radius: 15px;
+  background: #f4f7fb;
+  scrollbar-width: none;
+}
+
+.customer-dashboard-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.customer-dashboard-tabs button {
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: #667085;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: color 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.customer-dashboard-tabs button.active,
+.customer-dashboard-tabs button[aria-selected="true"] {
+  border-color: #0b326d;
+  background: #0b326d;
+  color: #fff;
+  box-shadow: none;
+}
+
+.customer-subscription-management-tabs {
+  padding-block: 5px;
+  background: #f4f7fb;
+}
+
+.customer-subscription-management-shell.is-mobile .customer-subscription-menu-button {
+  order: -2;
+  margin: 0 0 2px;
+}
+
+.customer-subscription-management-shell.is-mobile .customer-subscription-management-tabs {
+  order: -1;
+}
+
+.customer-iv-therapy-review {
+  gap: 12px;
+}
+
+.customer-iv-therapy-review > section {
+  padding: 16px;
+  border-color: #dce4ee;
+  border-radius: 16px;
+  background: #f8faff;
+}
+
+.customer-iv-therapy-review .customer-clinical-review-head {
+  margin-bottom: 12px;
+}
+
+.customer-iv-therapy-review .customer-clinical-review-head h4 {
+  color: #0b326d;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.customer-iv-therapy-review .customer-clinical-review-head button {
+  min-width: 52px;
+  min-height: 44px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.customer-iv-therapy-review dl > div {
+  grid-template-columns: minmax(88px, .38fr) minmax(0, 1fr);
+}
+
+.customer-iv-therapy-review p {
+  color: #344767;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.customer-dashboard-tabs button:focus-visible {
+  outline: 2px solid rgba(11, 50, 109, .28);
+  outline-offset: 3px;
+}
+
+@media (min-width: 961px) {
+  .customer-desktop-shell .nav-item {
+    font-size: 12px;
+  }
 }
 
 .app-modal-layer .product-editor-modal.product-editor-create-mode .product-editor-shell {
@@ -47148,6 +47675,1711 @@ html body div.creation-modal-layer section.profile-create-popup .user-account-ro
   }
 }
 
+/* Storefront information architecture and table controls. */
+.nevari-admin-storefront .topbar {
+  min-height: 72px;
+}
+
+.nevari-admin-storefront .topbar-left {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 20px;
+}
+
+.nevari-admin-storefront .topbar-page-title {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--color-primary);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.nevari-admin-storefront .topbar-left .search-field {
+  flex: 1 1 420px;
+  max-width: 620px;
+}
+
+.nevari-admin-storefront .page-view > .admin-page-heading {
+  display: none;
+}
+
+.nevari-admin-storefront :is(.table-panel, .admin-flat-table-section, .subscription-plans-panel, .users-panel) {
+  min-height: 0;
+}
+
+.nevari-admin-storefront :is(.pagination-row, .users-pagination, .doctor-pagination) {
+  position: sticky;
+  z-index: 5;
+  bottom: 0;
+  margin-top: auto;
+  border-top: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, .98);
+  backdrop-filter: blur(10px);
+}
+
+.sortable-table-header {
+  width: 100%;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sortable-table-header:focus-visible {
+  outline: 3px solid rgba(26, 91, 173, .24);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.sort-direction {
+  position: relative;
+  width: 10px;
+  height: 14px;
+  flex: 0 0 10px;
+  opacity: .48;
+}
+
+.sort-direction::before,
+.sort-direction::after {
+  position: absolute;
+  left: 1px;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  content: "";
+}
+
+.sort-direction::before { top: 1px; border-bottom: 5px solid currentColor; }
+.sort-direction::after { bottom: 1px; border-top: 5px solid currentColor; }
+.sort-direction.asc::before,
+.sort-direction.desc::after { opacity: 1; }
+.sort-direction.asc::after,
+.sort-direction.desc::before { opacity: .2; }
+
+/* Default storefront tabs: the group has no chrome; selection alone is framed. */
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) > button {
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #53647c;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) > button:is(.active, [aria-selected="true"], [aria-current="page"]) {
+  border-color: #0b326c !important;
+  background: #0b326c !important;
+  color: #fff;
+}
+
+.nevari-admin-storefront :is(.segmented-mini, .nevari-storefront-tabs) {
+  min-height: 52px;
+  padding: 5px;
+  border: 1px solid #d6e0eb;
+  border-radius: 15px;
+  background: #eef3f8;
+  overflow-x: auto;
+}
+
+.nevari-admin-storefront :is(.segmented-mini, .nevari-storefront-tabs) > button {
+  min-height: 42px;
+  border-radius: 12px;
+}
+
+.nevari-admin-storefront :is(.toolbar, .filter-row, .users-toolbar) select {
+  min-height: 44px;
+  padding: 0 38px 0 14px;
+  border: 1px solid #d6e0eb;
+  border-radius: 12px;
+  background-color: #fff;
+  color: var(--color-text-main);
+}
+
+/* Product categories: bounded independent columns and row-level actions. */
+.nevari-admin-storefront .product-categories-pane {
+  height: min(760px, calc(100dvh - 190px));
+  min-height: 560px;
+  overflow: hidden;
+}
+
+.nevari-admin-storefront .product-categories-sidebar {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.nevari-admin-storefront .product-category-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 10px 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.nevari-admin-storefront .product-category-directory-pagination {
+  position: sticky;
+  bottom: 0;
+  flex: 0 0 auto;
+  background: #f7f9fc;
+}
+
+.nevari-admin-storefront .product-category-row {
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  display: block;
+  overflow: hidden;
+}
+
+.product-category-row-main {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: grid;
+  gap: 5px;
+  color: inherit;
+  text-align: left;
+}
+
+.product-category-row-main strong,
+.product-category-row-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-category-row-actions {
+  height: 0;
+  margin-top: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+  opacity: 0;
+  transition: height 160ms ease, margin-top 160ms ease, opacity 160ms ease;
+}
+
+.product-category-row:hover .product-category-row-actions,
+.product-category-row:focus-within .product-category-row-actions {
+  height: 24px;
+  margin-top: 7px;
+  opacity: 1;
+}
+
+.product-category-row-actions button {
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #315f94;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.product-category-row-actions button.danger { color: #b42318; }
+.product-category-row-actions button:disabled { color: #95a2b2; cursor: not-allowed; }
+
+.product-category-directory-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.product-category-directory-editor input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #7aa7dc;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--color-text-main);
+}
+
+.nevari-admin-storefront .product-categories-content {
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+.nevari-admin-storefront .product-category-searchfield-inline {
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid #d6e0eb;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.nevari-admin-storefront .product-category-searchfield-inline input {
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.category-delete-popup {
+  width: min(460px, calc(100vw - 32px));
+  padding: 28px;
+  border: 1px solid #d9e1eb;
+  border-radius: 20px;
+  background: #fff;
+}
+
+.category-delete-confirm {
+  border-color: #b42318 !important;
+  background: #b42318 !important;
+}
+
+/* Consultation details action groups. */
+.consultation-details-actions > :first-child { order: 3; margin-left: auto; }
+.consultation-details-actions > :nth-child(2) { order: 2; }
+.consultation-details-actions > .consultation-action-primary { order: 4; }
+.consultation-details-actions > .consultation-action-danger { order: 1; }
+
+/* Product creator layout from the approved audit. */
+.creation-modal--product .product-create-details-columns {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.creation-modal--product .product-create-description-column {
+  width: 100%;
+  min-width: 0;
+}
+
+.creation-modal--product .product-create-description-column textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+}
+
+.creation-modal--product .product-create-tag-picker {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.product-create-multiple-footer {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #d6e0eb;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+@media (min-width: 981px) and (min-height: 760px) {
+  .creation-modal--product,
+  .creation-modal--product .creation-modal__form {
+    max-height: none !important;
+  }
+
+  .creation-modal--product :is(.creation-modal__body, .product-create-step-scroll) {
+    overflow: visible !important;
+  }
+}
+
+@media (max-width: 980px) {
+  .nevari-admin-storefront .product-categories-pane {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) !important;
+    overflow: visible;
+  }
+
+  .nevari-admin-storefront .product-categories-sidebar {
+    height: min(440px, 48dvh);
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .nevari-admin-storefront .product-categories-content {
+    height: auto;
+    overflow: visible;
+  }
+}
+
+/* Patient dashboard annotation pass: shared controls, crisp modal rendering, and flow details. */
+.customer-dashboard-tabs {
+  margin-top: 14px;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 27px;
+  background: transparent !important;
+}
+
+.customer-dashboard-tabs > button {
+  min-height: 34px;
+  padding: 0 16px;
+  border: 1px solid transparent !important;
+  border-radius: 27px;
+  background: transparent !important;
+  color: #667085 !important;
+  font-size: 12px;
+  font-weight: 400;
+  box-shadow: none !important;
+}
+
+.customer-dashboard-tabs > button:not(.active):not([aria-selected="true"]):hover {
+  border-color: transparent !important;
+  background: #f8f9fb !important;
+  color: #48566c !important;
+}
+
+.customer-dashboard-tabs > button.active,
+.customer-dashboard-tabs > button[aria-selected="true"] {
+  border-color: #d9e0e8 !important;
+  background: #f1f3f5 !important;
+  color: #58677d !important;
+  box-shadow: none !important;
+}
+
+.customer-mobile-app :is(
+  .customer-mobile-primary-button,
+  .customer-mobile-secondary-button,
+  .appointment-primary-cta,
+  .appointment-booking-cta,
+  .pill-button,
+  .button-primary,
+  .btn-wide
+) {
+  border-radius: 999px !important;
+}
+
+.customer-mobile-app :is(
+  label.customer-mobile-field > input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  label.customer-mobile-field > select,
+  label.customer-mobile-field > textarea
+) {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid #d7e1ef;
+  border-radius: 9px;
+  background: #f4f6f8;
+  color: #1e2f4b;
+  box-shadow: none;
+}
+
+.customer-mobile-app label.customer-mobile-field > textarea {
+  padding-block: 12px;
+}
+
+.customer-mtm-token-input,
+.customer-mtm-token-input:focus-within {
+  border-width: 0;
+}
+
+.customer-mtm-token button {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+
+.customer-mtm-medication-group-head > button,
+.customer-mobile-medication-remove {
+  width: 31px;
+  min-width: 31px;
+  height: 31px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.customer-mobile-upload-meta-wrap > button:first-of-type {
+  width: 88px;
+  min-width: 88px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.customer-mobile-calendar-day,
+.customer-mobile-book-card-shot .customer-mobile-calendar-day,
+.customer-mobile-book-card-shot .customer-mobile-calendar-day.active {
+  aspect-ratio: 1;
+  border-radius: 50%;
+}
+
+.customer-clinical-review-head button {
+  height: 21px;
+  min-height: 21px;
+  padding: 0 10px;
+  border-radius: 999px;
+  line-height: 19px;
+}
+
+.customer-mtm-success-shell #mtm-success-title {
+  font-size: 22px;
+  font-weight: 300;
+}
+
+.customer-mtm-success-shell .customer-flow-kv-key {
+  font-weight: 300;
+}
+
+.customer-mtm-success-shell .customer-flow-kv-value {
+  font-weight: 400;
+}
+
+.customer-mtm-success-shell .customer-flow-status-note {
+  border: 0;
+  background: #fff;
+}
+
+.customer-mtm-success-shell .customer-flow-status-note p {
+  font-size: 12px;
+}
+
+.customer-mtm-booking-panel h3 {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.customer-mtm-booking-panel .customer-flow-status-inline-message {
+  color: #c25e00;
+  font-size: 12px;
+}
+
+.customer-quota-modal-card > p:nth-of-type(2) {
+  color: #0052e0;
+}
+
+.customer-appointment-detail-card .icon-btn,
+.customer-quota-modal-card .icon-btn {
+  aspect-ratio: 1;
+  border-radius: 50%;
+}
+
+.customer-flow-status-actions :is(a, button) {
+  border-radius: 999px;
+}
+
+.customer-flow-status-actions .customer-mobile-primary-button {
+  min-height: 48px;
+  font-size: 14px;
+}
+
+.appointment-booking-cta,
+.customer-mobile-appointment-booknow-btn.appointment-booking-cta {
+  min-height: 58px;
+  height: 58px;
+}
+
+.customer-appointment-detail-card .detail-section-title {
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.customer-appointment-detail-card .customer-section-kicker {
+  font-size: 10px;
+}
+
+.customer-appointment-detail-card .customer-panel-head h2,
+.customer-appointment-detail-card .customer-detail-summary-title {
+  text-transform: capitalize;
+}
+
+.customer-appointment-detail-card .customer-panel-head h2 {
+  font-size: 18px;
+  font-weight: 300;
+}
+
+.customer-appointment-detail-card .customer-detail-summary-title {
+  font-weight: 300;
+}
+
+.customer-appointment-detail-card .customer-detail-summary-sub {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.customer-mobile-appointment-screen .customer-mobile-visit-copy-shot strong {
+  font-weight: 300 !important;
+  text-transform: capitalize;
+}
+
+.customer-mobile-appointment-screen .customer-mobile-visit-copy-shot span {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.customer-profile-reminder-modal h2 {
+  font-weight: 700;
+}
+
+.customer-profile-reminder-progress-head strong,
+.customer-profile-reminder-progress-head strong:last-child {
+  font-weight: 600;
+}
+
+.customer-profile-mobile-health-field {
+  min-height: 82px;
+  padding: 13px 0;
+}
+
+.customer-mobile-drawer-footer {
+  padding: 0 1px 1px;
+}
+
+.customer-mobile-app .overview-actions {
+  margin-top: 26px;
+}
+
+.customer-confirmation-modal,
+.customer-mtm-success-modal,
+.customer-quota-modal-backdrop,
+.customer-appointment-modal-backdrop,
+.customer-profile-reminder-overlay,
+.customer-photo-viewer,
+.session-reauth-layer {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.customer-confirmation-modal :is(.customer-flow-status-card, .customer-confirmation-shell),
+.customer-appointment-modal .customer-appointment-detail-card,
+.customer-quota-modal-card,
+.customer-profile-reminder-modal,
+.customer-profile-modal-card,
+.session-reauth-dialog {
+  filter: none !important;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Nurse request confirmation: keep the patient modal compact and mobile-safe. */
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell {
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 28px 24px 24px;
+  gap: 14px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #dfe5ee;
+  border-radius: 24px;
+  background: #ffffff !important;
+  text-align: center;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell > * {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell .customer-confirmation-icon {
+  width: 64px;
+  height: 64px;
+  background: #eaf7f0;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell .customer-confirmation-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell > h2 {
+  margin: 0;
+  color: #0b326d;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell > p {
+  max-width: 340px;
+  margin: -4px auto 2px;
+  color: #58677d;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell .customer-confirmation-next {
+  position: static;
+  z-index: auto;
+  display: grid;
+  width: 100%;
+  padding: 16px;
+  gap: 0;
+  border: 1px solid #dfe5ee;
+  border-radius: 14px;
+  background: #f7f9fc;
+  text-align: left;
+  backdrop-filter: none;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell .customer-confirmation-next h3 {
+  margin: 0 0 4px;
+  color: #0b326d;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell .customer-confirmation-next-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  gap: 16px;
+  padding: 11px 0 0;
+  margin-top: 11px;
+  border-top: 1px solid #e2e7ef;
+  color: #66758b;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell .customer-confirmation-next-row strong {
+  min-width: 0;
+  color: #0b326d;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: right;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell .customer-confirmation-next-row .badge {
+  padding: 5px 10px;
+  background: #e9f0fb;
+  color: #0b326d;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell .customer-confirmation-actions {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.customer-confirmation-modal .customer-nurse-request-confirmation-shell .customer-confirmation-actions > button {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 0 20px;
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .customer-confirmation-modal {
+    padding: 16px;
+  }
+
+  .customer-confirmation-modal .customer-nurse-request-confirmation-shell {
+    width: 100%;
+    max-height: calc(100dvh - 32px);
+    padding: 24px 18px 20px;
+  }
+}
+
+.account-switch-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 100001;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f4f7fb;
+}
+
+.account-switch-dialog {
+  width: min(420px, 100%);
+  padding: 28px;
+  border: 1px solid #dce4ee;
+  border-radius: 24px;
+  background: #fff;
+  color: #0b326d;
+  text-align: center;
+}
+
+.account-switch-dialog h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 500;
+}
+
+.account-switch-dialog p {
+  margin: 12px 0 22px;
+  color: #667085;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.account-switch-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.account-switch-actions button {
+  width: 100%;
+  min-height: 48px;
+  border-radius: 999px;
+}
+
+@media (max-width: 960px) {
+  .customer-profile-upload-modal {
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 0;
+  }
+
+  .customer-profile-upload-modal .customer-profile-upload-card {
+    width: 100%;
+    min-height: 100dvh;
+    max-height: 100dvh;
+    padding: 56px 18px 24px;
+    border-radius: 0;
+    overflow-y: auto;
+  }
+
+  .customer-profile-upload-modal .customer-profile-cropper-surface {
+    width: min(100%, calc(100dvh - 330px));
+    min-width: 260px;
+  }
+}
+
+/* Readable patient subscription history redesign. */
+.customer-subscription-management-app .customer-mobile-header,
+.customer-subscription-management-tabs {
+  background: #fff;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Keep the desktop subscription tabs in the page flow instead of pinning them
+   over the history heading. The mobile tab bar remains full-width and sticky. */
+.customer-subscription-management-shell.is-desktop > .customer-subscription-management-tabs {
+  position: static;
+  top: auto;
+  z-index: auto;
+  justify-self: start;
+  width: min(100%, 320px);
+  margin: 0 0 4px;
+  padding-block: 0;
+  overflow: visible;
+}
+
+.customer-subscription-management-shell.is-desktop > .customer-subscription-management-tabs > button {
+  min-width: 0;
+}
+
+.customer-subscription-history-panel[role="tabpanel"] {
+  width: 100%;
+  max-width: 760px;
+  min-height: 420px;
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  padding: 4px 0 32px;
+  background: transparent;
+}
+
+.customer-subscription-history-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 0;
+  padding: 0 0 20px;
+  border-bottom: 1px solid #dce5ef;
+}
+
+.customer-subscription-history-eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: #63738b;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.customer-subscription-history-header h2 {
+  margin: 0;
+  color: #082d68;
+  font-size: clamp(24px, 4vw, 30px);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -.025em;
+}
+
+.customer-subscription-history-header p {
+  max-width: 470px;
+  margin: 8px 0 0;
+  color: #5f7088;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.customer-subscription-history-filters button:focus-visible {
+  outline: 3px solid rgba(11, 50, 109, .2);
+  outline-offset: 2px;
+}
+
+.customer-subscription-history-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.customer-subscription-history-summary article {
+  min-width: 0;
+  min-height: 108px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 15px;
+  border: 1px solid #dce5ef;
+  border-radius: 18px;
+  background: #f7f9fc;
+}
+
+.customer-subscription-history-summary article > span,
+.customer-subscription-history-summary article > small {
+  overflow: hidden;
+  color: #607087;
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-subscription-history-summary article > span {
+  font-weight: 600;
+}
+
+.customer-subscription-history-summary article > strong {
+  color: #0b326d;
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.customer-subscription-history-summary .is-successful > strong {
+  color: #198754;
+}
+
+.customer-subscription-history-summary .is-failed > strong {
+  color: #c9434b;
+}
+
+.customer-subscription-history-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-radius: 27px;
+  background: #f0f4f9;
+}
+
+.customer-subscription-history-filters button {
+  min-width: 0;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 22px;
+  background: transparent;
+  color: #586a83;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.customer-subscription-history-filters button > span {
+  min-width: 20px;
+  min-height: 20px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #fff;
+  color: #53647c;
+  font-size: 10px;
+}
+
+.customer-subscription-history-filters button.active {
+  background: #0b326d;
+  color: #fff;
+}
+
+.customer-subscription-history-filters button.active > span {
+  background: rgba(255, 255, 255, .18);
+  color: #fff;
+}
+
+.customer-subscription-history-list {
+  display: grid;
+  gap: 12px;
+}
+
+.customer-subscription-history-item {
+  min-width: 0;
+  min-height: 108px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 13px;
+  padding: 16px;
+  border: 1px solid #dce5ef;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.customer-subscription-history-icon {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border: 1px solid #d9e4ef;
+  border-radius: 50%;
+  background: #f2f6fa;
+  color: #66758b;
+}
+
+.customer-subscription-history-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.customer-subscription-history-icon.is-successful,
+.customer-subscription-history-icon.is-activated {
+  border-color: #ccebd9;
+  background: #edf9f2;
+  color: #198754;
+}
+
+.customer-subscription-history-icon.is-failed,
+.customer-subscription-history-icon.is-deactivated,
+.customer-subscription-history-icon.is-expired {
+  border-color: #f3d4d7;
+  background: #fff2f3;
+  color: #c9434b;
+}
+
+.customer-subscription-history-copy {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.customer-subscription-history-copy > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.customer-subscription-history-copy strong {
+  min-width: 0;
+  color: #132f59;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.customer-subscription-history-copy p {
+  margin: 0;
+  color: #5f7088;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.customer-subscription-history-copy small {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: #7b899c;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.customer-subscription-history-reference {
+  min-width: 0;
+  overflow: hidden;
+  color: #536b8a;
+  text-overflow: ellipsis;
+}
+
+.customer-subscription-history-badge {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.customer-subscription-history-value {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.customer-subscription-history-amount {
+  color: #102f61;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.customer-subscription-history-value > span {
+  color: #8491a3;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.customer-subscription-history-state {
+  min-height: 250px;
+  padding: 24px;
+  border: 1px dashed #cad7e6;
+  border-radius: 18px;
+  background: #f8fafc;
+}
+
+.customer-subscription-history-state.is-filtered {
+  min-height: 180px;
+}
+
+@media (max-width: 620px) {
+  .customer-subscription-history-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .customer-subscription-history-summary .is-membership {
+    grid-column: 1 / -1;
+    min-height: 84px;
+  }
+
+  .customer-subscription-history-item {
+    grid-template-columns: 40px minmax(0, 1fr);
+    padding: 15px 14px;
+  }
+
+  .customer-subscription-history-icon {
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    height: 40px;
+  }
+
+  .customer-subscription-history-value {
+    grid-column: 2;
+    grid-row: auto;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    justify-items: stretch;
+    padding-top: 7px;
+    border-top: 1px solid #edf1f5;
+  }
+}
+
+/* September 10 annotation pass: creation controls, operational tables, and blocking dialogs. */
+.nevari-create-user .workflow-step-1 .user-account-role {
+  padding-top: 0;
+  border-top-width: 0;
+}
+
+.nevari-create-user .workflow-step-1 .user-account-role .select-wrap {
+  position: relative;
+  padding-left: 0;
+}
+
+.nevari-create-user .workflow-step-1 .user-account-role .select-wrap::after {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid #526780;
+  border-bottom: 1.5px solid #526780;
+  content: "";
+  pointer-events: none;
+  transform: translateY(-65%) rotate(45deg);
+}
+
+.nevari-create-user .workflow-step-1 .user-account-role select {
+  padding-right: 38px !important;
+}
+
+.nevari-create-user .workflow-step-1 .user-account-section-heading {
+  padding-top: 17px;
+}
+
+.nevari-create-user .user-account-avatar-section {
+  justify-content: flex-start;
+}
+
+.nevari-create-user .user-account-avatar-copy .user-account-field-title {
+  margin-bottom: 0 !important;
+}
+
+.nevari-create-user .user-account-avatar img {
+  border-radius: 118px;
+}
+
+.nevari-create-user .user-account-avatar:has(img) {
+  border-radius: 50%;
+}
+
+.nevari-create-user .user-password-input > button {
+  min-height: 21px !important;
+  height: 21px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  background: #fff !important;
+}
+
+.nevari-create-user .user-password-control > .pill-button {
+  min-height: 0 !important;
+  height: 16.6px !important;
+  padding: 13.7px 18px !important;
+  box-sizing: content-box;
+  white-space: nowrap;
+}
+
+.nevari-create-user .modal-actions .button-primary {
+  border-radius: 999px !important;
+}
+
+@media (min-width: 901px) {
+  .nevari-create-user .workflow-step-1 .user-password-control {
+    width: 532.2px;
+    max-width: 100%;
+    grid-template-columns: 310px minmax(0, 1fr);
+  }
+
+  .nevari-create-user .workflow-step-1 .user-password-input > input {
+    width: 300px !important;
+    margin-right: 10px;
+    box-sizing: border-box;
+  }
+}
+
+@media (max-width: 900px) {
+  .nevari-create-user .workflow-step-1 .user-password-control {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nevari-create-user .workflow-step-1 .user-password-input > input {
+    width: 100% !important;
+    margin-right: 0;
+  }
+}
+
+/* The order form combines customer and basket entry, followed by one review step. */
+.nevari-create-order .creation-flow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.nevari-create-order .workflow-step-0 .order-create-full-width {
+  display: grid !important;
+  grid-template-columns: minmax(310px, .8fr) minmax(0, 1.2fr) !important;
+  gap: 34px !important;
+}
+
+.nevari-create-order .workflow-step-0 .order-create-left-column {
+  width: auto;
+  margin: 0;
+}
+
+.nevari-create-order .workflow-step-0 .order-create-right-column {
+  display: flex !important;
+}
+
+.nevari-create-order .workflow-step-1 .order-create-full-width {
+  display: none !important;
+}
+
+.nevari-create-order .workflow-step-1 .order-create-review {
+  display: block !important;
+  margin-top: 32px;
+  margin-bottom: 32px;
+}
+
+@media (max-width: 900px) {
+  .nevari-create-order .workflow-step-0 .order-create-full-width {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* Product and order table annotations. */
+.nevari-admin-storefront .products-table .stock-col {
+  width: 80px;
+  min-width: 80px;
+}
+
+.nevari-admin-storefront .products-table .product-stock-summary {
+  width: 80px;
+  justify-content: flex-start;
+}
+
+.nevari-admin-storefront .products-segmented-bar > .filter-btn:nth-child(2) {
+  border: 1px solid #737373;
+}
+
+.nevari-admin-storefront .order-queue-tabs {
+  padding-right: 10px;
+  padding-left: 10px;
+  background: #eef4fb;
+}
+
+.nevari-admin-storefront .orders-table-shell .interactive-row > td:first-child .muted {
+  font-size: 10px;
+}
+
+/* Patient directory widths are scoped so other admin tables keep their own proportions. */
+.nevari-admin-storefront .patient-directory-panel table {
+  min-width: 1260px;
+  table-layout: fixed;
+}
+
+.nevari-admin-storefront .patient-directory-panel :is(th, td):nth-child(1) {
+  width: 612.93px;
+}
+
+.nevari-admin-storefront .patient-directory-panel :is(th, td):nth-child(2),
+.nevari-admin-storefront .patient-directory-panel .narrow-col:nth-child(2),
+.nevari-admin-storefront .patient-directory-panel .narrow-col:nth-child(2) .sortable-table-header {
+  width: 80px;
+  min-width: 80px;
+}
+
+/* The later Spend annotation supersedes the earlier 114.88px request. */
+.nevari-admin-storefront .patient-directory-panel :is(th, td):nth-child(3) {
+  width: 286.6px;
+}
+
+html body .nevari-admin-storefront .products-segmented-bar > .filter-btn:nth-child(2) {
+  border: 1px solid #737373 !important;
+}
+
+html body .nevari-admin-storefront .order-queue-tabs {
+  padding-right: 10px !important;
+  padding-left: 10px !important;
+  background: #eef4fb !important;
+}
+
+.nevari-admin-storefront .patient-directory-panel tbody > tr > td:nth-child(5) {
+  font-size: 10px;
+}
+
+/* Subscription OTP is a root-level, topmost verification layer. */
+.subscription-protection-backdrop {
+  z-index: 400;
+}
+
+.subscription-protection-frame.subscription-otp-card-frame {
+  width: min(500px, calc(100vw - 24px));
+  padding: 0;
+}
+
+.subscription-otp-card-frame .modal-body {
+  padding: 0;
+}
+
+.subscription-otp-card-frame .subscription-otp-card {
+  padding: 26px 40px 0;
+}
+
+.subscription-otp-card-frame .subscription-otp-close {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 9999px;
+}
+
+/* Security-sensitive staff actions block the details dialog until confirmed or cancelled. */
+.staff-confirmation-overlay {
+  position: fixed;
+  z-index: 420;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(7, 24, 50, .56);
+  backdrop-filter: blur(5px);
+}
+
+.staff-confirmation-dialog {
+  width: min(520px, 100%);
+  border: 1px solid #d7e0eb;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(7, 24, 50, .2);
+}
+
+.staff-confirmation-dialog .staff-action-confirmation {
+  padding: 26px;
+  border-top: 0;
+}
+
+@media (max-width: 420px) {
+  .customer-subscription-history-header {
+    align-items: start;
+  }
+
+  .customer-subscription-history-filters button {
+    gap: 4px;
+    padding-inline: 6px;
+    font-size: 11px;
+  }
+}
+
+/* Product category column polish requested during the desktop review. */
+html body .nevari-admin-storefront .product-categories-sidebar > .product-categories-pane-head,
+html body .nevari-admin-storefront .product-categories-sidebar > .product-category-directory-search {
+  width: auto;
+  margin-inline: 16px;
+}
+
+html body .nevari-admin-storefront .product-category-list {
+  gap: 8px;
+  padding-inline: 16px;
+}
+
+html body .nevari-admin-storefront .product-category-row {
+  min-height: 60px;
+  padding: 17px 14px;
+  overflow: clip;
+  transition: min-height 180ms ease, padding 180ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+html body .nevari-admin-storefront .product-category-row-main {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+}
+
+html body .nevari-admin-storefront .product-category-row-actions {
+  height: auto;
+  max-height: 0;
+  margin-top: 0;
+  flex-wrap: nowrap;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: max-height 180ms ease, margin-top 180ms ease, opacity 140ms ease, transform 180ms ease;
+}
+
+html body .nevari-admin-storefront .product-category-row:hover,
+html body .nevari-admin-storefront .product-category-row:focus-within {
+  min-height: 88px;
+}
+
+html body .nevari-admin-storefront .product-category-row:hover .product-category-row-actions,
+html body .nevari-admin-storefront .product-category-row:focus-within .product-category-row-actions {
+  height: auto;
+  max-height: 28px;
+  margin-top: 10px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+html body .nevari-admin-storefront .product-categories-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+html body .nevari-admin-storefront .product-category-products {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+html body .nevari-admin-storefront .product-category-linked-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+html body .nevari-admin-storefront .product-category-searchbar,
+html body .nevari-admin-storefront .product-category-searchbar .product-category-searchfield,
+html body .nevari-admin-storefront .product-category-searchfield-inline,
+html body .nevari-admin-storefront .product-category-searchfield-inline input {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+html body .nevari-admin-storefront .product-category-searchfield-inline {
+  margin-left: 0;
+}
+
+html body .nevari-admin-storefront .product-category-searchfield-inline input {
+  flex: 1 1 auto;
+}
+
+html body .nevari-admin-storefront .product-category-directory-pagination,
+html body .nevari-admin-storefront .product-category-pagination-row,
+html body .nevari-admin-storefront :is(.pagination-row, .users-pagination, .doctor-pagination) {
+  position: sticky;
+  z-index: 12;
+  bottom: 0;
+  flex: 0 0 auto;
+  margin-top: auto;
+  background: rgba(255, 255, 255, .98);
+  backdrop-filter: blur(10px);
+}
+
+html body .nevari-admin-storefront :is(
+  .main-shell,
+  .pages-stack,
+  .dashboard-swr-reveal,
+  .page-view,
+  .product-categories-pane,
+  .product-category-list,
+  .product-categories-content,
+  .product-category-linked-list,
+  .table-scroll
+) {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html body .nevari-admin-storefront :is(
+  .main-shell,
+  .pages-stack,
+  .dashboard-swr-reveal,
+  .page-view,
+  .product-categories-pane,
+  .product-category-list,
+  .product-categories-content,
+  .product-category-linked-list,
+  .table-scroll
+)::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html body .nevari-admin-storefront .product-category-row,
+  html body .nevari-admin-storefront .product-category-row-actions {
+    transition: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .nevari-admin-storefront .topbar {
+    align-items: flex-start !important;
+    flex-wrap: wrap !important;
+  }
+
+  .nevari-admin-storefront .topbar-left {
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .nevari-admin-storefront .topbar-left .search-field {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+}
+
+/* V2 audit repairs: bounded mobile shell, category directory controls, and touch targets. */
+.storefront-sidebar-scrim {
+  display: none;
+}
+
+.product-category-directory-search {
+  display: block;
+  padding: 0 12px 10px;
+}
+
+.product-category-directory-search input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #d5dfeb;
+  border-radius: 12px;
+  background: #fff;
+  color: #102f5f;
+}
+
+.product-category-directory-pagination {
+  padding: 10px 12px;
+}
+
+@media (max-width: 980px) {
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) .sidebar {
+    top: 16px !important;
+    bottom: 16px !important;
+    left: 16px !important;
+    width: min(320px, calc(100vw - 32px)) !important;
+    max-width: calc(100vw - 32px) !important;
+    height: calc(100dvh - 32px) !important;
+    max-height: calc(100dvh - 32px) !important;
+  }
+
+  .storefront-sidebar-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: rgba(10, 42, 94, .42);
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) :is(.main-shell, .pages-stack, .page-view, .panel, .table-panel) {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) :is(.table-scroll, .table-wrap, .users-table-wrap, .order-create-table-scroll) {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto !important;
+    overscroll-behavior-inline: contain;
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) :is(.icon-button, .staff-action-icon, .featured-toggle, .btn-add-icon) {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+
+  .app-modal-layer :is(.detail-flat-modal, .modal-frame, .staff-fullscreen-modal) {
+    width: min(calc(100% - 16px), 960px) !important;
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+  }
+}
+
+@media (max-width: 620px) {
+  body:has(.nevari-admin-storefront) {
+    padding: 8px;
+    overflow-x: hidden;
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) .sidebar {
+    top: 8px !important;
+    bottom: 8px !important;
+    left: 8px !important;
+    width: min(320px, calc(100vw - 16px)) !important;
+    max-width: calc(100vw - 16px) !important;
+    height: calc(100dvh - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+  }
+
+  .page-shell.nevari-admin-storefront:not(.embedded-dashboard-page) .main-shell {
+    height: calc(100dvh - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+    padding: 10px !important;
+  }
+
+  .nevari-admin-storefront .topbar {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+  }
+
+  .nevari-admin-storefront .topbar-left {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .nevari-admin-storefront .search-field {
+    min-width: 0;
+  }
+
+  .nevari-admin-storefront .product-categories-pane {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
 /* Screenshot-reference redesign, scoped exclusively to Create Appointment. */
 .creation-modal--appointment {
   width: min(1390px, calc(100vw - 48px));
@@ -49138,4 +51370,2735 @@ html body .app-modal-layer .product-editor-modal.product-editor-create-mode .nev
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Approved storefront audit overrides; keep after legacy compatibility rules. */
+html body .nevari-admin-storefront .topbar-left {
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 20px;
+}
+
+html body .nevari-admin-storefront .topbar-page-title {
+  margin: 0;
+  flex: 0 0 auto;
+  color: #102f5f;
+  font-size: 22px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+html body .nevari-admin-storefront .topbar-left .search-field {
+  width: min(100%, 620px);
+  min-width: 220px;
+  flex: 1 1 420px;
+}
+
+html body .nevari-admin-storefront .page-view > .admin-page-heading {
+  display: none !important;
+}
+
+html body .nevari-admin-storefront .nevari-storefront-tabs label {
+  display: block;
+  min-width: 150px;
+}
+
+html body .nevari-admin-storefront .nevari-storefront-tabs select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 38px 0 14px;
+  border: 1px solid #d6e0eb;
+  border-radius: 12px;
+  background-color: #fff;
+  color: #102f5f;
+  font: inherit;
+}
+
+html body .nevari-admin-storefront .product-categories-pane {
+  height: min(760px, calc(100dvh - 190px));
+  min-height: 560px;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-categories-sidebar {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-searchfield-inline input {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode
+  .product-create-price-row {
+  grid-column: 1 / -1 !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode
+  .product-create-description-column {
+  grid-column: 1 / -1 !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode
+  .product-create-description-column textarea.form-control {
+  height: 74px !important;
+  min-height: 74px !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode
+  .product-create-tag-picker {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+html body .app-modal-layer .product-editor-modal.product-editor-create-mode
+  .product-create-multiple-footer {
+  min-height: 46px !important;
+  padding: 0 14px !important;
+  border: 1px solid #c8d4e2 !important;
+  border-radius: 12px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+@media (min-width: 981px) and (min-height: 760px) {
+  html body .app-modal-layer .product-editor-modal.product-editor-create-mode .product-editor-shell {
+    overflow: visible !important;
+  }
+}
+
+@media (max-width: 980px) {
+  html body .nevari-admin-storefront .product-categories-pane {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) !important;
+    overflow: visible;
+  }
+
+  html body .nevari-admin-storefront .product-categories-sidebar {
+    height: min(440px, 48dvh);
+    border-right: 0;
+    border-bottom: 1px solid #d6e0eb;
+  }
+
+  html body .nevari-admin-storefront .product-categories-content {
+    height: auto;
+    overflow: visible;
+  }
+}
+.customer-two-factor-row > span {
+  display: grid;
+  gap: 3px;
+}
+
+.customer-two-factor-row small,
+.customer-two-factor-recovery {
+  color: #596579;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.customer-two-factor-trigger {
+  min-width: 88px;
+  min-height: 44px;
+  border: 1px solid #c9d3e2;
+  border-radius: 12px;
+  background: #fff;
+  color: #10233f;
+  cursor: pointer;
+  font: inherit;
+}
+
+.customer-two-factor-trigger.is-enabled {
+  border-color: #b42318;
+  color: #b42318;
+}
+
+.customer-two-factor-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(9, 24, 46, 0.58);
+}
+
+.customer-two-factor-dialog {
+  width: min(100%, 480px);
+  border-radius: 18px;
+  background: #fff;
+  padding: 24px;
+  color: #10233f;
+}
+
+.customer-two-factor-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+}
+
+.customer-two-factor-dialog > p {
+  margin: 0 0 20px;
+  color: #596579;
+  line-height: 1.5;
+}
+
+.customer-two-factor-dialog label {
+  display: grid;
+  gap: 8px;
+}
+
+.customer-two-factor-dialog input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid #b8c5d6;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  letter-spacing: 0.22em;
+}
+
+.customer-two-factor-error {
+  margin: 12px 0 0;
+  color: #b42318;
+  font-size: 0.88rem;
+}
+
+.customer-two-factor-recovery {
+  margin: 14px 0 0;
+}
+
+.customer-two-factor-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+@media (max-width: 560px) {
+  .customer-two-factor-dialog {
+    padding: 20px;
+  }
+
+  .customer-two-factor-actions > button {
+    width: 100%;
+  }
+}
+
+/* Shared admin tabs, table actions, and pagination footers. */
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 5px;
+  overflow-x: auto;
+  border: 0 !important;
+  border-radius: 15px;
+  background: #eef4fb;
+  box-shadow: none;
+  scrollbar-width: none;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+)::-webkit-scrollbar {
+  display: none;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) > button {
+  min-height: 42px;
+  padding: 0 16px;
+  border: 0 !important;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  color: #53647c;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) > button:is(.active, [aria-selected="true"], [aria-current="page"]) {
+  background: #0b326c;
+  box-shadow: none;
+  color: #fff;
+}
+
+html body .nevari-admin-storefront .table-action-strip .table-action-button {
+  width: 36px !important;
+  min-width: 36px !important;
+  max-width: 36px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  max-height: 36px !important;
+  flex: 0 0 36px;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  aspect-ratio: 1 / 1;
+}
+
+html body :is(.pagination-row, .users-pagination, .doctor-pagination) {
+  border-top: 0 !important;
+}
+
+html body .nevari-admin-storefront .table-scroll table {
+  width: max(100%, max-content);
+}
+
+html body .nevari-admin-storefront table th,
+html body .nevari-admin-storefront .sortable-table-header,
+html body .nevari-admin-storefront .sortable-table-header > span:first-child {
+  white-space: nowrap;
+}
+
+html body .nevari-admin-storefront .patient-directory-panel .narrow-col {
+  width: 132px;
+  min-width: 132px;
+}
+
+html body .nevari-admin-storefront .topbar-page-title {
+  font-weight: 300;
+}
+
+html body .nevari-admin-storefront .topbar-search-field {
+  animation: topbar-search-reposition 220ms cubic-bezier(.2, .8, .2, 1) both;
+  will-change: transform, opacity;
+}
+
+@keyframes topbar-search-reposition {
+  from {
+    opacity: .72;
+    transform: translateX(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html body .nevari-admin-storefront .topbar-search-field {
+    animation: none;
+  }
+}
+
+html body .nevari-admin-storefront {
+  --admin-select-width: 120px;
+  --admin-select-height: 18px;
+  --admin-select-font-size: 12px;
+  --admin-select-radius: 12px;
+  --admin-select-padding-inline: 10px;
+}
+
+html body .nevari-admin-storefront select {
+  width: var(--admin-select-width) !important;
+  min-width: var(--admin-select-width) !important;
+  max-width: 100% !important;
+  height: var(--admin-select-height) !important;
+  min-height: var(--admin-select-height) !important;
+  padding-right: var(--admin-select-padding-inline) !important;
+  padding-left: var(--admin-select-padding-inline) !important;
+  border-radius: var(--admin-select-radius) !important;
+  font-size: var(--admin-select-font-size) !important;
+  line-height: 1 !important;
+}
+
+/* Consolidated storefront tabs, pagination, and product-category layout. */
+html body .nevari-admin-storefront {
+  --admin-tab-background: #eef4fb;
+  --admin-tab-font-size: 10px;
+  --admin-tab-height: 40px;
+  --admin-tab-min-width: 90px;
+  --admin-pagination-width: 42px;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) {
+  width: max-content;
+  max-width: 100%;
+  min-height: calc(var(--admin-tab-height) + 10px);
+  height: auto;
+  padding: 0;
+  gap: 5px;
+  border: 0 !important;
+  border-radius: 15px;
+  background: transparent !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) > button {
+  width: auto;
+  min-width: var(--admin-tab-min-width);
+  height: var(--admin-tab-height);
+  min-height: var(--admin-tab-height);
+  padding: 0 12px;
+  border: 1px solid transparent !important;
+  border-radius: 12px;
+  font-size: var(--admin-tab-font-size);
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) > button:is(.active, [aria-selected="true"], [aria-current="page"]) {
+  border-color: #0b326c !important;
+  background: #0b326c !important;
+  color: #fff;
+}
+
+html body .nevari-admin-storefront :is(
+  .filter-bar,
+  .segmented,
+  .segmented-mini,
+  .nevari-storefront-tabs,
+  .product-editor-tabs,
+  .email-segmented-tabs,
+  .audit-tabs,
+  .tabs-bar
+) .filter-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 9px;
+  line-height: 16px;
+}
+
+html body .nevari-admin-storefront .products-table-shell {
+  min-width: 0;
+  padding: 16px !important;
+  display: grid;
+  gap: 12px;
+  border-radius: 19px;
+  background: var(--admin-tab-background);
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .products-table-shell > .products-panel-header {
+  min-width: 0;
+  padding: 0 !important;
+  margin: 0;
+  border: 0;
+}
+
+html body .nevari-admin-storefront .products-table-shell .products-segmented-bar {
+  margin: 0;
+}
+
+html body .nevari-admin-storefront .product-categories-pane {
+  width: 100%;
+  min-width: 0;
+  height: min(680px, calc(100dvh - 220px));
+  min-height: 520px;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 0;
+  align-items: stretch;
+  border-radius: 19px;
+  background: var(--admin-tab-background);
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-categories-sidebar,
+html body .nevari-admin-storefront .product-categories-content {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  background: var(--admin-tab-background);
+}
+
+html body .nevari-admin-storefront .product-categories-sidebar {
+  padding: 16px 0 0;
+  border-right: 1px solid #d6e0eb;
+}
+
+html body .nevari-admin-storefront .product-categories-content {
+  padding: 16px;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-products {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  margin: 0;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-linked-list {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  grid-auto-rows: minmax(104px, auto);
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-product-card {
+  width: 100%;
+  min-width: 0;
+  min-height: 104px;
+  height: auto;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #d6e0eb;
+  border-radius: 16px;
+  background: #fff;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-product-card .product-thumb {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+html body .nevari-admin-storefront .product-category-product-card .product-thumb img {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+html body .nevari-admin-storefront .product-category-product-details {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+html body .nevari-admin-storefront .product-category-product-details strong {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+html body .nevari-admin-storefront .product-category-product-price {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+html body .nevari-admin-storefront .product-category-product-price {
+  margin: 0 !important;
+  color: #53647c;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+html body .nevari-admin-storefront .product-category-inline-head,
+html body .nevari-admin-storefront .product-category-inline-group,
+html body .nevari-admin-storefront .product-category-inline-trigger {
+  min-height: 34px;
+  overflow: visible;
+}
+
+html body .nevari-admin-storefront :is(.pagination-row, .users-pagination, .doctor-pagination) {
+  min-height: 44px;
+  padding-top: 5px !important;
+  padding-bottom: 5px !important;
+  border: 0 !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+html body .nevari-admin-storefront .page-item {
+  width: var(--admin-pagination-width);
+  min-width: var(--admin-pagination-width);
+  height: 34px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
+@media (max-width: 980px) {
+  html body .nevari-admin-storefront .products-table-shell {
+    padding: 12px !important;
+  }
+
+  html body .nevari-admin-storefront .product-categories-pane {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  html body .nevari-admin-storefront .product-categories-sidebar {
+    height: min(440px, 48dvh);
+    border-right: 0;
+    border-bottom: 1px solid #d6e0eb;
+  }
+
+  html body .nevari-admin-storefront .product-categories-content {
+    height: min(620px, 64dvh);
+  }
+}
+
+/* Admin storefront annotation pass: scoped component corrections. */
+.nevari-admin-storefront .nav-groups .nav-item:not(.active) > span:not(.nav-icon) {
+  font-weight: 300 !important;
+}
+
+.nevari-admin-storefront .nav-groups .nav-item.active > span:not(.nav-icon) {
+  font-weight: 500 !important;
+}
+
+html body .nevari-admin-storefront .products-table-shell .products-filter-bar {
+  padding: 5px !important;
+  border: 1px solid var(--admin-tab-border, #d8e2f0) !important;
+  border-radius: 15px !important;
+  background: var(--admin-tab-background, #f2f6fb) !important;
+}
+
+.staff-directory-detail-modal .staff-modal-avatar > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  object-position: center;
+}
+
+.staff-modal-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #c9d7e8;
+  border-radius: 10px;
+  background: #f5f8fc;
+  color: #18365f;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.staff-modal-notice.error {
+  border-color: #f1c2c2;
+  background: #fff5f5;
+  color: #9d2525;
+}
+
+.staff-action-confirmation {
+  display: grid;
+  gap: 14px;
+  padding-top: 20px;
+  border-top: 1px solid #e1e7f0;
+}
+
+.staff-action-confirmation p {
+  margin: 4px 0 0;
+  color: #61718a;
+  font-size: 12px;
+}
+
+.staff-action-confirmation label {
+  display: grid;
+  gap: 7px;
+  color: #334b6d;
+  font-size: 12px;
+}
+
+.staff-action-confirmation textarea {
+  width: 100%;
+  min-height: 82px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.staff-action-confirmation-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+html body .nevari-admin-storefront :is(.table-panel, .admin-flat-table-section, .subscription-plans-panel, .users-panel) > :is(.pagination-row, .users-pagination, .doctor-pagination) {
+  border-top: 1px solid #d8e2f0 !important;
+  background: #fff !important;
+}
+
+/* Admin settings and signed-in profile redesign. */
+html body .nevari-admin-storefront .admin-settings-surface {
+  gap: 0;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid #d8e2f0 !important;
+  border-radius: 18px !important;
+  background: #fff !important;
+  box-shadow: none !important;
+}
+
+.nevari-admin-storefront .admin-settings-intro {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 26px;
+  border-bottom: 1px solid #d8e2f0;
+}
+
+.nevari-admin-storefront .admin-settings-intro h2,
+.nevari-admin-storefront .admin-profile-hero h2,
+.nevari-admin-storefront .admin-profile-section-heading h3 {
+  margin: 4px 0 6px;
+  color: #0a2a5e;
+  letter-spacing: -0.02em;
+}
+
+.nevari-admin-storefront .admin-settings-intro h2 {
+  font-size: 24px;
+}
+
+.nevari-admin-storefront .admin-settings-intro p:not(.section-kicker),
+.nevari-admin-storefront .admin-profile-section-heading p:not(.section-kicker) {
+  margin: 0;
+  color: #5d6e86;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.nevari-admin-storefront .admin-settings-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #bfe2cf;
+  border-radius: 10px;
+  background: #eefaf3;
+  color: #176c43;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .admin-settings-health i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #27ae60;
+}
+
+.nevari-admin-storefront .admin-settings-workspace {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  min-height: 430px;
+}
+
+html body .nevari-admin-storefront .admin-settings-tabs {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: auto;
+  max-width: none;
+  padding: 14px !important;
+  overflow: visible;
+  border: 0 !important;
+  border-right: 1px solid #d8e2f0 !important;
+  border-radius: 0 !important;
+  background: #f2f6fb !important;
+  box-shadow: none !important;
+}
+
+html body .nevari-admin-storefront .admin-settings-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px !important;
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+  color: #344968 !important;
+  text-align: left;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+html body .nevari-admin-storefront .admin-settings-tabs button:hover {
+  border-color: #d4dfed !important;
+  background: #fff !important;
+}
+
+html body .nevari-admin-storefront .admin-settings-tabs button.active {
+  border-color: #0a2a5e !important;
+  background: #0a2a5e !important;
+  color: #fff !important;
+}
+
+.nevari-admin-storefront .admin-settings-tab-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.nevari-admin-storefront .admin-settings-tab-copy strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .admin-settings-tab-copy small {
+  overflow: hidden;
+  color: #6b7b91;
+  font-size: 11px;
+  font-weight: 300;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nevari-admin-storefront .admin-settings-tabs button.active .admin-settings-tab-copy small {
+  color: #dbe8fb;
+}
+
+.nevari-admin-storefront .settings-panels {
+  min-width: 0;
+  padding: 20px;
+}
+
+html body .nevari-admin-storefront .settings-panel {
+  padding: 22px !important;
+  border: 1px solid #d8e2f0 !important;
+  border-radius: 15px !important;
+  background: #fff !important;
+  box-shadow: none !important;
+}
+
+.nevari-admin-storefront .settings-form-grid .field-card {
+  display: grid;
+  grid-column: span 4;
+  align-content: start;
+  gap: 8px;
+}
+
+.nevari-admin-storefront .settings-form-grid .field-card.span-6 {
+  grid-column: span 6;
+}
+
+.nevari-admin-storefront .settings-form-grid .field-card.span-8 {
+  grid-column: span 8;
+}
+
+.nevari-admin-storefront .settings-form-grid .field-card.span-12 {
+  grid-column: span 12;
+}
+
+.nevari-admin-storefront .settings-form-grid .field-card > span {
+  color: #435672;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .settings-form-grid .field-card input:not([type="checkbox"]),
+.nevari-admin-storefront .settings-form-grid .field-card select,
+.nevari-admin-storefront .settings-form-grid .field-card textarea {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #d5dfeb;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.nevari-admin-storefront .settings-form-grid .field-card.customer-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 54px;
+  padding: 12px 14px;
+  border: 1px solid #d8e2f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.nevari-admin-storefront .settings-form-grid .field-card.customer-toggle-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+}
+
+.nevari-admin-storefront .admin-profile-page {
+  display: grid;
+  gap: 18px;
+}
+
+.nevari-admin-storefront .admin-profile-hero,
+.nevari-admin-storefront .admin-profile-card {
+  border: 1px solid #d8e2f0;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.nevari-admin-storefront .admin-profile-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 24px;
+}
+
+.nevari-admin-storefront .admin-profile-identity,
+.nevari-admin-storefront .admin-profile-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nevari-admin-storefront .admin-profile-avatar {
+  display: grid;
+  place-items: center;
+  width: 66px;
+  height: 66px;
+  flex: 0 0 66px;
+  overflow: hidden;
+  border: 1px solid #cbd8e8;
+  border-radius: 50%;
+  background: #eef3f9;
+  color: #0a2a5e;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.nevari-admin-storefront .admin-profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nevari-admin-storefront .admin-profile-identity h2 {
+  font-size: 23px;
+}
+
+.nevari-admin-storefront .admin-profile-identity p:not(.section-kicker) {
+  margin: 0;
+  color: #5d6e86;
+  font-size: 13px;
+}
+
+.nevari-admin-storefront .admin-profile-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.8fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.nevari-admin-storefront .admin-profile-card {
+  padding: 22px;
+}
+
+.nevari-admin-storefront .admin-profile-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.nevari-admin-storefront .admin-profile-section-heading h3 {
+  font-size: 19px;
+}
+
+.nevari-admin-storefront .admin-profile-section-heading > span {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: #eefaf3;
+  color: #176c43;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .admin-profile-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.nevari-admin-storefront .admin-profile-fields label:first-child {
+  grid-column: 1 / -1;
+}
+
+.nevari-admin-storefront .admin-profile-fields label {
+  display: grid;
+  gap: 7px;
+  color: #435672;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .admin-profile-fields input {
+  width: 100%;
+  min-height: 46px;
+  box-sizing: border-box;
+  padding: 11px 12px;
+  border: 1px solid #ccd9e8;
+  border-radius: 10px;
+  background: #fff;
+  color: #102f5e;
+}
+
+.nevari-admin-storefront .admin-profile-fields input:focus-visible {
+  border-color: #0a2a5e;
+  outline: 3px solid rgba(10, 42, 94, 0.13);
+}
+
+.nevari-admin-storefront .admin-profile-form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #e1e7f0;
+}
+
+.nevari-admin-storefront .admin-profile-form-footer p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.nevari-admin-storefront .admin-profile-form-footer > div {
+  display: flex;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.nevari-admin-storefront .admin-profile-access dl {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.nevari-admin-storefront .admin-profile-access dl > div {
+  display: grid;
+  gap: 3px;
+  padding: 13px 0;
+  border-bottom: 1px solid #e1e7f0;
+}
+
+.nevari-admin-storefront .admin-profile-access dt {
+  color: #65758b;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.nevari-admin-storefront .admin-profile-access dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #102f5e;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .admin-profile-access small {
+  color: #738197;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.nevari-admin-storefront .admin-profile-session-button {
+  width: 100%;
+  margin-top: 16px;
+}
+
+@media (max-width: 980px) {
+  .nevari-admin-storefront .admin-settings-workspace,
+  .nevari-admin-storefront .admin-profile-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  html body .nevari-admin-storefront .admin-settings-tabs {
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: 0 !important;
+    border-bottom: 1px solid #d8e2f0 !important;
+  }
+
+  html body .nevari-admin-storefront .admin-settings-tabs button {
+    min-width: 190px;
+  }
+}
+
+@media (max-width: 640px) {
+  .nevari-admin-storefront .admin-settings-intro,
+  .nevari-admin-storefront .admin-profile-hero,
+  .nevari-admin-storefront .admin-profile-form-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .nevari-admin-storefront .admin-settings-health {
+    align-self: flex-start;
+  }
+
+  .nevari-admin-storefront .settings-panels,
+  .nevari-admin-storefront .admin-profile-card {
+    padding: 16px;
+  }
+
+  .nevari-admin-storefront .admin-profile-hero-actions {
+    flex-wrap: wrap;
+  }
+
+  .nevari-admin-storefront .admin-profile-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nevari-admin-storefront .admin-profile-fields label:first-child {
+    grid-column: auto;
+  }
+
+  .nevari-admin-storefront .admin-profile-form-footer > div {
+    width: 100%;
+  }
+
+  .nevari-admin-storefront .admin-profile-form-footer button {
+    flex: 1 1 0;
+  }
+}
+
+/* Admin storefront review refinements — September 2026. */
+.nevari-admin-storefront .topbar .user-chip.user-chip-button {
+  width: 180px;
+  min-width: 180px;
+  height: 56px;
+  min-height: 56px;
+  padding: 6px 16px 6px 8px;
+  border-radius: 999px;
+  background: #f4f8fb !important;
+}
+
+.nevari-admin-storefront .topbar .user-chip.user-chip-button > span:first-child,
+.nevari-admin-storefront .topbar .user-chip.user-chip-button img {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+html body .nevari-admin-storefront :is(
+  .pagination-row,
+  .users-pagination,
+  .doctor-pagination,
+  .product-pagination,
+  .category-pagination,
+  .order-pagination,
+  .payment-pagination
+) {
+  border-top: 0 !important;
+  border-width: 0 !important;
+}
+
+html body .nevari-admin-storefront .subscription-details-tabs.segmented-mini.nevari-storefront-tabs {
+  display: flex !important;
+  width: 100% !important;
+  min-height: 52px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 4px;
+  padding: 5px !important;
+  overflow-x: auto;
+  border: 1px solid #d8e2f0 !important;
+  border-radius: 15px !important;
+  background: #eef4fb !important;
+}
+
+html body .nevari-admin-storefront .subscription-details-tabs.segmented-mini.nevari-storefront-tabs > button {
+  display: inline-flex !important;
+  width: auto !important;
+  min-width: 112px;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 16px !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  background: transparent !important;
+  color: #284160 !important;
+  font-weight: 400 !important;
+}
+
+html body .nevari-admin-storefront .subscription-details-tabs.segmented-mini.nevari-storefront-tabs > button.active {
+  background: #0a2a5e !important;
+  color: #fff !important;
+  font-weight: 500 !important;
+}
+
+.nevari-admin-storefront .subscription-inline-price:has(input) {
+  display: grid;
+  grid-template-columns: minmax(110px, 180px);
+  gap: 5px;
+}
+
+.nevari-admin-storefront .subscription-inline-price input {
+  width: 100%;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid #0a4f9f;
+  border-radius: 10px;
+  outline: 3px solid rgba(10, 79, 159, .12);
+}
+
+.nevari-admin-storefront .subscription-inline-edit-hint {
+  color: #6f7d90;
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+/* Audit center: progressive hierarchy, compact filters, and a readable activity table. */
+.nevari-admin-storefront .audit-panel {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid #d8e2f0;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.nevari-admin-storefront .audit-center-intro,
+.nevari-admin-storefront .audit-controls,
+.nevari-admin-storefront .audit-table-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.nevari-admin-storefront .audit-center-intro h2 {
+  margin: 2px 0 5px;
+  color: #0a2a5e;
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .audit-center-intro p:not(.section-kicker),
+.nevari-admin-storefront .audit-controls-copy span,
+.nevari-admin-storefront .audit-table-heading span {
+  margin: 0;
+  color: #687a92;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.nevari-admin-storefront .audit-center-summary {
+  display: grid;
+  min-width: 118px;
+  gap: 2px;
+  padding: 11px 14px;
+  border: 1px solid #d8e2f0;
+  border-radius: 12px;
+  background: #f4f8fb;
+}
+
+.nevari-admin-storefront .audit-center-summary strong {
+  color: #0a2a5e;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .audit-center-summary span {
+  color: #687a92;
+  font-size: 11px;
+}
+
+.nevari-admin-storefront .audit-controls {
+  padding: 14px 16px;
+  border: 1px solid #d8e2f0;
+  border-radius: 14px;
+  background: #f4f8fb;
+}
+
+.nevari-admin-storefront .audit-controls-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.nevari-admin-storefront .audit-controls-copy strong,
+.nevari-admin-storefront .audit-table-heading strong {
+  color: #16375f;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .audit-controls .toolbar {
+  display: flex;
+  gap: 10px;
+}
+
+.nevari-admin-storefront .audit-controls .select-wrap {
+  display: grid;
+  min-width: 160px;
+  gap: 5px;
+  color: #53647b;
+  font-size: 11px;
+}
+
+.nevari-admin-storefront .audit-controls select {
+  min-height: 42px;
+  padding: 0 34px 0 12px;
+  border: 1px solid #cbd8e8;
+  border-radius: 10px;
+  background-color: #fff;
+}
+
+html body .nevari-admin-storefront .audit-tabs.segmented-mini.nevari-storefront-tabs {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px !important;
+  overflow-x: auto;
+  border: 1px solid #d8e2f0 !important;
+  border-radius: 15px !important;
+  background: #eef4fb !important;
+}
+
+html body .nevari-admin-storefront .audit-tabs > .audit-tab {
+  min-height: 42px;
+  padding: 0 18px !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  background: transparent !important;
+  color: #284160 !important;
+  font-size: 12px;
+  font-weight: 400 !important;
+}
+
+html body .nevari-admin-storefront .audit-tabs > .audit-tab.active {
+  background: #0a2a5e !important;
+  color: #fff !important;
+  font-weight: 500 !important;
+}
+
+.nevari-admin-storefront .audit-table-wrap {
+  overflow: hidden;
+  border: 1px solid #d8e2f0;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.nevari-admin-storefront .audit-table-heading {
+  padding: 14px 16px;
+  border-bottom: 1px solid #e4eaf2;
+}
+
+.nevari-admin-storefront .audit-table-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.nevari-admin-storefront .audit-table-wrap .table-scroll {
+  max-height: min(54vh, 560px);
+  overflow: auto;
+}
+
+.nevari-admin-storefront .audit-table-wrap table {
+  min-width: 1120px;
+}
+
+.nevari-admin-storefront .audit-table-wrap thead {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  background: #f4f8fb;
+}
+
+.nevari-admin-storefront .audit-row {
+  cursor: pointer;
+}
+
+.nevari-admin-storefront .audit-row:hover,
+.nevari-admin-storefront .audit-row.active {
+  background: #f2f7fd;
+}
+
+/* Profile image editor. */
+.nevari-admin-storefront .admin-profile-photo-editor {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid #d8e2f0;
+  border-radius: 14px;
+  background: #f4f8fb;
+}
+
+.nevari-admin-storefront .admin-profile-photo-preview {
+  display: grid;
+  width: 76px;
+  height: 76px;
+  flex: 0 0 76px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #c8d6e7;
+  border-radius: 50%;
+  background: #fff;
+  color: #0a2a5e;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .admin-profile-photo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nevari-admin-storefront .admin-profile-photo-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 6px;
+}
+
+.nevari-admin-storefront .admin-profile-photo-copy :is(h4, p) {
+  margin: 0;
+}
+
+.nevari-admin-storefront .admin-profile-photo-copy h4 {
+  color: #16375f;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.nevari-admin-storefront .admin-profile-photo-copy > p {
+  color: #687a92;
+  font-size: 12px;
+}
+
+.nevari-admin-storefront .admin-profile-photo-select {
+  width: fit-content;
+  margin-top: 3px;
+}
+
+.nevari-admin-storefront .admin-profile-photo-file {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.nevari-admin-storefront .admin-profile-photo-file > span {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  color: #40516a;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nevari-admin-storefront .admin-profile-photo-file > button:not(.button-primary) {
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: #0a4f9f;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nevari-admin-storefront .admin-profile-photo-file .button-primary {
+  min-height: 40px;
+  margin-left: auto;
+}
+
+/* Professional creation-dialog layouts, scoped to the three reviewed flows. */
+html body .creation-modal-layer :is(.nevari-create-order, .nevari-create-appointment) {
+  width: min(1120px, calc(100vw - 32px));
+  max-width: 1120px;
+}
+
+html body .creation-modal-layer .nevari-create-user {
+  width: min(920px, calc(100vw - 32px));
+  max-width: 920px;
+}
+
+.nevari-create-user .user-account-reference-top {
+  align-items: stretch;
+  padding: 16px;
+  border: 1px solid #dbe3ed;
+  border-radius: 14px;
+  background: #f4f8fb;
+}
+
+.nevari-create-user .user-account-role {
+  align-self: center;
+}
+
+.nevari-create-user .user-account-grid {
+  padding: 2px 2px 8px;
+}
+
+.nevari-create-user .user-account-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 2px;
+}
+
+.nevari-create-user .user-account-section-heading :is(h4, p) {
+  margin: 0;
+}
+
+.nevari-create-user .user-account-section-heading h4 {
+  color: #102f5f;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.nevari-create-user .user-account-section-heading > span {
+  color: #6f7d90;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.nevari-create-user .user-password-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.nevari-create-user .user-password-control > .pill-button {
+  min-width: 150px;
+  border-radius: 12px;
+}
+
+.nevari-create-appointment .consultation-design-grid {
+  grid-template-columns: minmax(300px, .72fr) minmax(0, 1.28fr);
+  gap: 22px 34px;
+}
+
+.nevari-create-appointment .consultation-selected-doctor {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+  padding: 10px;
+}
+
+.nevari-create-appointment .consultation-selected-doctor .consultation-strip-avatar {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.nevari-create-appointment .consultation-selected-doctor .consultation-strip-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nevari-create-appointment .consultation-selected-doctor .consultation-strip-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.nevari-create-appointment .consultation-selected-doctor .consultation-strip-copy :is(strong, span) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nevari-create-order .order-create-full-width {
+  grid-template-columns: minmax(310px, .8fr) minmax(0, 1.2fr);
+  gap: 34px;
+}
+
+.nevari-create-order .order-create-left-column,
+.nevari-create-order .order-create-right-column {
+  gap: 20px;
+}
+
+.nevari-create-order .order-create-right-column {
+  padding-left: 34px;
+}
+
+.nevari-create-order .order-create-items-column,
+.nevari-create-order .order-create-total-summary {
+  border-color: #dbe3ed;
+}
+
+@media (max-width: 900px) {
+  .nevari-create-appointment .consultation-design-grid,
+  .nevari-create-order .order-create-full-width {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nevari-create-order .order-create-right-column,
+  .nevari-create-appointment .consultation-design-calendar {
+    padding-top: 24px;
+    padding-left: 0;
+    border-top: 1px solid #e8edf3;
+    border-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .nevari-admin-storefront .topbar .user-chip.user-chip-button {
+    width: 56px;
+    min-width: 56px;
+    padding: 8px;
+  }
+
+  .nevari-admin-storefront .topbar .user-chip.user-chip-button > :not(:first-child) {
+    display: none;
+  }
+
+  .nevari-admin-storefront :is(.audit-center-intro, .audit-controls, .audit-table-heading) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .nevari-admin-storefront .audit-controls .toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nevari-admin-storefront .audit-controls .select-wrap {
+    min-width: 0;
+  }
+
+  .nevari-admin-storefront .admin-profile-photo-editor,
+  .nevari-admin-storefront .admin-profile-photo-file {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .nevari-admin-storefront .admin-profile-photo-file .button-primary {
+    margin-left: 0;
+  }
+
+  .nevari-create-user .user-password-control {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nevari-create-user .user-account-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+}
+
+/* Creation workflows — structural redesign. Keep this after legacy modal layers. */
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow {
+  display: grid;
+  width: 100%;
+  box-sizing: border-box;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 14px 30px;
+  border-bottom: 1px solid #e5ebf3;
+  background: #f4f8fb;
+  list-style: none;
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: #7a899d;
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li:not(:last-child)::after {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  right: 18px;
+  left: 150px;
+  height: 1px;
+  background: #ccd8e7;
+  content: "";
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li > span {
+  display: grid;
+  position: relative;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border: 1px solid #c9d5e4;
+  border-radius: 50%;
+  background: #fff;
+  color: #718197;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow :is(strong, small) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow strong {
+  color: #50627b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow small {
+  font-size: 11px;
+  font-weight: 400;
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li.active > span {
+  border-color: #0a2a5e;
+  background: #0a2a5e;
+  color: #fff;
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li.active strong {
+  color: #0a2a5e;
+}
+
+/* New user: setup rail + focused form workspace. */
+html body .creation-modal-layer .nevari-create-user {
+  width: min(1080px, calc(100vw - 32px));
+  max-width: 1080px;
+}
+
+html body .nevari-create-user .user-account-create {
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr);
+  gap: 0;
+  padding: 0 !important;
+  background: #fff;
+}
+
+.nevari-create-user .creation-flow {
+  grid-column: 1 / -1;
+}
+
+.nevari-create-user .user-account-reference-top {
+  display: flex !important;
+  grid-column: 1;
+  grid-row: 2 / span 5;
+  min-height: 100%;
+  box-sizing: border-box;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 24px;
+  padding: 28px 24px;
+  border: 0;
+  border-right: 1px solid #dce5f0;
+  border-radius: 0;
+  background: #f4f8fb;
+}
+
+.nevari-create-user .user-account-avatar-section {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.nevari-create-user .user-account-avatar {
+  width: 88px;
+  height: 88px;
+  flex-basis: 88px;
+  border-radius: 20px;
+  background: #fff;
+  font-size: 24px;
+}
+
+.nevari-create-user .user-account-avatar-copy {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 7px;
+}
+
+.nevari-create-user .user-account-avatar-copy > span:not(.field-error):not(.user-avatar-filename) {
+  color: #65758b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.nevari-create-user .user-account-avatar-copy .user-account-field-title {
+  color: #102f5f !important;
+  font-size: 17px !important;
+  font-weight: 500;
+}
+
+.nevari-create-user .user-account-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.nevari-create-user .user-account-inline-actions .pill-button {
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 10px;
+}
+
+.nevari-create-user .user-account-role {
+  display: grid;
+  gap: 7px;
+  padding-top: 22px;
+  border-top: 1px solid #d8e2ee;
+}
+
+.nevari-create-user .user-account-role::after {
+  color: #687a92;
+  font-size: 11px;
+  line-height: 1.45;
+  content: "Role controls the dashboard and records this user can access.";
+}
+
+.nevari-create-user .user-account-section-heading,
+.nevari-create-user .user-account-grid,
+.nevari-create-user .user-account-permissions,
+.nevari-create-user .create-feedback {
+  grid-column: 2;
+}
+
+.nevari-create-user .user-account-section-heading {
+  padding: 28px 30px 0;
+}
+
+.nevari-create-user .user-account-grid {
+  gap: 20px 18px;
+  padding: 22px 30px 30px;
+}
+
+.nevari-create-user .user-account-permissions {
+  margin: 0 30px 28px;
+}
+
+.nevari-create-user .create-feedback {
+  margin: 0 30px 24px;
+}
+
+/* New appointment: care context and schedule are separate work areas. */
+html body .nevari-create-appointment .appointment-creation__body {
+  padding: 0 !important;
+}
+
+.nevari-create-appointment .consultation-design-form-card {
+  padding: 26px 30px 30px !important;
+}
+
+.nevari-create-appointment .consultation-design-grid {
+  grid-template-columns: 350px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.nevari-create-appointment .appointment-identity-panel {
+  display: grid;
+  grid-column: 1;
+  gap: 20px;
+  padding: 22px;
+  border: 1px solid #d8e2ef;
+  border-radius: 16px;
+  background: #f4f8fb;
+}
+
+.nevari-create-appointment .appointment-identity-panel .consultation-design-card-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #d8e2ef;
+}
+
+.nevari-create-appointment .appointment-identity-panel :is(input, textarea, .consultation-selected-doctor, .creation-selected-entity) {
+  background: #fff;
+}
+
+.nevari-create-appointment .appointment-identity-panel .consultation-design-reason textarea {
+  min-height: 132px;
+}
+
+.nevari-create-appointment .consultation-design-calendar {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  padding: 4px 0 0;
+  border-left: 0;
+}
+
+.nevari-create-appointment .consultation-reference-calendar {
+  padding: 0;
+}
+
+.nevari-create-appointment .consultation-validation-message {
+  margin: 16px 0 0 378px;
+  padding: 11px 14px;
+  border: 1px solid #f0d9b6;
+  border-radius: 10px;
+  background: #fff9ef;
+  color: #725220;
+  font-size: 12px;
+}
+
+/* New order: guided workflow with a customer rail and dedicated basket builder. */
+html body .nevari-create-order .order-create-shell {
+  padding: 0 !important;
+}
+
+.nevari-create-order .order-create-full-width {
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 28px;
+  padding: 26px 30px 30px;
+}
+
+.nevari-create-order .order-create-left-column {
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid #d8e2ef;
+  border-radius: 16px;
+  background: #f4f8fb;
+}
+
+.nevari-create-order .order-create-left-column :is(input, select, textarea, .creation-selected-entity) {
+  background-color: #fff;
+}
+
+.nevari-create-order .order-create-payment-heading {
+  margin-top: 6px;
+  padding-top: 20px;
+  border-top: 1px solid #d8e2ef;
+}
+
+.nevari-create-order .order-create-right-column {
+  gap: 20px;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.nevari-create-order .order-create-items-column {
+  gap: 16px;
+}
+
+.nevari-create-order .order-create-empty-products {
+  min-height: 126px;
+  background: #f8fbff;
+}
+
+.nevari-create-order .order-create-note-field {
+  padding-top: 2px;
+}
+
+.nevari-create-order .order-create-total-summary {
+  padding: 16px;
+  border: 1px solid #d8e2ef;
+  border-radius: 12px;
+  background: #f4f8fb;
+}
+
+@media (max-width: 900px) {
+  html body .nevari-create-user .user-account-create {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nevari-create-user .creation-flow,
+  .nevari-create-user .user-account-reference-top,
+  .nevari-create-user .user-account-section-heading,
+  .nevari-create-user .user-account-grid,
+  .nevari-create-user .user-account-permissions,
+  .nevari-create-user .create-feedback {
+    grid-column: 1;
+  }
+
+  .nevari-create-user .user-account-reference-top {
+    display: grid !important;
+    grid-row: auto;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, .55fr);
+    min-height: 0;
+    padding: 20px;
+    border-right: 0;
+    border-bottom: 1px solid #dce5f0;
+  }
+
+  .nevari-create-user .user-account-avatar-section {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .nevari-create-user .user-account-role {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .nevari-create-appointment .consultation-design-grid,
+  .nevari-create-order .order-create-full-width {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nevari-create-appointment .appointment-identity-panel,
+  .nevari-create-appointment .consultation-design-calendar {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .nevari-create-appointment .consultation-validation-message {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 620px) {
+  :is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow {
+    padding: 12px 16px;
+  }
+
+  :is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li {
+    justify-content: center;
+  }
+
+  :is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li > div,
+  :is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li::after {
+    display: none;
+  }
+
+  .nevari-create-user .user-account-reference-top {
+    display: flex !important;
+    padding: 20px 16px;
+  }
+
+  .nevari-create-user .user-account-avatar-section {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .nevari-create-user .user-account-section-heading {
+    padding: 22px 16px 0;
+  }
+
+  .nevari-create-user .user-account-grid {
+    padding: 18px 16px 24px;
+  }
+
+  .nevari-create-user .user-account-permissions,
+  .nevari-create-user .create-feedback {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
+
+  .nevari-create-appointment .consultation-design-form-card,
+  .nevari-create-order .order-create-full-width {
+    padding: 20px 16px 24px !important;
+  }
+
+  .nevari-create-order .order-create-left-column,
+  .nevari-create-appointment .appointment-identity-panel {
+    padding: 18px;
+  }
+}
+
+/* Minimal progressive creation modals — final interaction layer. */
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li.current > span {
+  border-color: #0a2a5e;
+  background: #0a2a5e;
+  color: #fff;
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li.current strong,
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li.complete strong {
+  color: #0a2a5e;
+}
+
+:is(.nevari-create-order, .nevari-create-appointment, .nevari-create-user) .creation-flow li.complete > span {
+  border-color: #9db2cb;
+  background: #fff;
+  color: #0a2a5e;
+}
+
+.creation-review {
+  display: none;
+  width: min(780px, 100%);
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 34px;
+  border: 1px solid #dce4ee;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.creation-review-heading {
+  max-width: 620px;
+  margin-bottom: 26px;
+}
+
+.creation-review-heading :is(h4, p) {
+  margin: 0;
+}
+
+.creation-review-heading h4 {
+  margin: 4px 0 7px;
+  color: #102f5f;
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -.02em;
+}
+
+.creation-review-heading p:not(.section-kicker) {
+  color: #5b6d84;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.creation-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  border-top: 1px solid #e3e9f1;
+}
+
+.creation-review-grid > div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 18px 0;
+  border-bottom: 1px solid #e3e9f1;
+}
+
+.creation-review-grid > div:nth-child(odd) {
+  padding-right: 24px;
+}
+
+.creation-review-grid > div:nth-child(even) {
+  padding-left: 24px;
+  border-left: 1px solid #e3e9f1;
+}
+
+.creation-review-grid dt,
+.creation-review-note > span {
+  color: #6b7b90;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.creation-review-grid dd {
+  margin: 0;
+  overflow: hidden;
+  color: #15365f;
+  font-size: 16px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.creation-review-grid small {
+  overflow: hidden;
+  color: #6b7b90;
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.creation-review-note {
+  margin-top: 22px;
+  padding: 16px;
+  border-radius: 10px;
+  background: #f5f8fb;
+}
+
+.creation-review-note p {
+  margin: 7px 0 0;
+  color: #40516a;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* Order workflow: full order entry, then confirmation. */
+.nevari-create-order .order-create-shell[class*="workflow-step-"] {
+  background: #fbfcfe;
+}
+
+.nevari-create-order .order-create-shell[class*="workflow-step-"] .order-create-full-width {
+  min-height: 430px;
+}
+
+.nevari-create-order .workflow-step-0 .order-create-full-width {
+  display: grid;
+}
+
+.nevari-create-order .workflow-step-0 .order-create-left-column {
+  width: auto;
+  box-sizing: border-box;
+  margin: 0;
+}
+
+.nevari-create-order .workflow-step-0 .order-create-review,
+.nevari-create-order .workflow-step-1 .order-create-full-width {
+  display: none !important;
+}
+
+.nevari-create-order .workflow-step-0 .order-create-right-column {
+  display: flex;
+  width: auto;
+  box-sizing: border-box;
+  margin: 0;
+}
+
+.nevari-create-order .workflow-step-1 .order-create-review {
+  display: block;
+  margin-top: 32px;
+  margin-bottom: 32px;
+}
+
+/* Appointment workflow: people, schedule, then confirmation. */
+.nevari-create-appointment .appointment-creation__body[class*="workflow-step-"] {
+  background: #fbfcfe;
+}
+
+.nevari-create-appointment .appointment-creation__body[class*="workflow-step-"] .consultation-design-grid {
+  display: block;
+  min-height: 430px;
+}
+
+.nevari-create-appointment .workflow-step-0 .appointment-identity-panel {
+  width: min(620px, 100%);
+  box-sizing: border-box;
+  margin: 0 auto;
+  background: #fff;
+}
+
+.nevari-create-appointment .workflow-step-0 .consultation-design-calendar,
+.nevari-create-appointment .workflow-step-0 .consultation-create-review,
+.nevari-create-appointment .workflow-step-1 .appointment-identity-panel,
+.nevari-create-appointment .workflow-step-1 .consultation-create-review,
+.nevari-create-appointment .workflow-step-2 .appointment-identity-panel,
+.nevari-create-appointment .workflow-step-2 .consultation-design-calendar {
+  display: none !important;
+}
+
+.nevari-create-appointment .workflow-step-1 .consultation-design-calendar {
+  display: block;
+  width: min(850px, 100%);
+  margin: 0 auto;
+}
+
+.nevari-create-appointment .workflow-step-2 .consultation-create-review {
+  display: block;
+}
+
+.nevari-create-appointment .workflow-step-0 .consultation-validation-message,
+.nevari-create-appointment .workflow-step-1 .consultation-validation-message {
+  width: min(620px, 100%);
+  box-sizing: border-box;
+  margin: 14px auto 0;
+}
+
+/* User workflow: persistent account summary with focused step content. */
+.nevari-create-user .user-account-create[class*="workflow-step-"] {
+  background: #fbfcfe;
+}
+
+.nevari-create-user .workflow-step-0 .user-field-access,
+.nevari-create-user .workflow-step-0 .user-account-role,
+.nevari-create-user .workflow-step-0 .user-account-permissions,
+.nevari-create-user .workflow-step-0 .user-account-review,
+.nevari-create-user .workflow-step-1 .user-field-identity,
+.nevari-create-user .workflow-step-1 .user-account-review,
+.nevari-create-user .workflow-step-2 .user-account-section-heading,
+.nevari-create-user .workflow-step-2 .user-account-grid,
+.nevari-create-user .workflow-step-2 .user-account-permissions {
+  display: none !important;
+}
+
+.nevari-create-user .workflow-step-0 .user-account-grid,
+.nevari-create-user .workflow-step-1 .user-account-grid {
+  min-height: 390px;
+  align-content: start;
+  background: #fff;
+}
+
+.nevari-create-user .workflow-step-1 .user-account-reference-top .user-account-avatar-section {
+  display: none;
+}
+
+.nevari-create-user .workflow-step-1 .user-account-reference-top {
+  justify-content: flex-start;
+}
+
+.nevari-create-user .workflow-step-2 .user-account-reference-top {
+  display: none !important;
+}
+
+.nevari-create-user .workflow-step-2 .user-account-review {
+  display: block;
+  grid-column: 1 / -1;
+  margin-top: 32px;
+  margin-bottom: 32px;
+}
+
+.user-account-review-profile {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 22px;
+  padding: 14px;
+  border-radius: 12px;
+  background: #f4f8fb;
+}
+
+.user-account-review-profile .user-account-avatar {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  border-radius: 50%;
+}
+
+.user-account-review-profile > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.user-account-review-profile strong,
+.user-account-review-profile span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-account-review-profile strong {
+  color: #15365f;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.user-account-review-profile span {
+  color: #687a92;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .nevari-create-user .workflow-step-2 .user-account-review {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 620px) {
+  .creation-review {
+    padding: 22px 18px;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  .creation-review-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .creation-review-grid > div:nth-child(n) {
+    padding-right: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .nevari-create-user .workflow-step-0 .user-account-grid,
+  .nevari-create-user .workflow-step-1 .user-account-grid,
+  .nevari-create-order .order-create-shell[class*="workflow-step-"] .order-create-full-width,
+  .nevari-create-appointment .appointment-creation__body[class*="workflow-step-"] .consultation-design-grid {
+    min-height: 0;
+  }
+}
+
+/* Final cascade ownership for the latest annotated components. */
+.nevari-create-user .modal-actions .button-primary {
+  border-radius: 999px !important;
+}
+
+.nevari-create-order .creation-flow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.nevari-create-order .workflow-step-0 .order-create-full-width {
+  display: grid !important;
+  grid-template-columns: minmax(310px, .8fr) minmax(0, 1.2fr) !important;
+  gap: 34px !important;
+}
+
+.nevari-create-order .workflow-step-0 .order-create-left-column {
+  width: auto;
+  margin: 0;
+}
+
+.nevari-create-order .workflow-step-0 .order-create-right-column {
+  display: flex !important;
+}
+
+.nevari-create-order .workflow-step-0 .order-create-review,
+.nevari-create-order .workflow-step-1 .order-create-full-width {
+  display: none !important;
+}
+
+.nevari-create-order .workflow-step-1 .order-create-review {
+  display: block !important;
+  margin-top: 32px;
+  margin-bottom: 32px;
+}
+
+.nevari-admin-storefront .patient-directory-panel :is(th, td):nth-child(1) {
+  width: 612.93px;
+}
+
+.nevari-admin-storefront .patient-directory-panel :is(th, td):nth-child(2),
+.nevari-admin-storefront .patient-directory-panel .narrow-col:nth-child(2),
+.nevari-admin-storefront .patient-directory-panel .narrow-col:nth-child(2) .sortable-table-header {
+  width: 80px;
+  min-width: 80px;
+}
+
+.nevari-admin-storefront .patient-directory-panel :is(th, td):nth-child(3) {
+  width: 286.6px;
+}
+
+html body .nevari-admin-storefront .products-segmented-bar > .filter-btn:nth-child(2) {
+  border: 1px solid #737373 !important;
+}
+
+html body .nevari-admin-storefront .order-queue-tabs {
+  padding-right: 10px !important;
+  padding-left: 10px !important;
+  background-color: #eef4fb !important;
+}
+
+@media (max-width: 900px) {
+  .nevari-create-order .workflow-step-0 .order-create-full-width {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* New appointment annotations: combined details step with a compact schedule grid. */
+.nevari-create-appointment .creation-flow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.nevari-create-appointment .appointment-creation__body[class*="workflow-step-"] .consultation-design-grid {
+  min-height: 430px;
+}
+
+.nevari-create-appointment .workflow-step-0 .consultation-design-grid {
+  display: grid;
+  grid-template-columns: 350px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.nevari-create-appointment .workflow-step-0 .appointment-identity-panel,
+.nevari-create-appointment .workflow-step-0 .consultation-design-calendar {
+  display: block;
+  width: auto;
+  margin: 0;
+}
+
+.nevari-create-appointment .workflow-step-0 .appointment-identity-panel {
+  display: grid;
+  background: #f4f8fb;
+}
+
+.nevari-create-appointment .workflow-step-0 .consultation-design-calendar {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.nevari-create-appointment .workflow-step-0 .consultation-create-review,
+.nevari-create-appointment .workflow-step-1 .appointment-identity-panel,
+.nevari-create-appointment .workflow-step-1 .consultation-design-calendar {
+  display: none !important;
+}
+
+.nevari-create-appointment .workflow-step-1 .consultation-create-review {
+  display: block;
+}
+
+.nevari-create-appointment .workflow-step-0 .consultation-validation-message {
+  width: auto;
+  margin: 14px 0 0 378px;
+}
+
+.nevari-create-appointment .consultation-week-controls {
+  padding-top: 27px;
+  padding-bottom: 13px;
+}
+
+.nevari-create-appointment .consultation-week-days {
+  padding-bottom: 17px;
+}
+
+.nevari-create-appointment .consultation-reference-calendar .booking-slots-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+
+@media (max-width: 900px) {
+  .nevari-create-appointment .workflow-step-0 .consultation-design-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nevari-create-appointment .workflow-step-0 .consultation-design-calendar {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .nevari-create-appointment .workflow-step-0 .consultation-validation-message {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 620px) {
+  .nevari-create-appointment .consultation-reference-calendar .booking-slots-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+/* Role-change two-factor authorization dialog. */
+.role-change-auth-layer {
+  z-index: 100001 !important;
+}
+
+.customer-privilege-auth-modal {
+  position: relative;
+}
+
+.customer-privilege-auth-modal .customer-privilege-close {
+  position: absolute;
+  z-index: 2;
+  top: 16px;
+  right: 16px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+}
+
+.customer-privilege-auth-modal .customer-privilege-otp-intro {
+  max-width: 410px;
+  margin: -12px auto 0;
+  color: #52647d;
+  font-size: 14px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+/* Session reauthentication: final annotated Google Identity control dimensions. */
+.session-reauth-form > .auth-google-panel {
+  width: min(290px, 100%);
+}
+
+.session-reauth-dialog .auth-google-button-slot {
+  width: min(290px, 100%);
+  min-height: 52px;
+  border-radius: 50px;
+}
+
+.session-reauth-dialog .auth-google-button-slot > div,
+.session-reauth-dialog .auth-google-button-slot > iframe,
+.session-reauth-dialog .auth-google-button-slot [role="button"] {
+  width: 100% !important;
+  height: 52px !important;
+  border-radius: 50px !important;
+}
+
+/* Role-change OTP typography is scoped so other verification screens retain their scale. */
+.role-change-auth-layer .customer-privilege-auth-modal .auth-otp-title {
+  font-size: 20px;
+  text-align: center;
+}
+
+.role-change-auth-layer .customer-privilege-otp-status {
+  text-align: center;
+}
+
+.role-change-auth-layer .customer-privilege-otp-actions .auth-otp-submit > span:not(.nevari-branded-spinner) {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* Appointment confirmation annotations. Keep these values out of other status screens. */
+.customer-appointment-confirmation-modal .customer-flow-status-card-confirmed .customer-flow-status-head h2 {
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.customer-appointment-confirmation-modal .customer-flow-status-card-confirmed .customer-flow-status-head p {
+  font-size: 12px;
+  font-weight: 300;
+}
+
+.customer-appointment-confirmation-modal .customer-flow-status-card-confirmed .customer-flow-status-actions {
+  display: flex !important;
+  grid-template-columns: none !important;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.customer-appointment-confirmation-modal .customer-flow-status-card-confirmed .customer-flow-status-actions .customer-mobile-primary-button {
+  width: 150px !important;
+  min-width: 150px !important;
+  max-width: 150px !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  max-height: 40px !important;
+  margin-top: 0 !important;
+  flex: 0 0 150px !important;
+}
+
+.customer-appointment-confirmation-modal .customer-flow-status-card-confirmed .customer-flow-status-actions .customer-mobile-secondary-button {
+  width: 150.8px !important;
+  min-width: 150.8px !important;
+  max-width: 150.8px !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  max-height: 40px !important;
+  margin-top: 0 !important;
+  flex: 0 0 150.8px !important;
+}
+
+/* Mobile search annotations. These overrides belong only to the dedicated search page. */
+.customer-mobile-search-frame .customer-mobile-search-results-list .customer-mobile-search-result {
+  padding-right: 25px;
+  padding-left: 25px;
+}
+
+.customer-mobile-search-frame .customer-mobile-searchbar.is-search-page .customer-mobile-search-clear {
+  width: 32px;
+  min-width: 32px;
+  max-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  flex: 0 0 32px;
+  border-radius: 50%;
+}
+
+/* Order-details annotations. Keep order actions separate from appointment actions. */
+.customer-order-details-card .detail-card.timeline {
+  box-sizing: border-box;
+  height: 100.6px;
+}
+
+.customer-order-details-card .action-stack .btn.btn-danger {
+  border-color: #ffa8a8 !important;
+  background: #ffffff !important;
+  color: #ff2929 !important;
+}
+
+.customer-order-details-card .action-stack .btn.btn-danger:hover {
+  background: rgba(255, 41, 41, 0.06) !important;
 }

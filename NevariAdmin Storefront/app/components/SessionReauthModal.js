@@ -56,9 +56,10 @@ async function authHeaders(config) {
   };
 }
 
-export default function SessionReauthModal({ open, config, onAuthenticated }) {
+export default function SessionReauthModal({ open, config, initialUsername = "", title = "", onAuthenticated }) {
   const dialogRef = useRef(null);
   const identifierRef = useRef(null);
+  const passwordRef = useRef(null);
   const googleButtonRef = useRef(null);
   const [stage, setStage] = useState("login");
   const [username, setUsername] = useState("");
@@ -77,8 +78,9 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
     setPasswordVisible(false);
     setChallenge({ id: "", code: "", maskedEmail: "" });
     setError("");
-    window.setTimeout(() => identifierRef.current?.focus(), 0);
-  }, [open]);
+    setUsername(initialUsername);
+    window.setTimeout(() => (initialUsername ? passwordRef.current : identifierRef.current)?.focus(), 0);
+  }, [open, initialUsername]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -134,9 +136,9 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
           type: "standard",
           theme: "outline",
           size: "large",
-          shape: "rectangular",
+          shape: "pill",
           text: "signin_with",
-          width: Math.min(400, googleButtonRef.current.clientWidth || 320),
+          width: Math.min(290, googleButtonRef.current.clientWidth || 290),
         });
       } catch (caught) {
         if (!cancelled) setError(String(caught?.message || "Google sign-in could not be loaded."));
@@ -186,6 +188,11 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
       expiresAt: Date.now() + (Number(data.expires_in || 900) * 1000),
       user: data.user || null,
     };
+    const result = await onAuthenticated(session);
+    if (result?.pending) return;
+    if (result?.accepted === false) {
+      throw new Error(result.message || "Sign in with the same account to continue.");
+    }
     saveSession(config, session);
     onAuthenticated(session);
   }
@@ -288,12 +295,12 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
   return (
     <div className="session-reauth-layer" role="presentation">
       <section ref={dialogRef} className="session-reauth-dialog" role="dialog" aria-modal="true" aria-labelledby="session-reauth-title">
-        <h1 id="session-reauth-title">{stage === "verify" ? "Verify code" : "Log in"}</h1>
+        <h1 id="session-reauth-title">{stage === "verify" ? "Verify code" : (title || "Log in")}</h1>
         {stage === "verify" ? <p className="session-reauth-copy">Enter the code sent to {challenge.maskedEmail || "your email"}.</p> : null}
         {stage === "login" ? (
           <form className="session-reauth-form" onSubmit={submitLogin}>
-            <label><span>Email</span><input ref={identifierRef} type="text" inputMode="email" autoCapitalize="none" spellCheck="false" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label>
-            <label><span>Password</span><span className="session-reauth-password-field"><input type={passwordVisible ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="button" onClick={() => setPasswordVisible((visible) => !visible)}>{passwordVisible ? "Hide" : "Show"}</button></span></label>
+            <label><span>Email</span><input ref={identifierRef} type="text" inputMode="email" autoCapitalize="none" spellCheck="false" autoComplete="username" value={username} readOnly={Boolean(initialUsername)} onChange={(event) => setUsername(event.target.value)} required /></label>
+            <label><span>Password</span><span className="session-reauth-password-field"><input ref={passwordRef} type={passwordVisible ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="button" onClick={() => setPasswordVisible((visible) => !visible)}>{passwordVisible ? "Hide" : "Show"}</button></span></label>
             <button className="auth-primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign In"}</button>
             <div className="session-reauth-links">
               <a href={config.loginPath}>Reset password</a>
@@ -310,7 +317,6 @@ export default function SessionReauthModal({ open, config, onAuthenticated }) {
           <form className="session-reauth-form" onSubmit={submitCode}>
             <label><span>Verification code</span><input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={challenge.code} onChange={(event) => setChallenge((current) => ({ ...current, code: event.target.value.replace(/\D/g, "").slice(0, 6) }))} required /></label>
             <button className="auth-primary-button" type="submit" disabled={busy || challenge.code.length !== 6}>{busy ? "Verifying…" : "Verify and continue"}</button>
-            <button className="auth-text-link" type="button" onClick={() => setStage("login")} disabled={busy}>Use a different account</button>
           </form>
         )}
         {error ? <p className="session-reauth-error" role="alert">{error}</p> : null}

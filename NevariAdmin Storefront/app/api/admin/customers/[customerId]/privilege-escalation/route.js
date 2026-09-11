@@ -9,7 +9,8 @@ import {
 const API_NAMESPACE = "nevari/v1";
 const UPSTREAM_TIMEOUT_MS = 30000;
 const SESSION_MARKER = "server-session";
-const ALLOWED_TARGET_ROLES = new Set(["doctor", "pharmacist", "customer"]);
+const ALLOWED_TARGET_ROLES = new Set(["administrator", "store_admin", "doctor", "pharmacist", "nurse", "customer"]);
+const ALLOWED_PERMISSIONS = new Set(["products", "orders", "payments", "patients", "consultations", "mtm", "iv-therapy", "nurse-requests", "logs", "staff", "subscriptions", "analytics"]);
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -161,7 +162,7 @@ export async function POST(request, { params }) {
     }
 
     const body = await request.json().catch(() => null);
-    const unknownFields = rejectUnknownFields(body, ["target_role", "challenge_id", "code"], "payload");
+    const unknownFields = rejectUnknownFields(body, ["target_role", "challenge_id", "code", "permissions"], "payload");
     if (unknownFields) {
       return Response.json({ success: false, error: { message: unknownFields } }, { status: 400 });
     }
@@ -169,11 +170,18 @@ export async function POST(request, { params }) {
     const targetRole = sanitizeText(body?.target_role, { max: 40 }).toLowerCase();
     const challengeId = sanitizeText(body?.challenge_id, { max: 120 });
     const code = sanitizeText(body?.code, { max: 12 });
+    const hasStaffPermissions = Array.isArray(body?.permissions);
+    const permissions = hasStaffPermissions
+      ? [...new Set(body.permissions.map((permission) => sanitizeText(permission, { max: 40 }).toLowerCase()))]
+      : [];
     if (!ALLOWED_TARGET_ROLES.has(targetRole)) {
       return Response.json({ success: false, error: { message: "Unsupported target role." } }, { status: 422 });
     }
-    if (!challengeId || !code) {
+    if (!challengeId || !/^\d{6}$/.test(code)) {
       return Response.json({ success: false, error: { message: "OTP verification is required." } }, { status: 422 });
+    }
+    if (permissions.some((permission) => !ALLOWED_PERMISSIONS.has(permission))) {
+      return Response.json({ success: false, error: { message: "Unsupported staff permission." } }, { status: 422 });
     }
 
     const frontendType = sanitizeText(request.headers.get("x-nevari-frontend-type") || "storefront", { max: 40 });
@@ -215,14 +223,29 @@ export async function POST(request, { params }) {
       return Response.json(verifyResult.payload, { status: verifyResult.status || 400 });
     }
 
-    const roleResult = await upstreamJson(request, session, `/admin/users/${encodeURIComponent(customerId)}/role`, {
-      method: "POST",
-      body: {
-        target_role: targetRole,
-        verified_by_user_id: viewer?.id || viewer?.user_id || "",
-        reason: "Role change approved with storefront OTP verification"
-      }
-    });
+    const useStaffAccessRoute = hasStaffPermissions && targetRole !== "administrator" && targetRole !== "customer";
+    const roleResult = await upstreamJson(
+      request,
+      session,
+      `/admin/users/${encodeURIComponent(customerId)}/${useStaffAccessRoute ? "access" : "role"}`,
+      useStaffAccessRoute
+        ? {
+            method: "PATCH",
+            body: {
+              role: targetRole,
+              permissions,
+              reason: "Role change approved with storefront OTP verification"
+            }
+          }
+        : {
+            method: "POST",
+            body: {
+              target_role: targetRole,
+              verified_by_user_id: viewer?.id || viewer?.user_id || "",
+              reason: "Role change approved with storefront OTP verification"
+            }
+          }
+    );
     if (!roleResult.ok) {
       return Response.json(roleResult.payload, { status: roleResult.status || 400 });
     }
@@ -237,10 +260,10 @@ export async function POST(request, { params }) {
         message: roleResult.payload?.data?.message || `User updated to ${targetRole}.`
       }
     });
-  } catch (error) {
+  } catch {
     return Response.json(
-      { success: false, error: { message: error?.message || "User role change failed." } },
-      { status: Number(error?.status || 400) }
+      { success: false, error: { message: "User role change failed." } },
+      { status: 400 }
     );
   }
 }
